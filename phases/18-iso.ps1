@@ -292,15 +292,27 @@ try {
         (Join-Path -Path $baseWorkDir -ChildPath "deep_apply_*"),
         (Join-Path -Path $baseWorkDir -ChildPath "scratchdir_*")
     )
+    $cleanedCount = 0
+    $pendingCleanup = [System.Collections.Generic.List[string]]::new()
     foreach ($pattern in $cleanupTargets) {
         Get-ChildItem -Path $pattern -Directory -ErrorAction SilentlyContinue | ForEach-Object {
             $full = $_.FullName
             if ($full -eq $scratchDir -or $full -eq $vhdxMountDir) { return }
-            Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction SilentlyContinue
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            if (Remove-Nano11TreeRobust -Path $full -SafetyRoot $baseWorkDir) {
+                $sw.Stop()
+                $cleanedCount++
+                Write-Host "  - Removed transient: $(Split-Path -Leaf $full) ($([math]::Round($sw.Elapsed.TotalSeconds,1))s)" -ForegroundColor DarkGray
+            } else {
+                $pendingCleanup.Add($full)
+            }
         }
     }
-    # Remove now-empty scratch stubs but keep the primary build directory
-    Write-Host "  - Transient artifacts cleaned (build\ preserved for -ResumeIsoOnly)" -ForegroundColor Green
+    if ($pendingCleanup.Count -gt 0) {
+        Write-Warning "Transient artifacts not fully removed ($($pendingCleanup.Count)): $($pendingCleanup -join '; ')"
+    } else {
+        Write-Host "  - Transient artifacts cleaned ($cleanedCount removed)" -ForegroundColor Green
+    }
 } catch {
     Write-Warning "Workspace cleanup skipped: $_"
 }

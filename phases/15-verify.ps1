@@ -193,9 +193,16 @@ if ($Validate) {
     $valLog | Out-File (Join-Path -Path $baseWorkDir -ChildPath "verify-paths.txt") -Encoding utf8
 }
 
-# Clean up verification scratch on success
-Remove-Item -LiteralPath $verifyApply -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath $verifyScratch -Recurse -Force -ErrorAction SilentlyContinue
+# Clean up verification scratch on success (robust delete: expanded images contain
+# >260-char paths and TrustedInstaller/RX-only ACLs that plain Remove-Item cannot delete)
+$verifyApplySw = [System.Diagnostics.Stopwatch]::StartNew()
+if (Remove-Nano11TreeRobust -Path $verifyApply -SafetyRoot $baseWorkDir) {
+    $verifyApplySw.Stop()
+    Write-Host "  - Deep-apply verification directory removed ($([math]::Round($verifyApplySw.Elapsed.TotalSeconds,1))s)." -ForegroundColor DarkGray
+} else {
+    Write-Warning "Deep-apply verification directory could not be fully removed: $verifyApply (later cleanup will retry)"
+}
+[void](Remove-Nano11TreeRobust -Path $verifyScratch -SafetyRoot $baseWorkDir)
 
 $activePayloadPath = $wimCheck
 $activePayloadName = "install.wim"

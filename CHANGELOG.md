@@ -57,6 +57,23 @@ nano11 scheme; entries below are local-fork additions on top of upstream 2.1.
   XML parsing (caught by the self-test, corrected).
 - `$resumeIsoAttempt:` interpolated-variable parse error in the new Resume-ISO code
   (caught by `-TestSelf`, corrected).
+- Image cleanup now actually deletes expanded trees: PowerShell 5.1 `Remove-Item` and
+  `rd /s /q` both fail with ACCESS DENIED on WIM-applied trees (files owned by
+  TrustedInstaller, Administrators granted RX only), and the old
+  `-ErrorAction SilentlyContinue` calls swallowed it - two runs leaked ~41 GB of
+  `deep_apply_verification_*` directories (~135k files each). New
+  `Remove-Nano11TreeRobust` helper prunes reparse points first (applied-image
+  junctions such as `Users\All Users` point at host paths like `C:\ProgramData`),
+  then deletes via `robocopy /MIR /XJ /B` (backup mode bypasses the DACL) with
+  `rd /s /q` plus a takeown/icacls tier as fallback. Empirically verified against
+  >260-char paths, RX-only ACL trees, and junction-traversal safety.
+- Final lifecycle cleanup no longer stalls for hours: the fast native first tier
+  replaces `Reset-DirectoryWithRobocopy`'s per-item `Get-Acl`/`Set-Acl` pass over
+  100k+ file trees (heavy reset machinery retained as an opt-in fallback for locked
+  trees / loaded offline hives). Per-target cleanup elapsed times are now logged.
+- Misleading "Transient artifacts cleaned (build\ preserved for -ResumeIsoOnly)"
+  message no longer prints when nothing was deleted - Phase 18 F1 cleanup reports the
+  real removed count and warns with paths for anything left behind.
 
 ### Notes
 - The 26100+ (24H2+) offline WinSxS cleanup remains **blocked by default**; use

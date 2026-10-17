@@ -5982,21 +5982,30 @@ try {
             Remove-Item -LiteralPath $destWimBackupPath -Force -ErrorAction SilentlyContinue
         }
 
-        # Clean nano11Dir
+        # Clean nano11Dir (fast path first: reparse prune + robocopy /B + rd). Previously this used
+        # Reset-DirectoryWithRobocopy, whose per-item ACL pass took ~5 hours on 100k-file trees.
         if ($nano11Dir -and (Test-Path -LiteralPath $nano11Dir)) {
-            try {
-                Reset-DirectoryWithRobocopy -Path $nano11Dir
-                Remove-Item -LiteralPath $nano11Dir -Force -ErrorAction SilentlyContinue
-            } catch {}
+            $swClean = [System.Diagnostics.Stopwatch]::StartNew()
+            $cleanOk = Remove-Nano11TreeRobust -Path $nano11Dir -SafetyRoot $baseWorkDir -AllowLockedFallback
+            $swClean.Stop()
+            if ($cleanOk) {
+                Write-Host "  - ISO workspace cleanup: removed ($([math]::Round($swClean.Elapsed.TotalSeconds,1))s)" -ForegroundColor DarkGray
+            } else {
+                Write-Warning "ISO workspace cleanup incomplete: $nano11Dir"
+            }
         }
 
         # Clean target mount directories only if individual safety checks pass
         foreach ($mPath in $allTargetMounts) {
             if (Test-CanSafelyDeleteDirectory -Path $mPath -ExpectedBaseDir $baseWorkDir -PreservedDirs $script:PreservedMountDirs) {
-                try {
-                    Reset-DirectoryWithRobocopy -Path $mPath
-                    Remove-Item -LiteralPath $mPath -Force -ErrorAction SilentlyContinue
-                } catch {}
+                $swMount = [System.Diagnostics.Stopwatch]::StartNew()
+                $mountOk = Remove-Nano11TreeRobust -Path $mPath -SafetyRoot $baseWorkDir -AllowLockedFallback
+                $swMount.Stop()
+                if ($mountOk) {
+                    Write-Host "  - Mount dir cleanup ($(Split-Path -Leaf $mPath)): removed ($([math]::Round($swMount.Elapsed.TotalSeconds,1))s)" -ForegroundColor DarkGray
+                } else {
+                    Write-Warning "Mount dir cleanup incomplete: $mPath"
+                }
             }
         }
 
@@ -6009,8 +6018,7 @@ try {
                     try { [System.IO.Directory]::Delete($vhdxMountDir, $false) } catch { try { $rpCheck.Delete() } catch {} }
                 } else {
                     if (Test-CanSafelyDeleteDirectory -Path $vhdxMountDir -ExpectedBaseDir $baseWorkDir -PreservedDirs $script:PreservedMountDirs) {
-                        Reset-DirectoryWithRobocopy -Path $vhdxMountDir
-                        Remove-Item -LiteralPath $vhdxMountDir -Force -ErrorAction SilentlyContinue
+                        [void](Remove-Nano11TreeRobust -Path $vhdxMountDir -SafetyRoot $baseWorkDir -AllowLockedFallback)
                     }
                 }
             }

@@ -618,3 +618,129 @@ function Sync-ScriptScopeFromContext {
     $script:PreservedMountDirs = $ctx.PreservedMountDirs
     $script:activeTweakGroups = $ctx.ActiveTweakGroups
 }
+
+# ============================================================================
+# Robust directory removal (long paths + image ACLs) - lifecycle cleanup fix
+# WHY: PowerShell 5.1 Remove-Item fails with ACCESS DENIED on expanded Windows
+# images (files owned by TrustedInstaller with Administrators granted RX only)
+# and -ErrorAction SilentlyContinue turns that into a silent, invisible leak.
+# cmd "rd /s /q" fails on the same ACLs too. robocopy /MIR /B (backup mode,
+# SeBackupPrivilege) deletes them regardless of the DACL.
+# Reparse points are pruned first on purpose: applied-image junctions such as
+# 'Users\All Users' -> C:\ProgramData point at HOST paths, so nothing may ever
+# recurse through them.
+#   Tier 1: prune reparse points -> robocopy /MIR /XJ /B -> rd /s /q
+#   Tier 2: takeown /r + icacls Administrators:F /T -> rd /s /q
+#   Tier 3: (opt-in) Reset-DirectoryWithRobocopy for locked trees / loaded hives
+# Returns $true when the path no longer exists.
+# ============================================================================
+function Remove-Nano11TreeRobust {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [string]$SafetyRoot,
+        [switch]$AllowLockedFallback
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $true }
+
+    $full = try { ConvertTo-Nano11NormalizedPath -Path $Path } catch { [System.IO.Path]::GetFullPath($Path).TrimEnd('\') }
+
+    # Safety guards: never operate on a drive root, and (when given) only on a strict child of SafetyRoot
+    if ($full -match '^[A-Za-z]:$') {
+        Write-Warning "Remove-Nano11TreeRobust: refusing to remove drive root '$full'."
+        return $false
+    }
+    if ($SafetyRoot) {
+        $normRoot = try { ConvertTo-Nano11NormalizedPath -Path $SafetyRoot } catch { [System.IO.Path]::GetFullPath($SafetyRoot).TrimEnd('\') }
+        if (($full -ieq $normRoot) -or (-not (Test-Nano11PathWithin -Path $full -Root $normRoot))) {
+            Write-Warning "Remove-Nano11TreeRobust: refusing '$full' (not a strict child of safety root '$normRoot')."
+            return $false
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath $full)) { return $true }
+
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+    # If the directory itself is a reparse point, remove the link only (never the target)
+    $rootItem = Get-Item -LiteralPath $full -Force -ErrorAction SilentlyContinue
+    if ($rootItem -and ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        try { [System.IO.Directory]::Delete($full, $false) } catch { Write-Warning "Remove-Nano11TreeRobust: failed to remove reparse point '$full': $_" }
+        return (-not (Test-Path -LiteralPath $full))
+    }
+
+    # Prune in-tree reparse points without following them (iterative, link-only deletes)
+    $linkError = $false
+    try {
+        $queue = [System.Collections.Generic.Queue[string]]::new()
+        $queue.Enqueue($full)
+        while ($queue.Count -gt 0) {
+            $curr = $queue.Dequeue()
+            $children = @(Get-ChildItem -LiteralPath $curr -Force -ErrorAction Stop)
+            foreach ($child in $children) {
+                if ($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                    try {
+                        if ($child.PSIsContainer) { [System.IO.Directory]::Delete($child.FullName, $false) }
+                        else { [System.IO.File]::Delete($child.FullName) }
+                    } catch {
+                        Write-Warning "Remove-Nano11TreeRobust: could not prune reparse point '$($child.FullName)': $_"
+                        $linkError = $true
+                    }
+                } elseif ($child.PSIsContainer) {
+                    $queue.Enqueue($child.FullName)
+                }
+            }
+        }
+    } catch {
+        Write-Warning "Remove-Nano11TreeRobust: pre-scan warning for '$full': $_"
+        $linkError = $true
+    }
+
+    $emptyTemp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "nano11_empty_$([System.IO.Path]::GetRandomFileName())"
+
+    # --- Tier 1: robocopy backup-mode mirror (handles long paths and restrictive ACLs) ---
+    try {
+        New-Item -Path $emptyTemp -ItemType Directory -Force -ErrorAction Stop | Out-Null
+        $null = & robocopy.exe $emptyTemp $full /MIR /XJ /B /R:0 /W:0 /NFL /NDL /NP /NJH /NJS 2>&1
+    } catch {
+        Write-Warning "Remove-Nano11TreeRobust: robocopy tier failed for '$full': $_"
+    } finally {
+        if (Test-Path -LiteralPath $emptyTemp) { Remove-Item -LiteralPath $emptyTemp -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    # Only safe to run rd when no reparse point survived the prune (rd must never meet a link)
+    if (-not $linkError) { & cmd.exe /c "rd /s /q `"$full`"" > $null 2>&1 }
+    if (-not (Test-Path -LiteralPath $full)) {
+        Write-Verbose "Remove-Nano11TreeRobust: '$full' removed via tier 1 in $([math]::Round($sw.Elapsed.TotalSeconds,1))s."
+        return $true
+    }
+
+    # --- Tier 2: native bulk ownership/ACL escalation, then rd ---
+    if (-not $linkError) {
+        & takeown.exe /f "$full" /r /d y > $null 2>&1
+        & icacls.exe "$full" /grant '*S-1-5-32-544:F' /T /C /Q > $null 2>&1
+        & cmd.exe /c "rd /s /q `"$full`"" > $null 2>&1
+        if (-not (Test-Path -LiteralPath $full)) {
+            Write-Verbose "Remove-Nano11TreeRobust: '$full' removed via tier 2 in $([math]::Round($sw.Elapsed.TotalSeconds,1))s."
+            return $true
+        }
+    }
+
+    # --- Tier 3: heavy reset machinery for locked trees / loaded offline hives (opt-in) ---
+    if ($AllowLockedFallback) {
+        if (Get-Command -Name Reset-DirectoryWithRobocopy -ErrorAction SilentlyContinue) {
+            try { Reset-DirectoryWithRobocopy -Path $full -Retries 2 } catch { Write-Warning "Remove-Nano11TreeRobust: heavy reset failed for '$full': $(($_ -split "`n")[0])" }
+            if (Test-Path -LiteralPath $full) {
+                if (-not $linkError) { & cmd.exe /c "rd /s /q `"$full`"" > $null 2>&1 }
+                else { try { [System.IO.Directory]::Delete($full, $false) } catch {} }
+            }
+            if (-not (Test-Path -LiteralPath $full)) {
+                Write-Verbose "Remove-Nano11TreeRobust: '$full' removed via tier 3 in $([math]::Round($sw.Elapsed.TotalSeconds,1))s."
+                return $true
+            }
+        } else {
+            Write-Warning "Remove-Nano11TreeRobust: Reset-DirectoryWithRobocopy not available; heavy fallback skipped for '$full'."
+        }
+    }
+
+    Write-Warning "Remove-Nano11TreeRobust: '$full' could not be fully removed (reparsePruneClean=$(-not $linkError), elapsed $([math]::Round($sw.Elapsed.TotalSeconds,1))s)."
+    return $false
+}

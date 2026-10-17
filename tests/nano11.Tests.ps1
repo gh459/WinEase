@@ -136,3 +136,67 @@ Describe "nano11 builder - end-to-end DryRun" {
         $p.ExitCode | Should Be 0
     }
 }
+
+# --- Regression tests: Remove-Nano11TreeRobust (fixes the 41 GB deep_apply leak and the
+# --- ~5-hour final cleanup stall). Loads nano11helpers.ps1 functions directly. ---
+if (-not (Get-Command -Name Remove-Nano11TreeRobust -ErrorAction SilentlyContinue)) {
+    . (Join-Path -Path $script:RepoRoot -ChildPath "nano11helpers.ps1")
+}
+
+Describe "nano11 builder - robust tree removal (long paths + image ACLs)" {
+    It "removes a tree containing >260-char paths" {
+        $root = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("nano11_robust_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $deep = Join-Path -Path $root -ChildPath "t1"
+        [System.IO.Directory]::CreateDirectory($deep) | Out-Null
+        $cur = $deep
+        for ($i = 0; $i -lt 12; $i++) {
+            $cur = Join-Path $cur "segments_of_reasonable_length_0123456789"
+            [System.IO.Directory]::CreateDirectory("\\?\$cur") | Out-Null
+        }
+        $deepFile = Join-Path $cur "deep.txt"
+        [System.IO.File]::WriteAllText("\\?\$deepFile", 'x')
+        ($deepFile.Length -gt 260) | Should Be $true
+
+        (Remove-Nano11TreeRobust -Path $deep -SafetyRoot $root) | Should Be $true
+        (Test-Path -LiteralPath $deep) | Should Be $false
+        if (Test-Path -LiteralPath $root) { & cmd.exe /c "rd /s /q `"$root`"" > $null 2>&1 }
+    }
+
+    It "removes a tree protected by image-style ACLs (Administrators RX only)" {
+        $root = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("nano11_robust_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $sub = Join-Path -Path $root -ChildPath "System32"
+        [System.IO.Directory]::CreateDirectory($sub) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $sub "locked.exe"), 'x')
+        & icacls.exe $sub /inheritance:r /grant '*S-1-5-32-544:RX' /T /C /Q > $null 2>&1
+
+        (Remove-Nano11TreeRobust -Path $sub -SafetyRoot $root) | Should Be $true
+        (Test-Path -LiteralPath $sub) | Should Be $false
+        if (Test-Path -LiteralPath $root) { & cmd.exe /c "rd /s /q `"$root`"" > $null 2>&1 }
+    }
+
+    It "never follows junctions (canary directory survives)" {
+        $root = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("nano11_robust_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $canary = ($root + '_canary')
+        $target = Join-Path -Path $root -ChildPath "linked"
+        [System.IO.Directory]::CreateDirectory($target) | Out-Null
+        [System.IO.Directory]::CreateDirectory($canary) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $canary "canary.txt"), 'precious')
+        & cmd.exe /c "mklink /J `"$target\the_junction`" `"$canary`"" > $null 2>&1
+
+        (Remove-Nano11TreeRobust -Path $target -SafetyRoot $root) | Should Be $true
+        (Test-Path -LiteralPath (Join-Path $canary "canary.txt")) | Should Be $true
+        if (Test-Path -LiteralPath $root) { & cmd.exe /c "rd /s /q `"$root`"" > $null 2>&1 }
+        if (Test-Path -LiteralPath $canary) { & cmd.exe /c "rd /s /q `"$canary`"" > $null 2>&1 }
+    }
+
+    It "refuses paths that are not strict children of the safety root" {
+        $root = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("nano11_robust_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $child = Join-Path -Path $root -ChildPath "keepme"
+        [System.IO.Directory]::CreateDirectory($child) | Out-Null
+
+        (Remove-Nano11TreeRobust -Path $root -SafetyRoot $root) | Should Be $false
+        (Remove-Nano11TreeRobust -Path $child -SafetyRoot (Join-Path $root "other")) | Should Be $false
+        (Test-Path -LiteralPath $child) | Should Be $true
+        if (Test-Path -LiteralPath $root) { & cmd.exe /c "rd /s /q `"$root`"" > $null 2>&1 }
+    }
+}
