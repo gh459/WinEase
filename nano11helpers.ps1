@@ -352,3 +352,269 @@ function Get-SafeShortPath {
 # persistent corruption from a known-good reference image (source media / untouched editions).
 # ---------------------------------------------------------------------------------------------
 
+
+# ============================================================================
+# BuildContext class - aggregates all build state into a single object (C1)
+# Foundation for dependency injection. Phases can optionally accept a BuildContext
+# instead of relying on global $script: variables.
+# ============================================================================
+
+class BuildContext {
+    # --- Workspace & paths ---
+    [string]$BaseWorkDir
+    [string]$Nano11Dir
+    [string]$ScratchDir
+    [string]$VhdxMountDir
+    [string]$VhdxPath
+    [string]$DriveLetter
+    [string]$WorkDir
+    # --- Image metadata ---
+    [int]$Index
+    [string]$TargetEditionName
+    [string]$Architecture
+    [string]$LanguageCode
+    # --- Build identity ---
+    [string]$BuildId
+    [string]$DiagDir
+    [hashtable]$DiagnosticData
+    [int]$CurrentPhase
+    [hashtable]$PhaseTimings
+    [System.Diagnostics.Stopwatch]$PhaseStopwatch
+    # --- Build state ---
+    [bool]$BuildSucceeded
+    [bool]$FinalPayloadVerified
+    [string]$VerifiedFinalWimSha256
+    [bool]$IsoPayloadVerified
+    [bool]$StreamIntegrityVerified
+    [string]$StreamIntegrityMethod
+    [int]$RemovedPackagesCount
+    [int]$WinSxSSavedMB
+    [int]$WinSxsBeforeMB
+    [int]$WinSxsAfterMB
+    [string]$DismLogPath
+    [bool]$DefenderExclusionAdded
+    [bool]$HivesLoaded
+    [bool]$MountOpened
+    [string]$DismMountDir
+    [System.Collections.Generic.HashSet[string]]$ManagedMountDirs
+    [System.Collections.Generic.HashSet[string]]$AllocatedMountDirs
+    [System.Collections.Generic.HashSet[string]]$PreservedMountDirs
+    # --- Configuration ---
+    [string]$SelectedProfile
+    [bool]$RemoveDefender
+    [bool]$KeepAsianIME
+    [bool]$KeepExtraFonts
+    [bool]$RemoveDrivers
+    [bool]$DisableWU
+    [bool]$KeepBT
+    [bool]$WslSupport
+    [bool]$KeepRecoveryEnv
+    [bool]$SafeDebloatMode
+    [bool]$UltraSlimMode
+    [bool]$SetJapaneseKeyboard
+    [bool]$AtlasReviOSMode
+    [bool]$ExportESDMode
+    [bool]$SplitWIMMode
+    [bool]$RemoveStore
+    [bool]$KeepBasicApps
+    [bool]$KeepSearchIndex
+    [bool]$KeepXboxServices
+    [bool]$KeepAudioTweaks
+    [bool]$UseVHDX
+    [bool]$RemoveLegacyFOD
+    [bool]$TrimWallpapers
+    [string]$HibernateMode
+    [string]$CrashDumpMode
+    [bool]$DisableCPUMitigations
+    [bool]$MmcssGaming
+    [bool]$DawMode
+    [bool]$DisableMemCompression
+    [bool]$DisableFSE
+    [bool]$NvidiaLowLatency
+    [bool]$NoKernelPaging
+    [bool]$DisableUSBSuspend
+    [bool]$NoHypervisor
+    [bool]$RemoveWebViewPostOOBE
+    [bool]$FastExport
+    [bool]$UefiOnly
+    [string]$CpuBoostMode
+    [string]$PowerPreset
+    [bool]$BypassActivationRestrictions
+    [bool]$RadicalRAM
+    [hashtable]$ActiveTweakGroups
+    [string]$PayloadFormat
+    [string]$ComputerName
+    [string]$UserName
+    [string]$SourceWimSize
+    [string]$ActivePayloadPath
+    [string]$ActivePayloadName
+    # --- Mutable state ---
+    [string]$DismPath
+    [string]$DismVerStr
+    [string]$HostBuildNum
+    [string]$IsoFileName
+    [string]$OutputIso
+    [string]$IsoSha256
+    [int]$IsoSizeMB
+    [string]$TempOutputIso
+    [string]$ExpectedPayloadFile
+    [string]$ProfSlug
+    [string]$BootWimPath
+
+    BuildContext() {
+        $this.ManagedMountDirs = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $this.AllocatedMountDirs = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $this.PreservedMountDirs = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $this.PhaseTimings = [ordered]@{}
+        $this.ActiveTweakGroups = [ordered]@{}
+        $this.DiagnosticData = [ordered]@{}
+        $this.CurrentPhase = 0
+        $this.BuildSucceeded = $false
+        $this.FinalPayloadVerified = $false
+        $this.IsoPayloadVerified = $false
+        $this.StreamIntegrityVerified = $false
+        $this.StreamIntegrityMethod = "NOT VERIFIED"
+        $this.DefenderExclusionAdded = $false
+        $this.HivesLoaded = $false
+        $this.MountOpened = $false
+        $this.IsoCreatedSuccessfully = $false
+        $this.IsoPayloadMatch = $false
+        $this.RemovedPackagesCount = 0
+        $this.WinSxSSavedMB = 0
+        $this.WinSxsBeforeMB = 0
+        $this.WinSxsAfterMB = 0
+        $this.PhaseStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    }
+}
+
+# Helper: create BuildContext from resolved script-scope variables (bridge for incremental migration)
+function New-BuildContextFromScriptScope {
+    $ctx = [BuildContext]::new()
+    $ctx.BaseWorkDir = $script:BaseWorkDir
+    $ctx.Nano11Dir = $nano11Dir
+    $ctx.ScratchDir = $scratchDir
+    $ctx.VhdxMountDir = $vhdxMountDir
+    $ctx.VhdxPath = $vhdxPath
+    $ctx.DriveLetter = $DriveLetter
+    $ctx.WorkDir = $WorkDir
+    $ctx.Index = $index
+    $ctx.TargetEditionName = $targetEditionName
+    $ctx.Architecture = $architecture
+    $ctx.LanguageCode = $languageCode
+    $ctx.BuildId = $script:BuildId
+    $ctx.DiagDir = $script:DiagDir
+    $ctx.DiagnosticData = $script:DiagnosticData
+    $ctx.CurrentPhase = $script:CurrentPhase
+    $ctx.PhaseTimings = $script:PhaseTimings
+    $ctx.PhaseStopwatch = $script:PhaseStopwatch
+    $ctx.BuildSucceeded = $script:BuildSucceeded
+    $ctx.FinalPayloadVerified = $script:FinalPayloadVerified
+    $ctx.VerifiedFinalWimSha256 = $script:VerifiedFinalWimSha256
+    $ctx.IsoPayloadVerified = $script:IsoPayloadVerified
+    $ctx.StreamIntegrityVerified = $script:StreamIntegrityVerified
+    $ctx.StreamIntegrityMethod = $script:StreamIntegrityMethod
+    $ctx.RemovedPackagesCount = if ($script:RemovedPackages) { $script:RemovedPackages.Count } else { 0 }
+    $ctx.WinSxSSavedMB = if ($script:WinSxSSavedMB) { $script:WinSxSSavedMB } else { 0 }
+    $ctx.WinSxsBeforeMB = if ($script:WinSxsBeforeMB) { $script:WinSxsBeforeMB } else { 0 }
+    $ctx.WinSxsAfterMB = if ($script:WinSxsAfterMB) { $script:WinSxsAfterMB } else { 0 }
+    $ctx.DismLogPath = $script:DismLogPath
+    $ctx.DefenderExclusionAdded = $script:DefenderExclusionAdded
+    $ctx.HivesLoaded = $script:HivesLoaded
+    $ctx.MountOpened = $script:MountOpened
+    $ctx.DismMountDir = $script:DismMountDir
+    $ctx.ManagedMountDirs = $script:ManagedMountDirs
+    $ctx.AllocatedMountDirs = $script:AllocatedMountDirs
+    $ctx.PreservedMountDirs = $script:PreservedMountDirs
+    $ctx.SelectedProfile = $selectedProfile
+    $ctx.RemoveDefender = $removeDefender
+    $ctx.KeepAsianIME = $keepAsianIME
+    $ctx.KeepExtraFonts = $keepExtraFonts
+    $ctx.RemoveDrivers = $removeDrivers
+    $ctx.DisableWU = $disableWU
+    $ctx.KeepBT = $keepBT
+    $ctx.WslSupport = $wslSupport
+    $ctx.KeepRecoveryEnv = $keepRecoveryEnv
+    $ctx.SafeDebloatMode = $safeDebloatMode
+    $ctx.UltraSlimMode = $ultraSlimMode
+    $ctx.SetJapaneseKeyboard = $setJapaneseKeyboard
+    $ctx.AtlasReviOSMode = $atlasReviOSMode
+    $ctx.ExportESDMode = $exportESDMode
+    $ctx.SplitWIMMode = $splitWIMMode
+    $ctx.RemoveStore = $removeStore
+    $ctx.KeepBasicApps = $keepBasicApps
+    $ctx.KeepSearchIndex = $keepSearchIndex
+    $ctx.KeepXboxServices = $keepXboxServices
+    $ctx.KeepAudioTweaks = $keepAudioTweaks
+    $ctx.UseVHDX = $useVHDX
+    $ctx.RemoveLegacyFOD = $removeLegacyFOD
+    $ctx.TrimWallpapers = $trimWallpapers
+    $ctx.HibernateMode = $hibernateMode
+    $ctx.CrashDumpMode = $crashDumpMode
+    $ctx.DisableCPUMitigations = $disableCPUMitigations
+    $ctx.MmcssGaming = $mmcssGaming
+    $ctx.DawMode = $dawMode
+    $ctx.DisableMemCompression = $disableMemCompression
+    $ctx.DisableFSE = $disableFSE
+    $ctx.NvidiaLowLatency = $nvidiaLowLatency
+    $ctx.NoKernelPaging = $noKernelPaging
+    $ctx.DisableUSBSuspend = $disableUSBSuspend
+    $ctx.NoHypervisor = $noHypervisor
+    $ctx.RemoveWebViewPostOOBE = $removeWebViewPostOOBE
+    $ctx.FastExport = $fastExport
+    $ctx.UefiOnly = $uefiOnly
+    $ctx.CpuBoostMode = $cpuBoostMode
+    $ctx.PowerPreset = $powerPreset
+    $ctx.BypassActivationRestrictions = $bypassActivationRestrictions
+    $ctx.RadicalRAM = $radicalRAM
+    $ctx.ActiveTweakGroups = $script:activeTweakGroups
+    $ctx.PayloadFormat = $PayloadFormat
+    $ctx.ComputerName = $ComputerName
+    $ctx.UserName = $UserName
+    $ctx.SourceWimSize = $sourceWimSize
+    $ctx.ActivePayloadPath = $activePayloadPath
+    $ctx.ActivePayloadName = $activePayloadName
+    $ctx.DismPath = $dismPath
+    $ctx.DismVerStr = $dismVerStr
+    $ctx.HostBuildNum = $hostBuildNum
+    $ctx.TargetEditionName = $targetEditionName
+    $ctx.IsoFileName = $isoFileName
+    $ctx.OutputIso = $outputIso
+    $ctx.IsoSha256 = $sha256
+    $ctx.IsoSizeMB = $isoSizeMB
+    $ctx.TempOutputIso = $tempOutputIso
+    $ctx.ExpectedPayloadFile = $expectedPayloadFile
+    $ctx.ProfSlug = $profSlug
+    $ctx.BootWimPath = $bootWimPath
+    return $ctx
+}
+
+# Helper: sync BuildContext back to script-scope variables (bridge for incremental migration)
+function Sync-ScriptScopeFromContext {
+    param([BuildContext]$ctx)
+    $script:BaseWorkDir = $ctx.BaseWorkDir
+    $script:BuildId = $ctx.BuildId
+    $script:DiagDir = $ctx.DiagDir
+    $script:DiagnosticData = $ctx.DiagnosticData
+    $script:CurrentPhase = $ctx.CurrentPhase
+    $script:PhaseTimings = $ctx.PhaseTimings
+    $script:PhaseStopwatch = $ctx.PhaseStopwatch
+    $script:BuildSucceeded = $ctx.BuildSucceeded
+    $script:FinalPayloadVerified = $ctx.FinalPayloadVerified
+    $script:VerifiedFinalWimSha256 = $ctx.VerifiedFinalWimSha256
+    $script:IsoPayloadVerified = $ctx.IsoPayloadVerified
+    $script:StreamIntegrityVerified = $ctx.StreamIntegrityVerified
+    $script:StreamIntegrityMethod = $ctx.StreamIntegrityMethod
+    $script:RemovedPackagesCount = $ctx.RemovedPackagesCount
+    $script:WinSxSSavedMB = $ctx.WinSxSSavedMB
+    $script:WinSxsBeforeMB = $ctx.WinSxsBeforeMB
+    $script:WinSxsAfterMB = $ctx.WinSxsAfterMB
+    $script:DismLogPath = $ctx.DismLogPath
+    $script:DefenderExclusionAdded = $ctx.DefenderExclusionAdded
+    $script:HivesLoaded = $ctx.HivesLoaded
+    $script:MountOpened = $ctx.MountOpened
+    $script:DismMountDir = $ctx.DismMountDir
+    $script:ManagedMountDirs = $ctx.ManagedMountDirs
+    $script:AllocatedMountDirs = $ctx.AllocatedMountDirs
+    $script:PreservedMountDirs = $ctx.PreservedMountDirs
+    $script:activeTweakGroups = $ctx.ActiveTweakGroups
+}
