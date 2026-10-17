@@ -10438,8 +10438,19 @@ if (Test-Path -LiteralPath $destWim) {
 }
 
 # Standard WIM Export with Resilient Compression (/Compress:max -> /Compress:fast) with STRICT /CheckIntegrity (Rule 3)
-$compressModes = if ($fastExport) { @("/Compress:fast") } else { @("/Compress:max", "/Compress:fast") }
-foreach ($compMode in $compressModes) {
+# G2: outer retry loop (2 passes) for transient export glitches
+$exportAttempt = 0
+$exportMaxAttempts = 2
+while (-not $exportSuccess -and $exportAttempt -lt $exportMaxAttempts) {
+    $exportAttempt++
+    if ($exportAttempt -gt 1) {
+        Write-Host "Retrying export (pass $exportAttempt of $exportMaxAttempts) after cooldown..." -ForegroundColor Yellow
+        [GC]::Collect()
+        [GC]::WaitForPendingFinalizers()
+        Start-Sleep -Seconds 5
+    }
+    $compressModes = if ($fastExport) { @("/Compress:fast") } else { @("/Compress:max", "/Compress:fast") }
+    foreach ($compMode in $compressModes) {
     Write-Host "Exporting modified image to single-edition install.wim ($compMode /CheckIntegrity)..." -ForegroundColor Green
     if (Test-Path -LiteralPath $tempExportWim) {
         Remove-Item -LiteralPath $tempExportWim -Force -ErrorAction Stop
@@ -10473,6 +10484,8 @@ foreach ($compMode in $compressModes) {
         }
         Start-Sleep -Seconds 1
     }
+}
+
 }
 
 if (-not $exportSuccess) {
