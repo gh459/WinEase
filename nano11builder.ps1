@@ -196,6 +196,19 @@ param(
     [object]$TweakGroupOverrides
 )
 
+# G7 regression fix: dot-source the extracted helper module BEFORE any top-level
+# statement that calls a helper. The leftover-hive cleanup further below calls
+# Unmount-RegistryHiveWithRetry, which only exists after this dot-source runs.
+# The helper module contains only pure functions and the BuildContext class
+# (no top-level state), so loading it this early is safe.
+$scriptDirEarly = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+$helperModuleEarly = Join-Path -Path $scriptDirEarly -ChildPath "nano11helpers.ps1"
+if (Test-Path -LiteralPath $helperModuleEarly) {
+    . $helperModuleEarly
+} else {
+    throw "Required helper module not found: $helperModuleEarly"
+}
+
 # Normalize -TweakGroupOverrides to a hashtable of [bool]
 if ($null -ne $TweakGroupOverrides -and $TweakGroupOverrides -isnot [System.Collections.IDictionary]) {
     $parsedOverrides = @{}
@@ -751,7 +764,8 @@ function Assert-Nano11DirectorySafety {
 # 3. Clean up any leftover nano11 registry hives from previous runs (Non-destructive)
 if ((-not $TestSelf) -and ($env:NANO11_TEST_MODE -ne "1") -and (-not $isDryRunMode)) {
     @('zCOMPONENTS', 'zDEFAULT', 'zNTUSER', 'zSOFTWARE', 'zSYSTEM') | ForEach-Object {
-        [void](Unmount-RegistryHiveWithRetry -Name $_)
+        # Best-effort cleanup: never let a stale-hive unmount failure abort the build
+        try { [void](Unmount-RegistryHiveWithRetry -Name $_) } catch { Write-Verbose "Leftover hive '$_' cleanup skipped: $_" }
     }
 }
 
