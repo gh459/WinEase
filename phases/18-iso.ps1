@@ -265,11 +265,10 @@ try {
     $reportData['WinSxSBeforeMB']       = if ($script:WinSxsBeforeMB) { $script:WinSxsBeforeMB } else { 0 }
     $reportData['WinSxSAfterMB']        = if ($script:WinSxsAfterMB) { $script:WinSxsAfterMB } else { 0 }
     $reportData['PhaseTimings']        = if ($script:PhaseTimings) { $script:PhaseTimings } else { @{} }
-    # G5: persist phase timings for next-run build time estimation
-    try {
-        $timingsPath = Join-Path -Path $logDir -ChildPath "last_phase_timings.json"
-        if ($script:PhaseTimings) { $script:PhaseTimings | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $timingsPath -Encoding utf8 -Force }
-    } catch { Write-Warning "Could not persist phase timings: $_" }
+    # G5: persist phase timings for next-run build time estimation.
+    # (Phase 18 is still running here; the orchestrator re-persists the complete table
+    # via Exit-Phase + Save-Nano11PhaseTimings immediately after this script returns.)
+    Save-Nano11PhaseTimings
     Export-Nano11HtmlReport -OutputPath $reportPath -BuildInfo $reportData
     Write-Host "Visual Build Report generated: $reportPath" -ForegroundColor Cyan
 } catch {

@@ -251,3 +251,62 @@ Describe "nano11 builder - robust tree removal (long paths + image ACLs)" {
         if (Test-Path -LiteralPath $canary) { & cmd.exe /c "rd /s /q `"$canary`"" > $null 2>&1 }
     }
 }
+
+Describe "nano11 builder - phase timing telemetry" {
+    It "persists Phase 18 through Exit-Phase + Save-Nano11PhaseTimings" {
+        # Runtime test of the real source text: extract the two functions from the builder
+        # AST, run them in this scope against a temp log dir, and verify the final phase
+        # lands in last_phase_timings.json (regression for the always-missing Phase 18).
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -in @('Exit-Phase', 'Save-Nano11PhaseTimings')
+        }, $true)) | ForEach-Object { $_.Extent.Text }
+        $funcTexts.Count | Should Be 2
+
+        $logDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("nano11_timings_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($logDir) | Out-Null
+        $script:PhaseTimings = [ordered]@{ "Phase 17" = 42.5 }
+        $script:CurrentPhase = 18
+        $script:PhaseStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        Start-Sleep -Milliseconds 60
+        . ([scriptblock]::Create(($funcTexts -join "`n")))
+        Exit-Phase
+        Save-Nano11PhaseTimings
+
+        $saved = (Get-Content -LiteralPath (Join-Path $logDir "last_phase_timings.json") -Raw -Encoding UTF8) | ConvertFrom-Json
+        ($saved.PSObject.Properties.Name -contains "Phase 18") | Should Be $true
+        ([double]$saved.'Phase 18') | Should BeGreaterThan 0
+        ([double]$saved.'Phase 17') | Should Be 42.5
+        $script:PhaseStopwatch | Should Be $null
+
+        $script:PhaseTimings = [ordered]@{}
+        Remove-Item -LiteralPath $logDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It "sums decimal phase durations from last_phase_timings.json" {
+        # Regression: PS 5.1 ConvertFrom-Json yields System.Decimal for JSON decimals, and
+        # the old reader only accepted double/int/long - fractional durations were silently
+        # dropped (a ~840 s table displayed as "~0 min").
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Get-Nano11LastRunTotalSeconds'
+        }, $true))
+        $funcTexts.Count | Should Be 1
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $jsonPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("nano11_timings_" + [guid]::NewGuid().ToString('N').Substring(0, 8) + ".json")
+        '{ "Phase 1": 0.8, "Phase 2": 1, "Phase 3": 25.3 }' | Set-Content -LiteralPath $jsonPath -Encoding utf8
+        $total = Get-Nano11LastRunTotalSeconds -TimingsPath $jsonPath
+        ([math]::Round($total, 1)) | Should Be 27.1
+        Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
+    }
+}

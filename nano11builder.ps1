@@ -2108,6 +2108,35 @@ function Exit-Phase {
     }
 }
 
+function Save-Nano11PhaseTimings {
+    # G5/F3: persist per-phase durations for the next run's build-time estimate.
+    # The final phase needs an explicit Exit-Phase close-out (no later Enter-Phase will
+    # record it), so this writer runs both mid-Phase-18 and after the phase completes.
+    try {
+        $timingsPath = Join-Path -Path $logDir -ChildPath "last_phase_timings.json"
+        if ($script:PhaseTimings -and $script:PhaseTimings.Count -gt 0) {
+            $script:PhaseTimings | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $timingsPath -Encoding utf8 -Force
+        }
+    } catch {
+        Write-Warning "Could not persist phase timings: $_"
+    }
+}
+
+function Get-Nano11LastRunTotalSeconds {
+    # G5: total wall-clock seconds of the previous run's phases (build-time estimate input).
+    # PS 5.1's ConvertFrom-Json yields System.Decimal for JSON decimals, so the numeric check
+    # must accept decimal as well as double/int/long - without it every fractional duration
+    # was silently skipped and the estimate always displayed "~0 min" (verified: a table
+    # summing to ~840 s evaluated as 1 s).
+    param([string]$TimingsPath)
+    $lastTimings = (Get-Content -LiteralPath $TimingsPath -Raw -ErrorAction Stop) | ConvertFrom-Json
+    $totalSec = 0
+    foreach ($v in $lastTimings.PSObject.Properties.Value) {
+        if ($v -is [double] -or $v -is [decimal] -or $v -is [int] -or $v -is [long]) { $totalSec += [double]$v }
+    }
+    return $totalSec
+}
+
 # ==============================================================================
 # Modular Tweak Architecture & In-Memory Built-in Presets
 # ==============================================================================
@@ -5095,9 +5124,7 @@ Write-Host ""
 try {
     $lastTimingsPath = Join-Path -Path $logDir -ChildPath "last_phase_timings.json"
     if (Test-Path -LiteralPath $lastTimingsPath) {
-        $lastTimings = (Get-Content -LiteralPath $lastTimingsPath -Raw -ErrorAction Stop) | ConvertFrom-Json
-        $totalSec = 0
-        foreach ($v in $lastTimings.PSObject.Properties.Value) { if ($v -is [double] -or $v -is [int] -or $v -is [long]) { $totalSec += [double]$v } }
+        $totalSec = Get-Nano11LastRunTotalSeconds -TimingsPath $lastTimingsPath
         if ($totalSec -gt 0) {
             Write-Host "  - Estimated build time:    ~$([math]::Round($totalSec / 60, 1)) min (based on last run's phase timings)" -ForegroundColor DarkCyan
         }
@@ -5837,6 +5864,12 @@ try {
 
     Enter-Phase 18 "Create Bootable ISO Image"
     . (Join-Path -Path $phasesDir -ChildPath "18-iso.ps1")
+
+    # F3: close out the final phase and persist the complete timings table. No
+    # Enter-Phase 19 will ever arrive to record Phase 18, and the snapshot written
+    # inside 18-iso.ps1 was taken while the phase was still running.
+    Exit-Phase
+    Save-Nano11PhaseTimings
 
 } catch {
     # Outer catch block: Reset success flags, record diagnostics, re-throw (Rule 16)

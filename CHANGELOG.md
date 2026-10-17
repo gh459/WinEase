@@ -86,6 +86,15 @@ nano11 scheme; entries below are local-fork additions on top of upstream 2.1.
   unreadable directories and undeletable child links are repaired one level at a
   time. Three Pester regression tests cover the denied-directory shape, a junction
   hidden inside an unreadable directory, and a link whose inherited ACL was emptied.
+- Phase 18 duration is now recorded in `logs/last_phase_timings.json`; previously the
+  final phase was always missing because only the next `Enter-Phase` recorded a phase's
+  duration (`Exit-Phase` existed but had no call sites). The orchestrator now closes out
+  Phase 18 and re-persists the complete timings table, so the next-run build-time
+  estimate includes ISO mastering.
+- The build-time estimate now actually sums fractional phase durations: PS 5.1's
+  `ConvertFrom-Json` returns `System.Decimal` for JSON decimals, and the old reader only
+  accepted double/int/long, so it silently displayed "~0 min" (verified: a timings table
+  totalling ~840 s evaluated as 1 s).
 
 ### Notes
 - The 26100+ (24H2+) offline WinSxS cleanup remains **blocked by default**; use
