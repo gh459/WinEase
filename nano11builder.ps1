@@ -3734,6 +3734,28 @@ function Export-Nano11HtmlReport {
     [void]$sb.AppendLine('    </table>')
     [void]$sb.AppendLine('  </div>')
 
+    # F4: Phase execution timeline (if provided)
+    $phaseTimings = if ($BuildInfo.ContainsKey('PhaseTimings') -and $BuildInfo.PhaseTimings) { $BuildInfo.PhaseTimings } else { $null }
+    if ($phaseTimings -and $phaseTimings.Count -gt 0) {
+        [void]$sb.AppendLine('  <div class="section-card">')
+        [void]$sb.AppendLine('    <h2>&#9201; Phase Execution Timeline</h2>')
+        [void]$sb.AppendLine('    <table>')
+        [void]$sb.AppendLine('      <thead><tr><th>Phase</th><th>Duration (s)</th><th>Share</th></tr></thead>')
+        [void]$sb.AppendLine('      <tbody>')
+        $totalPhaseSec = 0
+        foreach ($pt in $phaseTimings.Values) { if ($pt -is [double] -or $pt -is [int] -or $pt -is [long]) { $totalPhaseSec += [double]$pt } }
+        if ($totalPhaseSec -le 0) { $totalPhaseSec = 1 }
+        foreach ($pk in $phaseTimings.Keys) {
+            $pv = $phaseTimings[$pk]
+            $pct = [math]::Round(([double]$pv / $totalPhaseSec) * 100, 1)
+            [void]$sb.AppendLine("        <tr><td>$pk</td><td>$pv</td><td>$pct %</td></tr>")
+        }
+        [void]$sb.AppendLine("        <tr><td><strong>Total</strong></td><td><strong>$([math]::Round($totalPhaseSec,1))</strong></td><td><strong>100 %</strong></td></tr>")
+        [void]$sb.AppendLine('      </tbody>')
+        [void]$sb.AppendLine('    </table>')
+        [void]$sb.AppendLine('  </div>')
+    }
+
     [void]$sb.AppendLine('  <footer>')
     [void]$sb.AppendLine('    <p>nano11 Project &bull; Open Source Windows 11 Image Reducer &bull; <a href="https://github.com/gh459/nano11" style="color: var(--accent); text-decoration: none;">GitHub: gh459/nano11</a></p>')
     [void]$sb.AppendLine('  </footer>')
@@ -4294,6 +4316,7 @@ function Show-Nano11GUI {
             $script:guiBasePresetKey = $pKey
         }
         $script:updatingPreset = $false
+        & $updateEstimate
     }
 
     $cmbPreset.Add_SelectedIndexChanged({
@@ -4311,8 +4334,15 @@ function Show-Nano11GUI {
                 $cmbPreset.SelectedIndex = ($cmbPreset.Items.Count - 1) # Custom
                 $script:updatingPreset = $false
             }
+            & $updateEstimate
         })
     }
+    # Radio buttons for payload format also affect estimate
+    foreach ($r in @($radWIM, $radESD, $radSWM)) {
+        $r.Add_CheckedChanged({ & $updateEstimate })
+    }
+    # Initial estimate
+    & $updateEstimate
 
     # Bottom Button Panel
     $bottomPanel = New-Object System.Windows.Forms.Panel
@@ -4329,6 +4359,34 @@ function Show-Nano11GUI {
     $chkDryRun.Size = New-Object System.Drawing.Size(220, 24)
     $chkDryRun.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
     $bottomPanel.Controls.Add($chkDryRun)
+
+    # F5: estimated ISO size label (live, based on current selections)
+    $lblEstimate = New-Object System.Windows.Forms.Label
+    $lblEstimate.Text = "推定 ISO サイズ: ~5.5 GB"
+    $lblEstimate.Location = New-Object System.Drawing.Point(20, 48)
+    $lblEstimate.Size = New-Object System.Drawing.Size(360, 16)
+    $lblEstimate.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
+    $lblEstimate.Font = New-Object System.Drawing.Font($uiFontName, 9)
+    $bottomPanel.Controls.Add($lblEstimate)
+
+    $updateEstimate = {
+        try {
+            $mb = 5500.0
+            if ($chkFonts.Checked) { $mb += 150 }          # extra fonts kept
+            if ($chkIME.Checked) { $mb += 400 }            # all asian IMEs kept
+            if ($chkDefender.Checked) { $mb += 200 }       # defender kept
+            if ($chkStore.Checked) { $mb += 120 }          # store kept
+            if ($chkWU.Checked) { $mb += 50 }              # windows update kept
+            if ($chkBasicApps.Checked) { $mb += 30 }       # basic apps kept
+            if ($chkSearchIndex.Checked) { $mb += 20 }     # search index kept
+            if ($chkXboxServices.Checked) { $mb += 40 }    # xbox services kept
+            if (-not $chkDrivers.Checked) { $mb -= 80 }    # legacy drivers removed
+            if ($chkUltraSlim.Checked) { $mb -= 200 }      # ultraslim trim
+            if ($chkVHDX.Checked) { $mb += 0 }             # vhdx = no size change
+            if ($radESD.Checked) { $mb = [math]::Round($mb * 0.82) }   # ESD ~18% smaller
+            $lblEstimate.Text = ("推定 ISO サイズ: ~{0} GB (LZX基準, 概算)" -f [math]::Round($mb / 1024, 2))
+        } catch {}
+    }
 
     $btnBuild = New-Object System.Windows.Forms.Button
     $btnBuild.Text = "nano11 ビルド開始"
@@ -5314,6 +5372,7 @@ Write-Host "  - Remove Microsoft Store:  $removeStore"
 Write-Host "  - Keep Xbox Services:      $keepXboxServices"
 Write-Host "  - Low-Latency Audio MMCSS: $keepAudioTweaks"
 Write-Host "  - Search Indexing:         $(if ($keepSearchIndex) { 'Enabled (kept)' } else { 'Disabled (WSearch service off + SearchHost blocked)' })"
+Write-Host "  - Force WinSxS Cleanup:    $ForceWinSxSCleanup (experimental, opt-in)"
 if (Test-Path -LiteralPath $configSnapshotPath) {
     Write-Host "  - Config Snapshot:         $configSnapshotPath" -ForegroundColor DarkCyan
 }
@@ -10494,7 +10553,7 @@ Write-Host "  - Available Free Space: $($metaCapInfo.TargetFreeGB) GB" -Foregrou
 # 2. Mandatory Deep Apply Verification of Final Payload with Automatic Self-Healing (Rule 6)
 Write-Host "Performing mandatory deep apply verification of install.wim via DISM..." -ForegroundColor Cyan
 
-$maxApplyAttempts = 3
+$maxApplyAttempts = 5
 $applySuccess = $false
 $currentAttempt = 0
 
@@ -10603,7 +10662,7 @@ while (-not $applySuccess -and $currentAttempt -lt $maxApplyAttempts) {
         Write-Host "Cooling down file-system cache and RAM prior to retry..." -ForegroundColor Cyan
         [GC]::Collect()
         [GC]::WaitForPendingFinalizers()
-        Start-Sleep -Seconds 3
+        Start-Sleep -Seconds 5
     }
 }
 
@@ -11125,6 +11184,7 @@ try {
     $reportData['WinSxSSavedMB']        = if ($script:WinSxSSavedMB) { $script:WinSxSSavedMB } else { 0 }
     $reportData['WinSxSBeforeMB']       = if ($script:WinSxsBeforeMB) { $script:WinSxsBeforeMB } else { 0 }
     $reportData['WinSxSAfterMB']        = if ($script:WinSxsAfterMB) { $script:WinSxsAfterMB } else { 0 }
+    $reportData['PhaseTimings']        = if ($script:PhaseTimings) { $script:PhaseTimings } else { @{} }
     Export-Nano11HtmlReport -OutputPath $reportPath -BuildInfo $reportData
     Write-Host "Visual Build Report generated: $reportPath" -ForegroundColor Cyan
 } catch {
@@ -11136,6 +11196,26 @@ $script:BuildSucceeded = $true
 $script:DiagnosticData.BuildSucceeded = $true
 $isoCreatedSuccessfully = $true
 Write-Nano11DiagnosticReport "Build succeeded"
+
+# F1: Automatic workspace cleanup on successful build (preserves build\sources\install.wim for -ResumeIsoOnly)
+Write-Host "Cleaning up transient verification artifacts from successful build..." -ForegroundColor Cyan
+try {
+    $cleanupTargets = @(
+        (Join-Path -Path $baseWorkDir -ChildPath "deep_apply_*"),
+        (Join-Path -Path $baseWorkDir -ChildPath "scratchdir_*")
+    )
+    foreach ($pattern in $cleanupTargets) {
+        Get-ChildItem -Path $pattern -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $full = $_.FullName
+            if ($full -eq $scratchDir -or $full -eq $vhdxMountDir) { return }
+            Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    # Remove now-empty scratch stubs but keep the primary build directory
+    Write-Host "  - Transient artifacts cleaned (build\ preserved for -ResumeIsoOnly)" -ForegroundColor Green
+} catch {
+    Write-Warning "Workspace cleanup skipped: $_"
+}
 
 Write-Host ""
 Write-Host "=========================================================" -ForegroundColor Green
