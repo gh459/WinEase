@@ -174,6 +174,56 @@ Describe "nano11 builder - robust tree removal (long paths + image ACLs)" {
         if (Test-Path -LiteralPath $root) { & cmd.exe /c "rd /s /q `"$root`"" > $null 2>&1 }
     }
 
+    It "repairs a WIM-style locked directory (SYSTEM-only DACL) and removes the tree" {
+        # Regression for the 2026-10-18 real-build leftover (17.2 GB): dism /Apply-Image output
+        # contains directories with protected SYSTEM-only DACLs. The old repair call
+        # ('takeown /f <dir> /d y') was rejected by takeown's argv validation (needs /R) and
+        # failed SILENTLY - the tree could never be repaired, deleting, or logged.
+        $root = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("nano11_robust_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $tree = Join-Path -Path $root -ChildPath "t_wim"
+        $denied = Join-Path -Path $tree -ChildPath "WebThreatDefSvc"
+        [System.IO.Directory]::CreateDirectory($denied) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $denied "payload.bin"), 'x')
+        & icacls.exe $denied /inheritance:r > $null 2>&1
+        & icacls.exe $denied /grant '*S-1-5-18:F' /C /Q > $null 2>&1
+        & icacls.exe $denied /setowner '*S-1-5-18' /C /Q > $null 2>&1
+        # Precondition: the DACL grants nothing to Administrators (privilege-state agnostic).
+        $aclPre = Get-Acl -LiteralPath $denied
+        $adminsAces = @($aclPre.Access | Where-Object {
+            try { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-32-544' } catch { $false }
+        })
+        $adminsAces.Count | Should Be 0
+
+        (Remove-Nano11TreeRobust -Path $tree -SafetyRoot $root) | Should Be $true
+        (Test-Path -LiteralPath $tree) | Should Be $false
+        if (Test-Path -LiteralPath $root) { & cmd.exe /c "rd /s /q `"$root`"" > $null 2>&1 }
+    }
+
+    It "repairs a SYSTEM-locked directory hiding a junction (canary survives)" {
+        # End-to-end incident shape: the unreadable directory hides a junction. Before the fix
+        # the repair no-op kept the link-free gate closed forever; the gate must stay closed
+        # until the walk can prove the tree link-free - the mirror purge would destroy the
+        # junction target (verified hazard).
+        $root = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("nano11_robust_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $canary = ($root + '_canary')
+        $tree = Join-Path -Path $root -ChildPath "t_wim_link"
+        $denied = Join-Path -Path $tree -ChildPath "RtBackup"
+        [System.IO.Directory]::CreateDirectory($denied) | Out-Null
+        [System.IO.Directory]::CreateDirectory($canary) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $canary "canary.txt"), 'precious')
+        & cmd.exe /c "mklink /J `"$denied\hidden_junction`" `"$canary`"" > $null 2>&1
+        ([System.IO.Directory]::Exists((Join-Path $denied 'hidden_junction'))) | Should Be $true
+        & icacls.exe $denied /inheritance:r > $null 2>&1
+        & icacls.exe $denied /grant '*S-1-5-18:F' /C /Q > $null 2>&1
+        & icacls.exe $denied /setowner '*S-1-5-18' /C /Q > $null 2>&1
+
+        (Remove-Nano11TreeRobust -Path $tree -SafetyRoot $root) | Should Be $true
+        (Test-Path -LiteralPath $tree) | Should Be $false
+        (Test-Path -LiteralPath (Join-Path $canary "canary.txt")) | Should Be $true
+        if (Test-Path -LiteralPath $root) { & cmd.exe /c "rd /s /q `"$root`"" > $null 2>&1 }
+        if (Test-Path -LiteralPath $canary) { & cmd.exe /c "rd /s /q `"$canary`"" > $null 2>&1 }
+    }
+
     It "never follows junctions (canary directory survives)" {
         $root = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("nano11_robust_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
         $canary = ($root + '_canary')

@@ -639,13 +639,156 @@ function Test-Nano11PathExistsSafe {
 # recurse through them.
 #   Pass: tolerant reparse prune -> [robocopy /MIR /XJ /B only when the tree is proven
 #         link-free] -> rd /s /q, retried up to 4x; unreadable directories receive a
-#         NON-recursive takeown/icacls repair between passes.
+#         NON-recursive, in-process ACL repair between passes (take ownership +
+#         inheritable Administrators grant via Set-Acl, see Repair-Nano11DeniedAcl).
+#         The previous takeown/icacls repair was a SILENT NO-OP: current Windows 11
+#         takeown rejects "/d y" without "/r" (argv validation, exit 1) and icacls
+#         reports "Access is denied" while still exiting 0 - and both stderr streams
+#         were discarded ("> $null 2>&1"), which is what leaked the 17.2 GB tree.
 #         VERIFIED HAZARDS: takeown /r and icacls /T traverse junctions, and robocopy /MIR
 #         purges THROUGH junctions even with /XJ - so no recursive ACL grant and no mirror
 #         purge may ever run while a link could remain (visible or hidden).
 #   Fallback: (opt-in) Reset-DirectoryWithRobocopy for locked trees / loaded hives
 # Returns $true when the path no longer exists.
 # ============================================================================
+
+# ----------------------------------------------------------------------------
+# ACL-repair prerequisites: enable the token privileges that allow changing
+# owner/DACL on image-protected trees in-process (P/Invoke, Add-Type).
+# WHY not takeown/icacls: verified on the real leftover tree (2026-10-18) -
+#   * takeown.exe REJECTS "/f <dir> /d y" (needs /R): argv validation error,
+#     exit 1, NOTHING changed - and stderr went to $null, so the failure was
+#     invisible in every build log;
+#   * icacls reports "Access is denied" yet still exits 0, so exit codes alone
+#     cannot detect its failure either;
+#   * takeown /r and icacls /T recursively traverse junctions (verified hazard).
+# Set-Acl raises real catchable .NET exceptions instead, and stays non-recursive.
+# ----------------------------------------------------------------------------
+function Enable-Nano11TokenPrivileges {
+    param([string[]]$Privileges = @('SeTakeOwnershipPrivilege', 'SeRestorePrivilege', 'SeBackupPrivilege'))
+    if (-not ('Nano11.TokenHelpers' -as [type])) {
+        try {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace Nano11 {
+    public static class TokenHelpers {
+        [StructLayout(LayoutKind.Sequential)]
+        public struct LUID { public uint LowPart; public int HighPart; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct LUID_AND_ATTRIBUTES { public LUID Luid; public uint Attributes; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct TOKEN_PRIVILEGES {
+            public uint PrivilegeCount;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 1)]
+            public LUID_AND_ATTRIBUTES[] Privileges;
+        }
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool LookupPrivilegeValue(string lpSystemName, string lpName, out LUID lpLuid);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool AdjustTokenPrivileges(IntPtr TokenHandle, bool DisableAllPrivileges, ref TOKEN_PRIVILEGES NewState, uint BufferLength, IntPtr PreviousState, IntPtr ReturnLength);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetCurrentProcess();
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr hObject);
+
+        public static bool EnablePrivilege(string name) {
+            const uint TOKEN_ADJUST_PRIVILEGES = 0x0020;
+            const uint TOKEN_QUERY = 0x0008;
+            const uint SE_PRIVILEGE_ENABLED = 0x0002;
+            const int ERROR_NOT_ALL_ASSIGNED = 1300;
+
+            IntPtr token;
+            if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, out token)) { return false; }
+            try {
+                LUID luid;
+                if (!LookupPrivilegeValue(null, name, out luid)) { return false; }
+                TOKEN_PRIVILEGES tp = new TOKEN_PRIVILEGES();
+                tp.PrivilegeCount = 1;
+                tp.Privileges = new LUID_AND_ATTRIBUTES[1];
+                tp.Privileges[0].Luid = luid;
+                tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+                if (!AdjustTokenPrivileges(token, false, ref tp, (uint)Marshal.SizeOf(typeof(TOKEN_PRIVILEGES)), IntPtr.Zero, IntPtr.Zero)) { return false; }
+                return Marshal.GetLastWin32Error() != ERROR_NOT_ALL_ASSIGNED;
+            } finally {
+                CloseHandle(token);
+            }
+        }
+    }
+}
+'@ -ErrorAction Stop
+        } catch { }
+    }
+    if (-not ('Nano11.TokenHelpers' -as [type])) {
+        if (-not $script:Nano11TokenHelperWarned) {
+            $script:Nano11TokenHelperWarned = $true
+            Write-Warning "Enable-Nano11TokenPrivileges: token helper type unavailable (Add-Type failed); ACL repair cannot elevate owner/DACL rights."
+        }
+        return $false
+    }
+    $allEnabled = $true
+    foreach ($privilege in $Privileges) {
+        try { if (-not ([Nano11.TokenHelpers]::EnablePrivilege($privilege))) { $allEnabled = $false } }
+        catch { $allEnabled = $false }
+    }
+    return $allEnabled
+}
+
+# NON-recursive repair of one unreadable directory: take ownership for
+# BUILTIN\Administrators (S-1-5-32-544), strip explicit Deny ACEs aimed at
+# Administrators, add an inheritable FullControl grant, write it back via Set-Acl.
+# The (OI)(CI) grant propagates to children inside this tree only (verified: it
+# does NOT cross junctions - a link target keeps its own ACLs). Protected child
+# directories are picked up by the next helper iteration.
+# NEVER make this recursive (links may live below - verified hazard).
+# Returns $null on success, or a one-line error message on failure (caller logs it).
+function Repair-Nano11DeniedAcl {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    $null = Enable-Nano11TokenPrivileges
+    $adminsSid = [System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
+    try { $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop }
+    catch {
+        # Unreadable DACL (e.g. owner is a service account and no Administrators ACE exists):
+        # build a FRESH descriptor. With the privileges enabled above, WRITE_OWNER/WRITE_DAC
+        # are granted regardless of the DACL, so one Set-Acl writes owner + inheritable grant.
+        try {
+            $fresh = New-Object System.Security.AccessControl.DirectorySecurity
+            $fresh.SetOwner($adminsSid)
+            $grant = New-Object System.Security.AccessControl.FileSystemAccessRule($adminsSid, [System.Security.AccessControl.FileSystemRights]::FullControl, [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit', [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)
+            [void]$fresh.AddAccessRule($grant)
+            Set-Acl -LiteralPath $Path -AclObject $fresh -ErrorAction Stop
+            return $null
+        } catch {
+            return "fresh-descriptor Set-Acl failed: $(($_ -split "`n")[0])"
+        }
+    }
+    try {
+        $acl.SetOwner($adminsSid)
+        foreach ($rule in @($acl.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]))) {
+            if ($rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Deny -and
+                $rule.IdentityReference.Value -eq 'S-1-5-32-544') {
+                [void]$acl.RemoveAccessRuleSpecific($rule)
+            }
+        }
+        $grant = New-Object System.Security.AccessControl.FileSystemAccessRule($adminsSid, [System.Security.AccessControl.FileSystemRights]::FullControl, [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit', [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)
+        [void]$acl.AddAccessRule($grant)
+        Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
+    } catch {
+        return "Set-Acl failed: $(($_ -split "`n")[0])"
+    }
+    return $null
+}
+
 function Remove-Nano11TreeRobust {
     param(
         [Parameter(Mandatory=$true)][string]$Path,
@@ -688,6 +831,7 @@ function Remove-Nano11TreeRobust {
     $emptyTemp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "nano11_empty_$([System.IO.Path]::GetRandomFileName())"
     $enumDenied = [System.Collections.Generic.List[string]]::new()
     $linkFailedParents = [System.Collections.Generic.List[string]]::new()
+    $repairFailures = [System.Collections.Generic.Dictionary[string,string]]::new()
 
     try {
         New-Item -Path $emptyTemp -ItemType Directory -Force -ErrorAction Stop | Out-Null
@@ -706,10 +850,13 @@ function Remove-Nano11TreeRobust {
                     # Inheritable grant repairs the whole subtree in one pass and makes child
                     # links deletable; ACL propagation is verified NOT to cross junctions (a
                     # link target keeps its own ACLs). Children with protected ACLs are picked
-                    # up by the next iteration.
-                    & takeown.exe /f "$deniedPath" /d y > $null 2>&1
-                    & icacls.exe "$deniedPath" /remove:d '*S-1-5-32-544' /C /Q > $null 2>&1
-                    & icacls.exe "$deniedPath" /grant '*S-1-5-32-544:(OI)(CI)F' /C /Q > $null 2>&1
+                    # up by the next iteration. Failures are recorded (first error per path)
+                    # and surfaced in the final warning instead of being swallowed.
+                    $repairError = Repair-Nano11DeniedAcl -Path $deniedPath
+                    if ($repairError) {
+                        if (-not $repairFailures.ContainsKey($deniedPath)) { $repairFailures[$deniedPath] = $repairError }
+                        Write-Verbose "Remove-Nano11TreeRobust: ACL repair failed for '$deniedPath': $repairError"
+                    }
                 }
                 $enumDenied.Clear()
                 $linkFailedParents.Clear()
@@ -722,8 +869,11 @@ function Remove-Nano11TreeRobust {
             $queue.Enqueue($full)
             while ($queue.Count -gt 0) {
                 $curr = $queue.Dequeue()
-                try { $children = @(Get-ChildItem -LiteralPath $curr -Force -ErrorAction Stop) }
-                catch { $enumDenied.Add($curr); continue }
+                # Enumeration failures are expected for not-yet-repaired protected dirs; capture
+                # them via -ErrorVariable instead of try/catch so the transcript stays clean.
+                $walkErr = $null
+                $children = @(Get-ChildItem -LiteralPath $curr -Force -ErrorAction SilentlyContinue -ErrorVariable walkErr)
+                if ($null -ne $walkErr -and @($walkErr).Count -gt 0) { $enumDenied.Add($curr); continue }
                 foreach ($child in $children) {
                     if ($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
                         try {
@@ -779,6 +929,11 @@ function Remove-Nano11TreeRobust {
         }
     }
 
-    Write-Warning "Remove-Nano11TreeRobust: '$full' could not be fully removed (linkPruneClean=$(-not $linkDeleteFailed), elapsed $([math]::Round($sw.Elapsed.TotalSeconds,1))s)."
+    $repairDetail = ''
+    if ($repairFailures.Count -gt 0) {
+        $repairSamples = @($repairFailures.Keys | Select-Object -First 3 | ForEach-Object { "'$_': $($repairFailures[$_])" }) -join '; '
+        $repairDetail = " ACL repair errors ($($repairFailures.Count)): $repairSamples"
+    }
+    Write-Warning "Remove-Nano11TreeRobust: '$full' could not be fully removed (linkPruneClean=$(-not $linkDeleteFailed), elapsed $([math]::Round($sw.Elapsed.TotalSeconds,1))s).$repairDetail"
     return $false
 }

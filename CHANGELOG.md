@@ -95,6 +95,25 @@ nano11 scheme; entries below are local-fork additions on top of upstream 2.1.
   `ConvertFrom-Json` returns `System.Decimal` for JSON decimals, and the old reader only
   accepted double/int/long, so it silently displayed "~0 min" (verified: a timings table
   totalling ~840 s evaluated as 1 s).
+- ACL repair during image cleanup works again (root cause of the 2026-10-18 17.2 GB
+  leftover): the takeown tier called `takeown /f <dir> /d y`, which current Windows 11
+  takeown rejects outright ("/D can only be used together with /R"; argv validation,
+  exit 1, nothing changed) - and with everything piped to `$null 2>&1` the failure was
+  invisible, so WIM-protected directories (owner a service account, SYSTEM-only DACL)
+  were never repaired and the mirror pass stayed blocked behind the link-free gate.
+  Verified counter-evidence: plain `takeown /f` succeeds, and `icacls` reports "Access
+  is denied" while still exiting 0 (exit-code checks cannot detect it either). Repair is
+  now done in-process: `Enable-Nano11TokenPrivileges` enables SeTakeOwnership /
+  SeRestore / SeBackup on the PowerShell token (P/Invoke), and `Repair-Nano11DeniedAcl`
+  takes ownership for Administrators, strips explicit Deny ACEs aimed at them and adds
+  an inheritable FullControl grant via `Set-Acl` (real catchable exceptions; fresh
+  descriptor fallback when the DACL is unreadable). Repair failures are recorded and
+  surfaced in the final warning instead of being swallowed, and the prune walk captures
+  enumeration errors via `-ErrorVariable` so build logs stay clean. Verified: after
+  repair the walk fully enumerates the previously locked trees (SeBackupPrivilege),
+  finds and prunes every reparse point, and the gate opens only after that proof. Two
+  new Pester regression tests cover the SYSTEM-only DACL shape and a junction hidden
+  inside such a directory.
 
 ### Notes
 - The 26100+ (24H2+) offline WinSxS cleanup remains **blocked by default**; use
