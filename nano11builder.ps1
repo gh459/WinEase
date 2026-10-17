@@ -143,6 +143,13 @@ param(
     [switch]$TestSelf,
     [alias("VerifyImage")]
     [switch]$CheckHealth,
+    # F2: Phase-level checkpoint resume (delegates to -ResumeIsoOnly for targets >= 13)
+    [alias("ResumePhase", "ResumeFrom")]
+    [ValidateRange(1, 18)]
+    [int]$ResumeFromPhase = 0,
+    # F7: AppX removal parallelism (1-8; 1 = sequential, default 4)
+    [ValidateRange(1, 8)]
+    [int]$AppxParallelism = 4,
     # A2: Fast-track Phase 14-18 against the preserved workspace payload (workspace\build\sources\install.wim)
     [alias("ResumeIso", "IsoResume")]
     [switch]$ResumeIsoOnly,
@@ -365,45 +372,6 @@ $script:PreservedMountDirs = [System.Collections.Generic.HashSet[string]]::new(
 )
 $script:MountAllocationRoot = $null
 $script:MountDirectoryPrefix = $null
-
-function ConvertTo-Nano11NormalizedPath {
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$Path
-    )
-    if ([string]::IsNullOrWhiteSpace($Path)) {
-        throw "Path cannot be null or empty."
-    }
-    $cleanPath = $Path.Replace('/', '\')
-    if ($cleanPath -notmatch '^[A-Za-z]:\\') {
-        throw "Path must be an absolute local drive path starting with a drive letter: '$Path'"
-    }
-    try {
-        $fullPath = [System.IO.Path]::GetFullPath($cleanPath).TrimEnd('\')
-    } catch {
-        throw "Failed to get full path for '$Path': $_"
-    }
-    if ($fullPath -match '^[A-Za-z]:$') {
-        throw "Drive root path is not allowed as a managed path: '$Path'"
-    }
-    return $fullPath
-}
-
-# Helper function: True if Path equals Root or is a descendant of it.
-# Compares on a '\' boundary so that 'C:\work2' is NOT treated as inside 'C:\work'.
-function Test-Nano11PathWithin {
-    param(
-        [string]$Path,
-        [string]$Root
-    )
-    if ([string]::IsNullOrWhiteSpace($Path) -or [string]::IsNullOrWhiteSpace($Root)) {
-        return $false
-    }
-    $p = $Path.Replace('/', '\').TrimEnd('\')
-    $r = $Root.Replace('/', '\').TrimEnd('\')
-    if ($p -ieq $r) { return $true }
-    return $p.StartsWith($r + '\', [System.StringComparison]::OrdinalIgnoreCase)
-}
 
 # Helper function: Standardized DISM wrapper with retries and exit code diagnostics
 function Invoke-Dism {
@@ -1014,29 +982,6 @@ function Remove-ProtectedDirectory {
 }
 
 # Helper function: Check if a path resides on an NTFS volume (DISM requirement for reparse points)
-function Test-IsNtfsVolume {
-    param([string]$Path)
-    try {
-        if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
-        $root = [System.IO.Path]::GetPathRoot($Path)
-        if (-not $root) { return $false }
-        try {
-            $drive = New-Object System.IO.DriveInfo($root)
-            if ($drive.IsReady) {
-                return ($drive.DriveFormat -ieq 'NTFS')
-            }
-        } catch {}
-        if ($root -match '^[a-zA-Z]:') {
-            $letter = $root.Substring(0, 1)
-            $vol = Get-Volume -DriveLetter $letter -ErrorAction Stop
-            return ($vol.FileSystem -ieq 'NTFS')
-        }
-        return $false
-    } catch {
-        return $false
-    }
-}
-
 # Helper function: Fast and reliable directory reset using robocopy mirror trick (Guaranteed Empty)
 function Reset-DirectoryWithRobocopy {
     param(
@@ -1215,30 +1160,6 @@ function Reset-DirectoryWithRobocopy {
 # ==============================================================================
 # Helper Functions: Safe Deletion, Promotion, Metadata & Capacity Verification
 # ==============================================================================
-function Test-IsSafePathToDelete {
-    param([string]$Path)
-    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
-    try {
-        $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
-        if ($full.Length -le 3) { return $false }
-        $systemProfile = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::UserProfile)
-        if ($full -ieq $systemProfile.TrimEnd('\', '/')) { return $false }
-        $windowsDir = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::Windows)
-        if (Test-Nano11PathWithin -Path $full -Root $windowsDir) { return $false }
-        if ($scriptDir -and ($full -ieq [System.IO.Path]::GetFullPath($scriptDir).TrimEnd('\', '/'))) { return $false }
-        return $true
-    } catch {
-        return $false
-    }
-}
-
-function New-Nano11BuildId {
-    param([datetime]$Timestamp = (Get-Date))
-    $timePart = $Timestamp.ToString('yyyyMMdd_HHmmss')
-    $guidPart = [System.Guid]::NewGuid().ToString('N').Substring(0, 8)
-    return "${timePart}_${guidPart}"
-}
-
 function Get-Nano11VolumeFreeSpaceGB {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) { return 0 }
@@ -2388,6 +2309,10 @@ function Enter-Phase {
         [int]$PhaseNumber,
         [string]$PhaseName
     )
+    # F2: persist a checkpoint for the phase that just completed (foundation for -ResumeFromPhase)
+    if ($script:CurrentPhase -gt 0 -and -not $script:ResumeMode -and $script:BaseWorkDir) {
+        Save-Nano11Checkpoint -CompletedPhase $script:CurrentPhase
+    }
     if ($script:PhaseStopwatch -and $script:CurrentPhase -gt 0) {
         $script:PhaseStopwatch.Stop()
         $prevPhaseKey = "Phase $($script:CurrentPhase)"
@@ -4516,6 +4441,8 @@ function Show-Nano11GUI {
 # Handle -TestSelf before transcript or prompts
 if ($TestSelf) {
     $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+    $helperModule = Join-Path -Path $scriptDir -ChildPath "nano11helpers.ps1"
+    if (Test-Path -LiteralPath $helperModule) { . $helperModule }
     $builderPath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path -Path $scriptDir -ChildPath "nano11builder.ps1" }
     $unattendPath = Join-Path -Path $scriptDir -ChildPath "autounattend.xml"
     $testResult = Invoke-Nano11SelfTest -ScriptRoot $scriptDir -BuilderPath $builderPath -UnattendPath $unattendPath
@@ -4524,6 +4451,13 @@ if ($TestSelf) {
 
 # Start Transcript with log rotation (Keep latest 10 logs, fallback to TEMP)
 $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+# F8: Dot-source extracted pure helpers (module extraction)
+$helperModule = Join-Path -Path $scriptDir -ChildPath "nano11helpers.ps1"
+if (Test-Path -LiteralPath $helperModule) {
+    . $helperModule
+} else {
+    throw "Required helper module not found: $helperModule"
+}
 $logDir = Join-Path -Path $scriptDir -ChildPath "logs"
 $timestampStr = (Get-Date -Format "yyyyMMdd_HHmmss")
 $transcriptPath = $null
@@ -5940,7 +5874,98 @@ function Invoke-Nano11ResumeIsoBuild {
     try { Stop-Transcript } catch {}
 }
 
+# ============================================================================
+# F2. Phase Checkpoint Save/Load (foundation for -ResumeFromPhase)
+# ============================================================================
+function Save-Nano11Checkpoint {
+    [CmdletBinding()]
+    param([int]$CompletedPhase = 0)
+    try {
+        if (-not $script:BaseWorkDir) { return }
+        $cpPath = Join-Path -Path $script:BaseWorkDir -ChildPath "checkpoint.json"
+        $cp = [ordered]@{
+            CompletedPhase       = $CompletedPhase
+            Timestamp           = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+            BuildId             = $script:BuildId
+            BaseWorkDir         = $script:BaseWorkDir
+            Nano11Dir           = $nano11Dir
+            ScratchDir          = $scratchDir
+            VhdxMountDir        = $vhdxMountDir
+            DriveLetter         = $DriveLetter
+            Index               = $index
+            TargetEditionName   = $targetEditionName
+            Architecture        = $architecture
+            LanguageCode        = $languageCode
+            SelectedProfile     = $selectedProfile
+            KeepSearchIndex     = [bool]$keepSearchIndex
+            RemoveDefender      = [bool]$removeDefender
+            UltraSlimMode       = [bool]$ultraSlimMode
+            SafeDebloatMode     = [bool]$safeDebloatMode
+        }
+        $cp | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $cpPath -Encoding utf8 -Force
+    } catch {
+        Write-Warning "Checkpoint save skipped: $_"
+    }
+}
+
+function Load-Nano11Checkpoint {
+    [CmdletBinding()]
+    param()
+    $cpPath = $null
+    if ($script:BaseWorkDir) { $cpPath = Join-Path -Path $script:BaseWorkDir -ChildPath "checkpoint.json" }
+    if (-not $cpPath -or -not (Test-Path -LiteralPath $cpPath)) {
+        # Try default workspace
+        $docsDir = [Environment]::GetFolderPath('MyDocuments')
+        if (-not $docsDir) { $docsDir = Join-Path -Path $env:USERPROFILE -ChildPath "Documents" }
+        $cpPath = Join-Path -Path (Join-Path -Path $docsDir -ChildPath "nano11_workspace") -ChildPath "checkpoint.json"
+    }
+    if (-not (Test-Path -LiteralPath $cpPath)) { return $null }
+    try {
+        $raw = [System.IO.File]::ReadAllText($cpPath, [System.Text.Encoding]::UTF8)
+        return ($raw | ConvertFrom-Json)
+    } catch {
+        Write-Warning "Checkpoint load failed: $_"
+        return $null
+    }
+}
+
 # Resume mode entry point (before Phase 1 so no destructive early phases can run)
+if ($ResumeFromPhase -gt 0) {
+    if ($GUI -or $TestSelf -or $DryRun) {
+        throw "ResumeFromPhase cannot be combined with -GUI / -TestSelf / -DryRun."
+    }
+    $cp = Load-Nano11Checkpoint
+    if (-not $cp) {
+        throw "ResumeFromPhase: no checkpoint.json found. Run a full build first so a checkpoint is recorded."
+    }
+    $cpPhase = [int]$cp.CompletedPhase
+    if ($cpPhase -lt ($ResumeFromPhase - 1)) {
+        throw "ResumeFromPhase: checkpoint only reaches Phase $cpPhase, cannot resume from Phase $ResumeFromPhase. Run a full build or lower the target."
+    }
+    Write-Host "Checkpoint loaded: last completed phase = $cpPhase (timestamp $($cp.Timestamp))" -ForegroundColor Cyan
+    if ($ResumeFromPhase -ge 13) {
+        Write-Host "ResumeFromPhase $ResumeFromPhase >= 13: delegating to Resume-ISO mode (Phase 14+ fast-track)..." -ForegroundColor Yellow
+        # Hydrate the state ResumeIsoOnly relies on (it re-derives workspace/payload itself)
+        try {
+            Invoke-Nano11ResumeIsoBuild
+            exit 0
+        } catch {
+            if ($script:DiagnosticData) {
+                $script:DiagnosticData.FailurePhase = "ResumeFromPhase Mode"
+                $script:DiagnosticData.FailureMessage = "$_"
+                Write-Nano11DiagnosticReport "Resume failed"
+            }
+            Write-Host "ResumeFromPhase failed: $_" -ForegroundColor Red
+            try { Stop-Transcript } catch {}
+            exit 1
+        }
+    } else {
+        Write-Host "ResumeFromPhase $ResumeFromPhase < 13: early phases are fast; running full build (checkpoint will be refreshed)..." -ForegroundColor Yellow
+        # Fall through to normal build; checkpoint saving along the way keeps state fresh
+    }
+}
+
+# ResumeIsoOnly entry point (before Phase 1 so no destructive early phases can run)
 if ($ResumeIsoOnly) {
     if ($GUI -or $TestSelf -or $DryRun) {
         throw "ResumeIsoOnly cannot be combined with -GUI / -TestSelf / -DryRun."
@@ -6787,10 +6812,63 @@ foreach ($package in $packagesToRemove) {
 }
 
 # Clean leftover WindowsApps folders ONLY for packages that were successfully uninstalled via DISM
-foreach ($package in $successfullyRemovedPackages) {
-    $folderPath = Join-Path -Path "$scratchDir\Program Files\WindowsApps" -ChildPath $package.PackageName
+# F7: parallelize the file I/O (RunspacePool) - DISM package removal itself stays sequential
+# because the offline image is locked by DISM per call; parallel DISM on one image fails with lock errors.
+$folderCleanupScript = {
+    param($folderPath, $scratchPath)
     if (Test-Path -LiteralPath $folderPath) {
-        Remove-ProtectedDirectory -Path $folderPath -ScratchPath $scratchDir
+        try {
+            # Reuse the same ownership/robocopy technique as Remove-ProtectedDirectory (lightweight inline)
+            & takeown.exe /F "$folderPath" /A /R /D Y > $null 2>&1
+            & icacls.exe "$folderPath" /grant "*S-1-5-32-544:(OI)(CI)F" /T /C /Q > $null 2>&1
+            & cmd.exe /c "rd /s /q `"$folderPath`"" > $null 2>&1
+            if (Test-Path -LiteralPath $folderPath) { return $false }
+            return $true
+        } catch { return $false }
+    }
+    return $true
+}
+
+$parallelism = [Math]::Max(1, [Math]::Min($AppxParallelism, 8))
+$folderPaths = @()
+foreach ($package in $successfullyRemovedPackages) {
+    $folderPaths += (Join-Path -Path "$scratchDir\Program Files\WindowsApps" -ChildPath $package.PackageName)
+}
+
+if ($parallelism -le 1 -or $folderPaths.Count -le 1) {
+    foreach ($fp in $folderPaths) {
+        if (Test-Path -LiteralPath $fp) {
+            Remove-ProtectedDirectory -Path $fp -ScratchPath $scratchDir
+        }
+    }
+} else {
+    Write-Host "  [F7] Cleaning $($folderPaths.Count) WindowsApps folders with $parallelism parallel workers..." -ForegroundColor Cyan
+    $runspacePool = [runspacefactory]::CreateRunspacePool(1, $parallelism)
+    $runspacePool.Open()
+    $jobs = [System.Collections.Generic.List[object]]::new()
+    foreach ($fp in $folderPaths) {
+        if (-not (Test-Path -LiteralPath $fp)) { continue }
+        $ps = [powershell]::Create()
+        $ps.RunspacePool = $runspacePool
+        [void]$ps.AddScript($folderCleanupScript).AddArgument($fp).AddArgument($scratchDir)
+        $jobs.Add([PSCustomObject]@{ PS = $ps; Handle = $ps.BeginInvoke() })
+    }
+    foreach ($job in $jobs) {
+        try {
+            $job.PS.EndInvoke($job.Handle) | Out-Null
+        } catch {
+            Write-Warning "Parallel folder cleanup worker failed: $_ (falling back to sequential)"
+        } finally {
+            $job.PS.Dispose()
+        }
+    }
+    $runspacePool.Close()
+    $runspacePool.Dispose()
+    # Verify + sequential fallback for any survivors
+    foreach ($fp in $folderPaths) {
+        if (Test-Path -LiteralPath $fp) {
+            Remove-ProtectedDirectory -Path $fp -ScratchPath $scratchDir
+        }
     }
 }
 
@@ -10451,6 +10529,15 @@ if (Test-Path -LiteralPath $bootWimPath) {
     $hasIndex2 = ($bootInfo -split '\r?\n') -match 'Index\s*:\s*2'
     $indicesToPatch = if ($hasIndex2) { @(1, 2) } else { @(1) }
 
+    # F9: ARM64 sanity check - boot.wim architecture must match the selected payload architecture
+    if ($architecture -eq 'arm64') {
+        Write-Host "  [ARM64] Detected ARM64 target. Boot.wim must be ARM64 (UEFI-only bootdata will be used)." -ForegroundColor Cyan
+        $bootArchLine = ($bootInfo -split '\r?\n') | Where-Object { $_ -match 'Architecture' } | Select-Object -First 1
+        if ($bootArchLine -and ($bootArchLine -notmatch 'arm64|aarch64')) {
+            Write-Warning "boot.wim architecture ($bootArchLine) does not match ARM64 target. Setup may fail on ARM64 hardware."
+        }
+    }
+
     foreach ($bIndex in $indicesToPatch) {
         Write-Host "  - Applying Setup & Hardware requirement bypasses to boot.wim Index $bIndex..." -ForegroundColor Cyan
         $bMountResult = Invoke-Nano11ImageMount -ImageFile $bootWimPath -ImageIndex $bIndex -Retries 3
@@ -11196,6 +11283,9 @@ $script:BuildSucceeded = $true
 $script:DiagnosticData.BuildSucceeded = $true
 $isoCreatedSuccessfully = $true
 Write-Nano11DiagnosticReport "Build succeeded"
+
+# F2: final checkpoint marking the build as fully complete
+Save-Nano11Checkpoint -CompletedPhase 18
 
 # F1: Automatic workspace cleanup on successful build (preserves build\sources\install.wim for -ResumeIsoOnly)
 Write-Host "Cleaning up transient verification artifacts from successful build..." -ForegroundColor Cyan

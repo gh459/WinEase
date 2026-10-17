@@ -156,6 +156,7 @@ The goal of nano11 is to automate the creation of a streamlined Windows 11 image
 - **📱 ARM64 & Apple Silicon Support (Issues #2, #8, #20)**:
   - Dynamic architecture detection (`amd64` / `arm64`).
   - Automatically adjusts `autounattend.xml` processor architecture and generates UEFI-compliant boot records for ARM64 (Parallels Desktop, VMware Fusion, UTM).
+  - ARM64 builds use UEFI-only bootdata (no BIOS boot sector) and the ADK arm64 `oscdimg.exe` candidate paths. Requires an ARM64 Windows 11 source ISO; verification on real ARM64 hardware/VM is recommended.
 - **🚀 Canary 28020+ & Legacy Hardware Setup Bypass (Issue #29)**:
   - Automatically neutralizes `sources\appraiserres.dll` alongside offline registry `LabConfig` tweaks, allowing installation on unsupported CPUs, TPM 1.2/none, and older motherboards (e.g. Intel 6-series H67, 2nd-7th gen Core).
 - **📄 MIT License Included (Issue #14)**:
@@ -398,6 +399,8 @@ This working copy carries the following changes on top of the upstream fork:
 - **CrossDeviceResume.exe enforcement**: online FirstLogon block that kills the resume host and re-asserts the IFEO debugger redirect (the executable ships inside the protected `MicrosoftWindows.Client.CBS` shell package on 26H2, so neutralization - not deletion - is the correct approach).
 - **Build reliability**: `-ResumeIsoOnly` fast re-ISO mode, extended Phase 18 verification retry cooldown, and automatic host-environment health diagnostics (RAM / free space / SMART) at every build start - aimed at the Oct 16 failure pattern (DISM 577 transient corruption + final ISO payload hash mismatch on a flaky host).
 - **Repository hygiene**: `LICENSE` (MIT) restored, `tools/custom-scripts/` skeleton added, log rotation now also prunes stale `build_diagnostics` runs, and the repo is version-controlled with git.
+- **Module extraction (F8)**: pure utility helpers (`ConvertTo-Nano11NormalizedPath`, `Test-Nano11PathWithin`, `Test-IsNtfsVolume`, `Test-IsSafePathToDelete`, `New-Nano11BuildId`) moved to `nano11helpers.ps1` and dot-sourced at startup, reducing the main script size and improving maintainability.
+- **ARM64 (F9)**: boot.wim architecture sanity check added to Phase 14 (warns on arch mismatch); UEFI-only bootdata already used for ARM64 targets. Verification on real ARM64 hardware/VM is recommended (not yet performed in this environment).
 
 ---
 
