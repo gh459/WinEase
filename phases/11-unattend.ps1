@@ -50,6 +50,22 @@ if (Test-Path -LiteralPath $unattendSource) {
         $nsMgr = New-Object System.Xml.XmlNamespaceManager($xmlDoc.NameTable)
         $nsMgr.AddNamespace("u", $xmlDoc.DocumentElement.NamespaceURI)
 
+        # A2: External script injection - if scripts/ folder exists, override embedded File node contents
+        $scriptsDir = Join-Path -Path $scriptDir -ChildPath "scripts"
+        if (Test-Path -LiteralPath $scriptsDir) {
+            $fileNodes = $xmlDoc.SelectNodes("//*[local-name()='Extensions']/*[local-name()='File']")
+            foreach ($fn in $fileNodes) {
+                $fnPath = $fn.GetAttribute("path")
+                $scriptFileName = [System.IO.Path]::GetFileName($fnPath)
+                $scriptFilePath = Join-Path -Path $scriptsDir -ChildPath $scriptFileName
+                if (Test-Path -LiteralPath $scriptFilePath) {
+                    $externalContent = [System.IO.File]::ReadAllText($scriptFilePath, [System.Text.Encoding]::UTF8)
+                    $fn.InnerText = $externalContent.Trim()
+                    Write-Host "  [A2] Injected external script: $scriptFileName" -ForegroundColor DarkCyan
+                }
+            }
+        }
+
         # 1. Prune components matching other architectures if target architecture is explicitly present
         $allComponents = $xmlDoc.SelectNodes("//u:component", $nsMgr)
         $compNodesToRemove = @()
