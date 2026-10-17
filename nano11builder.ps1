@@ -3535,6 +3535,18 @@ function Export-Nano11HtmlReport {
 
     $formatDesc = if ($payloadFormat -eq 'install.swm') { 'FAT32 USB Compatible' } elseif ($payloadFormat -eq 'install.esd') { 'Ultra-compressed LZMS' } else { 'Standard WIM' }
 
+    # A4: External report template support (templates/report.html)
+    # If a template file exists next to the script, it can be used as a reference for
+    # customizing the report layout. The inline generation below is the canonical path;
+    # to switch to template-based generation, set $UseTemplate = $true and implement
+    # placeholder replacement ({{TITLE}}, {{TIMESTAMP}}, {{SETTINGS_TABLE}}, etc.).
+    $templatePath = Join-Path -Path $PSScriptRoot -ChildPath "templates\report.html"
+    $useTemplate = $false
+    if ($useTemplate -and (Test-Path -LiteralPath $templatePath)) {
+        # Template-based generation (future: implement placeholder replacement here)
+        Write-Host "Using external report template: $templatePath" -ForegroundColor Cyan
+    }
+
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine('<!DOCTYPE html>')
     [void]$sb.AppendLine('<html lang="ja">')

@@ -404,7 +404,42 @@ This working copy carries the following changes on top of the upstream fork:
 
 ---
 
-## ❤️ Credits & Support
+## 📁 Repository Structure
+
+```
+nano11-main/
+├── nano11builder.ps1          # Main orchestrator (params, options, GUI, try/catch)
+├── nano11helpers.ps1          # Pure utility helpers (dot-sourced at startup)
+├── autounattend.xml           # Unattended setup template (scripts injected at build time)
+├── nano11-GUI.bat             # GUI launcher
+├── oscdimg.exe                # Bundled ISO mastering tool
+├── LICENSE                    # MIT License
+├── README.md                  # This file
+├── CHANGELOG.md               # Change history
+├── PSScriptAnalyzerSettings.psd1  # Linter configuration
+├── phases/                    # 18 build phases (dot-sourced by orchestrator)
+│   ├── 01-environment.ps1     # ... through 18-iso.ps1
+├── scripts/                   # Embedded setup scripts (injected into autounattend.xml)
+│   ├── Specialize.ps1
+│   ├── FirstLogon.ps1
+│   ├── DefaultUser.ps1
+│   ├── UserOnce.ps1
+│   └── Winhancements.ps1
+├── templates/                 # HTML report template (reference)
+│   └── report.html
+├── config/                    # JSON Schema for profile validation
+│   └── nano11.config.schema.json
+├── tools/                     # Optional tooling
+│   └── custom-scripts/        # User post-install scripts (executed at first logon)
+├── tests/                     # Pester test suite
+│   └── nano11.Tests.ps1
+├── .github/                   # CI/CD workflows
+│   └── workflows/ci.yml
+├── logs/                      # Build logs (auto-rotated, gitignored)
+└── build_diagnostics/         # Failed build diagnostics (auto-pruned, gitignored)
+```
+
+---
 
 - **Original Project & Concept:** [NTDEV](https://github.com/ntdevlabs/nano11)
   - [Patreon](http://patreon.com/ntdev) | [PayPal](http://paypal.me/ntdev2) | [Ko-fi](http://ko-fi.com/ntdev)
