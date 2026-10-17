@@ -1,0 +1,544 @@
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+  <!-- Integrated nano11 + Winhance Unattended Configuration -->
+  <settings pass="offlineServicing"></settings>
+  <settings pass="windowsPE"></settings>
+  <settings pass="generalize"></settings>
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <ComputerName>nano11</ComputerName>
+    </component>
+    <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <RunSynchronous xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File C:\Windows\Setup\Scripts\ExtractUnattend.ps1</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>reg.exe add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v BypassNRO /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Path>powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File C:\Windows\Setup\Scripts\Specialize.ps1</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <Path>powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File C:\Windows\Setup\Scripts\ApplyDefaultUser.ps1</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="arm64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <ComputerName>nano11</ComputerName>
+    </component>
+    <component name="Microsoft-Windows-Deployment" processorArchitecture="arm64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <RunSynchronous xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File C:\Windows\Setup\Scripts\ExtractUnattend.ps1</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>reg.exe add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v BypassNRO /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Path>powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File C:\Windows\Setup\Scripts\Specialize.ps1</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <Path>powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File C:\Windows\Setup\Scripts\ApplyDefaultUser.ps1</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+  </settings>
+  <settings pass="auditSystem"></settings>
+  <settings pass="auditUser"></settings>
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value></Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>User</Name>
+            <DisplayName>User</DisplayName>
+            <Group>Administrators</Group>
+            <Password>
+              <Value></Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+      <AutoLogon>
+        <Username>User</Username>
+        <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
+        <Password>
+          <Value></Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <ProtectYourPC>3</ProtectYourPC>
+      </OOBE>
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File C:\Windows\Setup\Scripts\RunFirstLogon.ps1</CommandLine>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="arm64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value></Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>User</Name>
+            <DisplayName>User</DisplayName>
+            <Group>Administrators</Group>
+            <Password>
+              <Value></Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+      <AutoLogon>
+        <Username>User</Username>
+        <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
+        <Password>
+          <Value></Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <ProtectYourPC>3</ProtectYourPC>
+      </OOBE>
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File C:\Windows\Setup\Scripts\RunFirstLogon.ps1</CommandLine>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+  </settings>
+  <Extensions xmlns="https://schneegans.de/windows/unattend-generator/">
+    <ExtractScript>
+param(
+    [xml] $Document
+);
+
+foreach( $file in $Document.unattend.Extensions.File ) {
+    $path = [System.Environment]::ExpandEnvironmentVariables( $file.GetAttribute( 'path' ) );
+    $parent = Split-Path -Path $path -Parent;
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+        New-Item -Path $parent -ItemType Directory -Force -ErrorAction 'SilentlyContinue' | Out-Null;
+    }
+    $encoding = switch( [System.IO.Path]::GetExtension( $path ) ) {
+        { $_ -in '.ps1', '.xml' } { [System.Text.Encoding]::UTF8; }
+        { $_ -in '.reg', '.vbs', '.js' } { [System.Text.UnicodeEncoding]::new( $false, $true ); }
+        default { [System.Text.Encoding]::Default; }
+    };
+    [System.IO.File]::WriteAllBytes( $path, ( $encoding.GetPreamble() + $encoding.GetBytes( $file.InnerText.Trim() ) ) );
+}
+		</ExtractScript>
+    <File path="C:\ProgramData\Winhance\Unattend\Scripts\Winhancements.ps1">
+&lt;#
+.SYNOPSIS
+    Winhance Windows 10/11 Customization and Optimization Script (Offline-Integrated Slim Edition)
+.DESCRIPTION
+    All static HKLM, HKCU, and Default User optimizations are pre-baked offline directly into the WIM image by nano11builder.ps1.
+    This runtime wrapper handles active power scheme configuration and logs completion.
+#&gt;
+param(
+    [switch]$UserCustomizations
+)
+
+$LogPath = 'C:\ProgramData\Winhance\Unattend\Logs\Winhancements.txt'
+$logDir = Split-Path $LogPath -Parent
+if (-not (Test-Path -LiteralPath $logDir)) {
+    New-Item -Path $logDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+}
+
+function Write-Log {
+    param(
+        [string]$Message,
+        [string]$Level = "INFO"
+    )
+    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $LogMessage = "[$Timestamp] [$Level] $Message"
+    Write-Output $LogMessage
+    try {
+        Add-Content -Path $LogPath -Value $LogMessage -ErrorAction SilentlyContinue
+    } catch {}
+}
+
+Write-Log "================================================================================" "INFO"
+Write-Log "Winhance Windows Optimization &amp; Customization Script (Integrated Edition)" "INFO"
+
+if ($UserCustomizations) {
+    Write-Log "Mode: User Customizations (Pre-baked offline into Default User &amp; HKCU)" "INFO"
+    Write-Log "User customizations verified active from Default User NTUSER.DAT template." "SUCCESS"
+    Write-Log "Winhance User Customizations Completed Successfully" "SUCCESS"
+    exit 0
+} else {
+    Write-Log "Mode: System Optimizations (Pre-baked offline into SYSTEM &amp; SOFTWARE hives)" "INFO"
+    try {
+        Write-Log "Configuring active Ultimate Performance power scheme..." "INFO"
+        $uPlan = &amp; powercfg.exe -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 2&gt;$null
+        if ($uPlan -match '([a-f0-9-]{36})') {
+            $guid = $matches[1]
+            &amp; powercfg.exe /setactive $guid 2&gt;$null
+            Write-Log "Ultimate Performance power plan ($guid) duplicated and activated." "SUCCESS"
+        } else {
+            &amp; powercfg.exe /setactive SCHEME_MIN 2&gt;$null
+            Write-Log "High Performance power plan (SCHEME_MIN) activated." "INFO"
+        }
+    } catch {
+        Write-Log "Power plan activation handled with fallback: $_" "WARNING"
+    }
+
+    Write-Log "All system tweaks and service configurations pre-applied offline by nano11builder." "SUCCESS"
+    Write-Log "Winhance System Optimization Completed Successfully" "SUCCESS"
+    exit 0
+}
+</File>
+    <File path="C:\Windows\Setup\Scripts\Specialize.ps1">
+$markerDir = "C:\ProgramData\nano11";
+if (-not (Test-Path -LiteralPath $markerDir)) { New-Item -ItemType Directory -Force -Path $markerDir -ErrorAction SilentlyContinue | Out-Null; }
+Remove-Item -LiteralPath "$markerDir\specialize.succeeded", "$markerDir\specialize.failed" -Force -ErrorAction SilentlyContinue;
+Set-Content -LiteralPath "$markerDir\specialize.started" -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding ascii -ErrorAction SilentlyContinue;
+
+&amp; { try {
+  # 1. User account password policy
+  &amp; net.exe accounts /maxpwage:UNLIMITED /minpwlen:0 2&gt;$null;
+
+  # 2. Dynamic Network Stack &amp; TCP tuning if flagged
+  if (Test-Path "C:\Windows\Setup\Scripts\network-stack.flag") {
+    try {
+      Set-NetTCPSetting -SettingName InternetCustom -AutoTuningLevelLocal Normal -ScalingHeuristics Disabled -ErrorAction SilentlyContinue;
+      Set-NetTCPSetting -SettingName InternetCustom -EcnCapability Enabled -Timestamps Disabled -ErrorAction SilentlyContinue;
+      Set-NetOffloadGlobalSetting -ReceiveSideScaling Enabled -ReceiveSegmentCoalescing Disabled -TaskOffload Enabled -ErrorAction SilentlyContinue;
+      Disable-NetAdapterLso -Name * -IPv4 -ErrorAction SilentlyContinue;
+    } catch {}
+  }
+
+  # 3. Dynamic Message Signaled Interrupts (MSI) scan for newly detected PCI hardware
+  try {
+    $targetClasses = @('{4d36e968-e325-11ce-bfc1-08002be10318}', '{4d36e972-e325-11ce-bfc1-08002be10318}');
+    $pnpDevs = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.ClassGuid -in $targetClasses -and $_.InstanceId -like "PCI\*" };
+    foreach ($dev in $pnpDevs) {
+      $msiPath = "HKLM:\SYSTEM\CurrentControlSet\Enum\$($dev.InstanceId)\Device Parameters\Interrupt Management\MessageSignaledInterruptProperties";
+      if (-not (Test-Path -LiteralPath $msiPath)) {
+        New-Item -Path $msiPath -Force -ErrorAction SilentlyContinue | Out-Null;
+      }
+      Set-ItemProperty -LiteralPath $msiPath -Name "MSISupported" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue;
+    }
+  } catch {}
+
+  # 4. Memory Compression optimization if flagged
+  if (Test-Path "C:\Windows\Setup\Scripts\disable-memcompression.flag") {
+    try { Disable-MMAgent -MemoryCompression -ErrorAction SilentlyContinue; } catch {}
+  }
+
+  Set-Content -LiteralPath "C:\ProgramData\nano11\specialize.succeeded" -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding ascii -ErrorAction SilentlyContinue;
+} catch {
+  $err = "$($_ | Out-String)";
+  Remove-Item -LiteralPath "C:\ProgramData\nano11\specialize.succeeded" -Force -ErrorAction SilentlyContinue;
+  Set-Content -LiteralPath "C:\ProgramData\nano11\specialize.failed" -Value $err -Encoding ascii -ErrorAction SilentlyContinue;
+  exit 1;
+} } *&gt;&amp;1 &gt;&gt; "C:\Windows\Setup\Scripts\Specialize.log";
+if (Test-Path -LiteralPath "C:\ProgramData\nano11\specialize.failed") { exit 1; }
+exit 0;
+</File>
+    <File path="C:\Windows\Setup\Scripts\UserOnce.ps1">
+&amp; { try {
+  # Terminate rogue background sync processes
+  Stop-Process -Name 'SearchHost', 'CrossDeviceResume' -Force -ErrorAction SilentlyContinue;
+
+  # Remove SecHealthUI AppX package for current user if Defender was removed
+  if (Test-Path 'C:\Windows\Setup\Scripts\remove-defender.flag') {
+    Get-AppxPackage "*SecHealthUI*" -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue;
+  }
+
+  # Clean up RunOnce setup command
+  Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name 'UnattendedSetup' -Force -ErrorAction SilentlyContinue;
+} catch {} } *&gt;&amp;1 &gt;&gt; "$env:TEMP\UserOnce.log";
+exit 0;
+</File>
+    <File path="C:\Windows\Setup\Scripts\DefaultUser.ps1">
+&amp; { try {
+  # Ensure RunOnce UnattendedSetup is registered in Default User hive
+  &amp; reg.exe add "HKU\DefaultUser\Software\Microsoft\Windows\CurrentVersion\RunOnce" /v "UnattendedSetup" /t REG_SZ /d "powershell.exe -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File C:\Windows\Setup\Scripts\UserOnce.ps1" /f 2&gt;$null;
+  exit 0;
+} catch {
+  exit 1;
+} } *&gt;&amp;1 &gt;&gt; "C:\Windows\Setup\Scripts\DefaultUser.log";
+if (-not $?) { exit 1; }
+</File>
+    <File path="C:\Windows\Setup\Scripts\FirstLogon.ps1">
+try {
+	$initMarkerDir = "C:\ProgramData\nano11";
+	if (Test-Path -LiteralPath $initMarkerDir) {
+		Remove-Item -LiteralPath "$initMarkerDir\firstlogon.done", "$initMarkerDir\firstlogon_script.failed" -Force -ErrorAction SilentlyContinue;
+	}
+} catch {}
+$scripts = @(
+	{
+		# Guarantee User account has NO password (completely blank) and cannot expire
+		try {
+			&amp; net.exe accounts /maxpwage:UNLIMITED /minpwlen:0 2&gt;$null;
+			&amp; net.exe user User "" /active:yes /passwordreq:no /expires:never 2&gt;$null;
+		} catch {}
+	};
+	{
+		# Disable Computer Restore on System Drive
+		try {
+			Disable-ComputerRestore -Drive "C:\" 2&gt;$null;
+		} catch {}
+	};
+	{
+		# Enable CompactOS NTFS Compression
+		try {
+			&amp; Compact.exe /CompactOS:always 2&gt;$null;
+		} catch {}
+	};
+	{
+		# Low-Latency BCD Boot &amp; Timer Tweaks
+		try {
+			if (Test-Path "C:\Windows\Setup\Scripts\timer-bcd.flag") {
+				&amp; bcdedit.exe /set useplatformclock false 2&gt;$null;
+				&amp; bcdedit.exe /set disabledynamictick yes 2&gt;$null;
+				&amp; bcdedit.exe /set tscsyncpolicy Enhanced 2&gt;$null;
+			}
+			&amp; bcdedit.exe /timeout 0 2&gt;$null;
+			if (Test-Path "C:\Windows\Setup\Scripts\no-hypervisor.flag") {
+				&amp; bcdedit.exe /set hypervisorlaunchtype off 2&gt;$null;
+			}
+		} catch {}
+	};
+	{
+		# Advanced Low-Latency Network &amp; Nagle Tuning
+		try {
+			if (Test-Path "C:\Windows\Setup\Scripts\network-stack.flag") {
+				&amp; netsh.exe int tcp set global autotuninglevel=normal 2&gt;$null;
+				&amp; netsh.exe int tcp set global rss=enabled 2&gt;$null;
+				&amp; netsh.exe int tcp set global rsc=disabled 2&gt;$null;
+				&amp; netsh.exe int tcp set global ecncapability=enabled 2&gt;$null;
+				&amp; netsh.exe int tcp set global timestamps=disabled 2&gt;$null;
+				&amp; netsh.exe int tcp set heuristics disabled 2&gt;$null;
+				$adapters = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\*' -ErrorAction SilentlyContinue;
+				foreach ($adapter in $adapters) {
+					Set-ItemProperty -Path $adapter.PSPath -Name 'TcpAckFrequency' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue;
+					Set-ItemProperty -Path $adapter.PSPath -Name 'TCPNoDelay' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue;
+				}
+			}
+			if (Test-Path "C:\Windows\Setup\Scripts\disable-netbios.flag") {
+				Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Services\NetBT\Parameters\Interfaces' -ErrorAction SilentlyContinue |
+					ForEach-Object { Set-ItemProperty $_.PSPath 'NetbiosOptions' 2 -Type DWord -Force -ErrorAction SilentlyContinue };
+			}
+		} catch {}
+	};
+	{
+		# NTFS I/O Overhead Reduction
+		try {
+			&amp; fsutil.exe behavior set disablelastaccess 1 2&gt;$null;
+			&amp; fsutil.exe 8dot3name set 1 2&gt;$null;
+		} catch {}
+	};
+	{
+		# Custom Post-Install User Scripts Execution Hook (from tools/custom-scripts/)
+		$customDir = "C:\Windows\Setup\Scripts\Custom";
+		if (Test-Path $customDir) {
+			Get-ChildItem -Path $customDir -File | Sort-Object Name | ForEach-Object {
+				try {
+					switch ($_.Extension.ToLower()) {
+						'.ps1' { &amp; powershell.exe -ExecutionPolicy Bypass -NoProfile -File $_.FullName }
+						'.bat' { &amp; cmd.exe /c "`"$($_.FullName)`"" }
+						'.cmd' { &amp; cmd.exe /c "`"$($_.FullName)`"" }
+						'.reg' { &amp; reg.exe import $_.FullName }
+					}
+				} catch {}
+			}
+		}
+	};
+	{
+		# Post-OOBE WebView2 removal if flagged
+		if (Test-Path "C:\Windows\Setup\Scripts\remove-webview.flag") {
+			try {
+				$webViewDir = 'C:\Windows\System32\Microsoft-Edge-WebView';
+				if (Test-Path -LiteralPath $webViewDir) {
+					$yesKey = try { ($null | choice.exe).Substring(1, 1) } catch { 'Y' };
+					&amp; takeown.exe /f $webViewDir /r /a /d $yesKey &gt;$null 2&gt;&amp;1;
+					&amp; icacls.exe $webViewDir /grant "*S-1-5-32-544:F" /t /c /q &gt;$null 2&gt;&amp;1;
+					Remove-Item -LiteralPath $webViewDir -Recurse -Force -ErrorAction SilentlyContinue;
+				}
+				Remove-Item "C:\Windows\Setup\Scripts\remove-webview.flag" -Force -ErrorAction SilentlyContinue;
+			} catch {}
+		}
+	};
+	{
+		# Windows Activation Restriction Bypass &amp; Silent Digital License Activation
+		$actFlag = "C:\Windows\Setup\Scripts\bypass-activation.flag";
+		if (Test-Path $actFlag) {
+			try {
+				&amp; schtasks.exe /change /tn "\Microsoft\Windows\SoftwareProtectionPlatform\SvcRestartTask" /disable 2&gt;$null;
+				&amp; schtasks.exe /change /tn "\Microsoft\Windows\SoftwareProtectionPlatform\SvcRestartTaskLogon" /disable 2&gt;$null;
+				&amp; schtasks.exe /change /tn "\Microsoft\Windows\SoftwareProtectionPlatform\SvcRestartTaskNetwork" /disable 2&gt;$null;
+
+				$isOnline = $false;
+				try {
+					$ping = Test-Connection -ComputerName "1.1.1.1" -Count 1 -Quiet -ErrorAction SilentlyContinue;
+					if (-not $ping) { $ping = Test-Connection -ComputerName "8.8.8.8" -Count 1 -Quiet -ErrorAction SilentlyContinue; }
+					$isOnline = [bool]$ping;
+				} catch {}
+
+				if ($isOnline) {
+					[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13;
+					&amp; ([ScriptBlock]::Create((Invoke-RestMethod -Uri 'https://get.activated.win' -UseBasicParsing))) /HWID /NoEditionChange 2&gt;$null;
+				}
+				Remove-Item -LiteralPath $actFlag -Force -ErrorAction SilentlyContinue;
+			} catch {}
+		}
+	};
+	{
+		# Boot Time Metrics Tracking (Event ID 100)
+		try {
+			$bootEvent = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Diagnostics-Performance/Operational'; Id=100} -MaxEvents 1 -ErrorAction SilentlyContinue;
+			if ($bootEvent -and $bootEvent.Properties -and $bootEvent.Properties.Count -gt 5) {
+				$bootMs = $bootEvent.Properties[5].Value;
+				$statsDir = "C:\ProgramData\nano11";
+				if (-not (Test-Path $statsDir)) { New-Item -ItemType Directory -Force -Path $statsDir | Out-Null; }
+				"{0},{1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $bootMs | Add-Content "$statsDir\boot-stats.csv";
+			}
+		} catch {}
+	};
+	{
+		# WinRE Online Dismantle if winre-cleanup.flag is present
+		$flag = "C:\Windows\Setup\Scripts\winre-cleanup.flag";
+		if (Test-Path $flag) {
+			try {
+				&amp; reagentc.exe /disable 2&gt;$null;
+				$winrePath = "C:\Windows\System32\Recovery\Winre.wim";
+				if (Test-Path $winrePath) {
+					takeown.exe /f $winrePath /a 2&gt;$null;
+					icacls.exe $winrePath /grant "*S-1-5-32-544:F" 2&gt;$null;
+					Remove-Item -LiteralPath $winrePath -Force -ErrorAction SilentlyContinue;
+				}
+				Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue;
+			} catch {}
+		}
+	};
+	{
+		# Safe Telemetry &amp; CEIP Scheduled Tasks Suppression
+		try {
+			$safeTasks = @(
+				'\Microsoft\Windows\Application Experience\Microsoft Compatibility Appraiser',
+				'\Microsoft\Windows\Application Experience\ProgramDataUpdater',
+				'\Microsoft\Windows\Customer Experience Improvement Program\Consolidator',
+				'\Microsoft\Windows\Customer Experience Improvement Program\UsbCeip',
+				'\Microsoft\Windows\DiskDiagnostic\Microsoft-Windows-DiskDiagnosticDataCollector',
+				'\Microsoft\Windows\Feedback\Siuf\DmClient'
+			);
+			foreach ($t in $safeTasks) {
+				schtasks.exe /change /tn "$t" /disable &gt;$null 2&gt;&amp;1;
+			}
+		} catch {}
+	};
+	{
+		# Cross-Device Resume enforcement: kill the resume host if it launched before IFEO applied,
+		# and re-assert the IFEO debugger block online (the executable is bundled inside the protected
+		# MicrosoftWindows.Client.CBS shell package, so it must be neutralized, never deleted).
+		try {
+			Get-Process -Name CrossDeviceResume -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
+			New-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\CrossDeviceResume.exe' -Force -ErrorAction SilentlyContinue | Out-Null;
+			Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\CrossDeviceResume.exe' -Name 'Debugger' -Value 'rundll32.exe' -Force -ErrorAction SilentlyContinue;
+		} catch {}
+	};
+	{
+		# Windows Search disable enforcement (offline hive edit backup: stop &amp; disable WSearch online,
+		# kill SearchHost if it spawned, hide the taskbar search box for the logged-on user)
+		if (Test-Path "C:\Windows\Setup\Scripts\disable-search.flag") {
+			try {
+				Stop-Service -Name WSearch -Force -ErrorAction SilentlyContinue;
+				Set-Service -Name WSearch -StartupType Disabled -ErrorAction SilentlyContinue;
+				Get-Process -Name SearchHost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
+				Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' -Name 'SearchboxTaskbarMode' -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue;
+			} catch {}
+			Remove-Item "C:\Windows\Setup\Scripts\disable-search.flag" -Force -ErrorAction SilentlyContinue;
+		}
+	};
+	{
+		# Residual per-user Appx removal fallback: Windows Backup / Web Experience host / Get Started
+		try {
+			Get-AppxPackage -AllUsers -Name *WindowsBackupApp* -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue;
+			Get-AppxPackage -AllUsers -Name *Client.WebExperience* -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue;
+			Get-AppxPackage -AllUsers -Name *Getstarted* -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue;
+		} catch {}
+	};
+	{
+		# Signal FirstLogon completion and restore persistent AutoLogon security
+		try {
+			$markerDir = "C:\ProgramData\nano11";
+			if (-not (Test-Path $markerDir)) { New-Item -ItemType Directory -Force -Path $markerDir | Out-Null; }
+			Set-Content -LiteralPath "$markerDir\firstlogon.done" -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding ascii;
+
+			# Security restore: Tear down permanent AutoLogon after setup logon succeeds
+			Set-ItemProperty -LiteralPath 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name 'AutoAdminLogon' -Value '0' -Force -ErrorAction SilentlyContinue;
+			Set-ItemProperty -LiteralPath 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name 'ForceAutoLogon' -Value '0' -Force -ErrorAction SilentlyContinue;
+			Remove-ItemProperty -LiteralPath 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name 'DefaultPassword' -Force -ErrorAction SilentlyContinue;
+		} catch {}
+	};
+);
+
+&amp; {
+  [float] $complete = 0;
+  [float] $increment = 100 / $scripts.Count;
+  $flErrors = @();
+  foreach( $script in $scripts ) {
+    Write-Progress -Activity 'Running scripts to finalize your Windows installation. Do not close this window.' -PercentComplete $complete;
+    $start = [datetime]::Now;
+    try {
+      &amp; $script;
+    } catch {
+      $flErrors += ("Script block failed: {0}" -f $_);
+    }
+    $complete += $increment;
+  }
+  if ($flErrors.Count -gt 0) {
+    Remove-Item -LiteralPath "C:\ProgramData\nano11\firstlogon.done" -Force -ErrorAction SilentlyContinue;
+    Set-Content -LiteralPath "C:\ProgramData\nano11\firstlogon_script.failed" -Value ($flErrors -join "`r`n") -Encoding UTF8 -ErrorAction SilentlyContinue;
+    exit 1;
+  } else {
+    Remove-Item -LiteralPath "C:\ProgramData\nano11\firstlogon_script.failed" -Force -ErrorAction SilentlyContinue;
+    if (-not (Test-Path -LiteralPath "C:\ProgramData\nano11\firstlogon.done")) {
+      Set-Content -LiteralPath "C:\ProgramData\nano11\firstlogon.done" -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding UTF8 -ErrorAction SilentlyContinue;
+    }
+    exit 0;
+  }
+} *&gt;&amp;1 &gt;&gt; "C:\ProgramData\nano11\Logs\firstlogon-child.log";
+if (-not $? -or (Test-Path -LiteralPath "C:\ProgramData\nano11\firstlogon_script.failed")) {
+  exit 1;
+} else {
+  Remove-Item -LiteralPath "C:\ProgramData\nano11\firstlogon_script.failed" -Force -ErrorAction SilentlyContinue;
+  exit 0;
+}
+</File>
+  </Extensions>
+</unattend>

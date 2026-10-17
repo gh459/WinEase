@@ -1,0 +1,15 @@
+# Build outputs & volatile diagnostics - never commit
+logs/
+build_diagnostics/
+*.iso
+*.wim
+*.esd
+*.swm
+*.vhdx
+*.iso.sha256
+
+# Workspace artifacts (kept out of VCS; workspace lives outside this folder by default)
+nano11_workspace/
+
+# Local GUI helpers that may contain machine-specific paths
+*.local.ps1
