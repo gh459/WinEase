@@ -5312,6 +5312,18 @@ if (Test-Path -LiteralPath $configSnapshotPath) {
 }
 Write-Host "  - Payload Format:          $(if ($exportESDMode) { 'install.esd (LZMS)' } elseif ($splitWIMMode) { 'install.swm (Split-WIM / FAT32)' } else { 'install.wim (LZX - Recommended)' })"
 Write-Host ""
+# G5: estimated build time from last run's phase timings
+try {
+    $lastTimingsPath = Join-Path -Path $logDir -ChildPath "last_phase_timings.json"
+    if (Test-Path -LiteralPath $lastTimingsPath) {
+        $lastTimings = (Get-Content -LiteralPath $lastTimingsPath -Raw -ErrorAction Stop) | ConvertFrom-Json
+        $totalSec = 0
+        foreach ($v in $lastTimings.PSObject.Properties.Value) { if ($v -is [double] -or $v -is [int] -or $v -is [long]) { $totalSec += [double]$v } }
+        if ($totalSec -gt 0) {
+            Write-Host "  - Estimated build time:    ~$([math]::Round($totalSec / 60, 1)) min (based on last run's phase timings)" -ForegroundColor DarkCyan
+        }
+    }
+} catch {}
 
 # Early verification of -SourceDrive
 if ($SourceDrive) {
@@ -11285,6 +11297,11 @@ try {
     $reportData['WinSxSBeforeMB']       = if ($script:WinSxsBeforeMB) { $script:WinSxsBeforeMB } else { 0 }
     $reportData['WinSxSAfterMB']        = if ($script:WinSxsAfterMB) { $script:WinSxsAfterMB } else { 0 }
     $reportData['PhaseTimings']        = if ($script:PhaseTimings) { $script:PhaseTimings } else { @{} }
+    # G5: persist phase timings for next-run build time estimation
+    try {
+        $timingsPath = Join-Path -Path $logDir -ChildPath "last_phase_timings.json"
+        if ($script:PhaseTimings) { $script:PhaseTimings | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $timingsPath -Encoding utf8 -Force }
+    } catch { Write-Warning "Could not persist phase timings: $_" }
     Export-Nano11HtmlReport -OutputPath $reportPath -BuildInfo $reportData
     Write-Host "Visual Build Report generated: $reportPath" -ForegroundColor Cyan
 } catch {

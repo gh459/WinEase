@@ -1,0 +1,54 @@
+name: nano11 CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  self-test:
+    name: Self-test (AST + unattend schema + presets)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run nano11 self-test
+        shell: pwsh
+        run: |
+          .\nano11builder.ps1 -TestSelf
+          if ($LASTEXITCODE -ne 0) { throw "Self-test failed with exit code $LASTEXITCODE" }
+
+  pester:
+    name: Pester test suite
+    runs-on: windows-latest
+    needs: self-test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Pester tests
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable -Name Pester)) {
+            Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser
+          }
+          Import-Module Pester -Force
+          $result = Invoke-Pester -Path .\tests\nano11.Tests.ps1 -PassThru
+          if ($result.FailedCount -gt 0) { throw "$($result.FailedCount) Pester test(s) failed" }
+
+  dry-run:
+    name: Dry-run configuration resolution
+    runs-on: windows-latest
+    needs: self-test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run dry-run (extreme profile)
+        shell: pwsh
+        run: |
+          .\nano11builder.ps1 -DryRun -NonInteractive -Profile extreme
+          if ($LASTEXITCODE -ne 0) { throw "Dry-run failed with exit code $LASTEXITCODE" }
