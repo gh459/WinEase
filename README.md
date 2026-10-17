@@ -292,6 +292,7 @@ You can run the builder completely unattended with built-in presets and modular 
 | `-EnableWSL` / `-DisableWSL` (`-NoWSL`) | Pre-enables or disables WSL2 & Virtual Machine Platform |
 | `-KeepRecovery` (`-KeepWinRE`) / `-RemoveRecovery` (`-NoRecovery`) | Retains or removes Windows Recovery Environment WinRE |
 | `-SafeDebloat` (`-SafeWinSxS`) / `-AggressiveWinSxS` (`-TrimWinSxS`) | Component Store cleanup mode |
+| `-ForceWinSxSCleanup` (`-ForceWinSxS`) | [Experimental, opt-in] Forces offline `/StartComponentCleanup` (and `/ResetBase` when combined) on Windows 11 24H2+ (26100+ Germanium), overriding the safety block. Risk: checkpoint LCU corruption (0x80070570 / 0x800f081f). Deep-apply verification + ISO payload hash check run as safety net. Off by default |
 | `-UltraSlim` / `-NoUltraSlim` | Enables or disables UltraSlim target mode |
 | `-JapaneseKeyboard` / `-NoJapaneseKeyboard` | Enforces or skips Japanese 106/109 keyboard layout configuration |
 | `-AtlasReviOS` / `-NoAtlasReviOS` | Enables or skips AtlasOS & ReviOS debloat and low-latency tuning |

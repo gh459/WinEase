@@ -106,6 +106,9 @@ param(
     [switch]$SafeDebloat,
     [alias("TrimWinSxS")]
     [switch]$AggressiveWinSxS,
+    # E2 (opt-in): override the 26100+ offline StartComponentCleanup / ResetBase block (checkpoint LCU corruption risk)
+    [alias("ForceWinSxS")]
+    [switch]$ForceWinSxSCleanup,
     
     # 10. UltraSlim
     [switch]$UltraSlim,
@@ -4483,10 +4486,32 @@ try {
         Sort-Object LastWriteTime -Descending |
         Select-Object -Skip $KeepLogs |
         Remove-Item -Force -ErrorAction SilentlyContinue
+    # Prune logs beyond parameter -KeepLogs (Default: 10)
+    Get-ChildItem -Path $logDir -Filter "nano11_*.log" -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -Skip $KeepLogs |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+    Get-ChildItem -Path $logDir -Filter "dism_*.log" -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -Skip $KeepLogs |
+        Remove-Item -Force -ErrorAction SilentlyContinue
     Get-ChildItem -Path $logDir -Filter "nano11_*.config.json" -File -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending |
         Select-Object -Skip $KeepLogs |
         Remove-Item -Force -ErrorAction SilentlyContinue
+    # E4: compress logs older than 7 days into a rolling archive (best-effort, non-fatal)
+    try {
+        $archivePath = Join-Path -Path $logDir -ChildPath "archive.zip"
+        $oldLogs = Get-ChildItem -Path $logDir -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-7) -and $_.Name -ne 'archive.zip' }
+        if ($oldLogs) {
+            Compress-Archive -Path $oldLogs.FullName -DestinationPath $archivePath -Update -ErrorAction Stop
+            $oldLogs | Remove-Item -Force -ErrorAction SilentlyContinue
+            Write-Host "Compressed $($oldLogs.Count) log file(s) older than 7 days into archive.zip" -ForegroundColor DarkGray
+        }
+    } catch {
+        Write-Warning "Log compression skipped: $_"
+    }
     # D: rotate build_diagnostics folders - drop empty (aborted) dirs first, then keep newest $KeepLogs runs
     $diagRootDir = Join-Path -Path $scriptDir -ChildPath "build_diagnostics"
     if (Test-Path -LiteralPath $diagRootDir) {
@@ -7160,17 +7185,30 @@ if ($safeDebloatMode) {
     Write-Host "  -> Disk space optimization is safely handled via Phase 13 Export-Image (/Compress:max)." -ForegroundColor Green
 } else {
     Write-Host "Component Store Cleanup requested (-SafeDebloatMode:`$false)..." -ForegroundColor Yellow
-    if ($targetImageBuild -ge 26100) {
+    if ($targetImageBuild -ge 26100 -and -not $ForceWinSxSCleanup) {
         Write-Warning "Windows 11 Build $targetImageBuild (24H2+ Germanium) detected!"
         Write-Warning "Offline /ResetBase and manual WinSxS pruning are blocked to protect Checkpoint Cumulative Updates (LCU) and prevent TurboStack corruption (0x80070570)."
         Write-Host "  -> Safely deferring component compression to Phase 13 Export-Image (/Compress:max)." -ForegroundColor Green
+        Write-Host "  -> Pass -ForceWinSxSCleanup to override (experimental, opt-in; deep-apply verification runs as safety net)." -ForegroundColor DarkYellow
     } else {
+        if ($targetImageBuild -ge 26100) {
+            Write-Warning "FORCE MODE (-ForceWinSxSCleanup): running offline StartComponentCleanup on 26100+ (checkpoint LCU corruption risk). Deep-apply verification + hash checks follow as safety net."
+        }
         Write-Host "Executing DISM native Component Store Cleanup (preserving NTFS hardlinks, no manual file deletions)..." -ForegroundColor Cyan
         & dism.exe /English "/image:$scratchDir" /Cleanup-Image /StartComponentCleanup > $null 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Host "  - Component Store cleanup succeeded." -ForegroundColor Green
         } else {
             Write-Warning "  - Component Store cleanup exited with code $LASTEXITCODE (non-fatal, continuing)."
+        }
+        if ($ForceWinSxSCleanup) {
+            Write-Host "Attempting /StartComponentCleanup /ResetBase (force mode)..." -ForegroundColor Cyan
+            & dism.exe /English "/image:$scratchDir" /Cleanup-Image /StartComponentCleanup /ResetBase > $null 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  - ResetBase succeeded." -ForegroundColor Green
+            } else {
+                Write-Warning "  - ResetBase exited with code $LASTEXITCODE (non-fatal). Component cleanup above already applied."
+            }
         }
     }
 }
