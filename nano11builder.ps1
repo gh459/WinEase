@@ -4262,6 +4262,42 @@ function Show-Nano11GUI {
         }
     })
 
+    # F5: estimated ISO size label + update function (must be defined before checkbox event wiring)
+    $bottomPanel = New-Object System.Windows.Forms.Panel
+    $bottomPanel.Dock = [System.Windows.Forms.DockStyle]::Bottom
+    $bottomPanel.Height = 65
+    $bottomPanel.BackColor = [System.Drawing.Color]::FromArgb(18, 20, 24)
+    $form.Controls.Add($bottomPanel)
+    # Dock order fix: Fill panel must be front-most so it sits between header and footer
+    $mainPanel.BringToFront()
+
+    $lblEstimate = New-Object System.Windows.Forms.Label
+    $lblEstimate.Text = "推定 ISO サイズ: ~5.5 GB"
+    $lblEstimate.Location = New-Object System.Drawing.Point(20, 48)
+    $lblEstimate.Size = New-Object System.Drawing.Size(360, 16)
+    $lblEstimate.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
+    $lblEstimate.Font = New-Object System.Drawing.Font($uiFontName, 9)
+    $bottomPanel.Controls.Add($lblEstimate)
+
+    $updateEstimate = {
+        try {
+            $mb = 5500.0
+            if ($chkFonts.Checked) { $mb += 150 }
+            if ($chkIME.Checked) { $mb += 400 }
+            if ($chkDefender.Checked) { $mb += 200 }
+            if ($chkStore.Checked) { $mb += 120 }
+            if ($chkWU.Checked) { $mb += 50 }
+            if ($chkBasicApps.Checked) { $mb += 30 }
+            if ($chkSearchIndex.Checked) { $mb += 20 }
+            if ($chkXboxServices.Checked) { $mb += 40 }
+            if (-not $chkDrivers.Checked) { $mb -= 80 }
+            if ($chkUltraSlim.Checked) { $mb -= 200 }
+            if ($chkVHDX.Checked) { $mb += 0 }
+            if ($radESD.Checked) { $mb = [math]::Round($mb * 0.82) }
+            $lblEstimate.Text = ("推定 ISO サイズ: ~{0} GB (LZX基準, 概算)" -f [math]::Round($mb / 1024, 2))
+        } catch {}
+    }
+
     # Hook change events to switch preset to Custom
     $allCheckboxes = @($chkDefender, $chkIME, $chkFonts, $chkDrivers, $chkWU, $chkBT, $chkWSL, $chkRecovery, $chkBypassAct, $chkSafeDebloat, $chkUltraSlim, $chkJPKey, $chkAtlas, $chkStore, $chkBasicApps, $chkSearchIndex, $chkVHDX, $chkRadicalRAM)
     foreach ($c in $allCheckboxes) {
@@ -4281,49 +4317,13 @@ function Show-Nano11GUI {
     # Initial estimate
     & $updateEstimate
 
-    # Bottom Button Panel
-    $bottomPanel = New-Object System.Windows.Forms.Panel
-    $bottomPanel.Dock = [System.Windows.Forms.DockStyle]::Bottom
-    $bottomPanel.Height = 65
-    $bottomPanel.BackColor = [System.Drawing.Color]::FromArgb(18, 20, 24)
-    $form.Controls.Add($bottomPanel)
-    # Dock order fix: Fill panel must be front-most so it sits between header and footer
-    $mainPanel.BringToFront()
-
+    # Bottom Button Panel (already created earlier for F5 estimate label)
     $chkDryRun = New-Object System.Windows.Forms.CheckBox
     $chkDryRun.Text = "DryRun (シミュレーション)"
     $chkDryRun.Location = New-Object System.Drawing.Point(20, 22)
     $chkDryRun.Size = New-Object System.Drawing.Size(220, 24)
     $chkDryRun.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
     $bottomPanel.Controls.Add($chkDryRun)
-
-    # F5: estimated ISO size label (live, based on current selections)
-    $lblEstimate = New-Object System.Windows.Forms.Label
-    $lblEstimate.Text = "推定 ISO サイズ: ~5.5 GB"
-    $lblEstimate.Location = New-Object System.Drawing.Point(20, 48)
-    $lblEstimate.Size = New-Object System.Drawing.Size(360, 16)
-    $lblEstimate.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
-    $lblEstimate.Font = New-Object System.Drawing.Font($uiFontName, 9)
-    $bottomPanel.Controls.Add($lblEstimate)
-
-    $updateEstimate = {
-        try {
-            $mb = 5500.0
-            if ($chkFonts.Checked) { $mb += 150 }          # extra fonts kept
-            if ($chkIME.Checked) { $mb += 400 }            # all asian IMEs kept
-            if ($chkDefender.Checked) { $mb += 200 }       # defender kept
-            if ($chkStore.Checked) { $mb += 120 }          # store kept
-            if ($chkWU.Checked) { $mb += 50 }              # windows update kept
-            if ($chkBasicApps.Checked) { $mb += 30 }       # basic apps kept
-            if ($chkSearchIndex.Checked) { $mb += 20 }     # search index kept
-            if ($chkXboxServices.Checked) { $mb += 40 }    # xbox services kept
-            if (-not $chkDrivers.Checked) { $mb -= 80 }    # legacy drivers removed
-            if ($chkUltraSlim.Checked) { $mb -= 200 }      # ultraslim trim
-            if ($chkVHDX.Checked) { $mb += 0 }             # vhdx = no size change
-            if ($radESD.Checked) { $mb = [math]::Round($mb * 0.82) }   # ESD ~18% smaller
-            $lblEstimate.Text = ("推定 ISO サイズ: ~{0} GB (LZX基準, 概算)" -f [math]::Round($mb / 1024, 2))
-        } catch {}
-    }
 
     $btnBuild = New-Object System.Windows.Forms.Button
     $btnBuild.Text = "nano11 ビルド開始"
