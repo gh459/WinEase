@@ -133,8 +133,16 @@ if ($ultraSlimMode) {
 # Windows Defender definitions and telemetry cache purge (safe for Code Integrity & ci.dll)
 if ($removeDefender) {
     Write-Host "Purging Windows Defender definition updates, platform cache, and telemetry..." -ForegroundColor Cyan
-    Remove-Item -Path "$scratchDir\ProgramData\Microsoft\Windows Defender\*" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "$scratchDir\Program Files\Windows Defender Advanced Threat Protection\*" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "$scratchDir\ProgramData\Microsoft\Windows Defender\*" -Recurse -Force -ErrorAction SilentlyContinue
+        # Defender Remover (ionuttbara) integration: remove Defender folders entirely and recreate empty ones
+        foreach ($defFolder in @("Program Files\Windows Defender", "Program Files\Windows Defender Advanced Threat Protection")) {
+            $fullDefPath = Join-Path -Path $scratchDir -ChildPath $defFolder
+            if (Test-Path -LiteralPath $fullDefPath) {
+                Write-Host "  - Removing Defender folder: $defFolder" -ForegroundColor Cyan
+                Remove-ProtectedDirectory -Path $fullDefPath -ScratchPath $scratchDir
+                New-Item -ItemType Directory -Force -Path $fullDefPath -ErrorAction SilentlyContinue | Out-Null
+            }
+        }
     # Note: WinSxS manifests, security catalogs (.cat), and System32 binaries are strictly preserved.
     # On Windows 11 24H2+, deleting hardlinked binaries outside DISM causes WIM stream corruption (Data Error 0x80070570)
     # and Code Integrity (ci.dll) failure with STATUS_INVALID_IMAGE_HASH (0xC0000428) -> Installer BSOD/reboot loop.

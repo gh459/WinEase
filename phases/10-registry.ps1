@@ -358,11 +358,14 @@ if ($removeDefender) {
         'webthreatdefsvc',
         'webthreatdefusersvc',
         'SgrmBroker',
-        'SgrmAgent'
+        'SgrmAgent',
+        'whesvc'   # Windows Health and Enhanced Security (Defender Remover integration)
     )
     foreach ($svc in $defServices) {
         reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\$svc" /v "Start" /t REG_DWORD /d 4 /f > $null 2>&1
         reg.exe delete "HKLM\zSYSTEM\ControlSet001\Services\$svc\TriggerInfo" /f > $null 2>&1
+        # Defender Remover (ionuttbara) integration: delete service keys entirely for thorough removal
+        reg.exe delete "HKLM\zSYSTEM\ControlSet001\Services\$svc" /f > $null 2>&1
     }
 
     # 3. Disable Tamper Protection offline
