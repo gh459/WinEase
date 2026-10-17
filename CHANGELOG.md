@@ -74,6 +74,18 @@ nano11 scheme; entries below are local-fork additions on top of upstream 2.1.
 - Misleading "Transient artifacts cleaned (build\ preserved for -ResumeIsoOnly)"
   message no longer prints when nothing was deleted - Phase 18 F1 cleanup reports the
   real removed count and warns with paths for anything left behind.
+- Cleanup hardening after live validation on the leaked trees (real-data testing):
+  an access-denied directory previously aborted the prune walk, after which the
+  safety gate skipped removal entirely (empty roots left behind). Verified hazards
+  are now encoded as hard rules: `robocopy /MIR` purges THROUGH junctions even with
+  `/XJ` (it destroyed a canary target in every tested variant), `takeown /r` and
+  `icacls /T` traverse junctions, and `icacls` on a link path rewrites the link
+  TARGET's ACL. The mirror purge therefore runs only on trees the walk could fully
+  verify as link-free, and ACL repair is applied NON-recursively with inheritable
+  `(OI)(CI)` grants (verified not to propagate across junctions), iterated so
+  unreadable directories and undeletable child links are repaired one level at a
+  time. Three Pester regression tests cover the denied-directory shape, a junction
+  hidden inside an unreadable directory, and a link whose inherited ACL was emptied.
 
 ### Notes
 - The 26100+ (24H2+) offline WinSxS cleanup remains **blocked by default**; use

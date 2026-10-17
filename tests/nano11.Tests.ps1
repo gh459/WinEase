@@ -199,4 +199,55 @@ Describe "nano11 builder - robust tree removal (long paths + image ACLs)" {
         (Test-Path -LiteralPath $child) | Should Be $true
         if (Test-Path -LiteralPath $root) { & cmd.exe /c "rd /s /q `"$root`"" > $null 2>&1 }
     }
+
+    It "removes a tree whose subdirectory denies enumeration (real-incident shape)" {
+        $root = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("nano11_robust_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $tree = Join-Path -Path $root -ChildPath "t_enum"
+        $denied = Join-Path -Path $tree -ChildPath "DeniedSvc"
+        [System.IO.Directory]::CreateDirectory($denied) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $denied "payload.bin"), 'x')
+        & icacls.exe $denied /inheritance:r /deny '*S-1-5-32-544:RX' /C /Q > $null 2>&1
+
+        (Remove-Nano11TreeRobust -Path $tree -SafetyRoot $root) | Should Be $true
+        (Test-Path -LiteralPath $tree) | Should Be $false
+        if (Test-Path -LiteralPath $root) { & cmd.exe /c "rd /s /q `"$root`"" > $null 2>&1 }
+    }
+
+    It "never destroys a junction target hidden inside an unreadable directory" {
+        # Regression: robocopy /MIR purges THROUGH junctions even with /XJ, so it must only
+        # run on trees the prune walk could fully verify as link-free.
+        $root = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("nano11_robust_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $canary = ($root + '_canary')
+        $tree = Join-Path -Path $root -ChildPath "t_hidden"
+        $denied = Join-Path -Path $tree -ChildPath "DeniedSvc"
+        [System.IO.Directory]::CreateDirectory($denied) | Out-Null
+        [System.IO.Directory]::CreateDirectory($canary) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $canary "canary.txt"), 'precious')
+        & cmd.exe /c "mklink /J `"$denied\hidden_junction`" `"$canary`"" > $null 2>&1
+        & icacls.exe $denied /inheritance:r /deny '*S-1-5-32-544:RX' /C /Q > $null 2>&1
+
+        (Remove-Nano11TreeRobust -Path $tree -SafetyRoot $root) | Should Be $true
+        (Test-Path -LiteralPath $tree) | Should Be $false
+        (Test-Path -LiteralPath (Join-Path $canary "canary.txt")) | Should Be $true
+        if (Test-Path -LiteralPath $root) { & cmd.exe /c "rd /s /q `"$root`"" > $null 2>&1 }
+        if (Test-Path -LiteralPath $canary) { & cmd.exe /c "rd /s /q `"$canary`"" > $null 2>&1 }
+    }
+
+    It "deletes links whose inherited ACL was emptied, via parent repair" {
+        $root = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("nano11_robust_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $canary = ($root + '_canary')
+        $tree = Join-Path -Path $root -ChildPath "t_stripped"
+        $p = Join-Path -Path $tree -ChildPath "P"
+        [System.IO.Directory]::CreateDirectory($p) | Out-Null
+        [System.IO.Directory]::CreateDirectory($canary) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $canary "canary.txt"), 'precious')
+        & cmd.exe /c "mklink /J `"$p\stripped_link`" `"$canary`"" > $null 2>&1
+        & icacls.exe $p /inheritance:r /grant '*S-1-5-32-544:F' /C /Q > $null 2>&1
+
+        (Remove-Nano11TreeRobust -Path $tree -SafetyRoot $root) | Should Be $true
+        (Test-Path -LiteralPath $tree) | Should Be $false
+        (Test-Path -LiteralPath (Join-Path $canary "canary.txt")) | Should Be $true
+        if (Test-Path -LiteralPath $root) { & cmd.exe /c "rd /s /q `"$root`"" > $null 2>&1 }
+        if (Test-Path -LiteralPath $canary) { & cmd.exe /c "rd /s /q `"$canary`"" > $null 2>&1 }
+    }
 }
