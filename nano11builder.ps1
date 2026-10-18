@@ -1819,101 +1819,33 @@ function Invoke-Nano11ImageMount {
     throw "Failed to mount image '$normWim' (Index: $ImageIndex) after $Retries attempts. Tried directories: $triedStr. Last exit code: $lastExitHex ($lastExitCode)."
 }
 
-# Every setting that a JSON profile can carry (-SaveProfile writes these, -LoadProfile reads them).
-# Names match the keys understood by Apply-ProfileSettings and the built-in presets.
-$script:AllTweakDefs = [ordered]@{
-    # 1. Security & Requirement Bypasses
-    "BypassHardwareRequirements"      = @{ Category = "Security"; Default = $true;  Description = "Bypass TPM 2.0, SecureBoot, RAM, CPU and Storage checks" }
-    "BypassNetworkRequirement"       = @{ Category = "Security"; Default = $true;  Description = "Bypass mandatory OOBE internet connection requirement" }
-    "BypassNRO"                      = @{ Category = "Security"; Default = $true;  Description = "Enable BypassNRO registry policy for local account creation" }
-    "BypassActivationRestrictions"    = @{ Category = "Security"; Default = $true;  Description = "Unlock personalization, suppress watermarks and licensing nags" }
-    "DisableUAC"                     = @{ Category = "Security"; Default = $false; Description = "Disable User Account Control (UAC) consent prompts" }
-    "DisableSmartScreen"             = @{ Category = "Security"; Default = $false; Description = "Disable SmartScreen filter for apps and downloads" }
-    "DisableVBS"                     = @{ Category = "Security"; Default = $false; Description = "Disable Virtualization-Based Security (VBS / Core Isolation)" }
-    "DisableWPBT"                    = @{ Category = "Security"; Default = $false; Description = "Disable Windows Platform Binary Table (OEM backdoor prevention)" }
-    "PreventDeviceEncryption"        = @{ Category = "Security"; Default = $false; Description = "Prevent automatic BitLocker device encryption on OOBE" }
-    "DisableCPUMitigations"          = @{ Category = "Security"; Default = $false; Description = "Disable Spectre/Meltdown CPU mitigations for raw throughput" }
-
-    # 2. Privacy, Telemetry & AI Subsystems
-    "DisableCopilot"                 = @{ Category = "Privacy";  Default = $true;  Description = "Disable Windows Copilot AI integration" }
-    "DisableWebSearch"               = @{ Category = "Privacy";  Default = $true;  Description = "Disable Bing web search in Start Menu" }
-    "DisableWidgets"                 = @{ Category = "Privacy";  Default = $true;  Description = "Disable Windows Widgets board and news feed" }
-    "DisableCrossDevice"             = @{ Category = "Privacy";  Default = $true;  Description = "Disable Cross Device Experience Host (Phone Link)" }
-    "DisableAdvertisingId"           = @{ Category = "Privacy";  Default = $true;  Description = "Disable targeted Advertising Identifier" }
-    "DisableErrorReporting"          = @{ Category = "Privacy";  Default = $true;  Description = "Disable Windows Error Reporting (WER)" }
-    "DisableIMETelemetry"            = @{ Category = "Privacy";  Default = $true;  Description = "Opt out of cloud IME learning data collection" }
-    "DisableCloudContent"            = @{ Category = "Privacy";  Default = $true;  Description = "Disable cloud consumer features and promoted apps" }
-    "DisableAppPrivacy"              = @{ Category = "Privacy";  Default = $true;  Description = "Restrict background access to location, mic, and contacts" }
-    "DisableTelemetryAndDiagnostics" = @{ Category = "Privacy";  Default = $true;  Description = "Set telemetry to 0 (Security) and stop DiagTrack service" }
-    "DisableDefenderSecurityCenter"  = @{ Category = "Privacy";  Default = $true;  Description = "Hide Security Center systray notifications" }
-    "DisableCortana"                 = @{ Category = "Privacy";  Default = $true;  Description = "Disable Cortana digital assistant" }
-    "DisableActivityHistory"         = @{ Category = "Privacy";  Default = $true;  Description = "Disable User Activity tracking and synchronization" }
-    "DisableTimeline"                = @{ Category = "Privacy";  Default = $true;  Description = "Disable Windows Timeline feature" }
-    "DisableDiagnosticData"          = @{ Category = "Privacy";  Default = $true;  Description = "Disable diagnostic feedback and sample submissions" }
-
-    # 3. Performance, Memory & Gaming Tuning
-    "DisableFTH"                     = @{ Category = "Performance"; Default = $true;  Description = "Disable Fault Tolerant Heap to reduce gaming latency" }
-    "DisablePCA"                     = @{ Category = "Performance"; Default = $true;  Description = "Disable Program Compatibility Assistant" }
-    "RadicalRAM"                     = @{ Category = "Performance"; Default = $true;  Description = "Radical RAM optimization targeting sub-1.6GB idle memory" }
-    "TuneMemoryAndPaging"            = @{ Category = "Performance"; Default = $true;  Description = "Skip clearing the pagefile on shutdown and keep standard system cache" }
-    "GamingNetworkTweaks"            = @{ Category = "Performance"; Default = $true;  Description = "Disable multimedia network throttling and MSMQ Nagle (TCPNoDelay)" }
-    "LowLatencyAudioMMCSS"           = @{ Category = "Performance"; Default = $true;  Description = "Optimize MMCSS thread scheduling for low audio jitter" }
-    "DisableBackgroundApps"          = @{ Category = "Performance"; Default = $true;  Description = "Disable background execution of UWP apps" }
-    "DisableGameDVR"                 = @{ Category = "Performance"; Default = $true;  Description = "Disable GameDVR background video recording" }
-    "DisableSuperfetch"              = @{ Category = "Performance"; Default = $true;  Description = "Disable SysMain (Superfetch) service for NVMe/SSD" }
-    "DisableWindowsSearchIndexing"   = @{ Category = "Performance"; Default = $true;  Description = "Disable Windows Search indexing service (WSearch)" }
-    "DisableFastStartup"             = @{ Category = "Performance"; Default = $false; Description = "Disable Fast Startup to guarantee clean reboots" }
-    "DisableMemCompression"          = @{ Category = "Performance"; Default = $true;  Description = "Disable in-memory paging compression" }
-    "NoKernelPaging"                 = @{ Category = "Performance"; Default = $true;  Description = "Lock NT kernel executive in physical RAM" }
-    "DisableUSBSuspend"              = @{ Category = "Performance"; Default = $true;  Description = "Disable selective USB power suspend" }
-    "NoHypervisor"                   = @{ Category = "Performance"; Default = $true;  Description = "Set hypervisorlaunchtype to Off for bare-metal performance" }
-
-    # 4. User Interface, Explorer & Shell Customizations
-    "EnableClassicContextMenu"       = @{ Category = "UI"; Default = $true;  Description = "Restore classic Windows 10 style full context menus" }
-    "EnableDarkTheme"                = @{ Category = "UI"; Default = $true;  Description = "Enable system-wide Dark Theme for apps and system" }
-    "ShowFileExtensions"             = @{ Category = "UI"; Default = $true;  Description = "Show file extensions in File Explorer" }
-    "ShowHiddenFiles"                = @{ Category = "UI"; Default = $false; Description = "Show hidden files and folders in File Explorer" }
-    "LaunchToThisPC"                 = @{ Category = "UI"; Default = $true;  Description = "Open File Explorer to This PC instead of Home" }
-    "TaskbarEndTask"                 = @{ Category = "UI"; Default = $true;  Description = "Enable End Task on taskbar right-click context menu" }
-    "TaskbarAlignLeft"               = @{ Category = "UI"; Default = $true;  Description = "Align Start button and taskbar icons to the left" }
-    "HideMeetNow"                    = @{ Category = "UI"; Default = $true;  Description = "Hide Meet Now icon from taskbar" }
-    "HideSyncNotifications"          = @{ Category = "UI"; Default = $true;  Description = "Hide sync provider notifications in File Explorer" }
-    "HideRecommendedSection"         = @{ Category = "UI"; Default = $true;  Description = "Hide Recommended section in Start Menu" }
-    "DisableStartupSound"            = @{ Category = "UI"; Default = $true;  Description = "Disable Windows startup audio chime" }
-    "DisableLockScreen"              = @{ Category = "UI"; Default = $false; Description = "Skip lock screen directly to login prompt" }
-    "DisableSleepOption"             = @{ Category = "UI"; Default = $false; Description = "Remove Sleep option from power menu" }
-    "DisableBSODEmoticon"            = @{ Category = "UI"; Default = $false; Description = "Remove sad face emoticon from BSOD crash screen" }
-    "EnableLongPaths"                = @{ Category = "UI"; Default = $true;  Description = "Enable Win32 long paths (> 260 characters)" }
-    "TransparentShortcutOverlay"     = @{ Category = "UI"; Default = $false; Description = "Remove shortcut arrow icon overlay on desktop icons" }
-    "PhotoViewerAssociations"        = @{ Category = "UI"; Default = $true;  Description = "Restore classic Windows Photo Viewer file associations" }
-    "TakeOwnershipContextMenu"       = @{ Category = "UI"; Default = $true;  Description = "Add Take Ownership right-click context menu" }
-    "CmdAsAdminContextMenu"          = @{ Category = "UI"; Default = $true;  Description = "Add Command Prompt as Administrator to context menu" }
-    "OptimizeVisualEffects"          = @{ Category = "UI"; Default = $true;  Description = "Optimize visual effects for maximum performance" }
-    "CleanContextMenus"              = @{ Category = "UI"; Default = $true;  Description = "Hide Share, Give access to and Cast to Device context menu entries" }
+# Every tweak and component setting is defined once, in config\tweaks.psd1. The tables below
+# are derived from it; add or rename a setting there, never here.
+$script:Nano11SettingsDefPath = Join-Path -Path $scriptDirEarly -ChildPath "config\tweaks.psd1"
+if (-not (Test-Path -LiteralPath $script:Nano11SettingsDefPath)) {
+    throw "Settings definition file not found: $($script:Nano11SettingsDefPath)"
 }
+$script:Nano11SettingsDef = Import-PowerShellDataFile -LiteralPath $script:Nano11SettingsDefPath
+
+# Tweak settings shown on GUI tabs 2-5 (Key -> Category / Default / Description)
+$script:AllTweakDefs = [ordered]@{}
+# Legacy tweak key names (older profiles, -TweakSettings hashtables) -> current AllTweakDefs key
+$script:TweakKeyAliases = [ordered]@{}
+# Tweak keys that phases consume through a script variable instead of Test-TweakEnabled
+$script:TweakVariableMap = [ordered]@{}
+foreach ($td in $script:Nano11SettingsDef.Tweaks) {
+    $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description }
+    foreach ($alias in @($td.Aliases)) { if ($alias) { $script:TweakKeyAliases[$alias] = $td.Key } }
+    if ($td.Variable) { $script:TweakVariableMap[$td.Key] = $td.Variable }
+}
+
+# Component settings (Key -> Variable / Type / Default / Gui), in profile key order
+$script:ComponentDefs = [ordered]@{}
+foreach ($cd in $script:Nano11SettingsDef.Components) { $script:ComponentDefs[$cd.Key] = $cd }
 
 $script:TweakSettings = [ordered]@{}
 foreach ($tk in $script:AllTweakDefs.Keys) {
     $script:TweakSettings[$tk] = [bool]$script:AllTweakDefs[$tk].Default
-}
-
-# Legacy tweak key names (older profiles, -TweakSettings hashtables) -> current AllTweakDefs key
-$script:TweakKeyAliases = [ordered]@{
-    "BypassRequirements" = "BypassHardwareRequirements"
-    "DisableTelemetry"   = "DisableTelemetryAndDiagnostics"
-    "DisableSearchIndex" = "DisableWindowsSearchIndexing"
-    "DAWMode"            = "LowLatencyAudioMMCSS"
-}
-
-# Tweak keys that phases consume through a script variable instead of Test-TweakEnabled
-$script:TweakVariableMap = [ordered]@{
-    "RadicalRAM"                   = "radicalRAM"
-    "BypassActivationRestrictions" = "bypassActivationRestrictions"
-    "DisableMemCompression"        = "disableMemCompression"
-    "DisableUSBSuspend"            = "disableUSBSuspend"
-    "NoHypervisor"                 = "noHypervisor"
-    "NoKernelPaging"               = "noKernelPaging"
-    "DisableCPUMitigations"        = "disableCPUMitigations"
 }
 
 function Resolve-Nano11TweakKey {
@@ -1931,77 +1863,35 @@ function Sync-Nano11TweakVariables {
     }
 }
 
-$script:Nano11ProfileKeys = @(
-    'RemoveDefender', 'KeepAsianIME', 'KeepExtraFonts', 'RemoveDrivers', 'DisableWindowsUpdate',
-    'KeepBluetooth', 'WSLSupport', 'KeepRecoveryEnv', 'SafeDebloatMode', 'UltraSlimMode',
-    'SetJapaneseKeyboard', 'AtlasReviOSMode', 'RemoveStore', 'KeepBasicApps', 'KeepSearchIndex',
-    'KeepXboxServices', 'KeepAudioTweaks', 'UseVHDX', 'RemoveLegacyFOD', 'TrimWallpapers',
-    'HibernateMode', 'CrashDumpMode', 'DisableCPUMitigations', 'MMCSSGaming', 'DAWMode',
-    'DisableMemCompression', 'DisableFSE', 'NvidiaLowLatency', 'NoKernelPaging', 'DisableUSBSuspend',
-    'NoHypervisor', 'RemoveWebViewPostOOBE', 'FastExport', 'UefiOnly', 'CpuBoostMode', 'PowerPreset',
-    'BypassActivationRestrictions', 'RadicalRAM', 'TweakGroups', 'TweakSettings', 'PayloadFormat',
-    'SkipEiCfg', 'NoPostInstallAssets', 'SourceDrive', 'WorkDir', 'Index', 'ComputerName', 'UserName',
-    'AdvancedDebloatStandard', 'AdvancedDebloatExperimental'
-) + @($script:AllTweakDefs.Keys)
+# Profile key order: component settings first, then every tweak key (-SaveProfile writes these,
+# -LoadProfile accepts them)
+$script:Nano11ProfileKeys = @($script:ComponentDefs.Keys) + @($script:AllTweakDefs.Keys)
+
+# Read a component's script variable typed as its definition says (Bool -> [bool], String -> [string])
+function Get-Nano11ComponentValue {
+    param([Parameter(Mandatory = $true)][hashtable]$Def)
+    $val = Get-Variable -Name $Def.Variable -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    if ($Def.Type -eq 'String') { return "$val" }
+    return [bool]$val
+}
 
 # Helper function: Snapshot the currently resolved build settings (script scope) as a profile hashtable
 function Get-Nano11CurrentConfig {
     param([string]$ProfileName = "Exported Profile")
     $tweakGroups = [ordered]@{}
     foreach ($k in $script:activeTweakGroups.Keys) { $tweakGroups[$k] = [bool]$script:activeTweakGroups[$k] }
-    return @{
-        ProfileName                  = $ProfileName
-        RemoveDefender               = [bool]$script:removeDefender
-        KeepAsianIME                 = [bool]$script:keepAsianIME
-        KeepExtraFonts               = [bool]$script:keepExtraFonts
-        RemoveDrivers                = [bool]$script:removeDrivers
-        DisableWindowsUpdate         = [bool]$script:disableWU
-        KeepBluetooth                = [bool]$script:keepBT
-        WSLSupport                   = [bool]$script:wslSupport
-        KeepRecoveryEnv              = [bool]$script:keepRecoveryEnv
-        SafeDebloatMode              = [bool]$script:safeDebloatMode
-        UltraSlimMode                = [bool]$script:ultraSlimMode
-        SetJapaneseKeyboard          = [bool]$script:setJapaneseKeyboard
-        AtlasReviOSMode              = [bool]$script:atlasReviOSMode
-        RemoveStore                  = [bool]$script:removeStore
-        KeepBasicApps                = [bool]$script:keepBasicApps
-        KeepSearchIndex              = [bool]$script:keepSearchIndex
-        KeepXboxServices             = [bool]$script:keepXboxServices
-        KeepAudioTweaks              = [bool]$script:keepAudioTweaks
-        UseVHDX                      = [bool]$script:useVHDX
-        RemoveLegacyFOD              = [bool]$script:removeLegacyFOD
-        TrimWallpapers               = [bool]$script:trimWallpapers
-        HibernateMode                = "$($script:hibernateMode)"
-        CrashDumpMode                = "$($script:crashDumpMode)"
-        DisableCPUMitigations        = [bool]$script:disableCPUMitigations
-        MMCSSGaming                  = [bool]$script:mmcssGaming
-        DAWMode                      = [bool]$script:dawMode
-        DisableMemCompression        = [bool]$script:disableMemCompression
-        DisableFSE                   = [bool]$script:disableFSE
-        NvidiaLowLatency             = [bool]$script:nvidiaLowLatency
-        NoKernelPaging               = [bool]$script:noKernelPaging
-        DisableUSBSuspend            = [bool]$script:disableUSBSuspend
-        NoHypervisor                 = [bool]$script:noHypervisor
-        RemoveWebViewPostOOBE        = [bool]$script:removeWebViewPostOOBE
-        FastExport                   = [bool]$script:fastExport
-        UefiOnly                     = [bool]$script:uefiOnly
-        CpuBoostMode                 = "$($script:cpuBoostMode)"
-        PowerPreset                  = "$($script:powerPreset)"
-        BypassActivationRestrictions = [bool]$script:bypassActivationRestrictions
-        RadicalRAM                   = [bool]$script:radicalRAM
+    $config = @{ ProfileName = $ProfileName }
+    foreach ($cd in $script:ComponentDefs.Values) {
+        if ($cd.Type -ne 'Special') { $config[$cd.Key] = Get-Nano11ComponentValue -Def $cd }
+    }
+    $config += @{
         TweakGroups                  = $tweakGroups
         PayloadFormat                = if ($script:exportESDMode) { "ESD" } elseif ($script:splitWIMMode) { "SWM" } else { "WIM" }
-        SkipEiCfg                    = [bool]$script:SkipEiCfg
-        NoPostInstallAssets          = [bool]$script:NoPostInstallAssets
-        SourceDrive                  = "$($script:SourceDrive)"
-        WorkDir                      = "$($script:WorkDir)"
-        Index                        = "$($script:Index)"
-        ComputerName                 = "$($script:ComputerName)"
-        UserName                     = "$($script:UserName)"
         AdvancedDebloatStandard      = @($script:advancedDebloatStandard)
         AdvancedDebloatExperimental  = @($script:advancedDebloatExperimental)
         TweakSettings                = $script:TweakSettings
     }
+    return $config
 }
 
 # Helper function: Export configuration settings to a JSON profile
@@ -2706,9 +2596,7 @@ function Apply-ProfileSettings {
         [Parameter(Mandatory = $false)]
         [string]$ProfileName,
         [Parameter(Mandatory = $false)]
-        [psobject]$ProfileObject,
-        [switch]$UpdateGui,
-        [hashtable]$GuiControls
+        [psobject]$ProfileObject
     )
 
     $targetPreset = $null
@@ -2734,131 +2622,64 @@ function Apply-ProfileSettings {
         return $defaultVal
     }
 
-    if ($UpdateGui -and $GuiControls) {
-        $GuiControls.chkDefender.Checked    = [bool](& $getVal 'RemoveDefender' $true)
-        $GuiControls.chkIME.Checked         = [bool](& $getVal 'KeepAsianIME' $true)
-        $GuiControls.chkFonts.Checked       = [bool](& $getVal 'KeepExtraFonts' $true)
-        $GuiControls.chkDrivers.Checked     = [bool](& $getVal 'RemoveDrivers' $false)
-        $GuiControls.chkWU.Checked          = [bool](& $getVal 'DisableWindowsUpdate' $true)
-        $GuiControls.chkBT.Checked          = [bool](& $getVal 'KeepBluetooth' $true)
-        $GuiControls.chkWSL.Checked         = [bool](& $getVal 'WSLSupport' $false)
-        $GuiControls.chkRecovery.Checked    = [bool](& $getVal 'KeepRecoveryEnv' $false)
-        $GuiControls.chkSafeDebloat.Checked = [bool](& $getVal 'SafeDebloatMode' $true)
-        $GuiControls.chkUltraSlim.Checked   = [bool](& $getVal 'UltraSlimMode' $true)
-        $GuiControls.chkJPKey.Checked       = [bool](& $getVal 'SetJapaneseKeyboard' $true)
-        $GuiControls.chkAtlas.Checked       = [bool](& $getVal 'AtlasReviOSMode' $true)
-        $GuiControls.chkStore.Checked       = [bool](& $getVal 'RemoveStore' $false)
-        if ($GuiControls.chkBypassActivation) { $GuiControls.chkBypassActivation.Checked = [bool](& $getVal 'BypassActivationRestrictions' $true) }
-        if ($GuiControls.chkRadicalRAM)        { $GuiControls.chkRadicalRAM.Checked        = [bool](& $getVal 'RadicalRAM' $true) }
-        if ($GuiControls.chkBasicApps)   { $GuiControls.chkBasicApps.Checked   = [bool](& $getVal 'KeepBasicApps' $false) }
-        if ($GuiControls.chkSearchIndex) { $GuiControls.chkSearchIndex.Checked = [bool](& $getVal 'KeepSearchIndex' $false) }
-        if ($GuiControls.chkVhdx)        { $GuiControls.chkVhdx.Checked        = [bool](& $getVal 'UseVHDX' $false) }
-        
-        $fmt = (& $getVal 'PayloadFormat' 'WIM').ToString().ToUpper()
-        if ($fmt -eq 'ESD') { $GuiControls.radESD.Checked = $true }
-        elseif ($fmt -eq 'SWM') { $GuiControls.radSWM.Checked = $true }
-        else { $GuiControls.radWIM.Checked = $true }
-        if ($GuiControls.TweakCheckboxes) {
-            foreach ($k in $GuiControls.TweakCheckboxes.Keys) {
-                if ($script:TweakSettings.Contains($k)) {
-                    $GuiControls.TweakCheckboxes[$k].Checked = [bool]$script:TweakSettings[$k]
-                }
-            }
-        }
-    } else {
-        $script:removeDefender       = [bool](& $getVal 'RemoveDefender' $true)
-$script:advancedDebloatStandard     = @()
-$script:advancedDebloatExperimental = @()
-        $advStd = & $getVal 'AdvancedDebloatStandard' $null
-        if ($advStd) { $script:advancedDebloatStandard = @($advStd) } else { $script:advancedDebloatStandard = @() }
-        $advExp = & $getVal 'AdvancedDebloatExperimental' $null
-        if ($advExp) { $script:advancedDebloatExperimental = @($advExp) } else { $script:advancedDebloatExperimental = @() }
-        $script:keepAsianIME         = [bool](& $getVal 'KeepAsianIME' $true)
-        $script:keepExtraFonts       = [bool](& $getVal 'KeepExtraFonts' $true)
-        $script:removeDrivers        = [bool](& $getVal 'RemoveDrivers' $false)
-        $script:disableWU            = [bool](& $getVal 'DisableWindowsUpdate' $true)
-        $script:keepBT               = [bool](& $getVal 'KeepBluetooth' $true)
-        $script:wslSupport           = [bool](& $getVal 'WSLSupport' $false)
-        $script:keepRecoveryEnv      = [bool](& $getVal 'KeepRecoveryEnv' $false)
-        $script:safeDebloatMode      = [bool](& $getVal 'SafeDebloatMode' $true)
-        $script:ultraSlimMode        = [bool](& $getVal 'UltraSlimMode' $true)
-        $script:setJapaneseKeyboard  = [bool](& $getVal 'SetJapaneseKeyboard' $true)
-        $script:atlasReviOSMode      = [bool](& $getVal 'AtlasReviOSMode' $true)
-        $script:removeStore          = [bool](& $getVal 'RemoveStore' $false)
-        $script:keepBasicApps        = [bool](& $getVal 'KeepBasicApps' $false)
-        $script:keepSearchIndex      = [bool](& $getVal 'KeepSearchIndex' $false)
-        $script:keepXboxServices     = [bool](& $getVal 'KeepXboxServices' $false)
-        $script:keepAudioTweaks      = [bool](& $getVal 'KeepAudioTweaks' $true)
-        $script:useVHDX              = [bool](& $getVal 'UseVHDX' $false)
-
-        # Advanced Modular Optimization Flags
-        $script:removeLegacyFOD      = [bool](& $getVal 'RemoveLegacyFOD' $false)
-        $script:trimWallpapers       = [bool](& $getVal 'TrimWallpapers' $false)
-        $script:hibernateMode        = (& $getVal 'HibernateMode' 'Keep').ToString()
-        $script:crashDumpMode        = (& $getVal 'CrashDumpMode' 'Automatic').ToString()
-        $script:disableCPUMitigations= [bool](& $getVal 'DisableCPUMitigations' $false)
-        $script:mmcssGaming          = [bool](& $getVal 'MMCSSGaming' $false)
-        $script:dawMode              = [bool](& $getVal 'DAWMode' $false)
-        $script:disableMemCompression= [bool](& $getVal 'DisableMemCompression' $false)
-        $script:disableFSE           = [bool](& $getVal 'DisableFSE' $false)
-        $script:nvidiaLowLatency     = [bool](& $getVal 'NvidiaLowLatency' $false)
-        $script:noKernelPaging       = [bool](& $getVal 'NoKernelPaging' $false)
-        $script:disableUSBSuspend    = [bool](& $getVal 'DisableUSBSuspend' $false)
-        $script:noHypervisor         = [bool](& $getVal 'NoHypervisor' $false)
-        $script:removeWebViewPostOOBE= [bool](& $getVal 'RemoveWebViewPostOOBE' $false)
-        $script:fastExport           = [bool](& $getVal 'FastExport' $false)
-        $script:uefiOnly             = [bool](& $getVal 'UefiOnly' $false)
-        $script:cpuBoostMode         = (& $getVal 'CpuBoostMode' 'Default').ToString()
-        $script:powerPreset          = (& $getVal 'PowerPreset' 'Default').ToString()
-        $script:bypassActivationRestrictions = [bool](& $getVal 'BypassActivationRestrictions' $true)
-        $script:radicalRAM                   = [bool](& $getVal 'RadicalRAM' $true)
-
-        # Modular Tweak Groups
-        $tGroups = & $getVal 'TweakGroups' $null
-        if ($tGroups) {
-            foreach ($k in $script:TweakGroups.Keys) {
-                # Built-in presets use a dictionary; JSON profiles arrive as a PSCustomObject
-                if ($tGroups -is [System.Collections.IDictionary]) {
-                    if ($tGroups.Contains($k)) { $script:activeTweakGroups[$k] = [bool]$tGroups[$k] }
-                } elseif ($tGroups.PSObject.Properties[$k]) {
-                    $script:activeTweakGroups[$k] = [bool]$tGroups.$k
-                }
-            }
-        }
-
-        $fmt = (& $getVal 'PayloadFormat' 'WIM').ToString().ToUpper()
-        if ($fmt -eq 'ESD') { $script:exportESDMode = $true; $script:splitWIMMode = $false }
-        elseif ($fmt -eq 'SWM') { $script:splitWIMMode = $true; $script:exportESDMode = $false }
-        else { $script:exportESDMode = $false; $script:splitWIMMode = $false }
+    foreach ($cd in $script:ComponentDefs.Values) {
+        # Components without a Default (SourceDrive, SkipEiCfg, ...) are not applied from a profile
+        if ($cd.Type -eq 'Special' -or -not $cd.ContainsKey('Default')) { continue }
+        $raw = & $getVal $cd.Key $cd.Default
+        $val = if ($cd.Type -eq 'String') { $raw.ToString() } else { [bool]$raw }
+        Set-Variable -Name $cd.Variable -Scope Script -Value $val
     }
-        $script:TweakSettings = [ordered]@{}
-        foreach ($tk in $script:AllTweakDefs.Keys) {
-            $script:TweakSettings[$tk] = [bool]$script:AllTweakDefs[$tk].Default
+    $advStd = & $getVal 'AdvancedDebloatStandard' $null
+    if ($advStd) { $script:advancedDebloatStandard = @($advStd) } else { $script:advancedDebloatStandard = @() }
+    $advExp = & $getVal 'AdvancedDebloatExperimental' $null
+    if ($advExp) { $script:advancedDebloatExperimental = @($advExp) } else { $script:advancedDebloatExperimental = @() }
+
+    # Modular Tweak Groups
+    $tGroups = & $getVal 'TweakGroups' $null
+    if ($tGroups) {
+        foreach ($k in $script:TweakGroups.Keys) {
+            # Built-in presets use a dictionary; JSON profiles arrive as a PSCustomObject
+            if ($tGroups -is [System.Collections.IDictionary]) {
+                if ($tGroups.Contains($k)) { $script:activeTweakGroups[$k] = [bool]$tGroups[$k] }
+            } elseif ($tGroups.PSObject.Properties[$k]) {
+                $script:activeTweakGroups[$k] = [bool]$tGroups.$k
+            }
         }
-        $tweakOverrides = & $getVal 'TweakSettings' $null
-        if ($tweakOverrides) {
-            if ($tweakOverrides -is [System.Collections.IDictionary]) {
-                foreach ($k in $tweakOverrides.Keys) {
-                    $rk = Resolve-Nano11TweakKey $k
-                    if ($script:AllTweakDefs.Contains($rk)) {
-                        $script:TweakSettings[$rk] = [bool]$tweakOverrides[$k]
-                    }
+    }
+
+    $fmt = (& $getVal 'PayloadFormat' 'WIM').ToString().ToUpper()
+    if ($fmt -eq 'ESD') { $script:exportESDMode = $true; $script:splitWIMMode = $false }
+    elseif ($fmt -eq 'SWM') { $script:splitWIMMode = $true; $script:exportESDMode = $false }
+    else { $script:exportESDMode = $false; $script:splitWIMMode = $false }
+
+    $script:TweakSettings = [ordered]@{}
+    foreach ($tk in $script:AllTweakDefs.Keys) {
+        $script:TweakSettings[$tk] = [bool]$script:AllTweakDefs[$tk].Default
+    }
+    $tweakOverrides = & $getVal 'TweakSettings' $null
+    if ($tweakOverrides) {
+        if ($tweakOverrides -is [System.Collections.IDictionary]) {
+            foreach ($k in $tweakOverrides.Keys) {
+                $rk = Resolve-Nano11TweakKey $k
+                if ($script:AllTweakDefs.Contains($rk)) {
+                    $script:TweakSettings[$rk] = [bool]$tweakOverrides[$k]
                 }
-            } elseif ($tweakOverrides.PSObject) {
-                foreach ($prop in $tweakOverrides.PSObject.Properties) {
-                    $rk = Resolve-Nano11TweakKey $prop.Name
-                    if ($script:AllTweakDefs.Contains($rk)) {
-                        $script:TweakSettings[$rk] = [bool]$prop.Value
-                    }
+            }
+        } elseif ($tweakOverrides.PSObject) {
+            foreach ($prop in $tweakOverrides.PSObject.Properties) {
+                $rk = Resolve-Nano11TweakKey $prop.Name
+                if ($script:AllTweakDefs.Contains($rk)) {
+                    $script:TweakSettings[$rk] = [bool]$prop.Value
                 }
             }
         }
-        foreach ($k in $script:AllTweakDefs.Keys) {
-            $val = & $getVal $k $null
-            if ($null -ne $val) {
-                $script:TweakSettings[$k] = [bool]$val
-            }
+    }
+    foreach ($k in $script:AllTweakDefs.Keys) {
+        $val = & $getVal $k $null
+        if ($null -ne $val) {
+            $script:TweakSettings[$k] = [bool]$val
         }
+    }
     return $targetPreset
 }
 
@@ -4765,29 +4586,10 @@ function Show-Nano11GUI {
     $tabServices.Controls.Add($flowSvc)
     $flowSvc.BringToFront()
 
-    $svcDefs = @(
-        @{ Key = "RemoveDefender";       Text = "Remove Windows Defender & Security UI"; Desc = "Disable and remove Defender AV, Security Center UI and background scanning"; Def = $true },
-        @{ Key = "KeepAsianIME";         Text = "Keep Asian IMEs (Japanese, Korean, Chinese)"; Desc = "Preserve MS-IME and regional input method components"; Def = $true },
-        @{ Key = "KeepExtraFonts";       Text = "Keep Extra International & Regional Fonts"; Desc = "Preserve supplementary international fonts"; Def = $true },
-        @{ Key = "RemoveDrivers";        Text = "Remove Legacy Storage & Network Drivers"; Desc = "Prune obsolete legacy floppy, modem, and tape drivers"; Def = $false },
-        @{ Key = "DisableWindowsUpdate"; Text = "Disable Automatic Windows Update"; Desc = "Prevent automated background patching and driver updates"; Def = $true },
-        @{ Key = "KeepBluetooth";        Text = "Keep Bluetooth Services & Peripheral Stack"; Desc = "Preserve Bluetooth audio, keyboard, and peripheral connectivity"; Def = $true },
-        @{ Key = "WSLSupport";           Text = "Enable WSL2 & Virtual Machine Platform"; Desc = "Pre-enable WSL2 subsystem and virtual machine components"; Def = $false },
-        @{ Key = "KeepRecoveryEnv";      Text = "Keep Recovery Environment (WinRE)"; Desc = "Preserve WinRE recovery image partition"; Def = $false },
-        @{ Key = "RemoveStore";          Text = "Remove Microsoft Store & Purchased UWP"; Desc = "Remove Store app package while keeping winget package manager"; Def = $false },
-        @{ Key = "KeepBasicApps";        Text = "Keep Basic Apps (Notepad, Paint, Calculator)"; Desc = "Preserve essential inbox utility applications"; Def = $false },
-        @{ Key = "KeepSearchIndex";      Text = "Keep Windows Search Indexing Active"; Desc = "Keep WSearch indexing service running in background"; Def = $false },
-        @{ Key = "SetJapaneseKeyboard";  Text = "Configure Japanese 106/109 Keyboard Layout"; Desc = "Auto-configure keyboard hardware layout for Japanese 106/109 keys"; Def = $true },
-        @{ Key = "AtlasReviOSMode";      Text = "AtlasOS & ReviOS Low-Latency Kernel Tuning"; Desc = "Apply timer resolution, DPC and MMCSS low-latency optimizations"; Def = $true },
-        @{ Key = "KeepXboxServices";     Text = "Keep Xbox Services & Gaming Overlay"; Desc = "Preserve Xbox identity, gaming overlay and Game Bar services"; Def = $false },
-        @{ Key = "KeepAudioTweaks";      Text = "Low-Latency Audio MMCSS Priority"; Desc = "Optimize multimedia class scheduler thread priority for low audio jitter"; Def = $true },
-        @{ Key = "RemoveLegacyFOD";      Text = "Remove Legacy Optional Features (FOD)"; Desc = "Prune legacy Fax, XPS Viewer, WordPad and obsolete packages"; Def = $true },
-        @{ Key = "TrimWallpapers";       Text = "Trim Default Wallpapers & Screen Savers"; Desc = "Remove heavy high-res 4K background images to save image space"; Def = $true },
-        @{ Key = "RemoveWebViewPostOOBE"; Text = "Remove WebView2 Post-OOBE"; Desc = "Uninstall Edge WebView2 runtime after initial setup completes"; Def = $false },
-        @{ Key = "SafeDebloatMode";      Text = "Safe WinSxS Component Store Debloat"; Desc = "Maintain WinSxS component consistency to prevent 0x80070570 setup errors"; Def = $true },
-        @{ Key = "UltraSlimMode";        Text = "UltraSlim Mode (~3GB ISO Reduction Target)"; Desc = "Extensive pruning targeting minimal installation ISO size"; Def = $true }
-    )
-
+    # Components with a Gui entry in config\tweaks.psd1, in their Gui.Order
+    $svcDefs = @($script:ComponentDefs.Values | Where-Object { $_.Gui } | Sort-Object { [int]$_.Gui.Order } | ForEach-Object {
+        @{ Key = $_.Key; Text = $_.Gui.Text; Desc = $_.Gui.Description; Def = [bool]$_.Gui.Default }
+    })
     $svcCheckboxes = [System.Collections.Generic.List[System.Windows.Forms.CheckBox]]::new()
     foreach ($sd in $svcDefs) {
         $initVal = [bool]$sd.Def
@@ -5413,34 +5215,16 @@ function Invoke-Nano11GuiSession {
         UserName                     = $script:UserName
         ComputerName                 = $script:ComputerName
         PresetKey                    = $script:selectedProfile
-        RemoveDefender               = $script:removeDefender
-        KeepAsianIME                 = $script:keepAsianIME
-        KeepExtraFonts               = $script:keepExtraFonts
-        RemoveDrivers                = $script:removeDrivers
-        DisableWindowsUpdate         = $script:disableWU
-        KeepBluetooth                = $script:keepBT
-        WSLSupport                   = $script:wslSupport
-        KeepRecoveryEnv              = $script:keepRecoveryEnv
-        BypassActivationRestrictions = $script:bypassActivationRestrictions
-        RadicalRAM                   = $script:radicalRAM
-        SafeDebloatMode              = $script:safeDebloatMode
-        UltraSlimMode                = $script:ultraSlimMode
-        SetJapaneseKeyboard          = $script:setJapaneseKeyboard
-        AtlasReviOSMode              = $script:atlasReviOSMode
-        RemoveStore                  = $script:removeStore
-        KeepBasicApps                = $script:keepBasicApps
-        KeepSearchIndex              = $script:keepSearchIndex
-        KeepXboxServices             = $script:keepXboxServices
-        KeepAudioTweaks              = $script:keepAudioTweaks
-        RemoveLegacyFOD              = $script:removeLegacyFOD
-        TrimWallpapers               = $script:trimWallpapers
-        RemoveWebViewPostOOBE        = $script:removeWebViewPostOOBE
         UseVHDX                      = $script:useVHDX
         ExportESDMode                = $script:exportESDMode
         SplitWIMMode                 = $script:splitWIMMode
         TweakSettings                = $script:TweakSettings
         AdvancedDebloatStandard      = $script:advancedDebloatStandard
         AdvancedDebloatExperimental  = $script:advancedDebloatExperimental
+    }
+    # Services & Apps tab checkboxes
+    foreach ($cd in $script:ComponentDefs.Values) {
+        if ($cd.Gui) { $initialSettings[$cd.Key] = Get-Nano11ComponentValue -Def $cd }
     }
     $guiResult = Show-Nano11GUI -InitialSettings $initialSettings
     if (-not ($guiResult -and $guiResult.Success)) { return $false }
@@ -5453,26 +5237,9 @@ function Invoke-Nano11GuiSession {
     if ($guiResult.WorkDir)     { $script:WorkDir = $guiResult.WorkDir }
     if ($guiResult.UserName)     { $script:UserName = $guiResult.UserName }
     if ($guiResult.ComputerName) { $script:ComputerName = $guiResult.ComputerName }
-    $script:removeDefender               = [bool]$guiResult.RemoveDefender
-    $script:keepAsianIME                 = [bool]$guiResult.KeepAsianIME
-    $script:keepExtraFonts               = [bool]$guiResult.KeepExtraFonts
-    $script:removeDrivers                = [bool]$guiResult.RemoveDrivers
-    $script:disableWU                    = [bool]$guiResult.DisableWindowsUpdate
-    $script:keepBT                       = [bool]$guiResult.KeepBluetooth
-    $script:wslSupport                   = [bool]$guiResult.WSLSupport
-    $script:keepRecoveryEnv              = [bool]$guiResult.KeepRecoveryEnv
-    $script:safeDebloatMode              = [bool]$guiResult.SafeDebloatMode
-    $script:ultraSlimMode                = [bool]$guiResult.UltraSlimMode
-    $script:setJapaneseKeyboard          = [bool]$guiResult.SetJapaneseKeyboard
-    $script:atlasReviOSMode              = [bool]$guiResult.AtlasReviOSMode
-    $script:removeStore                  = [bool]$guiResult.RemoveStore
-    $script:keepBasicApps                = [bool]$guiResult.KeepBasicApps
-    $script:keepSearchIndex              = [bool]$guiResult.KeepSearchIndex
-    $script:keepXboxServices             = [bool]$guiResult.KeepXboxServices
-    $script:keepAudioTweaks              = [bool]$guiResult.KeepAudioTweaks
-    $script:removeLegacyFOD              = [bool]$guiResult.RemoveLegacyFOD
-    $script:trimWallpapers               = [bool]$guiResult.TrimWallpapers
-    $script:removeWebViewPostOOBE        = [bool]$guiResult.RemoveWebViewPostOOBE
+    foreach ($cd in $script:ComponentDefs.Values) {
+        if ($cd.Gui) { Set-Variable -Name $cd.Variable -Scope Script -Value ([bool]$guiResult.($cd.Key)) }
+    }
     $script:useVHDX                      = [bool]$guiResult.UseVHDX
     $script:exportESDMode                = [bool]$guiResult.ExportESDMode
     $script:splitWIMMode                 = [bool]$guiResult.SplitWIMMode
@@ -5740,20 +5507,13 @@ if (& $isAnyBound @('UseVHDX', 'FastVHDX', 'VHDX')) {
 }
 
 # 21. Advanced Modular Optimization Tweak Toggles overrides
-if (& $isAnyBound @('RemoveLegacyFOD'))       { $removeLegacyFOD = & $getBoundVal 'RemoveLegacyFOD'; [void]$cliBound.Add('RemoveLegacyFOD') }
-if (& $isAnyBound @('TrimWallpapers'))        { $trimWallpapers  = & $getBoundVal 'TrimWallpapers';  [void]$cliBound.Add('TrimWallpapers') }
-if (& $isAnyBound @('DisableCPUMitigations')) { $disableCPUMitigations = & $getBoundVal 'DisableCPUMitigations'; [void]$cliBound.Add('DisableCPUMitigations') }
-if (& $isAnyBound @('MMCSSGaming'))          { $mmcssGaming     = & $getBoundVal 'MMCSSGaming';     [void]$cliBound.Add('MMCSSGaming') }
-if (& $isAnyBound @('DAWMode'))              { $dawMode         = & $getBoundVal 'DAWMode';         [void]$cliBound.Add('DAWMode') }
-if (& $isAnyBound @('DisableMemCompression')){ $disableMemCompression = & $getBoundVal 'DisableMemCompression'; [void]$cliBound.Add('DisableMemCompression') }
-if (& $isAnyBound @('DisableFSE'))           { $disableFSE      = & $getBoundVal 'DisableFSE';      [void]$cliBound.Add('DisableFSE') }
-if (& $isAnyBound @('NvidiaLowLatency'))     { $nvidiaLowLatency = & $getBoundVal 'NvidiaLowLatency'; [void]$cliBound.Add('NvidiaLowLatency') }
-if (& $isAnyBound @('NoKernelPaging'))       { $noKernelPaging  = & $getBoundVal 'NoKernelPaging';  [void]$cliBound.Add('NoKernelPaging') }
-if (& $isAnyBound @('DisableUSBSuspend'))    { $disableUSBSuspend = & $getBoundVal 'DisableUSBSuspend'; [void]$cliBound.Add('DisableUSBSuspend') }
-if (& $isAnyBound @('NoHypervisor'))         { $noHypervisor    = & $getBoundVal 'NoHypervisor';    [void]$cliBound.Add('NoHypervisor') }
-if (& $isAnyBound @('RemoveWebViewPostOOBE')){ $removeWebViewPostOOBE = & $getBoundVal 'RemoveWebViewPostOOBE'; [void]$cliBound.Add('RemoveWebViewPostOOBE') }
-if (& $isAnyBound @('FastExport'))           { $fastExport      = & $getBoundVal 'FastExport';      [void]$cliBound.Add('FastExport') }
-if (& $isAnyBound @('UefiOnly'))             { $uefiOnly        = & $getBoundVal 'UefiOnly';        [void]$cliBound.Add('UefiOnly') }
+# Components marked CliSwitch in config\tweaks.psd1: a [switch] named like the key sets its variable
+foreach ($cd in $script:ComponentDefs.Values) {
+    if ($cd.CliSwitch -and (& $isAnyBound @($cd.Key))) {
+        Set-Variable -Name $cd.Variable -Scope Script -Value (& $getBoundVal $cd.Key)
+        [void]$cliBound.Add($cd.Key)
+    }
+}
 if ($bound.ContainsKey('HibernateMode'))     { $hibernateMode   = $bound['HibernateMode'];          [void]$cliBound.Add('HibernateMode') }
 if ($bound.ContainsKey('CrashDumpMode'))     { $crashDumpMode   = $bound['CrashDumpMode'];          [void]$cliBound.Add('CrashDumpMode') }
 if ($bound.ContainsKey('CpuBoostMode') -and $bound['CpuBoostMode'] -ne 'Default') { $cpuBoostMode = $bound['CpuBoostMode']; [void]$cliBound.Add('CpuBoostMode') }

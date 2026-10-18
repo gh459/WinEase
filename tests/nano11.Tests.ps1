@@ -582,19 +582,14 @@ Describe "nano11 GUI wiring - every toggle is consumed by the build" {
     $phaseText = (Get-ChildItem -LiteralPath $phasesDir -Filter "*.ps1" | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"
     $helpersText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "nano11helpers.ps1"))
 
-    # Evaluate a top-level "$script:<Name> = ..." hashtable assignment from the builder without running it
-    $getScriptHashtable = {
-        param([string]$Name)
-        $assign = $builderAst.Find({
-            param($n)
-            $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
-            $n.Left.Extent.Text -eq "`$script:$Name"
-        }, $false)
-        return (Invoke-Expression $assign.Right.Extent.Text)
+    # The builder derives these tables from config\tweaks.psd1; build them the same way here
+    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+    $tweakDefs = [ordered]@{}; $varMap = [ordered]@{}; $aliases = [ordered]@{}
+    foreach ($td in $settingsDef.Tweaks) {
+        $tweakDefs[$td.Key] = $td
+        foreach ($a in @($td.Aliases)) { if ($a) { $aliases[$a] = $td.Key } }
+        if ($td.Variable) { $varMap[$td.Key] = $td.Variable }
     }
-    $tweakDefs = & $getScriptHashtable 'AllTweakDefs'
-    $varMap = & $getScriptHashtable 'TweakVariableMap'
-    $aliases = & $getScriptHashtable 'TweakKeyAliases'
 
     It "every AllTweakDefs key is read by a phase (Test-TweakEnabled) or mapped to a consumed variable" {
         $unconsumed = @()
@@ -648,3 +643,4 @@ Describe "nano11 GUI wiring - every toggle is consumed by the build" {
         ($unhandled -join ' | ') | Should Be ''
     }
 }
+
