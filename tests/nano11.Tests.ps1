@@ -644,3 +644,114 @@ Describe "nano11 GUI wiring - every toggle is consumed by the build" {
     }
 }
 
+Describe "nano11 settings - config\tweaks.psd1 is the single source of truth" {
+    $builderText = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+    $builderAst = [System.Management.Automation.Language.Parser]::ParseInput($builderText, [ref]$null, [ref]$null)
+    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+    $tweakKeys = @($settingsDef.Tweaks | ForEach-Object { $_.Key })
+    $componentKeys = @($settingsDef.Components | ForEach-Object { $_.Key })
+    $allKeys = $tweakKeys + $componentKeys
+    $paramNames = @($builderAst.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+    $switchNames = @($builderAst.ParamBlock.Parameters | Where-Object { $_.StaticType -eq [switch] } | ForEach-Object { $_.Name.VariablePath.UserPath })
+
+    It "keys are unique within Tweaks and within Components" {
+        @($tweakKeys | Group-Object | Where-Object Count -gt 1).Count | Should Be 0
+        @($componentKeys | Group-Object | Where-Object Count -gt 1).Count | Should Be 0
+    }
+
+    It "every tweak has a valid category, boolean default and description" {
+        foreach ($td in $settingsDef.Tweaks) {
+            @('Security', 'Privacy', 'Performance', 'UI') -contains $td.Category | Should Be $true
+            $td.Default -is [bool] | Should Be $true
+            [string]::IsNullOrWhiteSpace($td.Description) | Should Be $false
+        }
+    }
+
+    It "every non-special component names its script variable and type" {
+        foreach ($cd in $settingsDef.Components) {
+            @('Bool', 'String', 'Special') -contains $cd.Type | Should Be $true
+            if ($cd.Type -ne 'Special') { [string]::IsNullOrWhiteSpace($cd.Variable) | Should Be $false }
+            if ($cd.Gui) { $cd.Type | Should Be 'Bool' }
+        }
+    }
+
+    It "aliases never shadow a real key" {
+        foreach ($td in $settingsDef.Tweaks) {
+            foreach ($a in @($td.Aliases)) { if ($a) { $tweakKeys -contains $a | Should Be $false } }
+        }
+    }
+
+    It "CliSwitch matches a [switch] parameter of the builder, and every setting-named switch is marked" {
+        foreach ($d in @($settingsDef.Tweaks) + @($settingsDef.Components)) {
+            if ($d.CliSwitch) { $switchNames -contains $d.Key | Should Be $true }
+        }
+        foreach ($td in $settingsDef.Tweaks) {
+            if ($switchNames -contains $td.Key) { [bool]$td.CliSwitch | Should Be $true }
+        }
+    }
+
+    It "every GUI checkbox key (createToggleChk) exists in the definition file" {
+        # The GUI builds its tweak tabs from AllTweakDefs and the Services tab from $svcDefs; both
+        # come from the definition file, so no literal setting key may be passed to createToggleChk.
+        $calls = [regex]::Matches($builderText, "& \`$createToggleChk \S+ (\S+) ")
+        $calls.Count | Should BeGreaterThan 0
+        foreach ($m in $calls) {
+            $keyArg = $m.Groups[1].Value
+            if ($keyArg -match '^["'']([^"'']+)["'']$') { $allKeys -contains $Matches[1] | Should Be $true }
+            else { @('$tk', '$sd.Key') -contains $keyArg | Should Be $true }
+        }
+    }
+
+    It "derived tables are built from the definition file, not hand-written" {
+        foreach ($name in 'AllTweakDefs', 'TweakKeyAliases', 'TweakVariableMap', 'Nano11ProfileKeys') {
+            $assigns = @($builderAst.FindAll({
+                param($n)
+                $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq "`$script:$name"
+            }, $true))
+            $assigns.Count | Should Be 1
+            # Only an empty initializer or a derivation from the loaded definitions is allowed
+            $assigns[0].Right.Extent.Text | Should Match '^(\[ordered\]@\{\}|@\(\$script:ComponentDefs\.Keys\).*)$'
+        }
+        $svc = $builderAst.Find({
+            param($n)
+            $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$svcDefs'
+        }, $true)
+        $svc.Right.Extent.Text | Should Match 'ComponentDefs'
+    }
+
+    It "built-in preset and phase-read setting keys all exist in the definition file" {
+        $presets = $builderAst.Find({
+            param($n)
+            $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$script:BuiltInPresets'
+        }, $true)
+        $presetData = Invoke-Expression $presets.Right.Extent.Text
+        $meta = @('ProfileName', 'Description')
+        foreach ($pn in $presetData.Keys) {
+            foreach ($k in $presetData[$pn].Keys) {
+                if ($meta -contains $k) { continue }
+                ($allKeys -contains $k) | Should Be $true
+            }
+        }
+        $phaseText = (Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "phases") -Filter "*.ps1" | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"
+        # A key missing from the definition file is an internal tweak (no GUI/profile entry yet);
+        # it must at least carry its own explicit default so a typo cannot silently disable it.
+        foreach ($m in [regex]::Matches($phaseText, "Test-TweakEnabled\s+'([^']+)'(\s+\`$(true|false))?")) {
+            if ($tweakKeys -notcontains $m.Groups[1].Value) { $m.Groups[2].Success | Should Be $true }
+        }
+    }
+
+    It "profiles\*.json only use known setting keys" {
+        $known = $allKeys + @('ProfileName', 'Description', 'Version', 'Timestamp', 'Architecture')
+        $aliasNames = @($settingsDef.Tweaks | ForEach-Object { @($_.Aliases) } | Where-Object { $_ })
+        foreach ($f in Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "profiles") -Filter "*.json") {
+            $data = [System.IO.File]::ReadAllText($f.FullName) | ConvertFrom-Json
+            $settings = if ($data.Settings) { $data.Settings } else { $data }
+            foreach ($prop in $settings.PSObject.Properties) { ($known -contains $prop.Name) | Should Be $true }
+            if ($settings.TweakSettings) {
+                foreach ($prop in $settings.TweakSettings.PSObject.Properties) {
+                    (($tweakKeys + $aliasNames) -contains $prop.Name) | Should Be $true
+                }
+            }
+        }
+    }
+}
