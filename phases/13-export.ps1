@@ -4,7 +4,6 @@
 
 
 # 13. Export modified image
-$finalWim = Join-Path -Path "$nano11Dir\sources" -ChildPath "install.wim"
 $finalEsd = Join-Path -Path "$nano11Dir\sources" -ChildPath "install.esd"
 $tempWim  = Join-Path -Path "$nano11Dir\sources" -ChildPath "install_export.wim"
 $exportScratch = Join-Path -Path $baseWorkDir -ChildPath "dism_export_scratch"
@@ -97,7 +96,7 @@ if (-not $exportSuccess) {
 }
 
 # Verify exported temporary WIM metadata before replacing original
-$tempInfoOut = & dism.exe /English /Get-WimInfo "/WimFile:$tempExportWim" 2>&1
+$null = & dism.exe /English /Get-WimInfo "/WimFile:$tempExportWim" 2>&1
 if ($LASTEXITCODE -ne 0) {
     throw "Phase 13: Exported temporary WIM metadata inspection failed."
 }

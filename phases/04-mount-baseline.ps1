@@ -1,6 +1,8 @@
 ﻿# Phase 4: 04-mount-baseline
 # Extracted from nano11builder.ps1
 # Dot-sourced by the main orchestrator
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', 'sourceWimSize', Justification = 'Read by later phases or New-BuildContextFromScriptScope in the shared builder scope')]
+param()
 
 
 Write-Host "Mounting Windows image (Index: $index)..." -ForegroundColor Green

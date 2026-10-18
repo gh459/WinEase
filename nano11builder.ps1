@@ -19,6 +19,8 @@
     License: MIT
 #>
 
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', 'isoCreatedSuccessfully', Justification = 'Read by New-BuildContextFromScriptScope and the phases in script scope')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidAssignmentToAutomaticVariable', '', Justification = '-Profile is the public preset parameter; renaming it would break the command line')]
 [CmdletBinding(SupportsShouldProcess=$true)]
 param(
     [alias("Unattended", "Silent", "Batch")]
@@ -952,6 +954,7 @@ function Set-ItemOwnershipAndAccess {
 
 # Helper function: Robust directory deletion using empty directory robocopy mirror trick
 function Remove-ProtectedDirectory {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'ScratchPath', Justification = 'Kept for caller compatibility')]
     param(
         [Parameter(Mandatory=$true)]
         [string]$Path,
@@ -964,12 +967,6 @@ function Remove-ProtectedDirectory {
 
     if (-not (Test-Path -LiteralPath $full)) {
         return
-    }
-
-    $stagingTemp = if ($script:BaseWorkDir) {
-        Join-Path -Path $script:BaseWorkDir -ChildPath "temp_empty_$([System.IO.Path]::GetRandomFileName())"
-    } else {
-        Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "nano11_del_$([System.IO.Path]::GetRandomFileName())"
     }
 
     for ($attempt = 1; $attempt -le $Retries; $attempt++) {
@@ -1028,7 +1025,6 @@ function Reset-DirectoryWithRobocopy {
     $lastRoboExit = $null
     $lastRoboOutput = $null
     $lastAttribExit = $null
-    $lastAttribOutput = $null
 
     for ($attempt = 1; $attempt -le $Retries; $attempt++) {
         Assert-Nano11DirectorySafety -Path $full -Operation 'Reset'
@@ -1106,7 +1102,7 @@ function Reset-DirectoryWithRobocopy {
             }
 
             # Strip ReadOnly, Hidden, and System attributes across root and children
-            $lastAttribOutput = & attrib.exe -r -s -h $full 2>&1
+            $null = & attrib.exe -r -s -h $full 2>&1
             $lastAttribExit = $LASTEXITCODE
             $childPattern = Join-Path -Path $full -ChildPath '*'
             $null = & attrib.exe -r -s -h $childPattern /s /d 2>&1
@@ -1990,6 +1986,7 @@ function Get-Nano11WimImageCount {
 # Extracts a file twice and returns its SHA-1 / signature state. Two differing reads of the same
 # stream mean the host itself is corrupting data in memory.
 function Get-Nano11WimFileFingerprint {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingBrokenHashAlgorithms', '', Justification = 'SHA1 only fingerprints files to detect corruption; not a security control')]
     param(
         [Parameter(Mandatory=$true)][string]$WimPath,
         [Parameter(Mandatory=$true)][int]$Index,
@@ -2080,6 +2077,7 @@ function Find-Nano11ReferenceWimFile {
 # corrupted stream is dropped. Files are overwritten in place with robocopy /B (backup semantics), which
 # preserves WinSxS hard links, ownership and ACLs.
 function Repair-Nano11WimFiles {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingBrokenHashAlgorithms', '', Justification = 'SHA1 only fingerprints files to detect corruption; not a security control')]
     param(
         [Parameter(Mandatory=$true)][string]$WimPath,
         [Parameter(Mandatory=$true)][object[]]$Repairs,
@@ -2763,7 +2761,7 @@ function Invoke-Nano11SelfTest {
         $content = [System.IO.File]::ReadAllText($BuilderPath, [System.Text.Encoding]::UTF8)
         $tokens = $null
         $errors = $null
-        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$errors)
+        $null = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$errors)
         if ($errors.Count -eq 0) {
             $astPass = $true
             $astMsg = "0 parser errors found in $([math]::Round($content.Length / 1KB, 1)) KB script"
@@ -3504,7 +3502,6 @@ function Export-Nano11HtmlReport {
     $timestamp = if ($BuildInfo.ContainsKey('Timestamp')) { $BuildInfo.Timestamp } else { (Get-Date).ToString("yyyy-MM-dd HH:mm:ss") }
     $profileName = if ($BuildInfo.ContainsKey('Profile')) { $BuildInfo.Profile } else { "Extreme Slim & Gaming" }
     $arch = if ($BuildInfo.ContainsKey('Architecture')) { $BuildInfo.Architecture } else { "amd64" }
-    $sourceDrive = if ($BuildInfo.ContainsKey('SourceDrive')) { $BuildInfo.SourceDrive } else { "N/A" }
     $outputIso = if ($BuildInfo.ContainsKey('OutputIso')) { $BuildInfo.OutputIso } else { "nano11.iso" }
     $payloadFormat = if ($BuildInfo.ContainsKey('PayloadFormat')) { $BuildInfo.PayloadFormat } else { "install.wim" }
     $origSize = if ($BuildInfo.ContainsKey('OriginalSizeBytes') -and $BuildInfo.OriginalSizeBytes) { [long]$BuildInfo.OriginalSizeBytes } else { 0 }
@@ -3512,7 +3509,6 @@ function Export-Nano11HtmlReport {
     $isoSha256 = if ($BuildInfo.ContainsKey('IsoSha256')) { $BuildInfo.IsoSha256 } else { "N/A" }
     $settings = if ($BuildInfo.ContainsKey('Settings') -and $BuildInfo.Settings) { $BuildInfo.Settings } else { @{} }
 
-    $origGBText = if ($origSize -gt 0) { "$([math]::Round($origSize / 1GB, 2)) GB" } else { "N/A" }
     $finalGBText = if ($finalSize -gt 0) { "$([math]::Round($finalSize / 1GB, 2)) GB" } else { "N/A" }
     $diffText = if ($origSize -gt 0 -and $finalSize -gt 0) {
         $saved = [math]::Round(($origSize - $finalSize) / 1GB, 2)
@@ -4820,6 +4816,7 @@ $script:DiagnosticData = [ordered]@{
 }
 
 function Write-Nano11DiagnosticReport {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'StatusMessage', Justification = 'Callers pass a status message; kept for compatibility')]
     param([string]$StatusMessage = "")
     try {
         $jsonPath = Join-Path -Path $script:DiagDir -ChildPath "build_diagnostic_report.json"
@@ -4944,6 +4941,7 @@ function Invoke-Nano11HostHealthCheck {
 # failure pattern without repeating a 15-minute debloat pipeline.
 # ============================================================================
 function Invoke-Nano11ResumeIsoBuild {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', 'bootWimPath', Justification = 'Read by New-BuildContextFromScriptScope via dynamic scope')]
     [CmdletBinding()]
     param()
 
@@ -5007,7 +5005,7 @@ function Invoke-Nano11ResumeIsoBuild {
     # 3. Payload integrity (hash-level only; deep apply is deliberately skipped in resume mode)
     Invoke-Nano11HostHealthCheck -WorkspaceDir $resumeWorkDir
     Write-Host "Verifying payload structural integrity + SHA256..." -ForegroundColor Cyan
-    $resumeMetaOut = & dism.exe /English /Get-WimInfo "/WimFile:$resumePayload" 2>&1
+    $null = & dism.exe /English /Get-WimInfo "/WimFile:$resumePayload" 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "ResumeIsoOnly: payload metadata validation failed (ExitCode: $LASTEXITCODE). The payload is unusable - run a full build instead."
     }

@@ -20,6 +20,7 @@
     Compatible with Windows PowerShell 5.1 and PowerShell 7+.
 #>
 
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingComputerNameHardcoded', '', Justification = 'Connectivity probe against public DNS resolvers')]
 [CmdletBinding()]
 param(
     [ValidateRange(5, 120)]
@@ -49,7 +50,6 @@ $measurementStart = Get-Date
 Write-Host "[1/6] Gathering OS and Hardware Specification..." -ForegroundColor Yellow
 
 $osInfo = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
-$csInfo = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
 $cpuInfo = Get-CimInstance -ClassName Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
 
 $uptimeSec = 0
@@ -208,7 +208,7 @@ if (-not $SkipResponseProbes) {
 
     # Probe A: cmd.exe
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c exit" -NoNewWindow -Wait -PassThru -ErrorAction SilentlyContinue
+    $null = Start-Process -FilePath "cmd.exe" -ArgumentList "/c exit" -NoNewWindow -Wait -PassThru -ErrorAction SilentlyContinue
     $sw.Stop()
     $cmdColdMs = [math]::Round($sw.Elapsed.TotalMilliseconds, 2)
     $probeResults.ColdLaunch['CmdExeMs'] = $cmdColdMs
@@ -216,7 +216,7 @@ if (-not $SkipResponseProbes) {
     $cmdWarmRuns = [System.Collections.Generic.List[double]]::new()
     for ($w = 0; $w -lt 3; $w++) {
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c exit" -NoNewWindow -Wait -PassThru -ErrorAction SilentlyContinue
+        $null = Start-Process -FilePath "cmd.exe" -ArgumentList "/c exit" -NoNewWindow -Wait -PassThru -ErrorAction SilentlyContinue
         $sw.Stop()
         $cmdWarmRuns.Add([math]::Round($sw.Elapsed.TotalMilliseconds, 2))
     }
@@ -225,7 +225,7 @@ if (-not $SkipResponseProbes) {
 
     # Probe B: reg.exe
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $p = Start-Process -FilePath "reg.exe" -ArgumentList "query HKCU\Console /v FontSize" -NoNewWindow -Wait -PassThru -ErrorAction SilentlyContinue
+    $null = Start-Process -FilePath "reg.exe" -ArgumentList "query HKCU\Console /v FontSize" -NoNewWindow -Wait -PassThru -ErrorAction SilentlyContinue
     $sw.Stop()
     $regColdMs = [math]::Round($sw.Elapsed.TotalMilliseconds, 2)
     $probeResults.ColdLaunch['RegExeMs'] = $regColdMs
@@ -233,7 +233,7 @@ if (-not $SkipResponseProbes) {
     $regWarmRuns = [System.Collections.Generic.List[double]]::new()
     for ($w = 0; $w -lt 3; $w++) {
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        $p = Start-Process -FilePath "reg.exe" -ArgumentList "query HKCU\Console /v FontSize" -NoNewWindow -Wait -PassThru -ErrorAction SilentlyContinue
+        $null = Start-Process -FilePath "reg.exe" -ArgumentList "query HKCU\Console /v FontSize" -NoNewWindow -Wait -PassThru -ErrorAction SilentlyContinue
         $sw.Stop()
         $regWarmRuns.Add([math]::Round($sw.Elapsed.TotalMilliseconds, 2))
     }

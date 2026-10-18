@@ -1,6 +1,8 @@
 ﻿# Phase 15: 15-verify
 # Extracted from nano11builder.ps1
 # Dot-sourced by the main orchestrator
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', 'activePayloadName', Justification = 'Read by later phases or New-BuildContextFromScriptScope in the shared builder scope')]
+param()
 
 
 # 15. Verify final installation payload

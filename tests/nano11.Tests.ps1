@@ -2,6 +2,10 @@
 # Run with:  Invoke-Pester -Path .\tests\nano11.Tests.ps1
 # Requires:  Pester 3.4+ (ships with Windows PowerShell 5.1)
 
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', 'builderAst', Justification = 'Used inside It blocks')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingInvokeExpression', '', Justification = 'Evaluates literal arrays/hashtables taken from the repo''s own source AST')]
+param()
+
 $script:RepoRoot = Split-Path -Parent $PSScriptRoot
 $script:BuilderPath = Join-Path -Path $script:RepoRoot -ChildPath "nano11builder.ps1"
 $script:GuiPath = Join-Path -Path $script:RepoRoot -ChildPath "gui\Nano11Gui.ps1"
@@ -661,7 +665,6 @@ Describe "nano11 settings - config\tweaks.psd1 is the single source of truth" {
     $tweakKeys = @($settingsDef.Tweaks | ForEach-Object { $_.Key })
     $componentKeys = @($settingsDef.Components | ForEach-Object { $_.Key })
     $allKeys = $tweakKeys + $componentKeys
-    $paramNames = @($builderAst.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
     $switchNames = @($builderAst.ParamBlock.Parameters | Where-Object { $_.StaticType -eq [switch] } | ForEach-Object { $_.Name.VariablePath.UserPath })
 
     It "keys are unique within Tweaks and within Components" {
@@ -773,11 +776,11 @@ Describe "nano11 GUI - smoke test (form built without ShowDialog)" {
     foreach ($td in $settingsDef.Tweaks) { $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description } }
     $script:ComponentDefs = [ordered]@{}
     foreach ($cd in $settingsDef.Components) { $script:ComponentDefs[$cd.Key] = $cd }
-    function Get-Nano11Preset { param([string]$Name) $null }
+    function Get-Nano11Preset { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([string]$Name) $null }
 
     . $script:GuiPath
     # Never block on the experimental Select All confirmation
-    function Confirm-Nano11GuiAction { param([string]$Message, [string]$Title) $true }
+    function Confirm-Nano11GuiAction { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([string]$Message, [string]$Title) $true }
 
     function Get-AllControls($ctl) { foreach ($c in $ctl.Controls) { $c; Get-AllControls $c } }
 

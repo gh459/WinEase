@@ -1,6 +1,8 @@
 ﻿# Phase 18: 18-iso
 # Extracted from nano11builder.ps1
 # Dot-sourced by the main orchestrator
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', 'isoCreatedSuccessfully', Justification = 'Read by later phases or New-BuildContextFromScriptScope in the shared builder scope')]
+param()
 
 
 # 18. Create bootable ISO (oscdimg) with Architecture-aware bootdata and Volume Label
@@ -153,7 +155,7 @@ while (-not $isoCreationSuccess -and $isoAttempt -lt $maxIsoAttempts) {
         }
 
         # 2. DISM / WIMGAPI structural integrity verification
-        $wimInfoOut = & dism.exe /English /Get-WimInfo "/WimFile:$embeddedWimPath" 2>&1
+        $null = & dism.exe /English /Get-WimInfo "/WimFile:$embeddedWimPath" 2>&1
         if ($LASTEXITCODE -ne 0) {
             throw "Embedded payload failed DISM metadata validation (ExitCode: $LASTEXITCODE)."
         }

@@ -1,6 +1,10 @@
 ﻿# Phase 2: 02-source-media
 # Extracted from nano11builder.ps1
 # Dot-sourced by the main orchestrator
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', 'destWim', Justification = 'Read by later phases or New-BuildContextFromScriptScope in the shared builder scope')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', 'hasSourceWim', Justification = 'Read by later phases or New-BuildContextFromScriptScope in the shared builder scope')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', 'hasSourceEsd', Justification = 'Read by later phases or New-BuildContextFromScriptScope in the shared builder scope')]
+param()
 
 
 # Determine source drive letter (with auto-detection)

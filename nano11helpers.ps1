@@ -219,7 +219,6 @@ function Unmount-RegistryHiveWithRetry {
 }
 
 # 4. Language-independent Administrators group via Well-Known SID (S-1-5-32-544)
-$adminGroupSid = New-Object System.Security.Principal.SecurityIdentifier([System.Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null)
 
 # Helper function: Query registered mounted images from DISM
 # Helper function: Query registered mounted images from DISM (Distinguishes 0-mount success from query failure)
@@ -1383,7 +1382,7 @@ function Test-Nano11ResumeIntegrity {
                     try {
                         $fs = [System.IO.File]::OpenRead($p)
                         $hdr = New-Object byte[] 8
-                        $read = $fs.Read($hdr, 0, 8)
+                        $null = $fs.Read($hdr, 0, 8)
                         $fs.Close()
                         $sig = [System.Text.Encoding]::ASCII.GetString($hdr, 0, 5)
                         if ($sig -ne 'MSWIM') {

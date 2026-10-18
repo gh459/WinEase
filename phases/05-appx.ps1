@@ -1,6 +1,8 @@
 ﻿# Phase 5: 05-appx
 # Extracted from nano11builder.ps1
 # Dot-sourced by the main orchestrator
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'scratchPath', Justification = 'Positional runspace argument of $folderCleanupScript supplied by the caller')]
+param()
 
 
 # 5. Removing provisioned AppX packages (Bloatware)

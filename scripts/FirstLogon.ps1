@@ -392,7 +392,6 @@ $scripts = @(
   $flErrors = @();
   foreach( $script in $scripts ) {
     Write-Progress -Activity 'Running scripts to finalize your Windows installation. Do not close this window.' -PercentComplete $complete;
-    $start = [datetime]::Now;
     try {
       & $script;
     } catch {
