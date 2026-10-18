@@ -520,7 +520,7 @@ function Update-Nano11GuiEstimate {
         if ($componentCheckboxes['UltraSlimMode'] -and $componentCheckboxes['UltraSlimMode'].Checked)       { $mb -= 200 }
         if ($Gui.RadESD.Checked) { $mb = [math]::Round($mb * 0.82) }
         $Gui.Estimate.Text = ("Estimated ISO Size: ~{0} GB (LZX baseline)" -f [math]::Round($mb / 1024, 2))
-    } catch {}
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
 
 # Apply built-in preset number -PresetIndex (order of $Gui.PresetKeyMap) to every checkbox
@@ -661,7 +661,7 @@ function Show-Nano11GUI {
         try {
             $testFont = New-Object System.Drawing.Font($fName, 9)
             if ($testFont.Name -eq $fName) { $uiFontName = $fName; break }
-        } catch {}
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
 
     $form = New-Object System.Windows.Forms.Form
@@ -681,7 +681,7 @@ function Show-Nano11GUI {
         if ($form.Height -gt $wa.Height) {
             $form.ClientSize = New-Object System.Drawing.Size(880, ($wa.Height - $frameH - 10))
         }
-    } catch {}
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
     # Shared state for event handlers: they read it back as $this.FindForm().Tag
     $gui = @{

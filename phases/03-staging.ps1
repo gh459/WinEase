@@ -19,7 +19,7 @@ try {
     if ($LASTEXITCODE -lt 8) {
         $copySuccess = $true
     }
-} catch {}
+} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
 if (-not $copySuccess) {
     Write-Host "Robocopy completed or unavailable, ensuring files via Copy-Item..." -ForegroundColor Yellow

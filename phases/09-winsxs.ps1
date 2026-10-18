@@ -16,7 +16,7 @@ $ntoskrnlPath = Join-Path -Path $scratchDir -ChildPath "Windows\System32\ntoskrn
 if (Test-Path -LiteralPath $ntoskrnlPath) {
     try {
         $targetImageBuild = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($ntoskrnlPath).ProductBuildPart
-    } catch {}
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
 
 if ($safeDebloatMode) {

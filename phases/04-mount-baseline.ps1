@@ -8,7 +8,7 @@ Write-Host "  -> DISM is unpacking system files (takes approx. 1-2 min on SSD)..
 Write-Host "  -> [Notice] DISM normally pauses at 90%-94% for 1-2 minutes while committing 100,000+ NTFS ACLs, hardlinks, and metadata." -ForegroundColor Yellow
 Write-Host "     This is expected Windows DISM behavior. Please DO NOT close this window - it will proceed automatically." -ForegroundColor Yellow
 Set-ItemOwnershipAndAccess -Path $destWim
-try { Set-ItemProperty -LiteralPath $destWim -Name IsReadOnly -Value $false -ErrorAction Stop } catch {}
+try { Set-ItemProperty -LiteralPath $destWim -Name IsReadOnly -Value $false -ErrorAction Stop } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
 $mountResult = Invoke-Nano11ImageMount -ImageFile $destWim -ImageIndex $index -Retries 3
 $scratchDir = $mountResult.MountDir
@@ -95,7 +95,7 @@ if ($configSnapshotPath -and (Test-Path -LiteralPath $configSnapshotPath)) {
     try {
         $resolvedConfig.Architecture = $architecture
         $resolvedConfig | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $configSnapshotPath -Encoding UTF8 -Force
-    } catch {}
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
 
 # Pre-enable WSL2 and Virtual Machine Platform if requested (Resolves Issue #5)

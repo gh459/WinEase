@@ -15,7 +15,7 @@ if (-not (Test-Path -LiteralPath $bootWimPath)) {
 if (Test-Path -LiteralPath $bootWimPath) {
     Write-Host "Processing boot.wim..." -ForegroundColor Green
     Set-ItemOwnershipAndAccess -Path $bootWimPath
-    try { Set-ItemProperty -LiteralPath $bootWimPath -Name IsReadOnly -Value $false -ErrorAction Stop } catch {}
+    try { Set-ItemProperty -LiteralPath $bootWimPath -Name IsReadOnly -Value $false -ErrorAction Stop } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
     # Inspect boot.wim indices (Setup image is usually Index 2, WinPE is Index 1)
     # We patch both indices in-place and preserve dual-index structure for 100% BCD and UEFI stability.

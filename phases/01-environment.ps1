@@ -110,7 +110,7 @@
     try {
         Add-MpPreference -ExclusionPath $baseWorkDir -ErrorAction SilentlyContinue
         $script:DefenderExclusionAdded = $true
-    } catch {}
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
     # 1. Resolve any lingering DISM mounts associated with our workspace or candidate WIMs
     $managedWims = @(
@@ -138,14 +138,14 @@
             try {
                 $diskImg = Get-DiskImage -ImagePath $vhdxPath -ErrorAction Stop
                 if ($diskImg.Attached) { $detachedOk = $false }
-            } catch {}
+            } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
             if ($detachedOk) {
                 Remove-Item -LiteralPath $vhdxPath -Force -ErrorAction SilentlyContinue
             } else {
                 Write-Warning "Could not confirm VHDX detach for '$vhdxPath'. Preserving file."
             }
-        } catch {}
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
 
     # 3. Safely reset build directory and scratch directory (Empty guaranteed)
@@ -172,11 +172,11 @@
         $vhdxDirItem = Get-Item -LiteralPath $vhdxMountDir -Force -ErrorAction SilentlyContinue
         if ($vhdxDirItem -and ($vhdxDirItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
             Write-Host "Releasing previous VHDX mount point junction at '$vhdxMountDir'..." -ForegroundColor Cyan
-            try { & mountvol.exe "$vhdxMountDir" /D > $null 2>&1 } catch {}
+            try { & mountvol.exe "$vhdxMountDir" /D > $null 2>&1 } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
             try {
                 [System.IO.Directory]::Delete($vhdxMountDir, $false)
             } catch {
-                try { $vhdxDirItem.Delete() } catch {}
+                try { $vhdxDirItem.Delete() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
             }
         }
         if (Test-Path -LiteralPath $vhdxMountDir) {

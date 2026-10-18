@@ -193,7 +193,7 @@ while (-not $isoCreationSuccess -and $isoAttempt -lt $maxIsoAttempts) {
         Start-Sleep -Seconds 5
     } finally {
         if ($isoMountResult) {
-            try { Dismount-DiskImage -ImagePath $tempOutputIso -ErrorAction SilentlyContinue | Out-Null } catch {}
+            try { Dismount-DiskImage -ImagePath $tempOutputIso -ErrorAction SilentlyContinue | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         }
     }
 }
@@ -222,7 +222,7 @@ if ($TimestampIso) {
                 Remove-Item -LiteralPath $oldIso.FullName -Force -ErrorAction SilentlyContinue
             }
         }
-    } catch {}
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
 
 # Post-build hook execution (Explicitly disabled for verification build per specification)
@@ -263,11 +263,11 @@ try {
     # 3-Axis Sizing & Guest Benchmark Telemetry (Domain 5)
     $sourceIsoBytes = 0
     if ($SourceDrive -and $SourceDrive.EndsWith(".iso", [System.StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $SourceDrive)) {
-        try { $sourceIsoBytes = (Get-Item -LiteralPath $SourceDrive).Length } catch {}
+        try { $sourceIsoBytes = (Get-Item -LiteralPath $SourceDrive).Length } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
     $finalPayloadBytes = 0
     if ($activePayloadPath -and (Test-Path -LiteralPath $activePayloadPath)) {
-        try { $finalPayloadBytes = (Get-Item -LiteralPath $activePayloadPath).Length } catch {}
+        try { $finalPayloadBytes = (Get-Item -LiteralPath $activePayloadPath).Length } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
     $benchPath = Join-Path -Path $reportOutputDir -ChildPath "nano11_guest_benchmark.json"
     if (-not (Test-Path -LiteralPath $benchPath)) {
@@ -275,7 +275,7 @@ try {
     }
     $guestBench = $null
     if (Test-Path -LiteralPath $benchPath) {
-        try { $guestBench = (Get-Content -LiteralPath $benchPath -Raw -Encoding UTF8) | ConvertFrom-Json } catch {}
+        try { $guestBench = (Get-Content -LiteralPath $benchPath -Raw -Encoding UTF8) | ConvertFrom-Json } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
     $reportData['SourceIsoSizeBytes']     = $sourceIsoBytes
     $reportData['FinalIsoSizeBytes']      = $isoItem.Length

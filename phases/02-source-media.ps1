@@ -21,7 +21,7 @@ if ($SourceDrive) {
                     Write-Host "ISO mounted successfully on drive: $DriveLetter" -ForegroundColor Green
                 }
             }
-        } catch {}
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
     if (-not $DriveLetter) {
         $candDrive = $SourceDrive.Trim().TrimEnd(':') + ":"
@@ -63,10 +63,10 @@ function Find-AndMountHealthyWindowsIso {
                     }
                 }
                 # Dismount candidate if it does not contain a healthy install.wim
-                try { Dismount-DiskImage -ImagePath $iso.FullName -ErrorAction SilentlyContinue > $null } catch {}
+                try { Dismount-DiskImage -ImagePath $iso.FullName -ErrorAction SilentlyContinue > $null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
                 $script:MountedIso = $null
             }
-        } catch {}
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
     return $null
 }

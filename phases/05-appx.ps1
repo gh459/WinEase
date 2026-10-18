@@ -133,7 +133,7 @@ $folderCleanupScript = {
                         try {
                             if ($c.PSIsContainer) { [System.IO.Directory]::Delete($c.FullName, $false) }
                             else { [System.IO.File]::Delete($c.FullName) }
-                        } catch {}
+                        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
                     } elseif ($c.PSIsContainer) {
                         $queue.Enqueue($c.FullName)
                     }

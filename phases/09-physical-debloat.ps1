@@ -71,7 +71,7 @@ if ($physMountError) {
 $physTargetBuild = 0
 $physNtoskrnl = Join-Path -Path $scratchDir -ChildPath "Windows\System32\ntoskrnl.exe"
 if (Test-Path -LiteralPath $physNtoskrnl) {
-    try { $physTargetBuild = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($physNtoskrnl).ProductBuildPart } catch {}
+    try { $physTargetBuild = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($physNtoskrnl).ProductBuildPart } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
 $physWinSxSBlockReason = $null
 if ($safeDebloatMode) { $physWinSxSBlockReason = 'Safe Debloat Mode (component-store integrity protection)' }
@@ -337,7 +337,7 @@ if ($hasStandardItems) {
                 if ($isDryRunMode) { Write-Host "    [DRY] Would delete: $mpDir" -ForegroundColor Yellow }
                 else { Remove-Item -LiteralPath $mpDir -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Deleted Media Player dir" -ForegroundColor Green }
             }
-            try { & dism.exe /image:$scratchDir /Disable-Feature /FeatureName:WindowsMediaPlayer /NoRestart 2>&1 | Out-Null } catch {}
+            try { & dism.exe /image:$scratchDir /Disable-Feature /FeatureName:WindowsMediaPlayer /NoRestart 2>&1 | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
             $handled = $true
         }
         elseif ($item -match 'Remote Desktop') {
@@ -364,7 +364,7 @@ if ($hasStandardItems) {
             $handled = $true
         }
         elseif ($item -match 'Hyper-V') {
-            try { & dism.exe /image:$scratchDir /Disable-Feature /FeatureName:Microsoft-Hyper-V-All /NoRestart 2>&1 | Out-Null } catch {}
+            try { & dism.exe /image:$scratchDir /Disable-Feature /FeatureName:Microsoft-Hyper-V-All /NoRestart 2>&1 | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
             Write-Host "    [SAFE] Hyper-V disabled via DISM (System32 binaries preserved)" -ForegroundColor Cyan
             $handled = $true
         }
@@ -547,7 +547,7 @@ if ($hasExperimentalItems -and $script:advancedDebloatExperimental.Count -gt 0) 
     if (Get-Command -Name 'Write-Nano11TextFileAtomic' -ErrorAction SilentlyContinue) {
         Write-Nano11TextFileAtomic -Path $physLogPath -Content $logText | Out-Null
     } else {
-        try { [System.IO.File]::WriteAllText($physLogPath, $logText, [System.Text.Encoding]::UTF8) } catch {}
+        try { [System.IO.File]::WriteAllText($physLogPath, $logText, [System.Text.Encoding]::UTF8) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
 }
 

@@ -14,7 +14,7 @@ Set-Content -LiteralPath "$markerDir\specialize.started" -Value (Get-Date -Forma
       Set-NetTCPSetting -SettingName InternetCustom -EcnCapability Enabled -Timestamps Disabled -ErrorAction SilentlyContinue;
       Set-NetOffloadGlobalSetting -ReceiveSideScaling Enabled -ReceiveSegmentCoalescing Disabled -TaskOffload Enabled -ErrorAction SilentlyContinue;
       Disable-NetAdapterLso -Name * -IPv4 -ErrorAction SilentlyContinue;
-    } catch {}
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
   }
 
   # 3. Dynamic Message Signaled Interrupts (MSI) scan for newly detected PCI hardware
@@ -28,11 +28,11 @@ Set-Content -LiteralPath "$markerDir\specialize.started" -Value (Get-Date -Forma
       }
       Set-ItemProperty -LiteralPath $msiPath -Name "MSISupported" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue;
     }
-  } catch {}
+  } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
   # 4. Memory Compression optimization if flagged
   if (Test-Path "C:\Windows\Setup\Scripts\disable-memcompression.flag") {
-    try { Disable-MMAgent -MemoryCompression -ErrorAction SilentlyContinue; } catch {}
+    try { Disable-MMAgent -MemoryCompression -ErrorAction SilentlyContinue; } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
   }
 
   Set-Content -LiteralPath "C:\ProgramData\nano11\specialize.succeeded" -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding ascii -ErrorAction SilentlyContinue;

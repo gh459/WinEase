@@ -25,7 +25,7 @@ function Write-Log {
     Write-Output $LogMessage
     try {
         Add-Content -Path $LogPath -Value $LogMessage -ErrorAction SilentlyContinue
-    } catch {}
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
 
 Write-Log "================================================================================" "INFO"

@@ -3,26 +3,26 @@ try {
 	if (Test-Path -LiteralPath $initMarkerDir) {
 		Remove-Item -LiteralPath "$initMarkerDir\firstlogon.done", "$initMarkerDir\firstlogon_script.failed" -Force -ErrorAction SilentlyContinue;
 	}
-} catch {}
+} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 $scripts = @(
 	{
 		# Guarantee User account has NO password (completely blank) and cannot expire
 		try {
 			& net.exe accounts /maxpwage:UNLIMITED /minpwlen:0 2>$null;
 			& net.exe user User "" /active:yes /passwordreq:no /expires:never 2>$null;
-		} catch {}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Disable Computer Restore on System Drive
 		try {
 			Disable-ComputerRestore -Drive "C:\" 2>$null;
-		} catch {}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Enable CompactOS NTFS Compression
 		try {
 			& Compact.exe /CompactOS:always 2>$null;
-		} catch {}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Low-Latency BCD Boot & Timer Tweaks
@@ -36,7 +36,7 @@ $scripts = @(
 			if (Test-Path "C:\Windows\Setup\Scripts\no-hypervisor.flag") {
 				& bcdedit.exe /set hypervisorlaunchtype off 2>$null;
 			}
-		} catch {}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Advanced Low-Latency Network & Nagle Tuning
@@ -58,14 +58,14 @@ $scripts = @(
 				Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Services\NetBT\Parameters\Interfaces' -ErrorAction SilentlyContinue |
 					ForEach-Object { Set-ItemProperty $_.PSPath 'NetbiosOptions' 2 -Type DWord -Force -ErrorAction SilentlyContinue };
 			}
-		} catch {}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# NTFS I/O Overhead Reduction
 		try {
 			& fsutil.exe behavior set disablelastaccess 1 2>$null;
 			& fsutil.exe 8dot3name set 1 2>$null;
-		} catch {}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Custom Post-Install User Scripts Execution Hook (from tools/custom-scripts/)
@@ -279,7 +279,7 @@ $scripts = @(
 				& schtasks.exe /change /tn "\Microsoft\Windows\SoftwareProtectionPlatform\SvcRestartTaskLogon" /disable 2>$null;
 				& schtasks.exe /change /tn "\Microsoft\Windows\SoftwareProtectionPlatform\SvcRestartTaskNetwork" /disable 2>$null;
 				Remove-Item -LiteralPath $actFlag -Force -ErrorAction SilentlyContinue;
-			} catch {}
+			} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 		}
 	};
 	{
@@ -292,7 +292,7 @@ $scripts = @(
 				if (-not (Test-Path $statsDir)) { New-Item -ItemType Directory -Force -Path $statsDir | Out-Null; }
 				"{0},{1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $bootMs | Add-Content "$statsDir\boot-stats.csv";
 			}
-		} catch {}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# WinRE Online Dismantle if winre-cleanup.flag is present
@@ -307,7 +307,7 @@ $scripts = @(
 					Remove-Item -LiteralPath $winrePath -Force -ErrorAction SilentlyContinue;
 				}
 				Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue;
-			} catch {}
+			} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 		}
 	};
 	{
@@ -324,7 +324,7 @@ $scripts = @(
 			foreach ($t in $safeTasks) {
 				schtasks.exe /change /tn "$t" /disable >$null 2>&1;
 			}
-		} catch {}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Cross-Device Resume enforcement: kill the resume host if it launched before IFEO applied,
@@ -334,7 +334,7 @@ $scripts = @(
 			Get-Process -Name CrossDeviceResume -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
 			New-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\CrossDeviceResume.exe' -Force -ErrorAction SilentlyContinue | Out-Null;
 			Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\CrossDeviceResume.exe' -Name 'Debugger' -Value 'rundll32.exe' -Force -ErrorAction SilentlyContinue;
-		} catch {}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Accessibility tools enforcement (post-OOBE): osk.exe / Narrator.exe / Magnify.exe are
@@ -348,7 +348,7 @@ $scripts = @(
 				Set-ItemProperty -LiteralPath $accKey -Name 'Debugger' -Value 'rundll32.exe' -Force -ErrorAction SilentlyContinue;
 				Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($acc)) -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
 			}
-		} catch {}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Windows Search disable enforcement (offline hive edit backup: stop & disable WSearch online,
@@ -359,7 +359,7 @@ $scripts = @(
 				Set-Service -Name WSearch -StartupType Disabled -ErrorAction SilentlyContinue;
 				Get-Process -Name SearchHost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
 				Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' -Name 'SearchboxTaskbarMode' -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue;
-			} catch {}
+			} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 			Remove-Item "C:\Windows\Setup\Scripts\disable-search.flag" -Force -ErrorAction SilentlyContinue;
 		}
 	};
@@ -369,7 +369,7 @@ $scripts = @(
 			Get-AppxPackage -AllUsers -Name *WindowsBackupApp* -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue;
 			Get-AppxPackage -AllUsers -Name *Client.WebExperience* -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue;
 			Get-AppxPackage -AllUsers -Name *Getstarted* -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue;
-		} catch {}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Signal FirstLogon completion and restore persistent AutoLogon security
@@ -382,7 +382,7 @@ $scripts = @(
 			Set-ItemProperty -LiteralPath 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name 'AutoAdminLogon' -Value '0' -Force -ErrorAction SilentlyContinue;
 			Set-ItemProperty -LiteralPath 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name 'ForceAutoLogon' -Value '0' -Force -ErrorAction SilentlyContinue;
 			Remove-ItemProperty -LiteralPath 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name 'DefaultPassword' -Force -ErrorAction SilentlyContinue;
-		} catch {}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 );
 

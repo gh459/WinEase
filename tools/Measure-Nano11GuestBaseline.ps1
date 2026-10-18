@@ -57,7 +57,7 @@ try {
     if ($osInfo -and $osInfo.LastBootUpTime) {
         $uptimeSec = [math]::Round(((Get-Date) - $osInfo.LastBootUpTime).TotalSeconds, 1)
     }
-} catch {}
+} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
 $osCaption     = if ($osInfo) { $osInfo.Caption } else { [System.Environment]::OSVersion.VersionString }
 $osVersion     = if ($osInfo) { $osInfo.Version } else { "Unknown" }
@@ -111,7 +111,7 @@ for ($i = 1; $i -le $SampleSeconds; $i++) {
     try {
         $perf = Get-CimInstance -ClassName Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction SilentlyContinue
         if ($perf) { $cpuLoad = [double]$perf.PercentProcessorTime }
-    } catch {}
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     $cpuSamples.Add($cpuLoad)
 
     # Process and handle counts
@@ -147,7 +147,7 @@ try {
         $commitLimitMB = [math]::Round($perfMem.CommitLimit / 1MB, 1)
         $cachedMB      = [math]::Round($perfMem.CacheBytes / 1MB, 1)
     }
-} catch {}
+} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
 $avgProcs = if ($procCountSamples.Count -gt 0) { [int]([math]::Round(($procCountSamples | Measure-Object -Average).Average, 0)) } else { 0 }
 $avgThreads = if ($threadCountSamples.Count -gt 0) { [int]([math]::Round(($threadCountSamples | Measure-Object -Average).Average, 0)) } else { 0 }
@@ -189,7 +189,7 @@ try {
             Write-Host "  - Total Boot to Idle:  $([math]::Round($bootTotalMs / 1000, 2)) seconds" -ForegroundColor Green
         }
     }
-} catch {}
+} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
 if (-not $bootEventFound) {
     Write-Host "  - Boot Diagnostics Event 100: Not yet generated (System may need a clean restart)." -ForegroundColor DarkGray
@@ -261,7 +261,7 @@ try {
         $ping = Test-Connection -ComputerName 8.8.8.8 -Count 1 -Quiet -ErrorAction SilentlyContinue
     }
     $netOk = [bool]$ping
-} catch {}
+} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 $healthResults['NetworkConnectivity'] = @{
     Component = "Network Connectivity"
     Passed    = $netOk

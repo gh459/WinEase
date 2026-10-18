@@ -327,7 +327,7 @@ $script:Nano11Version = "2.1"
 try {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
     $OutputEncoding = [System.Text.Encoding]::UTF8
-} catch {}
+} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
 # Disable all interactive confirmation prompts to guarantee non-blocking unattended execution
 $ConfirmPreference = 'None'
@@ -551,7 +551,7 @@ function Get-Nano11MountedImages {
                 }
             }
         }
-    } catch {}
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
     if (-not $querySuccess) {
         throw "Failed to query mounted images from DISM (Get-WindowsImage failed and dism.exe returned non-zero exit code): $lastErr"
@@ -616,6 +616,7 @@ function Get-Nano11DismOfflineHives {
                 }
             } catch {
                 # Not a valid absolute path or drive root, safely skip
+                Write-Verbose "Ignored: $($_.Exception.Message)"
             }
         }
     }
@@ -887,7 +888,7 @@ function Set-ItemOwnershipAndAccess {
             try {
                 $itemObj.Attributes = $itemObj.Attributes -bxor [System.IO.FileAttributes]::ReadOnly
             } catch {
-                try { Set-ItemProperty -LiteralPath $current -Name IsReadOnly -Value $false -ErrorAction SilentlyContinue } catch {}
+                try { Set-ItemProperty -LiteralPath $current -Name IsReadOnly -Value $false -ErrorAction SilentlyContinue } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
             }
         }
 
@@ -896,7 +897,7 @@ function Set-ItemOwnershipAndAccess {
         $success = $false
         try {
             $acl = Get-Acl -LiteralPath $current -ErrorAction Stop
-            try { $acl.SetOwner($adminGroupSid) } catch {}
+            try { $acl.SetOwner($adminGroupSid) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
             $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
                 $adminGroupSid,
                 [System.Security.AccessControl.FileSystemRights]::FullControl,
@@ -974,7 +975,7 @@ function Remove-ProtectedDirectory {
     for ($attempt = 1; $attempt -le $Retries; $attempt++) {
         try {
             Set-ItemOwnershipAndAccess -Path $full -Recurse
-        } catch {}
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
         # 3. Safe native directory & reparse point removal (avoids robocopy /MIR junction traversal that deletes WinSxS targets)
         try {
@@ -982,7 +983,7 @@ function Remove-ProtectedDirectory {
             if ($item -and ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
                 [System.IO.Directory]::Delete($full, $false)
             }
-        } catch {}
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
         # 4. Windows native directory removal
         & cmd.exe /c "rd /s /q `"$full`"" > $null 2>&1
@@ -1153,7 +1154,7 @@ function Reset-DirectoryWithRobocopy {
             $lastEx = $_
             if ($attempt -lt $Retries) {
                 if ($script:ManagedMountDirs.Contains($full)) {
-                    try { [void](Unmount-DismOfflineHives -TargetMountDir $full -BestEffort) } catch {}
+                    try { [void](Unmount-DismOfflineHives -TargetMountDir $full -BestEffort) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
                 }
                 Start-Sleep -Seconds $attempt
             }
@@ -1170,7 +1171,7 @@ function Reset-DirectoryWithRobocopy {
             if ($leftoverHives.Count -gt 0) {
                 $hivesInfo = "`nLingering DISM offline registry hives:`n    " + (($leftoverHives | ForEach-Object { "$($_.KeyName) -> $($_.HivePath)" }) -join "`n    ")
             }
-        } catch {}
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
 
     throw "Reset-DirectoryWithRobocopy failed to empty directory '$full' after $Retries attempts.$hivesInfo`nRemaining items ($($remainingItems.Count)):`n    $remainingDetails`nLast error: $lastEx`nRobocopy Exit Code: $lastRoboExit`nAttrib Exit Code: $lastAttribExit`nPlease close any process locking these files or restart Windows before retrying."
@@ -1454,7 +1455,7 @@ function Clear-DismMountConflicts {
             
             # Unload any registry hives under this mount first
             @('zCOMPONENTS', 'zDEFAULT', 'zNTUSER', 'zSOFTWARE', 'zSYSTEM') | ForEach-Object {
-                try { [void](Unmount-RegistryHiveWithRetry -Name $_) } catch {}
+                try { [void](Unmount-RegistryHiveWithRetry -Name $_) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
             }
 
             Set-Location -LiteralPath $scriptDir
@@ -1793,7 +1794,7 @@ function Invoke-Nano11ImageMount {
         Invoke-Nano11MountpointCleanup | Out-Null
 
         # Unload any offline hives
-        try { [void](Unmount-DismOfflineHives -TargetMountDir $curMountDir -BestEffort) } catch {}
+        try { [void](Unmount-DismOfflineHives -TargetMountDir $curMountDir -BestEffort) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
         # Re-verify that no active mount remains on curMountDir
         $verifyLingering = @(Get-Nano11MountedImages) | Where-Object {
@@ -2011,7 +2012,7 @@ function Get-Nano11WimFileFingerprint {
             if ($n -eq 1) { $keptFile = $outFile }
         }
         $sigStatus = 'Unknown'
-        try { $sigStatus = [string](Get-AuthenticodeSignature -LiteralPath $keptFile -ErrorAction Stop).Status } catch {}
+        try { $sigStatus = [string](Get-AuthenticodeSignature -LiteralPath $keptFile -ErrorAction Stop).Status } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         return [PSCustomObject]@{
             Sha1          = $hashes[0]
             StableRead    = ($hashes[0] -eq $hashes[1])
@@ -2127,7 +2128,7 @@ function Repair-Nano11WimFiles {
         throw
     } finally {
         $script:MountOpened = $false
-        try { Clear-DismMountConflicts -TargetMountDir $mountDir -TargetWimFile $WimPath } catch {}
+        try { Clear-DismMountConflicts -TargetMountDir $mountDir -TargetWimFile $WimPath } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
 
     # Re-export so the superseded (corrupted) stream is removed and a fresh integrity table is written.
@@ -2174,7 +2175,7 @@ function Enter-Phase {
     }
     $script:PhaseStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $phaseTitle = "nano11 [$PhaseNumber/$($script:TotalPhases)] $PhaseName"
-    try { $host.UI.RawUI.WindowTitle = $phaseTitle } catch {}
+    try { $host.UI.RawUI.WindowTitle = $phaseTitle } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     Write-Host ""
     Write-Host "=========================================================" -ForegroundColor Cyan
     Write-Host " [$PhaseNumber/$($script:TotalPhases)] $PhaseName" -ForegroundColor Cyan
@@ -3023,7 +3024,7 @@ function Invoke-Nano11SelfTest {
                     if ($expectedSet.Contains($normH)) {
                         $matchedKeys += $mk
                     }
-                } catch {}
+                } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
             }
         }
 
@@ -3904,7 +3905,7 @@ if ($Profile -and $Profile.Contains(',')) {
             try {
                 if ($script:HasMutex) { $script:BuildMutex.ReleaseMutex() }
                 $script:BuildMutex.Dispose()
-            } catch {}
+            } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
             $script:BuildMutex = $null
             $script:HasMutex = $false
         }
@@ -4698,7 +4699,7 @@ $resolvedConfig = [PSCustomObject]@{
 try {
     $configJson = $resolvedConfig | ConvertTo-Json -Depth 6
     [void](Write-Nano11TextFileAtomic -Path $configSnapshotPath -Content $configJson -Encoding utf8)
-} catch {}
+} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
 Write-Host ""
 Write-Host "Active configuration:" -ForegroundColor Cyan
@@ -4736,7 +4737,7 @@ try {
             Write-Host "  - Estimated build time:    ~$([math]::Round($totalSec / 60, 1)) min (based on last run's phase timings)" -ForegroundColor DarkCyan
         }
     }
-} catch {}
+} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
 # Early verification of -SourceDrive
 if ($SourceDrive) {
@@ -4901,7 +4902,7 @@ function Invoke-Nano11HostHealthCheck {
                 if ($freeGB -lt 40) { $hostIssues.Add("Low free space on the $volLetter`: drive ($freeGB GB free, 40+ GB recommended).") }
             }
         }
-    } catch {}
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
     # 3. Physical disk SMART health (Storage module available on Win8+)
     $diskScanDone = $false
@@ -5039,7 +5040,7 @@ function Invoke-Nano11ResumeIsoBuild {
     )
     Write-Host "Patching boot.wim (LabConfig + setup bypasses, Phase 14 equivalent)..." -ForegroundColor Green
     Set-ItemOwnershipAndAccess -Path $resumeBootWim
-    try { Set-ItemProperty -LiteralPath $resumeBootWim -Name IsReadOnly -Value $false -ErrorAction Stop } catch {}
+    try { Set-ItemProperty -LiteralPath $resumeBootWim -Name IsReadOnly -Value $false -ErrorAction Stop } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     $resumeBootInfo = & dism.exe /English /Get-WimInfo "/WimFile:$resumeBootWim"
     $resumeHasIndex2 = (($resumeBootInfo -split '\r?\n') -match 'Index\s*:\s*2')
     $resumeIndices = if ($resumeHasIndex2) { @(1, 2) } else { @(1) }
@@ -5130,7 +5131,7 @@ function Invoke-Nano11ResumeIsoBuild {
         }
         $resumeInfoObj | ConvertTo-Json -Depth 4 |
             Set-Content -LiteralPath (Join-Path -Path $resumeNanoDir -ChildPath "nano11-build-info.json") -Encoding utf8
-    } catch {}
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
     # 7. Phase 17 equivalent: locate verified oscdimg.exe (local first, then PATH/ADK)
     $resumeOscdimg = $null
@@ -5248,7 +5249,7 @@ function Invoke-Nano11ResumeIsoBuild {
             Start-Sleep -Seconds 5
         } finally {
             if ($resumeMountResult) {
-                try { Dismount-DiskImage -ImagePath $resumeTempIso -ErrorAction SilentlyContinue | Out-Null } catch {}
+                try { Dismount-DiskImage -ImagePath $resumeTempIso -ErrorAction SilentlyContinue | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
             }
         }
     }
@@ -5267,7 +5268,7 @@ function Invoke-Nano11ResumeIsoBuild {
                     Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
                 }
             }
-        } catch {}
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
     $resumeIsoItem = Get-Item -LiteralPath $resumeOutputIso
     $resumeIsoSha256 = (Get-FileHash -LiteralPath $resumeOutputIso -Algorithm SHA256).Hash
@@ -5306,7 +5307,7 @@ function Invoke-Nano11ResumeIsoBuild {
         $script:DiagnosticData.IsoPayloadVerified = $true
         Write-Nano11DiagnosticReport "Resume build succeeded"
     }
-    try { Stop-Transcript } catch {}
+    try { Stop-Transcript } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
 
 # ============================================================================
@@ -5394,7 +5395,7 @@ if ($ResumeFromPhase -gt 0) {
                 Write-Nano11DiagnosticReport "Resume failed"
             }
             Write-Host "ResumeFromPhase failed: $_" -ForegroundColor Red
-            try { Stop-Transcript } catch {}
+            try { Stop-Transcript } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
             exit 1
         }
     } else {
@@ -5423,7 +5424,7 @@ if ($ResumeIsoOnly) {
         Write-Host "==============================================================================" -ForegroundColor Red
         Write-Host "Error: $_" -ForegroundColor Red
         Write-Host "Preserved workspace payload: $(if ($WorkDir) { $WorkDir } else { '<Documents>\nano11_workspace\build' })" -ForegroundColor Gray
-        try { Stop-Transcript } catch {}
+        try { Stop-Transcript } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         exit 1
     }
 }
@@ -5568,7 +5569,7 @@ try {
     if ($script:HivesLoaded) {
         Write-Host "Cleaning up lingering registry hives..." -ForegroundColor Yellow
         @('zCOMPONENTS', 'zDEFAULT', 'zNTUSER', 'zSOFTWARE', 'zSYSTEM') | ForEach-Object {
-            try { [void](Unmount-RegistryHiveWithRetry -Name $_) } catch {}
+            try { [void](Unmount-RegistryHiveWithRetry -Name $_) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         }
         $script:HivesLoaded = $false
     }
@@ -5579,10 +5580,10 @@ try {
         foreach ($d in $script:AllocatedMountDirs) { [void]$allTargetMounts.Add($d) }
     }
     if ($scratchDir) {
-        try { [void]$allTargetMounts.Add((ConvertTo-Nano11NormalizedPath -Path $scratchDir)) } catch {}
+        try { [void]$allTargetMounts.Add((ConvertTo-Nano11NormalizedPath -Path $scratchDir)) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
     if ($vhdxMountDir -and (-not $script:IsVhdxMounted)) {
-        try { [void]$allTargetMounts.Add((ConvertTo-Nano11NormalizedPath -Path $vhdxMountDir)) } catch {}
+        try { [void]$allTargetMounts.Add((ConvertTo-Nano11NormalizedPath -Path $vhdxMountDir)) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
 
     foreach ($mPath in $allTargetMounts) {
@@ -5650,7 +5651,7 @@ try {
         try {
             Dismount-DiskImage -ImagePath $script:MountedIso.ImagePath -ErrorAction SilentlyContinue > $null
             $script:MountedIso = $null
-        } catch {}
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
 
     # 5. ALWAYS remove Windows Defender temporary workspace exclusion (Rule 17)
@@ -5658,7 +5659,7 @@ try {
         try {
             Remove-MpPreference -ExclusionPath $baseWorkDir -ErrorAction SilentlyContinue
             $script:DefenderExclusionAdded = $false
-        } catch {}
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
 
     # 6. Disk deletion: ONLY IF ALL SAFETY CONDITIONS MET
@@ -5705,8 +5706,8 @@ try {
             if ($vhdxMountDir -and (Test-Path -LiteralPath $vhdxMountDir)) {
                 $rpCheck = Get-Item -LiteralPath $vhdxMountDir -Force -ErrorAction SilentlyContinue
                 if ($rpCheck -and ($rpCheck.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
-                    try { & mountvol.exe "$vhdxMountDir" /D > $null 2>&1 } catch {}
-                    try { [System.IO.Directory]::Delete($vhdxMountDir, $false) } catch { try { $rpCheck.Delete() } catch {} }
+                    try { & mountvol.exe "$vhdxMountDir" /D > $null 2>&1 } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+                    try { [System.IO.Directory]::Delete($vhdxMountDir, $false) } catch { try { $rpCheck.Delete() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" } }
                 } else {
                     if (Test-CanSafelyDeleteDirectory -Path $vhdxMountDir -ExpectedBaseDir $baseWorkDir -PreservedDirs $script:PreservedMountDirs) {
                         [void](Remove-Nano11TreeRobust -Path $vhdxMountDir -SafetyRoot $baseWorkDir -AllowLockedFallback)
@@ -5768,7 +5769,7 @@ try {
             $script:BuildMutex.ReleaseMutex()
             $script:BuildMutex.Dispose()
             $script:BuildMutex = $null
-        } catch {}
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
 
     if ($script:BuildSucceeded) {

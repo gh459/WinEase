@@ -48,7 +48,7 @@ try {
     if ([Enum]::IsDefined([Net.SecurityProtocolType], 'Tls13')) {
         [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]'Tls13'
     }
-} catch {}
+} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     
     foreach ($url in $mirrors) {
         try {

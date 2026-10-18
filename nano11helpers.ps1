@@ -59,7 +59,7 @@ function Test-IsNtfsVolume {
             if ($drive.IsReady) {
                 return ($drive.DriveFormat -ieq 'NTFS')
             }
-        } catch {}
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         if ($root -match '^[a-zA-Z]:') {
             $letter = $root.Substring(0, 1)
             $vol = Get-Volume -DriveLetter $letter -ErrorAction Stop
@@ -373,7 +373,7 @@ function Test-OscdimgIntegrity {
         if ($sig -and $sig.Status -eq 'Valid' -and ($sig.SignerCertificate.Subject -match 'Microsoft')) {
             return $true
         }
-    } catch {}
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
     # 2. Known Official & Pinned SHA256 Hashes
     $knownHashes = @(
@@ -387,7 +387,7 @@ function Test-OscdimgIntegrity {
         if ($fileHash -and ($knownHashes -contains $fileHash.ToUpperInvariant())) {
             return $true
         }
-    } catch {}
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
     return $false
 }
@@ -409,7 +409,7 @@ function Get-SafeShortPath {
             $short = $fso.GetFolder($Path).ShortPath
             if ($short) { return $short }
         }
-    } catch {}
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     return $Path
 }
 
@@ -831,7 +831,7 @@ namespace Nano11 {
     }
 }
 '@ -ErrorAction Stop
-        } catch { }
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
     if (-not ('Nano11.TokenHelpers' -as [type])) {
         if (-not $script:Nano11TokenHelperWarned) {
@@ -1022,7 +1022,7 @@ function Remove-Nano11TreeRobust {
             try { Reset-DirectoryWithRobocopy -Path $full -Retries 2 } catch { Write-Warning "Remove-Nano11TreeRobust: heavy reset failed for '$full': $(($_ -split "`n")[0])" }
             if (Test-Path -LiteralPath $full) {
                 if (-not $linkDeleteFailed) { & cmd.exe /c "rd /s /q `"$full`"" > $null 2>&1 }
-                else { try { [System.IO.Directory]::Delete($full, $false) } catch {} }
+                else { try { [System.IO.Directory]::Delete($full, $false) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" } }
             }
             if (-not (Test-Path -LiteralPath $full)) {
                 Write-Verbose "Remove-Nano11TreeRobust: '$full' removed via tier 3 in $([math]::Round($sw.Elapsed.TotalSeconds,1))s."

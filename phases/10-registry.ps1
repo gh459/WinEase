@@ -34,7 +34,7 @@ try {
     if ($targetProductName) {
         Write-Host "Target Image OS: $targetProductName (Version: $targetDisplayVer, Build: $targetBuildNum.$targetUBR)" -ForegroundColor Green
     }
-} catch {}
+} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
 # Helper function to evaluate individual toggle settings
 function Test-TweakEnabled {
