@@ -3,7 +3,69 @@
 All notable changes to this fork are documented here. Versions follow the upstream
 nano11 scheme; entries below are local-fork additions on top of upstream 2.1.
 
-## Unreleased (local fork, 2026-10-17)
+## Unreleased (local fork, 2026-10-19)
+
+### Added
+- `config/tweaks.psd1`: single source of truth for every tweak and component setting
+  (key, GUI tab, default, description, legacy aliases, CLI switch, backing variable).
+  `AllTweakDefs`, the GUI "Services & Apps" tab, profile apply/export and the plain CLI
+  switches are now all generated from it.
+- Per-tweak `TweakSettings` block in profiles (`profiles/*.json`) - every switch can be
+  turned on/off individually. Legacy key names (`BypassRequirements`, `DisableTelemetry`,
+  `DisableSearchIndex`, `DAWMode`) are still accepted as aliases.
+- `gui/Nano11Gui.ps1`: the WinForms GUI moved out of `nano11builder.ps1` (loaded only for
+  `-GUI` / menu option `[7]`), built from shared control helpers (`New-Nano11Button`,
+  `New-Nano11ToggleTab`, `Add-Nano11SelectButtons`, ...).
+- **Select All / Clear All** buttons on the Standard and Experimental lists of the
+  Advanced Debloat tab. Select All on the Experimental list asks for confirmation.
+- `tools/Measure-Nano11GuestBaseline.ps1` (in-guest disk / RAM / CPU / boot-time /
+  functionality measurement, JSON output) and `tools/Compare-Nano11Benchmarks.ps1`
+  (multi-run statistical comparison: mean, median, StdDev, IQR, % improvement).
+- `tools/custom-scripts/user/`: post-install scripts that run in the standard user context.
+- `PSScriptAnalyzerSettings.psd1` plus a Pester test that requires zero Error/Warning
+  findings. Pester suite grew to 64 tests (GUI wiring, single-source settings, GUI smoke
+  test that clicks every Select All / Clear All button).
+
+### Changed
+- AppX leftover folder cleanup no longer runs recursive `takeown /R` / `icacls /T`; it
+  removes reparse points (junctions) as links first so deletion never follows them out
+  of the image (`Remove-Nano11TreeRobust`). Folder cleanup still runs on
+  `-AppxParallelism` (1-8, default 4) RunspacePool workers; DISM removal stays sequential.
+- Rewritten Rust physical-debloat tool and Phase 09 with the explicit
+  `-AllowPhysicalDebloat` / GUI consent gate and mount-path safety validation.
+- Code hygiene (no behaviour change): empty `catch {}` blocks now log via `Write-Verbose`,
+  `$null` moved to the left of comparisons, positional parameters named, unused variables
+  removed, trailing whitespace stripped.
+
+### Fixed
+- GUI **Select All / Clear All** buttons on tabs 2-5 did nothing (the click handler
+  referenced a variable that was out of scope by click time).
+- 24 GUI tweak switches were never read by the build because their names differed from
+  the ones Phase 10 looked up (e.g. `BypassHardwareRequirements` vs `BypassRequirements`),
+  or had no implementation at all. All are now wired through or implemented.
+- `RadicalRAM`, `BypassActivationRestrictions`, `DisableMemCompression`,
+  `DisableUSBSuspend`, `NoHypervisor`, `NoKernelPaging`, `DisableCPUMitigations` from the
+  GUI/profiles were ignored (RadicalRAM always resolved to off).
+- 15 Advanced Debloat "Standard" items only logged `[SKIP] No standard handler`; they now
+  have handlers, or were removed from the GUI when no safe implementation exists.
+
+- GUI toggle initialization called `ContainsKey` on `[ordered]@{}`
+  (`System.Collections.Specialized.OrderedDictionary`), which Windows PowerShell 5.1 does not
+  implement: every launch logged 122 method-not-found errors and per-tweak values saved in
+  profiles were not applied (the `elseif` fallback to top-level keys was used instead). The GUI
+  loader now uses `Contains`, as does Phase 10's `Test-TweakEnabled` alias lookup - the same
+  pattern there would have evaluated every toggle as disabled in a real build.
+
+### Known issues
+- `nano11builder.ps1` is saved as UTF-8 without BOM but contains emoji in the console
+  preset menu, so Windows PowerShell 5.1 shows them garbled (display only).
+
+### Notes
+- Full end-to-end build re-verified on 2026-10-19 (GUI-driven): the complete pipeline finished
+  with "Build succeeded and safety checks passed" and produced `nano11.iso` (7,888,314,368
+  bytes); `nano11_report.html` was refreshed from the same run.
+
+## Earlier (local fork, 2026-10-17)
 
 ### Added
 - `-ResumeIsoOnly` (aliases `-ResumeIso`, `-IsoResume`): fast-track Phase 14-18 (boot.wim

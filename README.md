@@ -214,7 +214,8 @@ Simply double-click **`nano11-GUI.bat`** (or run `.\nano11builder.ps1 -GUI` as A
 The modern dark-mode GUI allows you to:
 - Select an auto-detected installation media drive or browse directly to an official Windows 11 `.iso` file.
 - Pick a one-click built-in profile preset (**Extreme Slim & Gaming**, **Balanced Pro**, **FAT32 USB Split-WIM**, **Portable Gaming PC**, **VM & Developer**, or **Audio & DAW Production**).
-- Toggle any of the debloat, localization, hardware injection, and modular performance options.
+- Toggle any of the debloat, localization, hardware injection, and modular performance options. Every tab has **Select All / Clear All** buttons, including both lists on the **Advanced Debloat** tab (Select All on the destructive Experimental list asks for confirmation).
+- Every switch shown in the GUI is defined in `config/tweaks.psd1` and is guaranteed to reach the build (covered by Pester wiring tests).
 - Choose your payload format (**install.wim**, **install.esd**, or **install.swm** for FAT32 USB).
 - Toggle **High-Speed VHDX Scratch Disk** (`-UseVHDX`) to eliminate host fragmentation.
 - Click **Start nano11 Build** to launch the build process!
@@ -317,6 +318,8 @@ You can run the builder completely unattended with built-in presets and modular 
 | `-RemoveWebViewPostOOBE` | Automatically uninstalls WebView2 during FirstLogon after OOBE completes |
 | `-FastExport` | Uses `/Compress:fast` during DISM export for accelerated build pipelines |
 | `-UefiOnly` | Configures pure UEFI bootdata without legacy BIOS boot sector fallback |
+| `-AllowPhysicalDebloat` | Explicit opt-in for Advanced Debloat physical deletion (Phase 09). Selections from a profile alone do not authorize deletion; the GUI asks for the same consent |
+| `-AppxParallelism <1-8>` | Number of parallel workers for leftover `WindowsApps` folder cleanup after AppX removal (Default: 4, `1` = sequential). DISM package removal itself always runs sequentially |
 | `-CpuBoostMode <Efficient\|Aggressive\|Off\|Default>` | Configures CPU power performance boost mode |
 | `-PowerPreset <Desktop\|Handheld\|Balanced\|VM\|Default>` | Applies hardware-tailored power policy table |
 
@@ -402,14 +405,28 @@ This working copy carries the following changes on top of the upstream fork:
 - **Module extraction (F8)**: pure utility helpers (`ConvertTo-Nano11NormalizedPath`, `Test-Nano11PathWithin`, `Test-IsNtfsVolume`, `Test-IsSafePathToDelete`, `New-Nano11BuildId`) moved to `nano11helpers.ps1` and dot-sourced at startup, reducing the main script size and improving maintainability.
 - **ARM64 (F9)**: boot.wim architecture sanity check added to Phase 14 (warns on arch mismatch); UEFI-only bootdata already used for ARM64 targets. Verification on real ARM64 hardware/VM is recommended (not yet performed in this environment).
 
+## 📝 Local Fork Revision Notes (2026-10-19)
+
+- **GUI settings now actually reach the build**: 24 tweak switches whose names did not match what Phase 10 read (or had no implementation), 7 variable-backed toggles such as `RadicalRAM` (previously always off), and 15 Advanced Debloat Standard items that were silently skipped are now wired through, implemented, or removed from the GUI. Older profiles using legacy key names keep working through aliases.
+- **Select All / Clear All buttons fixed and extended**: the buttons on tabs 2-5 did nothing; they now work, and the Advanced Debloat tab got them too.
+- **Single source of truth for settings**: every tweak and component setting lives in `config/tweaks.psd1`; the GUI, profiles and CLI switches are generated from it so names can no longer drift apart.
+- **GUI split out**: the WinForms GUI moved to `gui/Nano11Gui.ps1` with shared control helpers (about 1,200 lines out of `nano11builder.ps1`).
+- **Safer AppX folder cleanup**: no more recursive `takeown /R` / `icacls /T`; junctions are removed as links so deletion never follows them out of the image.
+- **Benchmark tooling**: `tools/Measure-Nano11GuestBaseline.ps1` and `tools/Compare-Nano11Benchmarks.ps1` measure and compare installed-system footprint, idle load and boot time.
+- **Code hygiene**: `PSScriptAnalyzerSettings.psd1` added; the codebase reports zero Error/Warning findings and the Pester suite (64 tests) enforces it.
+- **Toggle-state loading fixed**: GUI initialization called `ContainsKey` on `[ordered]@{}` (not implemented in Windows PowerShell 5.1), which logged 122 method-not-found errors per launch and left the per-tweak values saved in profiles unapplied; the GUI loader and Phase 10's `Test-TweakEnabled` now use `Contains`.
+- **Build verification (2026-10-19)**: a full GUI-driven run completed the pipeline with "Build succeeded and safety checks passed" and produced `nano11.iso` (7,888,314,368 bytes).
+
 ---
 
 ## 📁 Repository Structure
 
 ```
 nano11-main/
-├── nano11builder.ps1          # Main orchestrator (params, options, GUI, try/catch)
+├── nano11builder.ps1          # Main orchestrator (params, options, try/catch)
 ├── nano11helpers.ps1          # Pure utility helpers (dot-sourced at startup)
+├── gui/
+│   └── Nano11Gui.ps1          # WinForms GUI (loaded only for -GUI / menu [7])
 ├── autounattend.xml           # Unattended setup template (scripts injected at build time)
 ├── nano11-GUI.bat             # GUI launcher
 ├── oscdimg.exe                # Bundled ISO mastering tool
@@ -427,10 +444,16 @@ nano11-main/
 │   └── Winhancements.ps1
 ├── templates/                 # HTML report template (reference)
 │   └── report.html
-├── config/                    # JSON Schema for profile validation
-│   └── nano11.config.schema.json
+├── config/
+│   ├── tweaks.psd1            # Single source of truth for every tweak/component setting
+│   └── nano11.config.schema.json  # JSON Schema for profile validation
+├── profiles/                  # Saved build profiles (JSON, incl. per-tweak TweakSettings)
 ├── tools/                     # Optional tooling
-│   └── custom-scripts/        # User post-install scripts (executed at first logon)
+│   ├── custom-scripts/        # User post-install scripts (executed at first logon)
+│   │   └── user/              # Scripts run in the standard user context
+│   ├── nano11-physical-debloat/   # Rust tool for Advanced Debloat physical deletion
+│   ├── Measure-Nano11GuestBaseline.ps1  # In-guest footprint / idle load / boot-time measurement
+│   └── Compare-Nano11Benchmarks.ps1     # Multi-run benchmark statistical comparison
 ├── tests/                     # Pester test suite
 │   └── nano11.Tests.ps1
 ├── .github/                   # CI/CD workflows
