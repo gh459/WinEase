@@ -16,6 +16,3 @@ nano11_workspace/
 
 # Rust build artifacts (nano11-physical-debloat); build with: cargo build --release
 tools/nano11-physical-debloat/target/
-
-# Rust build artifacts (nano11-physical-debloat helper tool)
-tools/nano11-physical-debloat/target/

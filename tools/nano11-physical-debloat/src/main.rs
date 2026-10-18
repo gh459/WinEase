@@ -99,6 +99,62 @@ fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+/// True when `p` itself (not its target) is a reparse point: junction, mount point or
+/// symlink. Traversal must never descend into these, and they are never deleted through.
+fn is_reparse_point(p: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    match fs::symlink_metadata(p) {
+        Ok(md) => (md.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT) != 0,
+        Err(_) => false,
+    }
+}
+
+/// Strip the `\\?\` verbatim prefix on local drive paths (registry APIs prefer the plain
+/// `C:\...` form). UNC verbatim paths are left untouched.
+fn strip_verbatim_prefix(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix("\\\\?\\") {
+        if rest.as_bytes().get(1) == Some(&b':') {
+            return PathBuf::from(rest);
+        }
+    }
+    p
+}
+
+/// Validate the configured mount directory before any destructive operation.
+/// Rejects empty paths, reparse-point roots, non-directories, drive/volume roots, and
+/// trees without the `Windows\System32\config\SYSTEM` marker (offline-image proof).
+fn validate_mount_path(mount: &str) -> Result<PathBuf, String> {
+    if mount.trim().is_empty() {
+        return Err("mount_path is empty".to_string());
+    }
+    let p = Path::new(mount);
+    if is_reparse_point(p) {
+        return Err(format!("mount_path is a reparse point (junction/symlink): {}", mount));
+    }
+    let md = fs::symlink_metadata(p)
+        .map_err(|e| format!("mount_path is not accessible ({}): {}", mount, e))?;
+    if !md.is_dir() {
+        return Err(format!("mount_path is not a directory: {}", mount));
+    }
+    let canon = fs::canonicalize(p)
+        .map_err(|e| format!("mount_path canonicalization failed ({}): {}", mount, e))?;
+    if canon.parent().is_none() {
+        return Err(format!("mount_path resolves to a drive/volume root: {}", canon.display()));
+    }
+    let canon = strip_verbatim_prefix(canon);
+    let marker = canon.join("Windows").join("System32").join("config").join("SYSTEM");
+    if !marker.is_file() {
+        return Err(format!(
+            "Windows\\System32\\config\\SYSTEM marker not found (not a mounted Windows image): {}",
+            canon.display()
+        ));
+    }
+    println!("[GUARD] Mount validated: {}", canon.display());
+    Ok(canon)
+}
+
 // --- File/directory deletion ---
 
 /// Delete a file. Returns `Ok(true)` when the file was deleted, `Ok(false)`
@@ -106,8 +162,13 @@ fn to_wide(s: &str) -> Vec<u16> {
 /// for genuine failures (locked, access denied, ...).
 fn delete_file(path: &str, dry_run: bool) -> Result<bool, String> {
     if dry_run {
-        println!("[DRY] Would delete file: {}", path);
-        return Ok(true);
+        // Report only targets that actually exist: counters must not overstate the run.
+        if fs::symlink_metadata(path).is_ok() {
+            println!("[DRY] Would delete file: {}", path);
+            return Ok(true);
+        }
+        println!("  [SKIP] File not found: {}", path);
+        return Ok(false);
     }
     let wide = to_wide(path);
     unsafe {
@@ -169,25 +230,44 @@ fn delete_file(path: &str, dry_run: bool) -> Result<bool, String> {
     }
 }
 
-/// Delete a directory tree. Returns `Ok(true)` when processing happened,
-/// `Ok(false)` when the directory did not exist (reported as `[SKIP]`).
+/// Delete a directory tree. Returns `Ok(true)` only when the tree is gone,
+/// `Ok(false)` when the directory did not exist (reported as `[SKIP]`), and `Err`
+/// when the directory (or parts of it) could not be removed.
+/// Reparse points (junctions/symlinks) are never traversed and never deleted through.
 fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
-    if dry_run {
-        println!("[DRY] Would delete directory: {}", path);
-        return Ok(true);
-    }
     let p = Path::new(path);
+    // B5: a reparse-point root would make `read_dir` enumerate the *target* tree.
+    if is_reparse_point(p) {
+        println!("  [SKIP] Reparse point (junction/symlink) is never deleted: {}", path);
+        return Ok(false);
+    }
     if !p.exists() {
         println!("  [SKIP] Directory not found: {}", path);
         return Ok(false);
     }
-    // Collect all entries bottom-up
+    // Target registered as a directory but is actually a file (config drift):
+    // delete it as a file so success/failure reporting stays accurate.
+    if p.is_file() {
+        println!("  [INFO] Target is a file, not a directory; deleting as file: {}", path);
+        return delete_file(path, dry_run);
+    }
+    if dry_run {
+        println!("[DRY] Would delete directory: {}", path);
+        return Ok(true);
+    }
+    // Collect all entries bottom-up (reparse points are skipped, not followed)
     let mut entries: Vec<PathBuf> = Vec::new();
     fn collect(path: &Path, entries: &mut Vec<PathBuf>) {
         if let Ok(rd) = fs::read_dir(path) {
             for entry in rd.flatten() {
                 let ep = entry.path();
-                if ep.is_dir() && !ep.is_symlink() {
+                // B5: never descend into junctions/symlinks; deleting through them would
+                // destroy data outside the intended tree.
+                if is_reparse_point(&ep) {
+                    println!("  [SKIP] Reparse point (junction/symlink) not traversed: {}", ep.to_string_lossy());
+                    continue;
+                }
+                if ep.is_dir() {
                     collect(&ep, entries);
                 }
                 entries.push(ep);
@@ -205,11 +285,18 @@ fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
             let _ = delete_file(&entry.to_string_lossy(), false);
         }
     }
-    // Delete root
+    // Delete root and verify the outcome so success is not reported for failed removals
     let s = p.to_string_lossy();
     let wide = to_wide(&s);
     unsafe { let _ = RemoveDirectoryW(PCWSTR(wide.as_ptr())); }
-    Ok(true)
+    if p.exists() {
+        Err(format!(
+            "not fully removed (locked, access denied, or contains preserved reparse points): {}",
+            path
+        ))
+    } else {
+        Ok(true)
+    }
 }
 
 // --- Wildcard expansion for directory patterns ---
@@ -710,10 +797,10 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
     if config.experimental.get("physical_onedrive").copied().unwrap_or(false) {
         targets.push(DeletionTarget {
             name: "OneDrive",
-            files: vec![],
-            dirs: vec![
+            files: vec![
                 "Windows\\System32\\OneDriveSetup.exe",
             ],
+            dirs: vec![],
             registry_keys: vec![],
         });
     }
@@ -901,7 +988,7 @@ fn main() {
         i += 1;
     }
     
-    println!("nano11-physical-debloat v0.1.0");
+    println!("nano11-physical-debloat v0.2.0");
     println!("Config: {}", config_path);
     
     // Read config
@@ -925,8 +1012,23 @@ fn main() {
     println!("Dry run: {}", config.dry_run);
     println!("Mount path: {}", config.mount_path);
     
-    // Escalate privileges
-    escalate_privileges();
+    // E1 SAFETY: refuse to run against anything that is not a mounted Windows image.
+    // Exit code 3 tells the PowerShell phase to skip its DISM fallback as well.
+    let mount_path = match validate_mount_path(&config.mount_path) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[BLOCKED] Mount path safety validation failed: {}", e);
+            std::process::exit(3);
+        }
+    };
+    let mount = mount_path.to_string_lossy().to_string();
+    
+    // E1: escalate privileges only for real deletions (dry runs must stay non-invasive).
+    if config.dry_run {
+        println!("[PRIV] Dry run: privilege escalation skipped");
+    } else {
+        escalate_privileges();
+    }
     
     // Get targets
     let targets = get_targets(&config);
@@ -939,8 +1041,6 @@ fn main() {
         ..Default::default()
     };
     
-    let mount = &config.mount_path;
-    
     for target in &targets {
         println!("\n=== Processing: {} ===", target.name);
         result.targets_processed.push(target.name.to_string());
@@ -949,7 +1049,10 @@ fn main() {
         for f in &target.files {
             let full_path = format!("{}\\{}", mount, f);
             match delete_file(&full_path, config.dry_run) {
-                Ok(true) => { result.deleted_files += 1; println!("  [OK] Deleted file: {}", f); }
+                Ok(true) => {
+                    result.deleted_files += 1;
+                    if !config.dry_run { println!("  [OK] Deleted file: {}", f); }
+                }
                 Ok(false) => { /* not found: [SKIP] already printed */ }
                 Err(e) => { result.errors.push(format!("[{}] file {}: {}", target.name, f, e)); result.success = false; println!("  [ERR] {}", e); }
             }
@@ -959,7 +1062,7 @@ fn main() {
         // "Windows\SystemApps\Microsoft.Cortana*" are expanded to concrete matches)
         for d in &target.dirs {
             if has_wildcard(d) {
-                let matches = expand_dir_pattern(mount, d);
+                let matches = expand_dir_pattern(&mount, d);
                 if matches.is_empty() {
                     println!("  [SKIP] No matches: {}", d);
                     continue;
@@ -968,15 +1071,8 @@ fn main() {
                     let ms = m.to_string_lossy().to_string();
                     match delete_directory(&ms, config.dry_run) {
                         Ok(true) => {
-                            if config.dry_run || !m.exists() {
-                                result.deleted_dirs += 1;
-                                println!("  [OK] Deleted dir: {}", ms);
-                            } else {
-                                let msg = format!("[{}] dir {}: not fully removed (locked or access denied)", target.name, ms);
-                                result.errors.push(msg.clone());
-                                result.success = false;
-                                println!("  [ERR] {}", msg);
-                            }
+                            result.deleted_dirs += 1;
+                            if !config.dry_run { println!("  [OK] Deleted dir: {}", ms); }
                         }
                         Ok(false) => { /* not found: [SKIP] already printed */ }
                         Err(e) => { result.errors.push(format!("[{}] dir {}: {}", target.name, ms, e)); result.success = false; println!("  [ERR] {}", e); }
@@ -985,7 +1081,10 @@ fn main() {
             } else {
                 let full_path = format!("{}\\{}", mount, d);
                 match delete_directory(&full_path, config.dry_run) {
-                    Ok(true) => { result.deleted_dirs += 1; println!("  [OK] Deleted dir: {}", d); }
+                    Ok(true) => {
+                        result.deleted_dirs += 1;
+                        if !config.dry_run { println!("  [OK] Deleted dir: {}", d); }
+                    }
                     Ok(false) => { /* not found: [SKIP] already printed */ }
                     Err(e) => { result.errors.push(format!("[{}] dir {}: {}", target.name, d, e)); result.success = false; println!("  [ERR] {}", e); }
                 }
@@ -996,7 +1095,10 @@ fn main() {
         for key in &target.registry_keys {
             let hive_path = format!("{}\\Windows\\System32\\config\\SYSTEM", mount);
             match delete_registry_key(&hive_path, key, config.dry_run) {
-                Ok(()) => { result.deleted_registry_keys += 1; println!("  [OK] Deleted reg key: {}", key); }
+                Ok(()) => {
+                    result.deleted_registry_keys += 1;
+                    if !config.dry_run { println!("  [OK] Deleted reg key: {}", key); }
+                }
                 Err(e) => { println!("  [WARN] reg {}: {}", key, e); /* Don't fail on missing keys */ }
             }
         }
@@ -1010,9 +1112,10 @@ fn main() {
     }
     
     println!("\n=== Summary ===");
-    println!("Deleted files: {}", result.deleted_files);
-    println!("Deleted dirs: {}", result.deleted_dirs);
-    println!("Deleted registry keys: {}", result.deleted_registry_keys);
+    let verb = if config.dry_run { "Would delete" } else { "Deleted" };
+    println!("{} files: {}", verb, result.deleted_files);
+    println!("{} dirs: {}", verb, result.deleted_dirs);
+    println!("{} registry keys: {}", verb, result.deleted_registry_keys);
     println!("Errors: {}", result.errors.len());
     for e in &result.errors {
         println!("  - {}", e);

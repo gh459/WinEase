@@ -43,6 +43,9 @@ param(
     [switch]$Validate,
     [switch]$SkipEiCfg,
     [switch]$NoPostInstallAssets,
+    # E1: Explicit opt-in gate for destructive physical debloat (Phase 9.5, 09-physical-debloat.ps1).
+    # Advanced Debloat selections arriving from a profile or GUI are NOT sufficient by themselves.
+    [switch]$AllowPhysicalDebloat,
     
     # Customization & Maintenance Settings
     # Both values are inserted verbatim into autounattend.xml and its embedded PowerShell scripts,
@@ -278,6 +281,10 @@ Write-Host ""
 
 # 1. Early Simulation & Diagnostic Mode Resolution (P0-02)
 $isDryRunMode = $DryRun -or ($PSBoundParameters.ContainsKey('WhatIf') -and $PSBoundParameters['WhatIf'])
+
+# E1: Physical debloat opt-in gate for Phase 9.5 (09-physical-debloat.ps1). Set from the CLI
+# switch here; an interactive GUI session can additionally grant it via a consent dialog.
+$script:allowPhysicalDebloat = [bool]$AllowPhysicalDebloat
 
 # Check and adjust Execution Policy (Skip if in TestSelf or DryRun mode to remain 100% non-destructive)
 if ((-not $TestSelf) -and ($env:NANO11_TEST_MODE -ne "1") -and (-not $isDryRunMode)) {
@@ -4835,6 +4842,32 @@ function Invoke-Nano11GuiSession {
     $script:splitWIMMode                 = [bool]$guiResult.SplitWIMMode
     if ($guiResult.AdvancedDebloatStandard)     { $script:advancedDebloatStandard     = @($guiResult.AdvancedDebloatStandard) }     else { $script:advancedDebloatStandard     = @() }
     if ($guiResult.AdvancedDebloatExperimental) { $script:advancedDebloatExperimental = @($guiResult.AdvancedDebloatExperimental) } else { $script:advancedDebloatExperimental = @() }
+
+    # E1: destructive physical deletion requires explicit consent. CLI runs need
+    # -AllowPhysicalDebloat; in a GUI session the (present) operator confirms here, and
+    # declining clears the Advanced Debloat selections for this build.
+    $advStdCount = @($script:advancedDebloatStandard).Count
+    $advExpCount = @($script:advancedDebloatExperimental).Count
+    if ((-not $script:allowPhysicalDebloat) -and (($advStdCount + $advExpCount) -gt 0)) {
+        $consentMsg = "Advanced Debloat options selected: Standard=$advStdCount / Experimental=$advExpCount.`n`n" +
+            "These operations physically delete files, directories and registry keys from the offline image.`n" +
+            "Experimental items permanently break Windows Update and sfc verification.`n`n" +
+            "Enable physical debloat for this build?"
+        $consent = [System.Windows.Forms.MessageBox]::Show(
+            $consentMsg,
+            "nano11 - Confirm Physical Debloat",
+            [System.Windows.Forms.MessageBoxButtons]::YesNo,
+            [System.Windows.Forms.MessageBoxIcon]::Warning)
+        if ($consent -eq [System.Windows.Forms.DialogResult]::Yes) {
+            $script:allowPhysicalDebloat = $true
+            Write-Host "Physical debloat explicitly confirmed for this session." -ForegroundColor Yellow
+        } else {
+            $script:advancedDebloatStandard     = @()
+            $script:advancedDebloatExperimental = @()
+            Write-Warning "Physical debloat was not confirmed; Advanced Debloat selections were cleared for this build."
+        }
+    }
+
     if ($guiResult.Index)         { $script:Index = $guiResult.Index }
     if ($guiResult.InjectDrivers) { $script:InjectDrivers = $guiResult.InjectDrivers }
     if ($guiResult.DryRun) {

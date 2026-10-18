@@ -18,6 +18,77 @@ if (-not $hasStandardItems -and -not $hasExperimentalItems) {
     return
 }
 
+# --- E1 SAFETY GATE: physical deletion is strictly opt-in -----------------------------------
+# Selections coming from a JSON profile or the GUI do NOT authorize destructive physical
+# deletion by themselves. Without -AllowPhysicalDebloat (CLI) or the GUI consent dialog the
+# whole phase is skipped with an explicit notice.
+$physGateAllowed = $false
+if (Get-Variable -Name 'allowPhysicalDebloat' -Scope Script -ErrorAction SilentlyContinue) { $physGateAllowed = [bool]$script:allowPhysicalDebloat }
+if (-not $physGateAllowed) {
+    $reqStdCount = @($script:advancedDebloatStandard).Count
+    $reqExpCount = @($script:advancedDebloatExperimental).Count
+    Write-Host ""
+    Write-Host "  [Physical Debloat] BLOCKED: -AllowPhysicalDebloat was not specified." -ForegroundColor Yellow
+    Write-Host "  [Physical Debloat] Requested items were NOT executed (Standard: $reqStdCount, Experimental: $reqExpCount)." -ForegroundColor Yellow
+    Write-Host "  [Physical Debloat] Re-run with -AllowPhysicalDebloat to authorize physical deletion (test environments only)." -ForegroundColor DarkYellow
+    Write-Host ""
+    return
+}
+
+# --- E1 SAFETY VALIDATION: verify the mount directory before any destructive operation ------
+# Rejects empty paths, drive roots, non-existent directories, trees without the offline-image
+# marker, and mounts outside the workspace/mount roots.
+$physMountError = $null
+if ([string]::IsNullOrWhiteSpace("$scratchDir")) {
+    $physMountError = "scratchDir is empty"
+} else {
+    try {
+        $physMountFull = [System.IO.Path]::GetFullPath("$scratchDir").TrimEnd('\')
+        $physDriveRoot = [System.IO.Path]::GetPathRoot($physMountFull)
+        if ($physDriveRoot -and ($physMountFull -ieq $physDriveRoot.TrimEnd('\'))) {
+            $physMountError = "scratchDir is a drive root ($physMountFull)"
+        } elseif (-not (Test-Path -LiteralPath $physMountFull -PathType Container)) {
+            $physMountError = "scratchDir is not an existing directory ($physMountFull)"
+        } elseif (-not (Test-Path -LiteralPath (Join-Path -Path $physMountFull -ChildPath 'Windows\System32\config\SYSTEM'))) {
+            $physMountError = "Windows\System32\config\SYSTEM marker not found - not a mounted Windows image ($physMountFull)"
+        } else {
+            $physWorkspaceRoots = @()
+            if ($script:BaseWorkDir) { $physWorkspaceRoots += "$($script:BaseWorkDir)" }
+            if ($script:MountAllocationRoot) { $physWorkspaceRoots += "$($script:MountAllocationRoot)" }
+            if ($baseWorkDir) { $physWorkspaceRoots += "$baseWorkDir" }
+            if ($physWorkspaceRoots.Count -gt 0 -and (Get-Command -Name 'Test-Nano11PathWithin' -ErrorAction SilentlyContinue)) {
+                $physInside = $false
+                foreach ($physRoot in $physWorkspaceRoots) {
+                    if (Test-Nano11PathWithin -Path $physMountFull -Root $physRoot) { $physInside = $true; break }
+                }
+                if (-not $physInside) {
+                    $physMountError = "scratchDir is outside the workspace/mount roots ($($physWorkspaceRoots -join ', '))"
+                }
+            }
+        }
+    } catch {
+        $physMountError = "mount path validation failed: $($_.Exception.Message)"
+    }
+}
+if ($physMountError) {
+    Write-Host "  [Physical Debloat] BLOCKED: mount directory failed the safety validation." -ForegroundColor Red
+    Write-Host "    Reason: $physMountError" -ForegroundColor Red
+    Write-Host "    No deletion was attempted." -ForegroundColor Yellow
+    return
+}
+
+# --- E2 SAFETY: offline /ResetBase is blocked on 26100+ (checkpoint LCU protection) ---------
+# Mirrors phases/09-winsxs.ps1: Safe mode skips component cleanup entirely; on 24H2+ builds
+# ResetBase requires the explicit -ForceWinSxSCleanup override.
+$physTargetBuild = 0
+$physNtoskrnl = Join-Path -Path $scratchDir -ChildPath "Windows\System32\ntoskrnl.exe"
+if (Test-Path -LiteralPath $physNtoskrnl) {
+    try { $physTargetBuild = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($physNtoskrnl).ProductBuildPart } catch {}
+}
+$physWinSxSBlockReason = $null
+if ($safeDebloatMode) { $physWinSxSBlockReason = 'Safe Debloat Mode (component-store integrity protection)' }
+elseif (($physTargetBuild -ge 26100) -and (-not $ForceWinSxSCleanup)) { $physWinSxSBlockReason = "build $physTargetBuild (24H2+) checkpoint-LCU corruption protection (0x80070570)" }
+
 if (-not (Test-Path -LiteralPath $rustBinary)) {
     Write-Host "  [Physical Debloat] Rust binary not found at $rustBinary" -ForegroundColor Yellow
     Write-Host "  [Physical Debloat] Falling back to DISM-based removal (standard items only)." -ForegroundColor Yellow
@@ -103,7 +174,11 @@ if (-not (Test-Path -LiteralPath $rustBinary)) {
             } catch { Write-Host "    [WARN] Language pack removal failed: $_" -ForegroundColor Yellow }
         }
         elseif ($item -match 'WinSxS') {
-            if ($isDryRunMode) { Write-Host "    [DRY] Would run DISM /StartComponentCleanup /ResetBase" -ForegroundColor Yellow }
+            if ($physWinSxSBlockReason) {
+                Write-Host "    [SKIP] WinSxS /StartComponentCleanup /ResetBase skipped: $physWinSxSBlockReason" -ForegroundColor Green
+                Write-Host "      (pass -ForceWinSxSCleanup to override on 24H2+; see 09-winsxs.ps1)" -ForegroundColor DarkYellow
+            }
+            elseif ($isDryRunMode) { Write-Host "    [DRY] Would run DISM /StartComponentCleanup /ResetBase" -ForegroundColor Yellow }
             else {
                 try { & dism.exe /image:$scratchDir /Cleanup-Image /StartComponentCleanup /ResetBase 2>&1 | Out-Null; Write-Host "    [OK] WinSxS cleanup completed" -ForegroundColor Green } catch { Write-Host "    [WARN] WinSxS cleanup failed: $_" -ForegroundColor Yellow }
             }
@@ -197,7 +272,11 @@ if ($hasStandardItems) {
             }
         }
         elseif ($item -match 'WinSxS') {
-            if ($isDryRunMode) { Write-Host "    [DRY] Would run DISM /StartComponentCleanup /ResetBase" -ForegroundColor Yellow }
+            if ($physWinSxSBlockReason) {
+                Write-Host "    [SKIP] WinSxS /StartComponentCleanup /ResetBase skipped: $physWinSxSBlockReason" -ForegroundColor Green
+                Write-Host "      (pass -ForceWinSxSCleanup to override on 24H2+; see 09-winsxs.ps1)" -ForegroundColor DarkYellow
+            }
+            elseif ($isDryRunMode) { Write-Host "    [DRY] Would run DISM /StartComponentCleanup /ResetBase" -ForegroundColor Yellow }
             else {
                 try { & dism.exe /image:$scratchDir /Cleanup-Image /StartComponentCleanup /ResetBase 2>&1 | Out-Null; Write-Host "    [OK] WinSxS cleanup completed" -ForegroundColor Green } catch { Write-Host "    [WARN] WinSxS cleanup failed: $_" -ForegroundColor Yellow }
             }
@@ -477,13 +556,16 @@ if ($exitCode -eq 0) {
     $resultPath = if ($isDryRunMode) { Join-Path -Path $logDir -ChildPath "physical-debloat-dryrun.json" } else { Join-Path -Path $logDir -ChildPath "physical-debloat-result.json" }
     if (Test-Path -LiteralPath $resultPath) {
         $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
-        Write-Host "  [Physical Debloat] Deleted files: $($result.deleted_files), dirs: $($result.deleted_dirs), reg keys: $($result.deleted_registry_keys), errors: $($result.errors.Count)" -ForegroundColor Gray
+        $deletedLabel = if ($isDryRunMode) { 'Would delete' } else { 'Deleted' }
+        Write-Host "  [Physical Debloat] $deletedLabel files: $($result.deleted_files), dirs: $($result.deleted_dirs), reg keys: $($result.deleted_registry_keys), errors: $($result.errors.Count)" -ForegroundColor Gray
         if ($result.errors.Count -gt 0) {
             foreach ($err in $result.errors) {
                 Write-Host "    [ERROR] $err" -ForegroundColor Red
             }
         }
     }
+} elseif ($exitCode -eq 3) {
+    Write-Host "  [Physical Debloat] [BLOCKED] The Rust tool refused the mount path (exit 3). Skipping DISM fallback and all further deletions." -ForegroundColor Red
 } else {
     Write-Host "  [Physical Debloat] Rust binary failed (exit code $exitCode). Falling back to DISM-based removal." -ForegroundColor Yellow
     foreach ($item in $script:advancedDebloatExperimental) {
