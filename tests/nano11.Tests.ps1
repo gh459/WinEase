@@ -574,3 +574,77 @@ Describe "nano11 setup scripts - Custom Scripts Logging" {
 }
 
 
+
+Describe "nano11 GUI wiring - every toggle is consumed by the build" {
+    $builderText = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+    $builderAst = [System.Management.Automation.Language.Parser]::ParseInput($builderText, [ref]$null, [ref]$null)
+    $phasesDir = Join-Path -Path $script:RepoRoot -ChildPath "phases"
+    $phaseText = (Get-ChildItem -LiteralPath $phasesDir -Filter "*.ps1" | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"
+    $helpersText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "nano11helpers.ps1"))
+
+    # Evaluate a top-level "$script:<Name> = ..." hashtable assignment from the builder without running it
+    $getScriptHashtable = {
+        param([string]$Name)
+        $assign = $builderAst.Find({
+            param($n)
+            $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $n.Left.Extent.Text -eq "`$script:$Name"
+        }, $false)
+        return (Invoke-Expression $assign.Right.Extent.Text)
+    }
+    $tweakDefs = & $getScriptHashtable 'AllTweakDefs'
+    $varMap = & $getScriptHashtable 'TweakVariableMap'
+    $aliases = & $getScriptHashtable 'TweakKeyAliases'
+
+    It "every AllTweakDefs key is read by a phase (Test-TweakEnabled) or mapped to a consumed variable" {
+        $unconsumed = @()
+        foreach ($k in $tweakDefs.Keys) {
+            if ($phaseText -match "Test-TweakEnabled\s+'$k'") { continue }
+            if ($varMap.Contains($k)) {
+                $v = $varMap[$k]
+                if (($phaseText -match "\`$$v\b") -or ($helpersText -match "\`$$v\b")) { continue }
+            }
+            $unconsumed += $k
+        }
+        ($unconsumed -join ', ') | Should Be ''
+    }
+
+    It "legacy tweak aliases point at existing AllTweakDefs keys" {
+        foreach ($a in $aliases.Keys) { $tweakDefs.Contains($aliases[$a]) | Should Be $true }
+    }
+
+    It "phases do not read legacy alias names directly" {
+        foreach ($a in $aliases.Keys) { ($phaseText -match "Test-TweakEnabled\s+'$a'") | Should Be $false }
+    }
+
+    It "GUI session maps TweakSettings onto the variable-backed tweaks" {
+        $builderText | Should Match 'Sync-Nano11TweakVariables'
+        $builderText | Should Not Match '\$guiResult\.RadicalRAM'
+    }
+
+    It "every GUI Advanced Debloat standard item has a phase 09 handler" {
+        $physPath = Join-Path $phasesDir "09-physical-debloat.ps1"
+        $physAst = [System.Management.Automation.Language.Parser]::ParseFile($physPath, [ref]$null, [ref]$null)
+        # Patterns of the standard if/elseif chain: "$item -match '<pattern>'" in the Standard loop
+        $stdLoop = $physAst.Find({
+            param($n)
+            $n -is [System.Management.Automation.Language.ForEachStatementAst] -and
+            $n.Condition.Extent.Text -eq '$script:advancedDebloatStandard'
+        }, $true)
+        $patterns = @([regex]::Matches($stdLoop.Body.Extent.Text, "\`$item -match '([^']+)'") | ForEach-Object { $_.Groups[1].Value })
+        $patterns.Count | Should BeGreaterThan 0
+
+        $stdLists = $builderAst.FindAll({
+            param($n)
+            $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$stdItems'
+        }, $true)
+        @($stdLists).Count | Should BeGreaterThan 0
+        $unhandled = @()
+        foreach ($list in $stdLists) {
+            foreach ($item in (Invoke-Expression $list.Right.Extent.Text)) {
+                if (@($patterns | Where-Object { $item -match $_ }).Count -eq 0) { $unhandled += $item }
+            }
+        }
+        ($unhandled -join ' | ') | Should Be ''
+    }
+}

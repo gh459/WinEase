@@ -77,6 +77,38 @@ $physWinSxSBlockReason = $null
 if ($safeDebloatMode) { $physWinSxSBlockReason = 'Safe Debloat Mode (component-store integrity protection)' }
 elseif (($physTargetBuild -ge 26100) -and (-not $ForceWinSxSCleanup)) { $physWinSxSBlockReason = "build $physTargetBuild (24H2+) checkpoint-LCU corruption protection (0x80070570)" }
 
+# --- DISM helpers for Standard items (servicing-stack removal, no raw file deletion) ---
+function Invoke-Nano11DebloatFeatureRemoval {
+    param([string[]]$FeatureNames)
+    foreach ($feature in $FeatureNames) {
+        if ($isDryRunMode) { Write-Host "    [DRY] Would disable feature: $feature (/Remove)" -ForegroundColor Yellow; continue }
+        $dismOut = & dism.exe /English "/image:$scratchDir" /Disable-Feature "/FeatureName:$feature" /Remove /NoRestart 2>&1
+        $dismExit = $LASTEXITCODE
+        if ($dismExit -eq 0 -or $dismExit -eq 3010) { Write-Host "    [OK] Disabled feature: $feature" -ForegroundColor Green }
+        elseif (($dismOut | Out-String) -match '0x800f080c|feature name .* is unknown') { Write-Host "    [INFO] Feature not present in image: $feature" -ForegroundColor Gray }
+        else { Write-Host "    [WARN] Could not disable feature $feature (DISM exit $dismExit)" -ForegroundColor Yellow }
+    }
+}
+
+function Invoke-Nano11DebloatCapabilityRemoval {
+    param([string[]]$NamePatterns)
+    $capLines = & dism.exe /English "/image:$scratchDir" /Get-Capabilities /Format:Table 2>&1
+    $installed = @($capLines | ForEach-Object {
+        if ("$_" -match '^\s*(\S+~\S*)\s*\|\s*Installed') { $Matches[1] }
+    })
+    $matched = @($installed | Where-Object { $cap = $_; @($NamePatterns | Where-Object { $cap -like $_ }).Count -gt 0 })
+    if ($matched.Count -eq 0) {
+        Write-Host "    [INFO] No installed capability matches: $($NamePatterns -join ', ')" -ForegroundColor Gray
+        return
+    }
+    foreach ($cap in $matched) {
+        if ($isDryRunMode) { Write-Host "    [DRY] Would remove capability: $cap" -ForegroundColor Yellow; continue }
+        & dism.exe /English "/image:$scratchDir" /Remove-Capability "/CapabilityName:$cap" /NoRestart > $null 2>&1
+        if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 3010) { Write-Host "    [OK] Removed capability: $cap" -ForegroundColor Green }
+        else { Write-Host "    [WARN] Could not remove capability $cap (DISM exit $LASTEXITCODE)" -ForegroundColor Yellow }
+    }
+}
+
 # --- Process Standard items via safe PowerShell removal / DISM ---
 if ($hasStandardItems) {
     Write-Host "  [Physical Debloat] Processing Standard items safely..." -ForegroundColor Cyan
@@ -189,6 +221,82 @@ if ($hasStandardItems) {
             $handled = $true
         }
         elseif ($item -match 'Store cache') {
+            # The Store cache lives under each user profile and only exists after first sign-in
+            Write-Host "    [INFO] Store cache is per-user; nothing exists in the offline image to remove" -ForegroundColor Gray
+            $handled = $true
+        }
+        elseif ($item -match 'Provisioned AppX') {
+            # Second pass over the Phase 05 pattern list (same protection whitelist) for packages that survived it
+            if ($appxRegex -and $protectedAppxRegex) {
+                $leftoverAppx = @(Get-AppxProvisionedPackage -Path $scratchDir -ErrorAction SilentlyContinue | Where-Object {
+                    $n = $_.PackageName; $d = $_.DisplayName
+                    if (($n -and $protectedAppxRegex.IsMatch($n)) -or ($d -and $protectedAppxRegex.IsMatch($d))) { return $false }
+                    return (($n -and $appxRegex.IsMatch($n)) -or ($d -and $appxRegex.IsMatch($d)))
+                })
+                if ($leftoverAppx.Count -eq 0) { Write-Host "    [OK] No listed provisioned AppX packages remain" -ForegroundColor Green }
+                foreach ($pkg in $leftoverAppx) {
+                    if ($isDryRunMode) { Write-Host "    [DRY] Would remove provisioned AppX: $($pkg.DisplayName)" -ForegroundColor Yellow; continue }
+                    & dism.exe /English "/image:$scratchDir" /Remove-ProvisionedAppxPackage "/PackageName:$($pkg.PackageName)" > $null 2>&1
+                    if ($LASTEXITCODE -eq 0) { Write-Host "    [OK] Removed provisioned AppX: $($pkg.DisplayName)" -ForegroundColor Green }
+                    else { Write-Host "    [WARN] Could not remove provisioned AppX: $($pkg.DisplayName)" -ForegroundColor Yellow }
+                }
+            } else {
+                Write-Host "    [WARN] Phase 05 AppX pattern list unavailable; provisioned AppX pass skipped" -ForegroundColor Yellow
+            }
+            $handled = $true
+        }
+        elseif ($item -match 'non-Japanese IME') {
+            # Same directories Phase 08 removes when Asian IMEs are not kept; JPN is preserved
+            foreach ($imeDir in @('CHS', 'CHT', 'KOR')) {
+                $imePath = Join-Path -Path $scratchDir -ChildPath "Windows\System32\InputMethod\$imeDir"
+                if (Test-Path -LiteralPath $imePath) {
+                    if ($isDryRunMode) { Write-Host "    [DRY] Would delete: $imePath" -ForegroundColor Yellow }
+                    else { Remove-Item -LiteralPath $imePath -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Deleted InputMethod\$imeDir" -ForegroundColor Green }
+                }
+            }
+            $handled = $true
+        }
+        elseif ($item -match 'Windows Sandbox') {
+            Invoke-Nano11DebloatFeatureRemoval -FeatureNames @('Containers-DisposableClientVM')
+            $handled = $true
+        }
+        elseif ($item -match 'WSL / VM Platform') {
+            if ($wslSupport) { Write-Host "    [SKIP] WSL support is enabled for this build; WSL / VM Platform kept" -ForegroundColor Yellow }
+            else { Invoke-Nano11DebloatFeatureRemoval -FeatureNames @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform') }
+            $handled = $true
+        }
+        elseif ($item -match '\.NET Framework 3\.5') {
+            Invoke-Nano11DebloatFeatureRemoval -FeatureNames @('NetFx3')
+            $handled = $true
+        }
+        elseif ($item -match 'PowerShell ISE') {
+            Invoke-Nano11DebloatCapabilityRemoval -NamePatterns @('Microsoft.Windows.PowerShell.ISE~*')
+            $handled = $true
+        }
+        elseif ($item -match 'Steps Recorder') {
+            Invoke-Nano11DebloatCapabilityRemoval -NamePatterns @('App.StepsRecorder~*')
+            $handled = $true
+        }
+        elseif ($item -match 'Telnet/TFTP') {
+            Invoke-Nano11DebloatFeatureRemoval -FeatureNames @('TelnetClient', 'TFTP')
+            $handled = $true
+        }
+        elseif ($item -match 'SNMP') {
+            Invoke-Nano11DebloatCapabilityRemoval -NamePatterns @('SNMP.Client~*', 'WMI-SNMP-Provider.Client~*')
+            $handled = $true
+        }
+        elseif ($item -match 'Identity Foundation') {
+            Invoke-Nano11DebloatFeatureRemoval -FeatureNames @('Windows-Identity-Foundation')
+            $handled = $true
+        }
+        elseif ($item -match 'Fax service') {
+            Invoke-Nano11DebloatFeatureRemoval -FeatureNames @('FaxServicesClientPackage')
+            Invoke-Nano11DebloatCapabilityRemoval -NamePatterns @('Print.Fax.Scan~*')
+            $handled = $true
+        }
+        elseif ($item -match 'XPS Viewer') {
+            Invoke-Nano11DebloatCapabilityRemoval -NamePatterns @('XPS.Viewer~*')
+            Invoke-Nano11DebloatFeatureRemoval -FeatureNames @('Printing-XPSServices-Features')
             $handled = $true
         }
         elseif ($item -match 'help files') {

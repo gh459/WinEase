@@ -46,6 +46,14 @@ function Test-TweakEnabled {
     if ($null -ne $script:TweakSettings -and $script:TweakSettings.Contains($Name)) {
         return [bool]$script:TweakSettings[$Name]
     }
+    # Legacy key names (older profiles / -TweakSettings hashtables) that map onto this GUI key
+    if ($null -ne $script:TweakSettings -and $script:TweakKeyAliases) {
+        foreach ($alias in $script:TweakKeyAliases.Keys) {
+            if ($script:TweakKeyAliases[$alias] -eq $Name -and $script:TweakSettings.Contains($alias)) {
+                return [bool]$script:TweakSettings[$alias]
+            }
+        }
+    }
     $varName = "Tweak_$Name"
     $v = Get-Variable -Name $varName -Scope Script -ErrorAction SilentlyContinue
     if ($null -ne $v) { return [bool]$v.Value }
@@ -55,7 +63,7 @@ function Test-TweakEnabled {
 # ============================================================================
 # 1. Setup & Hardware Requirement Bypasses
 # ============================================================================
-if (Test-TweakEnabled 'BypassRequirements' $true) {
+if (Test-TweakEnabled 'BypassHardwareRequirements' $true) {
     Write-Host "Applying Setup & Hardware requirement bypasses (LabConfig + MoSetup)..." -ForegroundColor Green
     $labConfigKeys = @('BypassCPUCheck', 'BypassRAMCheck', 'BypassSecureBootCheck', 'BypassStorageCheck', 'BypassTPMCheck', 'BypassDiskCheck')
     foreach ($key in $labConfigKeys) {
@@ -141,7 +149,7 @@ if (Test-TweakEnabled 'DisableCloudContent' $true) {
 # ============================================================================
 # 4. Diagnostics, Privacy & Telemetry
 # ============================================================================
-if (Test-TweakEnabled 'DisableTelemetry' $true) {
+if (Test-TweakEnabled 'DisableTelemetryAndDiagnostics' $true) {
     Write-Host "Disabling Diagnostics & Telemetry..." -ForegroundColor Green
     reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" /v "Enabled" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" /v "Enabled" /t REG_DWORD /d 0 /f > $null 2>&1
@@ -157,7 +165,6 @@ if (Test-TweakEnabled 'DisableTelemetry' $true) {
     reg.exe add "HKLM\zDEFAULT\Software\Microsoft\InputPersonalization" /v "RestrictImplicitTextCollection" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" /v "AllowTelemetry" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" /v "MaxTelemetryAllowed" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" /v "DoNotShowFeedbackNotifications" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\SQMClient\Windows" /v "CEIPEnable" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Device Metadata" /v "PreventDeviceMetadataFromNetwork" /t REG_DWORD /d 1 /f > $null 2>&1
 }
@@ -364,7 +371,7 @@ if (Test-TweakEnabled 'NetworkTuning' $false) {
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows NT\DNSClient" /v "DisableSmartNameResolution" /t REG_DWORD /d 1 /f > $null 2>&1
 }
 
-if ($keepAudioTweaks -or $dawMode -or (Test-TweakEnabled 'DAWMode' $false)) {
+if ($keepAudioTweaks -or $dawMode -or (Test-TweakEnabled 'LowLatencyAudioMMCSS' $false)) {
     Write-Host "  [Audio DAW] Configuring low-latency Pro Audio MMCSS task profile..." -ForegroundColor Green
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio" /v "Priority" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio" /v "Scheduling Category" /t REG_SZ /d "High" /f > $null 2>&1
@@ -572,7 +579,7 @@ $serviceConfigs = [ordered]@{
     "SharedAccess"                             = 4
     "SharedRealitySvc"                         = 4
     "SmsRouter"                                = 4
-    "SysMain"                                  = 4
+    "SysMain"                                  = $(if (Test-TweakEnabled 'DisableSuperfetch' $true) { 4 } else { 2 })
     "TrkWks"                                   = 4
     "TroubleshootingSvc"                       = 4
     "WalletService"                            = 4
@@ -587,7 +594,7 @@ $serviceConfigs = [ordered]@{
     "WSAIFabricSvc"                            = 4
     "CDPSvc"                                   = 4
     "CDPUserSvc"                               = 4
-    "WSearch"                                  = $(if ($keepSearchIndex -or -not (Test-TweakEnabled 'DisableSearchIndex' $true)) { 2 } else { 4 })
+    "WSearch"                                  = $(if ($keepSearchIndex -or -not (Test-TweakEnabled 'DisableWindowsSearchIndexing' $true)) { 2 } else { 4 })
     "XblAuthManager"                           = if ($keepXboxServices) { 3 } else { 4 }
     "XblGameSave"                              = if ($keepXboxServices) { 3 } else { 4 }
     "XboxGipSvc"                               = if ($keepXboxServices) { 3 } else { 4 }
@@ -652,6 +659,93 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
     reg.exe delete "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v "SecurityHealth" /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.SecHealthUI_8wekyb3d8bbwe" /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.Windows.SecHealthUI_cw5n1h2txyewy" /f > $null 2>&1
+}
+
+# ============================================================================
+# GUI tweak toggles (keys match $script:AllTweakDefs in nano11builder.ps1)
+# ============================================================================
+if (Test-TweakEnabled 'BypassNetworkRequirement' $true) {
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v "BypassNRO" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSYSTEM\Setup\LabConfig" /v "BypassNRO" /t REG_DWORD /d 1 /f > $null 2>&1
+}
+
+if (Test-TweakEnabled 'DisableAdvertisingId' $true) {
+    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" /v "Enabled" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" /v "Enabled" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo" /v "DisabledByGroupPolicy" /t REG_DWORD /d 1 /f > $null 2>&1
+}
+
+if (Test-TweakEnabled 'DisableAppPrivacy' $true) {
+    foreach ($appPriv in @('LetAppsAccessLocation', 'LetAppsAccessMicrophone', 'LetAppsAccessContacts', 'LetAppsAccessCalendar', 'LetAppsAccessCallHistory', 'LetAppsAccessMessaging', 'LetAppsAccessAccountInfo')) {
+        reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy" /v $appPriv /t REG_DWORD /d 2 /f > $null 2>&1
+    }
+}
+
+if (Test-TweakEnabled 'DisableDefenderSecurityCenter' $true) {
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications" /v "DisableEnhancedNotifications" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender Security Center\Systray" /v "HideSystray" /t REG_DWORD /d 1 /f > $null 2>&1
+}
+
+if (Test-TweakEnabled 'DisableCortana' $true) {
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search" /v "AllowCortana" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search" /v "AllowCortanaAboveLock" /t REG_DWORD /d 0 /f > $null 2>&1
+}
+
+if (Test-TweakEnabled 'DisableTimeline' $true) {
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" /v "EnableActivityFeed" /t REG_DWORD /d 0 /f > $null 2>&1
+}
+
+if (Test-TweakEnabled 'DisableDiagnosticData' $true) {
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" /v "DoNotShowFeedbackNotifications" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" /v "LimitDiagnosticLogCollection" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" /v "LimitDumpCollection" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" /v "DisableDiagnosticDataViewer" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Siuf\Rules" /v "NumberOfSIUFInPeriod" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Siuf\Rules" /v "NumberOfSIUFInPeriod" /t REG_DWORD /d 0 /f > $null 2>&1
+}
+
+if (Test-TweakEnabled 'TuneMemoryAndPaging' $true) {
+    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management" /v "ClearPageFileAtShutdown" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management" /v "LargeSystemCache" /t REG_DWORD /d 0 /f > $null 2>&1
+}
+
+if (Test-TweakEnabled 'GamingNetworkTweaks' $true) {
+    # Per-adapter TcpAckFrequency needs interface GUIDs that only exist online; these are the offline-safe parts
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" /v "NetworkThrottlingIndex" /t REG_DWORD /d 0xffffffff /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\MSMQ\Parameters" /v "TCPNoDelay" /t REG_DWORD /d 1 /f > $null 2>&1
+}
+
+if (Test-TweakEnabled 'DisableBackgroundApps' $true) {
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy" /v "LetAppsRunInBackground" /t REG_DWORD /d 2 /f > $null 2>&1
+    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications" /v "GlobalUserDisabled" /t REG_DWORD /d 1 /f > $null 2>&1
+}
+
+if (Test-TweakEnabled 'DisableGameDVR' $true) {
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\GameDVR" /v "AllowGameDVR" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zNTUSER\System\GameConfigStore" /v "GameDVR_Enabled" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zDEFAULT\System\GameConfigStore" /v "GameDVR_Enabled" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\GameDVR" /v "AppCaptureEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
+}
+
+if (Test-TweakEnabled 'DisableFastStartup' $false) {
+    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Power" /v "HiberbootEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
+}
+
+if (Test-TweakEnabled 'TransparentShortcutOverlay' $false) {
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Icons" /v "29" /t REG_EXPAND_SZ /d "%SystemRoot%\System32\imageres.dll,-17" /f > $null 2>&1
+}
+
+if (Test-TweakEnabled 'OptimizeVisualEffects' $true) {
+    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v "VisualFXSetting" /t REG_DWORD /d 2 /f > $null 2>&1
+    reg.exe add "HKLM\zNTUSER\Control Panel\Desktop\WindowMetrics" /v "MinAnimate" /t REG_SZ /d "0" /f > $null 2>&1
+    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "TaskbarAnimations" /t REG_DWORD /d 0 /f > $null 2>&1
+}
+
+if (Test-TweakEnabled 'CleanContextMenus' $true) {
+    # Share, Give access to, Cast to Device
+    foreach ($shellExt in @('{e2bf9676-5f8f-435c-97eb-11607a5bedf7}', '{f81e9010-6ea4-11ce-a7ff-00aa003ca9f6}', '{7AD84985-87B4-4a16-BE58-8B72A5B390F7}')) {
+        reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked" /v $shellExt /t REG_SZ /d "" /f > $null 2>&1
+    }
 }
 
 # Personalization unlock & watermark suppression

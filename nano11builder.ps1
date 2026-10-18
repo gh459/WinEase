@@ -1855,8 +1855,8 @@ $script:AllTweakDefs = [ordered]@{
     "DisableFTH"                     = @{ Category = "Performance"; Default = $true;  Description = "Disable Fault Tolerant Heap to reduce gaming latency" }
     "DisablePCA"                     = @{ Category = "Performance"; Default = $true;  Description = "Disable Program Compatibility Assistant" }
     "RadicalRAM"                     = @{ Category = "Performance"; Default = $true;  Description = "Radical RAM optimization targeting sub-1.6GB idle memory" }
-    "TuneMemoryAndPaging"            = @{ Category = "Performance"; Default = $true;  Description = "Tune pagefile size and disable clear pagefile on shutdown" }
-    "GamingNetworkTweaks"            = @{ Category = "Performance"; Default = $true;  Description = "Disable Nagle algorithm (TcpAckFrequency=1) and throttling" }
+    "TuneMemoryAndPaging"            = @{ Category = "Performance"; Default = $true;  Description = "Skip clearing the pagefile on shutdown and keep standard system cache" }
+    "GamingNetworkTweaks"            = @{ Category = "Performance"; Default = $true;  Description = "Disable multimedia network throttling and MSMQ Nagle (TCPNoDelay)" }
     "LowLatencyAudioMMCSS"           = @{ Category = "Performance"; Default = $true;  Description = "Optimize MMCSS thread scheduling for low audio jitter" }
     "DisableBackgroundApps"          = @{ Category = "Performance"; Default = $true;  Description = "Disable background execution of UWP apps" }
     "DisableGameDVR"                 = @{ Category = "Performance"; Default = $true;  Description = "Disable GameDVR background video recording" }
@@ -1889,12 +1889,46 @@ $script:AllTweakDefs = [ordered]@{
     "TakeOwnershipContextMenu"       = @{ Category = "UI"; Default = $true;  Description = "Add Take Ownership right-click context menu" }
     "CmdAsAdminContextMenu"          = @{ Category = "UI"; Default = $true;  Description = "Add Command Prompt as Administrator to context menu" }
     "OptimizeVisualEffects"          = @{ Category = "UI"; Default = $true;  Description = "Optimize visual effects for maximum performance" }
-    "CleanContextMenus"              = @{ Category = "UI"; Default = $true;  Description = "Clean redundant third-party context menu entries" }
+    "CleanContextMenus"              = @{ Category = "UI"; Default = $true;  Description = "Hide Share, Give access to and Cast to Device context menu entries" }
 }
 
 $script:TweakSettings = [ordered]@{}
 foreach ($tk in $script:AllTweakDefs.Keys) {
     $script:TweakSettings[$tk] = [bool]$script:AllTweakDefs[$tk].Default
+}
+
+# Legacy tweak key names (older profiles, -TweakSettings hashtables) -> current AllTweakDefs key
+$script:TweakKeyAliases = [ordered]@{
+    "BypassRequirements" = "BypassHardwareRequirements"
+    "DisableTelemetry"   = "DisableTelemetryAndDiagnostics"
+    "DisableSearchIndex" = "DisableWindowsSearchIndexing"
+    "DAWMode"            = "LowLatencyAudioMMCSS"
+}
+
+# Tweak keys that phases consume through a script variable instead of Test-TweakEnabled
+$script:TweakVariableMap = [ordered]@{
+    "RadicalRAM"                   = "radicalRAM"
+    "BypassActivationRestrictions" = "bypassActivationRestrictions"
+    "DisableMemCompression"        = "disableMemCompression"
+    "DisableUSBSuspend"            = "disableUSBSuspend"
+    "NoHypervisor"                 = "noHypervisor"
+    "NoKernelPaging"               = "noKernelPaging"
+    "DisableCPUMitigations"        = "disableCPUMitigations"
+}
+
+function Resolve-Nano11TweakKey {
+    param([string]$Name)
+    if ($script:TweakKeyAliases.Contains($Name)) { return $script:TweakKeyAliases[$Name] }
+    return $Name
+}
+
+# Copy TweakSettings values onto the script variables listed in $script:TweakVariableMap
+function Sync-Nano11TweakVariables {
+    foreach ($tk in $script:TweakVariableMap.Keys) {
+        if ($script:TweakSettings.Contains($tk)) {
+            Set-Variable -Name $script:TweakVariableMap[$tk] -Scope Script -Value ([bool]$script:TweakSettings[$tk])
+        }
+    }
 }
 
 $script:Nano11ProfileKeys = @(
@@ -2805,14 +2839,16 @@ $script:advancedDebloatExperimental = @()
         if ($tweakOverrides) {
             if ($tweakOverrides -is [System.Collections.IDictionary]) {
                 foreach ($k in $tweakOverrides.Keys) {
-                    if ($script:AllTweakDefs.Contains($k)) {
-                        $script:TweakSettings[$k] = [bool]$tweakOverrides[$k]
+                    $rk = Resolve-Nano11TweakKey $k
+                    if ($script:AllTweakDefs.Contains($rk)) {
+                        $script:TweakSettings[$rk] = [bool]$tweakOverrides[$k]
                     }
                 }
             } elseif ($tweakOverrides.PSObject) {
                 foreach ($prop in $tweakOverrides.PSObject.Properties) {
-                    if ($script:AllTweakDefs.Contains($prop.Name)) {
-                        $script:TweakSettings[$prop.Name] = [bool]$prop.Value
+                    $rk = Resolve-Nano11TweakKey $prop.Name
+                    if ($script:AllTweakDefs.Contains($rk)) {
+                        $script:TweakSettings[$rk] = [bool]$prop.Value
                     }
                 }
             }
@@ -3982,12 +4018,9 @@ function Show-AdvancedDebloatDialog {
         "Remove .NET Framework 3.5 [100MB]",
         "Remove Windows PowerShell ISE [5MB]",
         "Remove Steps Recorder [2MB]",
-        "Remove Windows Memory Diagnostic [2MB]",
-        "Remove Character Map [1MB]",
         "Remove Telnet/TFTP client [1MB]",
         "Remove SNMP service [2MB]",
         "Remove Windows Identity Foundation [10MB]",
-        "Remove Windows Media Center [50MB]",
         "Remove Fax service [5MB]",
         "Remove XPS Viewer [5MB]"
     )
@@ -4915,12 +4948,9 @@ function Show-Nano11GUI {
         "Remove .NET Framework 3.5 [100MB]",
         "Remove Windows PowerShell ISE [5MB]",
         "Remove Steps Recorder [2MB]",
-        "Remove Windows Memory Diagnostic [2MB]",
-        "Remove Character Map [1MB]",
         "Remove Telnet/TFTP client [1MB]",
         "Remove SNMP service [2MB]",
         "Remove Windows Identity Foundation [10MB]",
-        "Remove Windows Media Center [50MB]",
         "Remove Fax service [5MB]",
         "Remove XPS Viewer [5MB]"
     )
@@ -5431,8 +5461,6 @@ function Invoke-Nano11GuiSession {
     $script:keepBT                       = [bool]$guiResult.KeepBluetooth
     $script:wslSupport                   = [bool]$guiResult.WSLSupport
     $script:keepRecoveryEnv              = [bool]$guiResult.KeepRecoveryEnv
-    $script:bypassActivationRestrictions = [bool]$guiResult.BypassActivationRestrictions
-    $script:radicalRAM                   = [bool]$guiResult.RadicalRAM
     $script:safeDebloatMode              = [bool]$guiResult.SafeDebloatMode
     $script:ultraSlimMode                = [bool]$guiResult.UltraSlimMode
     $script:setJapaneseKeyboard          = [bool]$guiResult.SetJapaneseKeyboard
@@ -5454,6 +5482,8 @@ function Invoke-Nano11GuiSession {
             $script:TweakSettings[$tk] = [bool]$guiResult.TweakSettings[$tk]
         }
     }
+    # RadicalRAM, BypassActivationRestrictions, NoHypervisor, ... are tab toggles that phases read as variables
+    Sync-Nano11TweakVariables
 
     if ($guiResult.AdvancedDebloatStandard)     { $script:advancedDebloatStandard     = @($guiResult.AdvancedDebloatStandard) }     else { $script:advancedDebloatStandard     = @() }
     if ($guiResult.AdvancedDebloatExperimental) { $script:advancedDebloatExperimental = @($guiResult.AdvancedDebloatExperimental) } else { $script:advancedDebloatExperimental = @() }
@@ -5733,11 +5763,11 @@ if ($bound.ContainsKey('PowerPreset') -and $bound['PowerPreset'] -ne 'Default') 
 if ($bound.ContainsKey('TweakSettings') -and $bound['TweakSettings']) {
     if ($bound['TweakSettings'] -is [hashtable]) {
         foreach ($k in $bound['TweakSettings'].Keys) {
-            $script:TweakSettings[$k] = [bool]$bound['TweakSettings'][$k]
+            $script:TweakSettings[(Resolve-Nano11TweakKey $k)] = [bool]$bound['TweakSettings'][$k]
         }
     } elseif ($bound['TweakSettings'] -is [PSCustomObject]) {
         foreach ($p in $bound['TweakSettings'].PSObject.Properties) {
-            $script:TweakSettings[$p.Name] = [bool]$p.Value
+            $script:TweakSettings[(Resolve-Nano11TweakKey $p.Name)] = [bool]$p.Value
         }
     }
 }
@@ -5746,6 +5776,21 @@ if ($script:AllTweakDefs) {
         if ($bound.ContainsKey($tk)) {
             $script:TweakSettings[$tk] = [bool]$bound[$tk]
         }
+    }
+}
+# Keep variable-backed tweaks consistent: a dedicated CLI switch wins, otherwise an explicit -TweakSettings entry
+$cliTweakSettingKeys = @()
+if ($bound.ContainsKey('TweakSettings') -and $bound['TweakSettings']) {
+    $cliTweakSettingKeys = if ($bound['TweakSettings'] -is [hashtable]) { @($bound['TweakSettings'].Keys) } else { @($bound['TweakSettings'].PSObject.Properties.Name) }
+    $cliTweakSettingKeys = @($cliTweakSettingKeys | ForEach-Object { Resolve-Nano11TweakKey $_ })
+}
+foreach ($tk in $script:TweakVariableMap.Keys) {
+    $cliName = if ($tk -eq 'BypassActivationRestrictions') { 'ActivationRestrictions' } else { $tk }
+    $varName = $script:TweakVariableMap[$tk]
+    if ($cliBound.Contains($cliName)) {
+        $script:TweakSettings[$tk] = [bool](Get-Variable -Name $varName -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+    } elseif ($cliTweakSettingKeys -contains $tk) {
+        Set-Variable -Name $varName -Scope Script -Value ([bool]$script:TweakSettings[$tk])
     }
 }
 if ($bound.ContainsKey('AllowPhysicalDebloat')) {
