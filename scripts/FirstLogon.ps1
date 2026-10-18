@@ -1,4 +1,4 @@
-﻿try {
+try {
 	$initMarkerDir = "C:\ProgramData\nano11";
 	if (Test-Path -LiteralPath $initMarkerDir) {
 		Remove-Item -LiteralPath "$initMarkerDir\firstlogon.done", "$initMarkerDir\firstlogon_script.failed" -Force -ErrorAction SilentlyContinue;
@@ -70,16 +70,124 @@ $scripts = @(
 	{
 		# Custom Post-Install User Scripts Execution Hook (from tools/custom-scripts/)
 		$customDir = "C:\Windows\Setup\Scripts\Custom";
-		if (Test-Path $customDir) {
-			Get-ChildItem -Path $customDir -File | Sort-Object Name | ForEach-Object {
+		$customLogDir = "C:\ProgramData\nano11\Logs";
+		$customLogFile = "$customLogDir\custom-scripts.log";
+
+		function Write-CustomScriptLog {
+			param([string]$Message)
+			$ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss";
+			$line = "[$ts] $Message";
+			try {
+				if (-not (Test-Path -LiteralPath $customLogDir)) {
+					New-Item -ItemType Directory -Force -Path $customLogDir -ErrorAction SilentlyContinue | Out-Null;
+				}
+				[System.IO.File]::AppendAllText($customLogFile, "$line`r`n", [System.Text.Encoding]::UTF8);
+			} catch {
 				try {
-					switch ($_.Extension.ToLower()) {
-						'.ps1' { & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $_.FullName }
-						'.bat' { & cmd.exe /c "`"$($_.FullName)`"" }
-						'.cmd' { & cmd.exe /c "`"$($_.FullName)`"" }
-						'.reg' { & reg.exe import $_.FullName }
+					Add-Content -LiteralPath $customLogFile -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue;
+				} catch {
+					try {
+						Add-Content -LiteralPath "$customDir\custom-scripts.log" -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue;
+					} catch {}
+				}
+			}
+		}
+
+		if (Test-Path -LiteralPath $customDir) {
+			$validExts = @('.ps1', '.bat', '.cmd', '.reg');
+			$targetFiles = @(Get-ChildItem -Path $customDir -File -ErrorAction SilentlyContinue |
+				Where-Object {
+					$validExts -contains $_.Extension.ToLower() -and
+					$_.Name -ne 'custom-scripts.log' -and
+					$_.Name -ne 'README.md'
+				} |
+				Sort-Object Name);
+
+			if ($targetFiles.Count -gt 0) {
+				Write-CustomScriptLog "================================================================================";
+				Write-CustomScriptLog "Custom Scripts Execution Pipeline Started";
+				Write-CustomScriptLog "Directory: $customDir";
+				Write-CustomScriptLog "Found Scripts ($($targetFiles.Count)): $(($targetFiles | ForEach-Object { $_.Name }) -join ', ')";
+				Write-CustomScriptLog "================================================================================";
+
+				$pipelineSw = [System.Diagnostics.Stopwatch]::StartNew();
+				$successCount = 0;
+				$failCount = 0;
+				$idx = 0;
+
+				foreach ($file in $targetFiles) {
+					$idx++;
+					$scriptName = $file.Name;
+					$scriptPath = $file.FullName;
+					$ext = $file.Extension.ToLower();
+					$scriptSw = [System.Diagnostics.Stopwatch]::StartNew();
+
+					Write-CustomScriptLog "[$idx/$($targetFiles.Count)] [START] $scriptName";
+
+					$exitCode = 0;
+					$isSuccess = $false;
+					$errDetail = $null;
+
+					$prevEap = $ErrorActionPreference;
+					$ErrorActionPreference = 'Continue';
+					try {
+						$output = switch ($ext) {
+							'.ps1' {
+								& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -NoProfile -NonInteractive -File $scriptPath 2>&1
+							}
+							'.bat' {
+								& "$env:SystemRoot\System32\cmd.exe" /c "`"$scriptPath`"" 2>&1
+							}
+							'.cmd' {
+								& "$env:SystemRoot\System32\cmd.exe" /c "`"$scriptPath`"" 2>&1
+							}
+							'.reg' {
+								& "$env:SystemRoot\System32\reg.exe" import $scriptPath 2>&1
+							}
+						}
+						$exitCode = if ($LASTEXITCODE -ne $null) { $LASTEXITCODE } else { 0 };
+
+						if ($exitCode -eq 0) {
+							$isSuccess = $true;
+						} else {
+							$isSuccess = $false;
+							$errLines = ($output | Out-String).Trim();
+							if (-not [string]::IsNullOrWhiteSpace($errLines)) {
+								$lastLine = ($errLines -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Last 1);
+								$errDetail = "Process exited with code $exitCode (Output: $lastLine)";
+							} else {
+								$errDetail = "Process exited with non-zero exit code: $exitCode";
+							}
+						}
+					} catch {
+						$isSuccess = $false;
+						$exitCode = if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) { $LASTEXITCODE } else { -1 };
+						$errDetail = "Execution exception (Code $exitCode): $($_.Exception.Message)";
+					} finally {
+						$ErrorActionPreference = $prevEap;
 					}
-				} catch {}
+
+					$scriptSw.Stop();
+					$elapsedSec = [math]::Round($scriptSw.Elapsed.TotalSeconds, 2);
+
+					if ($isSuccess) {
+						$successCount++;
+						Write-CustomScriptLog "[$idx/$($targetFiles.Count)] [SUCCESS] $scriptName (Duration: ${elapsedSec}s, ExitCode: $exitCode)";
+					} else {
+						$failCount++;
+						Write-CustomScriptLog "[$idx/$($targetFiles.Count)] [FAILED] $scriptName (Duration: ${elapsedSec}s, ExitCode: $exitCode)";
+						if ($errDetail) {
+							Write-CustomScriptLog "  Reason: $errDetail";
+						}
+					}
+				}
+
+				$pipelineSw.Stop();
+				$totalSec = [math]::Round($pipelineSw.Elapsed.TotalSeconds, 2);
+				Write-CustomScriptLog "================================================================================";
+				Write-CustomScriptLog "Custom Scripts Execution Pipeline Finished";
+				Write-CustomScriptLog "Summary: Total: $($targetFiles.Count), Succeeded: $successCount, Failed: $failCount, Duration: ${totalSec}s";
+				Write-CustomScriptLog "================================================================================";
 			}
 		}
 	};
@@ -174,6 +282,20 @@ $scripts = @(
 			Get-Process -Name CrossDeviceResume -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
 			New-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\CrossDeviceResume.exe' -Force -ErrorAction SilentlyContinue | Out-Null;
 			Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\CrossDeviceResume.exe' -Name 'Debugger' -Value 'rundll32.exe' -Force -ErrorAction SilentlyContinue;
+		} catch {}
+	};
+	{
+		# Accessibility tools enforcement (post-OOBE): osk.exe / Narrator.exe / Magnify.exe are
+		# RETAINED in System32 for OOBE stability (the offline debloat preserves them by design),
+		# but must never launch on the desktop. Execution is redirected to a harmless host via IFEO
+		# and any prematurely started instance is terminated.
+		try {
+			foreach ($acc in 'osk.exe','Narrator.exe','Magnify.exe') {
+				$accKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$acc";
+				New-Item -Path $accKey -Force -ErrorAction SilentlyContinue | Out-Null;
+				Set-ItemProperty -LiteralPath $accKey -Name 'Debugger' -Value 'rundll32.exe' -Force -ErrorAction SilentlyContinue;
+				Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($acc)) -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
+			}
 		} catch {}
 	};
 	{

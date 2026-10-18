@@ -685,7 +685,124 @@ try {
     exit 1
 }
 '@
+
+        "nano11-oobe-autologon-repair.ps1" = @'
+# nano11-oobe-autologon-repair.ps1
+# Re-assert the Winlogon auto-logon target for the OOBE -> first user session transition.
+# msoobe rewrites these values to the temporary defaultuser0 account at the end of OOBE,
+# which makes the transition logon fail (1326) and stalls setup on the "Just a moment..." screen.
+# Runs from SetupComplete.cmd as the LAST writer before the transition logon is attempted.
+$ErrorActionPreference = 'SilentlyContinue'
+$user = '__NANO11_USERNAME__'
+$key  = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+
+Set-ItemProperty -LiteralPath $key -Name 'AutoAdminLogon'  -Value '1'    -Type String -Force
+Set-ItemProperty -LiteralPath $key -Name 'DefaultUserName' -Value $user -Type String -Force
+Set-ItemProperty -LiteralPath $key -Name 'DefaultPassword' -Value ''    -Type String -Force
+Set-ItemProperty -LiteralPath $key -Name 'ForceAutoLogon'  -Value '1'    -Type String -Force
+
+$sid = $null
+try {
+    $sid = (New-Object System.Security.Principal.NTAccount($user)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+} catch { $sid = $null }
+
+if ($sid) {
+    Set-ItemProperty -LiteralPath $key -Name 'AutoLogonSID' -Value $sid -Type String -Force
+    Write-Output "[OOBE-AutoLogon] keys re-armed for '$user' (AutoLogonSID=$sid)"
+} else {
+    Remove-ItemProperty -LiteralPath $key -Name 'AutoLogonSID' -Force
+    Write-Output "[OOBE-AutoLogon] keys re-armed for '$user' (AutoLogonSID unresolved; stale value removed)"
+}
+Remove-ItemProperty -LiteralPath $key -Name 'AutoLogonCount' -Force
+
+$check = Get-ItemProperty -LiteralPath $key
+Write-Output ("[OOBE-AutoLogon] verified: AutoAdminLogon=" + $check.AutoAdminLogon + " DefaultUserName=" + $check.DefaultUserName + " ForceAutoLogon=" + $check.ForceAutoLogon)
+'@
+
+        "nano11-transition-watchdog.ps1" = @'
+# nano11-transition-watchdog.ps1
+# One-shot safety net for the first-boot OOBE -> user session transition.
+# If no interactive user session appears while auto-logon is still armed, trigger exactly
+# one recovery reboot so the boot-time auto-logon (proven path) can complete the transition.
+$ErrorActionPreference = 'SilentlyContinue'
+$markerDir = 'C:\ProgramData\nano11'
+$logDir    = "$markerDir\Logs"
+$logFile   = "$logDir\transition-watchdog.log"
+$guardFile = "$markerDir\watchdog.rebooted"
+$taskName  = 'nano11-TransitionWatchdog'
+$winlogon  = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+
+if (-not (Test-Path -LiteralPath $logDir)) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
+function Write-WLog { param([string]$m) try { Add-Content -LiteralPath $logFile -Value ("[" + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + "] " + $m) -Encoding UTF8 } catch {} }
+function Remove-WatchdogTask { & schtasks.exe /delete /tn "$taskName" /f 2>&1 | Out-Null }
+function Test-InteractiveSession {
+    try {
+        $out = & quser.exe 2>$null
+        if ($LASTEXITCODE -eq 0 -and $out) {
+            $rows = @($out | Where-Object { $_ -match '\S' })
+            if ($rows.Count -ge 2) { return $true }
+        }
+    } catch {}
+    try {
+        $expl = Get-Process -Name explorer -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -gt 0 }
+        if ($expl) { return $true }
+    } catch {}
+    return $false
+}
+
+if (Test-Path -LiteralPath $guardFile) {
+    Write-WLog ("post-reboot run: guard marker present, session-active=" + (Test-InteractiveSession))
+    Remove-WatchdogTask
+    Write-WLog 'watchdog stood down after recovery reboot'
+    exit 0
+}
+
+Write-WLog 'watchdog armed (first-run instance)'
+$deadline = (Get-Date).AddMinutes(15)
+$extended = $false
+$sessionSeen = $false
+$lastBeat = Get-Date
+
+while ($true) {
+    if (Test-InteractiveSession) { $sessionSeen = $true; break }
+    if ((Get-Date) -ge $deadline) {
+        if (-not $extended) {
+            $oobe = Get-Process -Name 'msoobe','CloudExperienceHost','CloudExperienceHostBroker' -ErrorAction SilentlyContinue
+            if ($oobe) {
+                $deadline = (Get-Date).AddMinutes(5)
+                $extended = $true
+                Write-WLog 'OOBE processes still running; extending wait by 5 minutes'
+                continue
+            }
+        }
+        break
     }
+    if (((Get-Date) - $lastBeat).TotalMinutes -ge 5) { Write-WLog 'waiting for an interactive session'; $lastBeat = Get-Date }
+    Start-Sleep -Seconds 45
+}
+
+if ($sessionSeen) {
+    Write-WLog 'interactive user session detected; transition OK'
+    Remove-WatchdogTask
+    exit 0
+}
+
+$auto = [string](Get-ItemProperty -LiteralPath $winlogon -Name 'AutoAdminLogon' -ErrorAction SilentlyContinue).AutoAdminLogon
+if ($auto -ne '1') {
+    Write-WLog ("no session yet but AutoAdminLogon='" + $auto + "'; autologon phase already finished - no action")
+    Remove-WatchdogTask
+    exit 0
+}
+
+Write-WLog 'no user session detected while auto-logon is armed; triggering one-shot recovery reboot'
+Set-Content -LiteralPath $guardFile -Value ("recovery reboot at " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')) -Encoding ascii
+& shutdown.exe /r /t 5 /f
+exit 0
+'@
+    }
+
+    # Inject the configured account name into the OOBE transition repair helper
+    $helperScripts['nano11-oobe-autologon-repair.ps1'] = $helperScripts['nano11-oobe-autologon-repair.ps1'].Replace('__NANO11_USERNAME__', $UserName)
 
     foreach ($hName in $helperScripts.Keys) {
         $hContent = $helperScripts[$hName]
@@ -818,6 +935,18 @@ try {
             ")"
         )
     }
+    # OOBE -> first user session transition hardening:
+    #  - Re-assert the Winlogon auto-logon target (msoobe can re-point it at the temporary
+    #    defaultuser0 account, which makes the transition logon fail with 1326 and stalls setup).
+    #  - Arm a one-shot watchdog that reboots exactly once if no interactive session appears.
+    $setupCompleteLines += @(
+        "rem --- Stage 5: OOBE->user transition auto-logon repair and one-shot watchdog ---",
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%SystemDrive%\Windows\Setup\Scripts\nano11-oobe-autologon-repair.ps1`" >> `"!LOGFILE!`" 2>&1",
+        "if !errorlevel! neq 0 echo [%DATE% %TIME%] [WARN] OOBE auto-logon repair returned error code !errorlevel! >> `"!LOGFILE!`"",
+        "schtasks.exe /create /f /tn `"nano11-TransitionWatchdog`" /sc onstart /delay 0003:00 /ru SYSTEM /tr `"powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File %SystemDrive%\Windows\Setup\Scripts\nano11-transition-watchdog.ps1`" >> `"!LOGFILE!`" 2>&1",
+        "if !errorlevel! neq 0 echo [%DATE% %TIME%] [WARN] Transition watchdog task creation failed with code !errorlevel! >> `"!LOGFILE!`"",
+        "schtasks.exe /run /tn `"nano11-TransitionWatchdog`" >> `"!LOGFILE!`" 2>&1"
+    )
     $setupCompleteLines += @(
         "if !SC_FAIL_COUNT! equ 0 (",
         "    if exist `"%SystemDrive%\ProgramData\nano11\setupcomplete.failed`" del /f /q `"%SystemDrive%\ProgramData\nano11\setupcomplete.failed`" 2>nul",

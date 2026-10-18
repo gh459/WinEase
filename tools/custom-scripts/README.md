@@ -14,9 +14,11 @@ Scripts Execution Hook` in the embedded unattend scripts).
 | `.cmd`  | `cmd.exe /c "<script>"` |
 | `.reg`  | `reg.exe import <script>` |
 
-Scripts run in the first-logon session with administrator rights. Wrap risky
-work in `try/catch` - a failing script will not abort the pipeline, but its
-error is recorded in `C:\ProgramData\nano11\Logs\firstlogon-child.log`.
+Scripts run in the first-logon session with administrator rights.
+All script executions, durations, and exit codes are automatically logged to:
+`C:\ProgramData\nano11\Logs\custom-scripts.log` (with fallback to `C:\Windows\Setup\Scripts\Custom\custom-scripts.log`).
+
+A failing script will not abort the pipeline; subsequent scripts continue to execute, and the failure details (exit code, error reason, timestamp) are recorded in the log file. Wrapping risky operations in `try/catch` within PowerShell scripts is still recommended.
 
 ## Naming convention
 

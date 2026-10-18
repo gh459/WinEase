@@ -1752,7 +1752,8 @@ $script:Nano11ProfileKeys = @(
     'DisableMemCompression', 'DisableFSE', 'NvidiaLowLatency', 'NoKernelPaging', 'DisableUSBSuspend',
     'NoHypervisor', 'RemoveWebViewPostOOBE', 'FastExport', 'UefiOnly', 'CpuBoostMode', 'PowerPreset',
     'BypassActivationRestrictions', 'RadicalRAM', 'TweakGroups', 'PayloadFormat',
-    'SkipEiCfg', 'NoPostInstallAssets', 'SourceDrive', 'WorkDir', 'Index', 'ComputerName', 'UserName'
+    'SkipEiCfg', 'NoPostInstallAssets', 'SourceDrive', 'WorkDir', 'Index', 'ComputerName', 'UserName',
+    'AdvancedDebloatStandard', 'AdvancedDebloatExperimental'
 )
 
 # Helper function: Snapshot the currently resolved build settings (script scope) as a profile hashtable
@@ -1809,6 +1810,8 @@ function Get-Nano11CurrentConfig {
         Index                        = "$($script:Index)"
         ComputerName                 = "$($script:ComputerName)"
         UserName                     = "$($script:UserName)"
+        AdvancedDebloatStandard      = @($script:advancedDebloatStandard)
+        AdvancedDebloatExperimental  = @($script:advancedDebloatExperimental)
     }
 }
 
@@ -2568,6 +2571,12 @@ function Apply-ProfileSettings {
         else { $GuiControls.radWIM.Checked = $true }
     } else {
         $script:removeDefender       = [bool](& $getVal 'RemoveDefender' $true)
+$script:advancedDebloatStandard     = @()
+$script:advancedDebloatExperimental = @()
+        $advStd = & $getVal 'AdvancedDebloatStandard' $null
+        if ($advStd) { $script:advancedDebloatStandard = @($advStd) } else { $script:advancedDebloatStandard = @() }
+        $advExp = & $getVal 'AdvancedDebloatExperimental' $null
+        if ($advExp) { $script:advancedDebloatExperimental = @($advExp) } else { $script:advancedDebloatExperimental = @() }
         $script:keepAsianIME         = [bool](& $getVal 'KeepAsianIME' $true)
         $script:keepExtraFonts       = [bool](& $getVal 'KeepExtraFonts' $true)
         $script:removeDrivers        = [bool](& $getVal 'RemoveDrivers' $false)
@@ -3501,10 +3510,270 @@ function Export-Nano11HtmlReport {
 }
 
 # Helper function: Display Graphical User Interface (GUI) for nano11 builder
+function Show-AdvancedDebloatDialog {
+    param(
+        [hashtable]$InitialSettings = @{},
+        [string]$UiFontName = "Segoe UI"
+    )
+
+    $stdItems = @(
+        "Remove WinRE (reagentc /disable + file delete) [500-700MB]",
+        "Remove PatchCache (dir delete) [200-500MB]",
+        "Remove Delivery Optimization cache (dir delete) [100-500MB]",
+        "Remove non-Japanese language packs (DISM) [200-500MB]",
+        "Remove non-essential fonts (file delete) [50-100MB]",
+        "WinSxS cleanup (/StartComponentCleanup /ResetBase) [1-3GB]",
+        "Remove pagefile.sys (pagefile disable) [4-16GB]",
+        "Remove hiberfil.sys (powercfg /h off) [4-16GB]",
+        "Remove swapfile.sys (pagefile disable) [256MB-1GB]",
+        "Remove Provisioned AppX (list-based) [100-300MB]",
+        "Remove Windows Media Player (component) [50-100MB]",
+        "Remove Remote Desktop host (service + binary) [30-50MB]",
+        "Remove Bluetooth stack (service + binary) [20-40MB]",
+        "Remove Print Spooler (service + binary) [20-30MB]",
+        "Remove touch/pen/ink components [20-30MB]",
+        "Preserve accessibility tools for OOBE (IFEO-blocked after setup) [0MB]",
+        "Remove help files [10-20MB]",
+        "Remove non-Japanese IME [5-15MB]",
+        "Remove event logs [10-50MB]",
+        "Remove crash dumps [varies]",
+        "Remove Windows Store cache [varies]",
+        "Remove Provisioning packages [5-10MB]",
+        "Remove Windows Sandbox [10-20MB]",
+        "Remove WSL / VM Platform [20-40MB]",
+        "Remove .NET Framework 3.5 [100MB]",
+        "Remove Windows PowerShell ISE [5MB]",
+        "Remove Steps Recorder [2MB]",
+        "Remove Windows Memory Diagnostic [2MB]",
+        "Remove Character Map [1MB]",
+        "Remove Telnet/TFTP client [1MB]",
+        "Remove SNMP service [2MB]",
+        "Remove Windows Identity Foundation [10MB]",
+        "Remove Windows Media Center [50MB]",
+        "Remove Fax service [5MB]",
+        "Remove XPS Viewer [5MB]"
+    )
+
+    $expItems = @(
+        "Physical: Edge / WebView2 (complete removal) [~200MB]",
+        "Physical: Defender (complete removal) [~50MB]",
+        "Physical: Cortana / Search (complete removal) [~100MB]",
+        "Physical: OneDrive (complete removal) [~50MB]",
+        "Physical: Telemetry/DiagTrack (complete removal) [~30MB]",
+        "Physical: Hyper-V / Virtualization stack [~200-400MB]",
+        "Physical: IIS (Web server) [~50-100MB]",
+        "Physical: Windows Firewall (complete removal) [~20-40MB]",
+        "Physical: Bluetooth stack (complete removal) [~20-40MB]",
+        "Physical: Print Spooler (complete removal) [~20-30MB]",
+        "Physical: Touch/Pen/Ink (complete removal) [~20-30MB]",
+        "Physical: Accessibility tools (OOBE-safe: retained, IFEO-blocked) [0MB]",
+        "Physical: Windows Media Player (complete removal) [~50-100MB]",
+        "Physical: Remote Desktop host (OOBE-safe: Terminal Server keys retained) [~0MB]",
+        "Physical: BitLocker (complete removal) [~30-50MB]",
+        "Physical: Windows Sandbox (complete removal) [~10-20MB]",
+        "Physical: WSL / VM Platform (complete removal) [~20-40MB]",
+        "Physical: Help files (complete removal) [~10-20MB]",
+        "Physical: Crash dumps (complete removal) [varies]",
+        "Physical: Provisioning packages (complete removal) [~5-10MB]",
+        "Physical: Delivery Optimization (complete removal) [varies]",
+        "Physical: Windows Search index (complete removal) [varies]",
+        "Physical: Windows.old (complete removal) [varies]",
+        "Physical: Temp files (complete removal) [varies]",
+        "Physical: Installer cache PatchCache (complete removal) [varies]",
+        "Physical: pagefile.sys (disable + delete) [4-16GB]",
+        "Physical: hiberfil.sys (disable + delete) [4-16GB]",
+        "Physical: swapfile.sys (disable + delete) [256MB-1GB]",
+        "Physical: Memory.dmp (complete removal) [varies]",
+        "Physical: Minidump (complete removal) [varies]",
+        "Physical: Cortana / Search (complete removal) [~100MB]",
+        "Physical: OneDrive (complete removal) [~50MB]",
+        "Physical: Telemetry/DiagTrack (complete removal) [~30MB]",
+        "Physical: Hyper-V / Virtualization stack [~200-400MB]",
+        "Physical: IIS (Web server) [~50-100MB]",
+        "Physical: Windows Firewall (complete removal) [~20-40MB]",
+        "Physical: Bluetooth stack (complete removal) [~20-40MB]",
+        "Physical: Print Spooler (complete removal) [~20-30MB]",
+        "Physical: Touch/Pen/Ink (complete removal) [~20-30MB]",
+        "Physical: Accessibility tools (OOBE-safe: retained, IFEO-blocked) [0MB]",
+        "Physical: Windows Media Player (complete removal) [~50-100MB]",
+        "Physical: Remote Desktop host (OOBE-safe: Terminal Server keys retained) [~0MB]",
+        "Physical: BitLocker (complete removal) [~30-50MB]"
+    )
+
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text = "Advanced Debloat Options (Standard + Experimental)"
+    $dlg.Size = New-Object System.Drawing.Size(700, 620)
+    $dlg.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
+    $dlg.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $dlg.MaximizeBox = $false
+    $dlg.MinimizeBox = $false
+    $dlg.BackColor = [System.Drawing.Color]::FromArgb(24, 26, 31)
+
+    $tabControl = New-Object System.Windows.Forms.TabControl
+    $tabControl.Location = New-Object System.Drawing.Point(10, 10)
+    $tabControl.Size = New-Object System.Drawing.Size(665, 480)
+    $dlg.Controls.Add($tabControl)
+
+    # Standard tab
+    $tabStd = New-Object System.Windows.Forms.TabPage
+    $tabStd.Text = "Standard (Safe - DISM/PS)"
+    $tabStd.BackColor = [System.Drawing.Color]::FromArgb(24, 26, 31)
+    $tabControl.TabPages.Add($tabStd)
+
+    $clbStd = New-Object System.Windows.Forms.CheckedListBox
+    $clbStd.Location = New-Object System.Drawing.Point(10, 10)
+    $clbStd.Size = New-Object System.Drawing.Size(640, 380)
+    $clbStd.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
+    $clbStd.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $clbStd.Font = New-Object System.Drawing.Font($UiFontName, 9)
+    $clbStd.CheckOnClick = $true
+    $preStd = @()
+    if ($InitialSettings -and $InitialSettings.AdvancedDebloatStandard) { $preStd = @($InitialSettings.AdvancedDebloatStandard) }
+    foreach ($item in $stdItems) {
+        $chk = $preStd -contains $item
+        [void]$clbStd.Items.Add($item, $chk)
+    }
+    $tabStd.Controls.Add($clbStd)
+
+    $btnStdAll = New-Object System.Windows.Forms.Button
+    $btnStdAll.Text = "Select All"
+    $btnStdAll.Location = New-Object System.Drawing.Point(10, 395)
+    $btnStdAll.Size = New-Object System.Drawing.Size(100, 28)
+    $btnStdAll.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
+    $btnStdAll.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $btnStdAll.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $tabStd.Controls.Add($btnStdAll)
+
+    $btnStdNone = New-Object System.Windows.Forms.Button
+    $btnStdNone.Text = "Deselect All"
+    $btnStdNone.Location = New-Object System.Drawing.Point(115, 395)
+    $btnStdNone.Size = New-Object System.Drawing.Size(100, 28)
+    $btnStdNone.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
+    $btnStdNone.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $btnStdNone.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $tabStd.Controls.Add($btnStdNone)
+
+    $btnStdAll.Add_Click({ for ($i = 0; $i -lt $clbStd.Items.Count; $i++) { $clbStd.SetItemChecked($i, $true) } })
+    $btnStdNone.Add_Click({ for ($i = 0; $i -lt $clbStd.Items.Count; $i++) { $clbStd.SetItemChecked($i, $false) } })
+
+    # Experimental tab
+    $tabExp = New-Object System.Windows.Forms.TabPage
+    $tabExp.Text = "Experimental (Physical Deletion)"
+    $tabExp.BackColor = [System.Drawing.Color]::FromArgb(24, 26, 31)
+    $tabControl.TabPages.Add($tabExp)
+
+    $lblWarn = New-Object System.Windows.Forms.Label
+    $lblWarn.Text = "WARNING: Physical deletion permanently breaks Windows Update and sfc."
+    $lblWarn.Location = New-Object System.Drawing.Point(10, 5)
+    $lblWarn.Size = New-Object System.Drawing.Size(640, 20)
+    $lblWarn.ForeColor = [System.Drawing.Color]::FromArgb(255, 100, 100)
+    $lblWarn.Font = New-Object System.Drawing.Font($UiFontName, 9, [System.Drawing.FontStyle]::Bold)
+    $tabExp.Controls.Add($lblWarn)
+
+    $clbExp = New-Object System.Windows.Forms.CheckedListBox
+    $clbExp.Location = New-Object System.Drawing.Point(10, 30)
+    $clbExp.Size = New-Object System.Drawing.Size(640, 365)
+    $clbExp.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
+    $clbExp.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $clbExp.Font = New-Object System.Drawing.Font($UiFontName, 9)
+    $clbExp.CheckOnClick = $true
+    $preExp = @()
+    if ($InitialSettings -and $InitialSettings.AdvancedDebloatExperimental) { $preExp = @($InitialSettings.AdvancedDebloatExperimental) }
+    foreach ($item in $expItems) {
+        $chk = $preExp -contains $item
+        [void]$clbExp.Items.Add($item, $chk)
+    }
+    $tabExp.Controls.Add($clbExp)
+
+    $btnExpAll = New-Object System.Windows.Forms.Button
+    $btnExpAll.Text = "Select All"
+    $btnExpAll.Location = New-Object System.Drawing.Point(10, 400)
+    $btnExpAll.Size = New-Object System.Drawing.Size(100, 28)
+    $btnExpAll.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
+    $btnExpAll.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $btnExpAll.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $tabExp.Controls.Add($btnExpAll)
+
+    $btnExpNone = New-Object System.Windows.Forms.Button
+    $btnExpNone.Text = "Deselect All"
+    $btnExpNone.Location = New-Object System.Drawing.Point(115, 400)
+    $btnExpNone.Size = New-Object System.Drawing.Size(100, 28)
+    $btnExpNone.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
+    $btnExpNone.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $btnExpNone.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $tabExp.Controls.Add($btnExpNone)
+
+    $btnExpAll.Add_Click({ for ($i = 0; $i -lt $clbExp.Items.Count; $i++) { $clbExp.SetItemChecked($i, $true) } })
+    $btnExpNone.Add_Click({ for ($i = 0; $i -lt $clbExp.Items.Count; $i++) { $clbExp.SetItemChecked($i, $false) } })
+
+    # Preview button
+    $btnPreview = New-Object System.Windows.Forms.Button
+    $btnPreview.Text = "Preview"
+    $btnPreview.Location = New-Object System.Drawing.Point(10, 500)
+    $btnPreview.Size = New-Object System.Drawing.Size(100, 30)
+    $btnPreview.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
+    $btnPreview.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $btnPreview.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $dlg.Controls.Add($btnPreview)
+
+    $btnPreview.Add_Click({
+        $stdSel = @(); $expSel = @()
+        for ($i = 0; $i -lt $clbStd.Items.Count; $i++) { if ($clbStd.GetItemChecked($i)) { $stdSel += $clbStd.Items[$i] } }
+        for ($i = 0; $i -lt $clbExp.Items.Count; $i++) { if ($clbExp.GetItemChecked($i)) { $expSel += $clbExp.Items[$i] } }
+        $msg = "Selected: Standard=$($stdSel.Count) / Experimental=$($expSel.Count)`n`n"
+        $msg += "Standard ($($stdSel.Count) items)`n"
+        foreach ($s in $stdSel) { $msg += "  - $s`n" }
+        $msg += "`nExperimental ($($expSel.Count) items)`n"
+        foreach ($s in $expSel) { $msg += "  - $s`n" }
+        if ($expSel.Count -gt 0) {
+            $msg += "`nExperimental enabled: Windows Update will be broken"
+        }
+        [System.Windows.Forms.MessageBox]::Show($msg, "Deletion Preview", "OK", "Information")
+    })
+
+    # OK / Cancel
+    $btnOK = New-Object System.Windows.Forms.Button
+    $btnOK.Text = "OK"
+    $btnOK.Location = New-Object System.Drawing.Point(480, 500)
+    $btnOK.Size = New-Object System.Drawing.Size(90, 30)
+    $btnOK.BackColor = [System.Drawing.Color]::FromArgb(0, 120, 215)
+    $btnOK.ForeColor = [System.Drawing.Color]::White
+    $btnOK.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $dlg.Controls.Add($btnOK)
+
+    $btnCancel = New-Object System.Windows.Forms.Button
+    $btnCancel.Text = "Cancel"
+    $btnCancel.Location = New-Object System.Drawing.Point(575, 500)
+    $btnCancel.Size = New-Object System.Drawing.Size(90, 30)
+    $btnCancel.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
+    $btnCancel.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $btnCancel.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $dlg.Controls.Add($btnCancel)
+
+    $btnOK.Add_Click({
+        $stdSel = @(); $expSel = @()
+        for ($i = 0; $i -lt $clbStd.Items.Count; $i++) { if ($clbStd.GetItemChecked($i)) { $stdSel += $clbStd.Items[$i] } }
+        for ($i = 0; $i -lt $clbExp.Items.Count; $i++) { if ($clbExp.GetItemChecked($i)) { $expSel += $clbExp.Items[$i] } }
+        $script:advDebloatStd = $stdSel
+        $script:advDebloatExp = $expSel
+        $dlg.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $dlg.Close()
+    })
+    $btnCancel.Add_Click({ $dlg.DialogResult = [System.Windows.Forms.DialogResult]::Cancel; $dlg.Close() })
+
+    $dlg.TopMost = $true
+    $result = $dlg.ShowDialog()
+    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+        return @{ Success = $true; StandardSelected = $script:advDebloatStd; ExperimentalSelected = $script:advDebloatExp }
+    }
+    return @{ Success = $false; StandardSelected = @(); ExperimentalSelected = @() }
+}
+
 function Show-Nano11GUI {
     param(
         [hashtable]$InitialSettings = @{}
     )
+
 
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
@@ -4061,7 +4330,7 @@ function Show-Nano11GUI {
     # F5: estimated ISO size label + update function (must be defined before checkbox event wiring)
     $bottomPanel = New-Object System.Windows.Forms.Panel
     $bottomPanel.Dock = [System.Windows.Forms.DockStyle]::Bottom
-    $bottomPanel.Height = 65
+    $bottomPanel.Height = 96
     $bottomPanel.BackColor = [System.Drawing.Color]::FromArgb(18, 20, 24)
     $form.Controls.Add($bottomPanel)
     # Dock order fix: Fill panel must be front-most so it sits between header and footer
@@ -4074,6 +4343,26 @@ function Show-Nano11GUI {
     $lblEstimate.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
     $lblEstimate.Font = New-Object System.Drawing.Font($uiFontName, 9)
     $bottomPanel.Controls.Add($lblEstimate)
+
+    # Advanced Debloat button (opens dialog with Standard/Experimental checkboxes)
+    $btnAdvDebloat = New-Object System.Windows.Forms.Button
+    $btnAdvDebloat.Text = "Advanced Debloat Options"
+    $btnAdvDebloat.Location = New-Object System.Drawing.Point(400, 52)
+    $btnAdvDebloat.Size = New-Object System.Drawing.Size(210, 28)
+    $btnAdvDebloat.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
+    $btnAdvDebloat.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $btnAdvDebloat.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $btnAdvDebloat.Font = New-Object System.Drawing.Font($uiFontName, 9)
+    $toolTip.SetToolTip($btnAdvDebloat, "Click to open Advanced Debloat dialog with 80+ individual reduction options")
+    $bottomPanel.Controls.Add($btnAdvDebloat)
+
+    $btnAdvDebloat.Add_Click({
+        $advResult = Show-AdvancedDebloatDialog -InitialSettings $InitialSettings -UiFontName $uiFontName
+        if ($advResult -and $advResult.Success) {
+            $script:advDebloatResult = $advResult
+            $lblEstimate.Text = "AdvDebloat: Standard=$($advResult.StandardSelected.Count) / Experimental=$($advResult.ExperimentalSelected.Count)"
+        }
+    })
 
     $updateEstimate = {
         try {
@@ -4222,6 +4511,15 @@ function Show-Nano11GUI {
         $formResult.UseVHDX                   = $chkVHDX.Checked
         $formResult.ExportESDMode             = $radESD.Checked
         $formResult.SplitWIMMode              = $radSWM.Checked
+
+        # Advanced Debloat selections (from dialog)
+        if ($script:advDebloatResult -and $script:advDebloatResult.Success) {
+            $formResult.AdvancedDebloatStandard     = $script:advDebloatResult.StandardSelected
+            $formResult.AdvancedDebloatExperimental = $script:advDebloatResult.ExperimentalSelected
+        } else {
+            $formResult.AdvancedDebloatStandard     = @()
+            $formResult.AdvancedDebloatExperimental = @()
+        }
 
         $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
         $form.Close()
@@ -4500,6 +4798,8 @@ function Invoke-Nano11GuiSession {
         UseVHDX                      = $script:useVHDX
         ExportESDMode                = $script:exportESDMode
         SplitWIMMode                 = $script:splitWIMMode
+        AdvancedDebloatStandard      = $script:advancedDebloatStandard
+        AdvancedDebloatExperimental  = $script:advancedDebloatExperimental
     }
     $guiResult = Show-Nano11GUI -InitialSettings $initialSettings
     if (-not ($guiResult -and $guiResult.Success)) { return $false }
@@ -4533,6 +4833,8 @@ function Invoke-Nano11GuiSession {
     $script:useVHDX                      = [bool]$guiResult.UseVHDX
     $script:exportESDMode                = [bool]$guiResult.ExportESDMode
     $script:splitWIMMode                 = [bool]$guiResult.SplitWIMMode
+    if ($guiResult.AdvancedDebloatStandard)     { $script:advancedDebloatStandard     = @($guiResult.AdvancedDebloatStandard) }     else { $script:advancedDebloatStandard     = @() }
+    if ($guiResult.AdvancedDebloatExperimental) { $script:advancedDebloatExperimental = @($guiResult.AdvancedDebloatExperimental) } else { $script:advancedDebloatExperimental = @() }
     if ($guiResult.Index)         { $script:Index = $guiResult.Index }
     if ($guiResult.InjectDrivers) { $script:InjectDrivers = $guiResult.InjectDrivers }
     if ($guiResult.DryRun) {
@@ -5837,6 +6139,14 @@ try {
 
     Enter-Phase 9 "Component Store (WinSxS) Optimization"
     . (Join-Path -Path $phasesDir -ChildPath "09-winsxs.ps1")
+
+    Enter-Phase 9.5 "Physical Debloat (Experimental - Rust-based)"
+    $physDebloatPhase = Join-Path -Path $phasesDir -ChildPath "09-physical-debloat.ps1"
+    if (Test-Path -LiteralPath $physDebloatPhase) {
+        . $physDebloatPhase
+    } else {
+        Write-Host "  [Phase 9.5] 09-physical-debloat.ps1 not found. Skipping." -ForegroundColor DarkGray
+    }
 
     Enter-Phase 10 "Load Registry Hives and Apply Optimizations"
     . (Join-Path -Path $phasesDir -ChildPath "10-registry.ps1")
