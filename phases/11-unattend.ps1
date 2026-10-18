@@ -979,7 +979,7 @@ exit 0
         Copy-Item -Path "$InjectDrivers\*" -Destination $destDriversDir -Recurse -Force -ErrorAction SilentlyContinue
         Write-Host "  - Drivers staged in sources\`$OEM`$\`$1\Drivers" -ForegroundColor Green
     }
-    
+
     # Stage feature flags for FirstLogon.ps1 automation
     if ($removeDefender) {
         Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "remove-defender.flag") -Value "1" -Encoding ascii -Force
@@ -1507,7 +1507,7 @@ pause
     $tool6Mem   | Set-Content -LiteralPath (Join-Path -Path $atlasDir -ChildPath "6. Free Memory & Clear Temp.bat") -Encoding ascii
     $tool7MAS   | Set-Content -LiteralPath (Join-Path -Path $atlasDir -ChildPath "7. Check Activation Status.bat") -Encoding ascii
     Write-Host "  - Staged Atlas-ReviOS maintenance tools to Windows\Setup\Tools\Atlas-ReviOS Tools" -ForegroundColor Green
-    
+
     # Ensure Public Desktop is clean of tools folders
     $cleanItems = @("Atlas-ReviOS Tools", "Install-Browser.cmd", "Install-Browser.ps1", "Nano11 Control Center.bat", "Nano11 Control Center.cmd")
     foreach ($ci in $cleanItems) {

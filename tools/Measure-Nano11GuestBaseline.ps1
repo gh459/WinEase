@@ -105,7 +105,7 @@ $handleCountSamples = [System.Collections.Generic.List[int]]::new()
 
 for ($i = 1; $i -le $SampleSeconds; $i++) {
     Write-Progress -Activity "Sampling System Performance" -Status "Sample $i of $SampleSeconds" -PercentComplete (($i / $SampleSeconds) * 100)
-    
+
     # Sample CPU load via WMI/CIM or Processor counter
     $cpuLoad = 0.0
     try {

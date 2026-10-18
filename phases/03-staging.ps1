@@ -34,7 +34,7 @@ if (-not (Test-Path -LiteralPath $destWim) -or ((Get-Item -LiteralPath $destWim)
     } elseif (Test-Path -LiteralPath $sourceEsd) {
         Write-Host "Detected install.esd format (MediaCreationTool ISO). Converting to install.wim..." -ForegroundColor Cyan
         Write-Host "Decompressing LZMS stream to LZX maximum compression via DISM. Please wait..." -ForegroundColor Cyan
-        
+
         $esdInfoOutput = & dism.exe /English /Get-WimInfo "/WimFile:$sourceEsd"
         $esdIndexEntries = @()
         $curEsdEntry = $null
@@ -49,7 +49,7 @@ if (-not (Test-Path -LiteralPath $destWim) -or ((Get-Item -LiteralPath $destWim)
         $availEsdIndices = @($esdIndexEntries | ForEach-Object { $_.Index })
         $proEsd = $esdIndexEntries | Where-Object { $_.Name -match 'Pro' -and $_.Name -notmatch 'Workstation' } | Select-Object -First 1
         $defaultEsdIndex = if ($proEsd) { $proEsd.Index } elseif ($availEsdIndices.Count -gt 0) { $availEsdIndices[0] } else { "1" }
-        
+
         $chosenEsdIndex = $defaultEsdIndex
         if ([string]::IsNullOrWhiteSpace($index) -or ($index -notin $availEsdIndices)) {
             if (-not $NonInteractive) {
@@ -65,7 +65,7 @@ if (-not (Test-Path -LiteralPath $destWim) -or ((Get-Item -LiteralPath $destWim)
         } else {
             $chosenEsdIndex = $index
         }
-        
+
         Write-Host "Decompressing and exporting Index $chosenEsdIndex from install.esd to $destWim..." -ForegroundColor Cyan
         & dism.exe /English /Export-Image "/SourceImageFile:$sourceEsd" "/SourceIndex:$chosenEsdIndex" "/DestinationImageFile:$destWim" /Compress:max
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $destWim) -or ((Get-Item -LiteralPath $destWim).Length -lt 1GB)) {

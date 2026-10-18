@@ -59,14 +59,14 @@ if (-not $keepExtraFonts) {
             }
         }
         $fontsToKeep = $essentialSystemFonts + $japaneseFonts + $ownLanguageFontFiles
-        
+
         $foreignFonts = @(
             "mingliu*", "simsun*", "msjh*", "msyh*", "malgun*",
             "khmer*", "lao*", "myanmar*", "thai*", "leelaw*", "gadugi*",
             "ebrima*", "dokchamp*", "taile*", "sylfaen*", "mvboli*",
             "plantc*", "himalaya*", "nyala*", "monbaiti*", "javatext*"
         )
-        
+
         Get-ChildItem -Path $fontsPath | ForEach-Object {
             $fontItem = $_
             $isKeep = $false

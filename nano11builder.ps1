@@ -37,7 +37,7 @@ param(
     [string]$Index,
     [string]$OutputIsoName,
     [switch]$TimestampIso,
-    
+
     # Execution & Diagnostic Flags
     [switch]$DryRun,
     [switch]$Validate,
@@ -46,7 +46,7 @@ param(
     # E1: Explicit opt-in gate for destructive physical debloat (Phase 9.5, 09-physical-debloat.ps1).
     # Advanced Debloat selections arriving from a profile or GUI are NOT sufficient by themselves.
     [switch]$AllowPhysicalDebloat,
-    
+
     # Customization & Maintenance Settings
     # Both values are inserted verbatim into autounattend.xml and its embedded PowerShell scripts,
     # so only characters that are safe in XML, in '...' and in "..." PowerShell strings are accepted.
@@ -60,50 +60,50 @@ param(
     [string]$InjectDrivers,
     [switch]$KeepBasicApps,
     [switch]$KeepSearchIndex,
-    
+
     # 1. Windows Defender
     [switch]$KeepDefender,
     [alias("NoDefender")]
     [switch]$RemoveDefender,
-    
+
     # 2. Asian IMEs
     [alias("KeepAsianIME")]
     [switch]$KeepIME,
     [alias("NoIME", "RemoveAsianIME")]
     [switch]$RemoveIME,
-    
+
     # 3. Fonts
     [alias("KeepExtraFonts")]
     [switch]$KeepFonts,
     [alias("NoFonts")]
     [switch]$RemoveFonts,
-    
+
     # 4. Drivers
     [switch]$KeepDrivers,
     [switch]$RemoveDrivers,
-    
+
     # 5. Windows Update
     [alias("EnableWindowsUpdate")]
     [switch]$KeepWindowsUpdate,
     [alias("NoWindowsUpdate")]
     [switch]$DisableWindowsUpdate,
-    
+
     # 6. Bluetooth
     [switch]$KeepBluetooth,
     [alias("NoBluetooth")]
     [switch]$DisableBluetooth,
-    
+
     # 7. WSL2 & Virtualization
     [switch]$EnableWSL,
     [alias("NoWSL")]
     [switch]$DisableWSL,
-    
+
     # 8. Recovery Environment (WinRE)
     [alias("KeepWinRE")]
     [switch]$KeepRecovery,
     [alias("RemoveWinRE", "NoWinRE", "NoRecovery")]
     [switch]$RemoveRecovery,
-    
+
     # 9. WinSxS debloat mode
     [alias("SafeWinSxS")]
     [switch]$SafeDebloat,
@@ -112,19 +112,19 @@ param(
     # E2 (opt-in): override the 26100+ offline StartComponentCleanup / ResetBase block (checkpoint LCU corruption risk)
     [alias("ForceWinSxS")]
     [switch]$ForceWinSxSCleanup,
-    
+
     # 10. UltraSlim
     [switch]$UltraSlim,
     [switch]$NoUltraSlim,
-    
+
     # 11. Japanese 106/109 Keyboard
     [switch]$JapaneseKeyboard,
     [switch]$NoJapaneseKeyboard,
-    
+
     # 12. AtlasOS & ReviOS Tweaks
     [switch]$AtlasReviOS,
     [switch]$NoAtlasReviOS,
-    
+
     # 13. Export payload format
     [switch]$ExportESD,
     [alias("NoESD")]
@@ -132,16 +132,16 @@ param(
     [alias("FAT32Compatible", "FAT32")]
     [switch]$SplitWIM,
     [switch]$NoSplitWIM,
-    
+
     # 14. Microsoft Store
     [switch]$KeepStore,
     [alias("NoStore", "RemoveMicrosoftStore")]
     [switch]$RemoveStore,
-    
+
     # 16. Fast VHDX Scratch Disk
     [alias("FastVHDX", "VHDX")]
     [switch]$UseVHDX,
-    
+
     # 17. Self Diagnostics and Image Verification
     [switch]$TestSelf,
     [alias("VerifyImage")]
@@ -156,7 +156,7 @@ param(
     # A2: Fast-track Phase 14-18 against the preserved workspace payload (workspace\build\sources\install.wim)
     [alias("ResumeIso", "IsoResume")]
     [switch]$ResumeIsoOnly,
-    
+
 
     # 19. Xbox Services & Gaming Features
     [switch]$KeepXboxServices,
@@ -382,13 +382,13 @@ $myWindowsID = [System.Security.Principal.WindowsIdentity]::GetCurrent()
 $myWindowsPrincipal = New-Object System.Security.Principal.WindowsPrincipal($myWindowsID)
 if ((-not $myWindowsPrincipal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) -and ($env:NANO11_TEST_MODE -ne "1") -and (-not $TestSelf) -and (-not $isDryRunMode)) {
     Write-Host "Restarting script with Administrator privileges in a new window..." -ForegroundColor Yellow
-    
+
     # Reconstruct bound parameters for elevated process
     $paramList = [System.Collections.Generic.List[string]]::new()
     foreach ($key in $PSBoundParameters.Keys) {
         $paramList.Add((ConvertTo-Nano11CliArgument -Name $key -Value $PSBoundParameters[$key]))
     }
-    
+
     $newProcess = New-Object System.Diagnostics.ProcessStartInfo "PowerShell"
     $newProcess.Arguments = New-Nano11ChildArguments -ScriptPath $myInvocation.MyCommand.Definition -ScriptArguments $paramList
     $newProcess.Verb = "runas"
@@ -1452,7 +1452,7 @@ function Clear-DismMountConflicts {
 
         foreach ($c in $conflicts) {
             Write-Host "Resolving lingering DISM mount at '$($c.Path)' (Image: $($c.ImagePath), Status: $($c.MountStatus))..." -ForegroundColor Yellow
-            
+
             # Unload any registry hives under this mount first
             @('zCOMPONENTS', 'zDEFAULT', 'zNTUSER', 'zSOFTWARE', 'zSYSTEM') | ForEach-Object {
                 try { [void](Unmount-RegistryHiveWithRetry -Name $_) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
@@ -2749,13 +2749,13 @@ function Invoke-Nano11SelfTest {
     if (-not $UnattendPath) {
         $UnattendPath = Join-Path -Path $ScriptRoot -ChildPath "autounattend.xml"
     }
-    
+
     Write-Host "=========================================================" -ForegroundColor Cyan
     Write-Host "   nano11 Self-Test & Diagnostic Verification Suite     " -ForegroundColor Cyan
     Write-Host "=========================================================" -ForegroundColor Cyan
 
     $results = @()
-    
+
     # 1. AST Syntax Check
     $astPass = $false
     $astMsg = ""
@@ -3338,18 +3338,18 @@ function Invoke-Nano11SelfTest {
         $testAtomicFile = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "nano11_atomic_test_$([Guid]::NewGuid().ToString('N')).txt"
         $initialContent = "Version 1 content"
         $newContent = "Version 2 atomic content"
-        
+
         Write-Nano11TextFileAtomic -Path $testAtomicFile -Content $initialContent -Encoding utf8
         $c1 = [System.IO.File]::ReadAllText($testAtomicFile, [System.Text.Encoding]::UTF8)
-        
+
         Write-Nano11TextFileAtomic -Path $testAtomicFile -Content $newContent -Encoding utf8
         $c2 = [System.IO.File]::ReadAllText($testAtomicFile, [System.Text.Encoding]::UTF8)
-        
+
         $dir = [System.IO.Path]::GetDirectoryName($testAtomicFile)
         $orphanTmp = Get-ChildItem -Path $dir -Filter "*nano11_atomic_test*.*.tmp" -ErrorAction SilentlyContinue
-        
+
         Remove-Item -LiteralPath $testAtomicFile -Force -ErrorAction SilentlyContinue
-        
+
         if ($c1 -eq $initialContent -and $c2 -eq $newContent -and ($null -eq $orphanTmp -or $orphanTmp.Count -eq 0)) {
             $atomicPass = $true
             $atomicMsg = "Atomic replace, overwrite retry, and clean temp cleanup validated"
@@ -3379,7 +3379,7 @@ function Invoke-Nano11SelfTest {
         $resolvedWU = ($cfResult.ResolvedConfig.DisableWindowsUpdate -eq $false)
         $resolvedStore = ($cfResult.ResolvedConfig.RemoveStore -eq $false)
         $resolvedPhys = ($cfResult.ResolvedConfig.TweakSettings.PhysicalDebloat -eq $false)
-        
+
         if ($cfResult.Conflicts.Count -ge 3 -and $resolvedWU -and $resolvedStore -and $resolvedPhys) {
             $conflictMatrixPass = $true
             $conflictMatrixMsg = "$($cfResult.Conflicts.Count) conflicting rules resolved (Store-WU dependency, Store retention, Physical debloat gate)"
@@ -3397,11 +3397,11 @@ function Invoke-Nano11SelfTest {
     try {
         $tempResumeDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "nano11_resume_test_$([Guid]::NewGuid().ToString('N'))"
         New-Item -ItemType Directory -Path (Join-Path $tempResumeDir "build\sources") -Force | Out-Null
-        
+
         # Test 19A: Empty workspace must fail
         $resA = Test-Nano11ResumeIntegrity -WorkspaceDir $tempResumeDir
         $failsOnEmpty = (-not $resA.IsValid)
-        
+
         # Test 19B: Mock valid workspace with header magic and required items
         $fakeWim = Join-Path $tempResumeDir "build\sources\install.wim"
         $magicBytes = [System.Text.Encoding]::ASCII.GetBytes("MSWIM`0`0`0")
@@ -3409,10 +3409,10 @@ function Invoke-Nano11SelfTest {
         $fs.Write($magicBytes, 0, $magicBytes.Length)
         $fs.SetLength(600 * 1024 * 1024)
         $fs.Close()
-        
+
         $fakeBoot = Join-Path $tempResumeDir "build\sources\boot.wim"
         [System.IO.File]::WriteAllBytes($fakeBoot, $magicBytes)
-        
+
         foreach ($reqItem in @('boot', 'efi', 'bootmgr', 'bootmgr.efi', 'bootmgfw.efi', 'setup.exe', 'autounattend.xml')) {
             $target = Join-Path (Join-Path $tempResumeDir "build") $reqItem
             if ($reqItem -in @('boot', 'efi')) {
@@ -3421,12 +3421,12 @@ function Invoke-Nano11SelfTest {
                 [System.IO.File]::WriteAllText($target, "dummy")
             }
         }
-        
+
         $resB = Test-Nano11ResumeIntegrity -WorkspaceDir $tempResumeDir -IsIsoOnly
         $passesOnValid = $resB.IsValid
-        
+
         Remove-Item -LiteralPath $tempResumeDir -Recurse -Force -ErrorAction SilentlyContinue
-        
+
         if ($failsOnEmpty -and $passesOnValid) {
             $resumeIntegrityPass = $true
             $resumeIntegrityMsg = "Incomplete workspace rejected; valid MSWIM magic header and layout validated"
@@ -4461,7 +4461,7 @@ if ($isAutomated) {
 
     if (-not $skipIndividualPrompts) {
         Write-Host "Configure debloat options (Press Enter to accept current defaults or CLI selections):" -ForegroundColor Gray
-    
+
     # 1. Windows Defender
     if ($cliBound.Contains('Defender') -and (-not $Interactive)) {
         Write-Host "1. Remove Windows Defender: $(if ($removeDefender) { 'Yes (Remove)' } else { 'No (Keep)' }) [CLI: Specified]" -ForegroundColor DarkCyan

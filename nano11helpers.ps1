@@ -366,7 +366,7 @@ function Test-CanSafelyDeleteVhdx {
 function Test-OscdimgIntegrity {
     param([string]$OscdimgPath)
     if (-not $OscdimgPath -or -not (Test-Path -LiteralPath $OscdimgPath)) { return $false }
-    
+
     # 1. Check Authenticode Signature (Official Microsoft Windows ADK binary)
     try {
         $sig = Get-AuthenticodeSignature -FilePath $OscdimgPath -ErrorAction SilentlyContinue

@@ -36,20 +36,20 @@ foreach ($candidate in $oscdimgCandidates) {
 if (-not $oscdimgExe) {
     $targetOscdPath = Join-Path -Path $scriptDir -ChildPath "oscdimg.exe"
     Write-Host "Downloading oscdimg.exe..." -ForegroundColor Cyan
-    
+
     $mirrors = @(
         "https://raw.githubusercontent.com/gh459/nano11/main/oscdimg.exe",
         "https://github.com/gh459/nano11/raw/main/oscdimg.exe",
         "https://msdl.microsoft.com/download/symbols/oscdimg.exe/3D44737265000/oscdimg.exe"
     )
-    
+
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 try {
     if ([Enum]::IsDefined([Net.SecurityProtocolType], 'Tls13')) {
         [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]'Tls13'
     }
 } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-    
+
     foreach ($url in $mirrors) {
         try {
             Write-Host "  - Attempting download from: $url" -ForegroundColor Gray
