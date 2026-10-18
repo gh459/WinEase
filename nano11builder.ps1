@@ -4689,11 +4689,15 @@ function Show-Nano11GUI {
             $tabCheckboxes.Add($chk)
         }
 
+        # $tabCheckboxes is local to this scriptblock's scope and is gone by the time a
+        # Click handler runs, so carry the list on the buttons themselves via Tag.
+        $btnSelectAll.Tag = $tabCheckboxes
+        $btnClearAll.Tag = $tabCheckboxes
         $btnSelectAll.Add_Click({
-            foreach ($c in $tabCheckboxes) { $c.Checked = $true }
+            foreach ($c in $this.Tag) { $c.Checked = $true }
         })
         $btnClearAll.Add_Click({
-            foreach ($c in $tabCheckboxes) { $c.Checked = $false }
+            foreach ($c in $this.Tag) { $c.Checked = $false }
         })
 
         return $tab
