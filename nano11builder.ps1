@@ -3289,7 +3289,7 @@ function Invoke-Nano11SelfTest {
 
         # C. ShortPath conversion test
         $testShort = Get-SafeShortPath "C:\Program Files"
-        $shortPathValid = ($testShort -ne $null)
+        $shortPathValid = ($null -ne $testShort)
 
         if (($whitelistedBlocked -eq $mockAppxWhitelisted.Count) -and $guardBlocked24H2 -and $guardAllowed23H2 -and $shortPathValid) {
             $safetyExtPass = $true
@@ -3660,7 +3660,7 @@ function Export-Nano11HtmlReport {
     [void]$sb.AppendLine('    <h2>&#9889; Guest VM Runtime Telemetry &amp; Subsystem Health</h2>')
     if ($guestBench) {
         $ramMB = if ($guestBench.Memory -and $guestBench.Memory.WorkingSetMB) { "$([math]::Round($guestBench.Memory.WorkingSetMB, 1)) MB" } else { "N/A" }
-        $cpuPct = if ($guestBench.Cpu -and $guestBench.Cpu.IdleLoadPercent -ne $null) { "$([math]::Round($guestBench.Cpu.IdleLoadPercent, 1)) %" } else { "N/A" }
+        $cpuPct = if ($guestBench.Cpu -and $null -ne $guestBench.Cpu.IdleLoadPercent) { "$([math]::Round($guestBench.Cpu.IdleLoadPercent, 1)) %" } else { "N/A" }
         $bootSec = if ($guestBench.BootPerformance -and $guestBench.BootPerformance.MainPathBootDurationSec) { "$([math]::Round($guestBench.BootPerformance.MainPathBootDurationSec, 2)) s" } else { "N/A" }
         $health = if ($guestBench.SubsystemHealth) { $guestBench.SubsystemHealth } else { @{} }
 

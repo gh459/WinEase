@@ -387,7 +387,7 @@ $benchmarkReport = [ordered]@{
         TotalCapacityGB = $diskTotalGB
         UsedSpaceGB     = $diskUsedGB
         FreeSpaceGB     = $diskFreeGB
-        IsMeasured      = ($systemDrive -ne $null)
+        IsMeasured      = ($null -ne $systemDrive)
     }
 
     PerformanceMetrics = [ordered]@{
@@ -421,7 +421,7 @@ $benchmarkReport = [ordered]@{
         TotalCapacityGB = $diskTotalGB
         UsedSpaceGB     = $diskUsedGB
         FreeSpaceGB     = $diskFreeGB
-        IsMeasured      = ($systemDrive -ne $null)
+        IsMeasured      = ($null -ne $systemDrive)
     }
 
     Memory = [ordered]@{
