@@ -56,7 +56,7 @@ $scripts = @(
 			}
 			if (Test-Path "C:\Windows\Setup\Scripts\disable-netbios.flag") {
 				Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Services\NetBT\Parameters\Interfaces' -ErrorAction SilentlyContinue |
-					ForEach-Object { Set-ItemProperty $_.PSPath 'NetbiosOptions' 2 -Type DWord -Force -ErrorAction SilentlyContinue };
+					ForEach-Object { Set-ItemProperty -Path $_.PSPath -Name 'NetbiosOptions' -Value 2 -Type DWord -Force -ErrorAction SilentlyContinue };
 			}
 		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
