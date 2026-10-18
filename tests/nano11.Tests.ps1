@@ -4,6 +4,7 @@
 
 $script:RepoRoot = Split-Path -Parent $PSScriptRoot
 $script:BuilderPath = Join-Path -Path $script:RepoRoot -ChildPath "nano11builder.ps1"
+$script:GuiPath = Join-Path -Path $script:RepoRoot -ChildPath "gui\Nano11Gui.ps1"
 $script:UnattendPath = Join-Path -Path $script:RepoRoot -ChildPath "autounattend.xml"
 
 Describe "nano11 builder - repository layout" {
@@ -27,6 +28,12 @@ Describe "nano11 builder - repository layout" {
 Describe "nano11 builder - AST syntax" {
     It "parses with zero parser errors" {
         $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $errors = $null
+        [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$errors) | Out-Null
+        $errors.Count | Should Be 0
+    }
+    It "gui\Nano11Gui.ps1 parses with zero parser errors" {
+        $content = [System.IO.File]::ReadAllText($script:GuiPath, [System.Text.Encoding]::UTF8)
         $tokens = $null; $errors = $null
         [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$errors) | Out-Null
         $errors.Count | Should Be 0
@@ -629,7 +636,8 @@ Describe "nano11 GUI wiring - every toggle is consumed by the build" {
         $patterns = @([regex]::Matches($stdLoop.Body.Extent.Text, "\`$item -match '([^']+)'") | ForEach-Object { $_.Groups[1].Value })
         $patterns.Count | Should BeGreaterThan 0
 
-        $stdLists = $builderAst.FindAll({
+        $guiAst = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiPath, [ref]$null, [ref]$null)
+        $stdLists = $guiAst.FindAll({
             param($n)
             $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$stdItems'
         }, $true)
@@ -647,7 +655,9 @@ Describe "nano11 GUI wiring - every toggle is consumed by the build" {
 Describe "nano11 settings - config\tweaks.psd1 is the single source of truth" {
     $builderText = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
     $builderAst = [System.Management.Automation.Language.Parser]::ParseInput($builderText, [ref]$null, [ref]$null)
-    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+    $guiText = [System.IO.File]::ReadAllText($script:GuiPath, [System.Text.Encoding]::UTF8)
+    $guiAst = [System.Management.Automation.Language.Parser]::ParseInput($guiText, [ref]$null, [ref]$null)
+    $settingsDef =Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
     $tweakKeys = @($settingsDef.Tweaks | ForEach-Object { $_.Key })
     $componentKeys = @($settingsDef.Components | ForEach-Object { $_.Key })
     $allKeys = $tweakKeys + $componentKeys
@@ -693,7 +703,7 @@ Describe "nano11 settings - config\tweaks.psd1 is the single source of truth" {
     It "every GUI checkbox key (createToggleChk) exists in the definition file" {
         # The GUI builds its tweak tabs from AllTweakDefs and the Services tab from $svcDefs; both
         # come from the definition file, so no literal setting key may be passed to createToggleChk.
-        $calls = [regex]::Matches($builderText, "& \`$createToggleChk \S+ (\S+) ")
+        $calls = [regex]::Matches($guiText,"& \`$createToggleChk \S+ (\S+) ")
         $calls.Count | Should BeGreaterThan 0
         foreach ($m in $calls) {
             $keyArg = $m.Groups[1].Value
@@ -712,7 +722,7 @@ Describe "nano11 settings - config\tweaks.psd1 is the single source of truth" {
             # Only an empty initializer or a derivation from the loaded definitions is allowed
             $assigns[0].Right.Extent.Text | Should Match '^(\[ordered\]@\{\}|@\(\$script:ComponentDefs\.Keys\).*)$'
         }
-        $svc = $builderAst.Find({
+        $svc = $guiAst.Find({
             param($n)
             $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$svcDefs'
         }, $true)
