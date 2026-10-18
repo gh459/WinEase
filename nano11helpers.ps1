@@ -1,4 +1,4 @@
-﻿# nano11helpers.ps1 - Pure utility helpers extracted from nano11builder.ps1 (F8)
+# nano11helpers.ps1 - Pure utility helpers extracted from nano11builder.ps1 (F8)
 # Dot-sourced by nano11builder.ps1. Functions use $script: scope of the caller.
 # Keep this file next to nano11builder.ps1.
 
@@ -26,7 +26,7 @@ function ConvertTo-Nano11NormalizedPath {
 }
 
 # Helper function: True if Path equals Root or is a descendant of it.
-# Compares on a '\' boundary so that 'C:\work2' is NOT treated as inside 'C:\work'.
+# Compares on a '\' boundary after canonicalizing both paths via GetFullPath.
 function Test-Nano11PathWithin {
     param(
         [string]$Path,
@@ -35,8 +35,14 @@ function Test-Nano11PathWithin {
     if ([string]::IsNullOrWhiteSpace($Path) -or [string]::IsNullOrWhiteSpace($Root)) {
         return $false
     }
-    $p = $Path.Replace('/', '\').TrimEnd('\')
-    $r = $Root.Replace('/', '\').TrimEnd('\')
+    try {
+        $cleanP = $Path.Replace('/', '\')
+        $cleanR = $Root.Replace('/', '\')
+        $p = [System.IO.Path]::GetFullPath($cleanP).TrimEnd('\', '/')
+        $r = [System.IO.Path]::GetFullPath($cleanR).TrimEnd('\', '/')
+    } catch {
+        return $false
+    }
     if ($p -ieq $r) { return $true }
     return $p.StartsWith($r + '\', [System.StringComparison]::OrdinalIgnoreCase)
 }
@@ -71,12 +77,54 @@ function Test-IsSafePathToDelete {
     if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
     try {
         $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
-        if ($full.Length -le 3) { return $false }
+        # 1. Drive roots (C:, D:\, etc.)
+        if ($full.Length -le 3 -or $full -match '^[A-Za-z]:$') { return $false }
+
+        # 2. Reject UNC roots (\\server\share)
+        if ($full -match '^\\\\[^\\]+\\[^\\]+$') { return $false }
+
+        # 3. User profile and users root
         $systemProfile = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::UserProfile)
-        if ($full -ieq $systemProfile.TrimEnd('\', '/')) { return $false }
-        $windowsDir = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::Windows)
-        if (Test-Nano11PathWithin -Path $full -Root $windowsDir) { return $false }
-        if ($scriptDir -and ($full -ieq [System.IO.Path]::GetFullPath($scriptDir).TrimEnd('\', '/'))) { return $false }
+        if ($systemProfile) {
+            $normUser = [System.IO.Path]::GetFullPath($systemProfile).TrimEnd('\', '/')
+            if ($full -ieq $normUser -or $normUser.StartsWith($full + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $false
+            }
+        }
+        if ($env:SystemDrive) {
+            $hostUsers = [System.IO.Path]::GetFullPath("$($env:SystemDrive)\Users").TrimEnd('\', '/')
+            if ($full -ieq $hostUsers -or $hostUsers.StartsWith($full + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $false
+            }
+        }
+
+        # 4. Critical OS and program files directories
+        $protectedRoots = @(
+            [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::Windows),
+            [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ProgramFiles),
+            [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::CommonProgramFiles),
+            [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::CommonApplicationData)
+        )
+        if (${env:ProgramFiles(x86)}) {
+            $protectedRoots += ${env:ProgramFiles(x86)}
+        }
+        foreach ($pr in $protectedRoots) {
+            if ([string]::IsNullOrWhiteSpace($pr)) { continue }
+            $normPr = [System.IO.Path]::GetFullPath($pr).TrimEnd('\', '/')
+            if ($full -ieq $normPr -or $full.StartsWith($normPr + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $normPr.StartsWith($full + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $false
+            }
+        }
+
+        # 5. Repository script directory itself, any subfolder inside it, or any ancestor of it
+        $refScriptDir = if ($scriptDir) { $scriptDir } elseif ($PSScriptRoot) { $PSScriptRoot } else { $null }
+        if ($refScriptDir) {
+            $normScript = [System.IO.Path]::GetFullPath($refScriptDir).TrimEnd('\', '/')
+            if ($full -ieq $normScript -or $full.StartsWith($normScript + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $normScript.StartsWith($full + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $false
+            }
+        }
+
         return $true
     } catch {
         return $false
@@ -111,25 +159,34 @@ function Invoke-Dism {
     }
     $fullArgs += $DismArgs
 
-    for ($i = 1; $i -le $Retries; $i++) {
+    $maxAttempts = [math]::Max(1, $Retries)
+    for ($i = 1; $i -le $maxAttempts; $i++) {
+        $output = $null
         if ($CaptureOutput) {
             $output = & dism.exe @fullArgs 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                return $output
-            }
         } else {
             if ($Quiet) {
                 & dism.exe @fullArgs > $null 2>&1
             } else {
                 & dism.exe @fullArgs
             }
-            if ($LASTEXITCODE -eq 0) {
-                return $true
-            }
         }
-        if ($i -lt $Retries) {
-            Write-Host "DISM command failed (Exit code: $LASTEXITCODE). Retrying ($i/$Retries)..." -ForegroundColor Yellow
+        $exitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
+        $script:LastDismExitCode = $exitCode
+
+        if ($exitCode -eq 0 -or $exitCode -eq 3010) {
+            if ($CaptureOutput) {
+                return $output
+            }
+            return $true
+        }
+
+        $exitHex = '0x{0:X8}' -f ([BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$exitCode), 0))
+        if ($i -lt $maxAttempts) {
+            Write-Host "DISM command failed (Exit code: $exitCode / $exitHex). Retrying ($i/$maxAttempts)..." -ForegroundColor Yellow
             Start-Sleep -Seconds 2
+        } else {
+            Write-Warning "DISM command failed (Final attempt $i/$maxAttempts, Exit code: $exitCode / $exitHex)."
         }
     }
     if ($CaptureOutput) { return $null }
@@ -171,11 +228,19 @@ $adminGroupSid = New-Object System.Security.Principal.SecurityIdentifier([System
 # ==============================================================================
 function Get-Nano11VolumeFreeSpaceGB {
     param([string]$Path)
-    if ([string]::IsNullOrWhiteSpace($Path)) { return 0 }
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "Path cannot be null or empty when querying volume free space."
+    }
     try {
         $resolved = [System.IO.Path]::GetFullPath($Path)
-        $driveLetter = (Split-Path -Path $resolved -Qualifier).TrimEnd(':')
-        $drive = [System.IO.DriveInfo]::new($driveLetter)
+        $root = [System.IO.Path]::GetPathRoot($resolved)
+        if (-not $root) {
+            throw "Failed to extract path root from '$Path'."
+        }
+        $drive = [System.IO.DriveInfo]::new($root)
+        if (-not $drive.IsReady) {
+            throw "Drive '$root' is not ready or volume is unavailable."
+        }
         return [math]::Round($drive.AvailableFreeSpace / 1GB, 2)
     } catch {
         throw "Failed to query volume free space for '$Path': $_"
@@ -197,6 +262,11 @@ function Test-CanSafelyDeleteDirectory {
     $normPath = try { ConvertTo-Nano11NormalizedPath -Path $Path } catch { return $false }
     if ($ExpectedBaseDir) {
         $normBase = try { ConvertTo-Nano11NormalizedPath -Path $ExpectedBaseDir } catch { return $false }
+        # Prohibit deleting the workspace root itself
+        if ($normPath -ieq $normBase) {
+            Write-Warning "Directory '$normPath' is the workspace root itself. Deletion prohibited."
+            return $false
+        }
         if (-not (Test-Nano11PathWithin -Path $normPath -Root $normBase)) {
             Write-Warning "Directory '$normPath' is outside workspace '$normBase'. Deletion prohibited."
             return $false
@@ -213,6 +283,10 @@ function Test-CanSafelyDeleteDirectory {
             }
             if ($normPDir.StartsWith($normPath + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
                 Write-Warning "Directory '$normPath' is a parent of preserved directory '$normPDir'. Deletion prohibited."
+                return $false
+            }
+            if ($normPath.StartsWith($normPDir + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+                Write-Warning "Directory '$normPath' is a descendant of preserved directory '$normPDir'. Deletion prohibited."
                 return $false
             }
         }
@@ -399,6 +473,10 @@ class BuildContext {
     [System.Collections.Generic.HashSet[string]]$ManagedMountDirs
     [System.Collections.Generic.HashSet[string]]$AllocatedMountDirs
     [System.Collections.Generic.HashSet[string]]$PreservedMountDirs
+    [bool]$IsoCreatedSuccessfully
+    [bool]$IsoPayloadMatch
+    [bool]$ExportSucceeded
+    [bool]$IsoGenerated
     # --- Configuration ---
     [string]$SelectedProfile
     [bool]$RemoveDefender
@@ -441,7 +519,11 @@ class BuildContext {
     [string]$PowerPreset
     [bool]$BypassActivationRestrictions
     [bool]$RadicalRAM
+    [bool]$AllowPhysicalDebloat
+    [bool]$AdvancedDebloatStandard
+    [bool]$AdvancedDebloatExperimental
     [hashtable]$ActiveTweakGroups
+    [hashtable]$TweakSettings
     [string]$PayloadFormat
     [string]$ComputerName
     [string]$UserName
@@ -468,6 +550,7 @@ class BuildContext {
         $this.PhaseTimings = [ordered]@{}
         $this.ActiveTweakGroups = [ordered]@{}
         $this.DiagnosticData = [ordered]@{}
+        $this.TweakSettings = [ordered]@{}
         $this.CurrentPhase = 0
         $this.BuildSucceeded = $false
         $this.FinalPayloadVerified = $false
@@ -479,6 +562,11 @@ class BuildContext {
         $this.MountOpened = $false
         $this.IsoCreatedSuccessfully = $false
         $this.IsoPayloadMatch = $false
+        $this.ExportSucceeded = $false
+        $this.IsoGenerated = $false
+        $this.AllowPhysicalDebloat = $false
+        $this.AdvancedDebloatStandard = $false
+        $this.AdvancedDebloatExperimental = $false
         $this.RemovedPackagesCount = 0
         $this.WinSxSSavedMB = 0
         $this.WinSxsBeforeMB = 0
@@ -525,6 +613,10 @@ function New-BuildContextFromScriptScope {
     $ctx.ManagedMountDirs = $script:ManagedMountDirs
     $ctx.AllocatedMountDirs = $script:AllocatedMountDirs
     $ctx.PreservedMountDirs = $script:PreservedMountDirs
+    $ctx.IsoCreatedSuccessfully = if ($null -ne $script:IsoCreatedSuccessfully) { [bool]$script:IsoCreatedSuccessfully } else { $false }
+    $ctx.IsoPayloadMatch = if ($null -ne $script:IsoPayloadMatch) { [bool]$script:IsoPayloadMatch } else { $false }
+    $ctx.ExportSucceeded = if ($null -ne $script:ExportSucceeded) { [bool]$script:ExportSucceeded } else { $false }
+    $ctx.IsoGenerated = if ($null -ne $script:IsoGenerated) { [bool]$script:IsoGenerated } else { $false }
     $ctx.SelectedProfile = $selectedProfile
     $ctx.RemoveDefender = $removeDefender
     $ctx.KeepAsianIME = $keepAsianIME
@@ -566,7 +658,11 @@ function New-BuildContextFromScriptScope {
     $ctx.PowerPreset = $powerPreset
     $ctx.BypassActivationRestrictions = $bypassActivationRestrictions
     $ctx.RadicalRAM = $radicalRAM
+    $ctx.AllowPhysicalDebloat = if ($null -ne $allowPhysicalDebloat) { [bool]$allowPhysicalDebloat } elseif ($null -ne $script:AllowPhysicalDebloat) { [bool]$script:AllowPhysicalDebloat } else { $false }
+    $ctx.AdvancedDebloatStandard = if ($null -ne $advancedDebloatStandard) { [bool]$advancedDebloatStandard } elseif ($null -ne $script:AdvancedDebloatStandard) { [bool]$script:AdvancedDebloatStandard } else { $false }
+    $ctx.AdvancedDebloatExperimental = if ($null -ne $advancedDebloatExperimental) { [bool]$advancedDebloatExperimental } elseif ($null -ne $script:AdvancedDebloatExperimental) { [bool]$script:AdvancedDebloatExperimental } else { $false }
     $ctx.ActiveTweakGroups = $script:activeTweakGroups
+    $ctx.TweakSettings = if ($null -ne $script:TweakSettings) { $script:TweakSettings } else { [ordered]@{} }
     $ctx.PayloadFormat = $PayloadFormat
     $ctx.ComputerName = $ComputerName
     $ctx.UserName = $UserName
@@ -616,7 +712,15 @@ function Sync-ScriptScopeFromContext {
     $script:ManagedMountDirs = $ctx.ManagedMountDirs
     $script:AllocatedMountDirs = $ctx.AllocatedMountDirs
     $script:PreservedMountDirs = $ctx.PreservedMountDirs
+    $script:IsoCreatedSuccessfully = $ctx.IsoCreatedSuccessfully
+    $script:IsoPayloadMatch = $ctx.IsoPayloadMatch
+    $script:ExportSucceeded = $ctx.ExportSucceeded
+    $script:IsoGenerated = $ctx.IsoGenerated
+    $script:AllowPhysicalDebloat = $ctx.AllowPhysicalDebloat
+    $script:AdvancedDebloatStandard = $ctx.AdvancedDebloatStandard
+    $script:AdvancedDebloatExperimental = $ctx.AdvancedDebloatExperimental
     $script:activeTweakGroups = $ctx.ActiveTweakGroups
+    $script:TweakSettings = $ctx.TweakSettings
 }
 
 # Safe existence probe: Test-Path throws on some access-denied paths (verified),
@@ -937,3 +1041,562 @@ function Remove-Nano11TreeRobust {
     Write-Warning "Remove-Nano11TreeRobust: '$full' could not be fully removed (linkPruneClean=$(-not $linkDeleteFailed), elapsed $([math]::Round($sw.Elapsed.TotalSeconds,1))s).$repairDetail"
     return $false
 }
+
+# ==============================================================================
+# Helper function: Write text file atomically with retry logic to avoid external lock failure
+# ==============================================================================
+function Write-Nano11TextFileAtomic {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path,
+        [Parameter(Mandatory=$true)]
+        [string]$Content,
+        [object]$Encoding = $null,
+        [int]$MaxRetries = 5,
+        [int]$RetryDelayMs = 200
+    )
+    $actualEncoding = if ($Encoding -is [System.Text.Encoding]) {
+        $Encoding
+    } elseif ($Encoding -is [string] -and $Encoding.ToLower() -eq 'ascii') {
+        [System.Text.Encoding]::ASCII
+    } elseif ($Encoding -is [string] -and $Encoding.ToLower() -eq 'unicode') {
+        [System.Text.Encoding]::Unicode
+    } else {
+        [System.Text.Encoding]::UTF8
+    }
+    $dir = [System.IO.Path]::GetDirectoryName($Path)
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Force -Path $dir -ErrorAction SilentlyContinue | Out-Null
+    }
+    $tempPath = "$Path.$([System.Guid]::NewGuid().ToString('N')).tmp"
+    try {
+        [System.IO.File]::WriteAllText($tempPath, $Content, $actualEncoding)
+    } catch {
+        Write-Warning "Write-Nano11TextFileAtomic: Failed to write initial temp file '$tempPath': $_"
+        return $false
+    }
+
+    for ($attempt = 1; $attempt -le $MaxRetries; $attempt++) {
+        try {
+            if ([System.IO.File]::Exists($Path)) {
+                try {
+                    [System.IO.File]::Replace($tempPath, $Path, $null, $true)
+                    return $true
+                } catch {
+                    [System.IO.File]::Delete($Path)
+                    [System.IO.File]::Move($tempPath, $Path)
+                    return $true
+                }
+            } else {
+                [System.IO.File]::Move($tempPath, $Path)
+                return $true
+            }
+        } catch {
+            if ($attempt -eq $MaxRetries) {
+                try {
+                    [System.IO.File]::WriteAllText($Path, $Content, $actualEncoding)
+                    if (Test-Path -LiteralPath $tempPath) { Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue }
+                    return $true
+                } catch {
+                    if (Test-Path -LiteralPath $tempPath) { Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue }
+                    Write-Warning "Write-Nano11TextFileAtomic failed for '$Path': $_"
+                    return $false
+                }
+            }
+            Start-Sleep -Milliseconds ($RetryDelayMs * $attempt)
+        }
+    }
+    return $false
+}
+
+# ==============================================================================
+# Helper function: Detect and resolve configuration conflicts across debloat selections and tweaks
+# ==============================================================================
+function Test-Nano11ConfigConflicts {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]
+        [object]$Config,
+        [switch]$AutoResolve
+    )
+    $conflicts = [System.Collections.Generic.List[object]]::new()
+    $warnings = [System.Collections.Generic.List[string]]::new()
+
+    # Helper to get property value whether hashtable or psobject
+    $getVal = {
+        param($key)
+        if ($Config -is [System.Collections.IDictionary]) {
+            if ($Config.Contains($key)) { return $Config[$key] }
+        } elseif ($Config.PSObject.Properties[$key]) {
+            return $Config.PSObject.Properties[$key].Value
+        }
+        return $null
+    }
+    $setVal = {
+        param($key, $val)
+        if ($Config -is [System.Collections.IDictionary]) {
+            $Config[$key] = $val
+        } elseif ($Config.PSObject.Properties[$key]) {
+            $Config.PSObject.Properties[$key].Value = $val
+        } else {
+            $Config | Add-Member -NotePropertyName $key -NotePropertyValue $val -Force
+        }
+    }
+
+    $rawStd = & $getVal 'advancedDebloatStandard'
+    $rawExp = & $getVal 'advancedDebloatExperimental'
+    $stdItems = [System.Collections.Generic.List[string]]::new()
+    if ($rawStd) { foreach ($item in $rawStd) { $stdItems.Add("$item") } }
+    $expItems = [System.Collections.Generic.List[string]]::new()
+    if ($rawExp) { foreach ($item in $rawExp) { $expItems.Add("$item") } }
+
+    $tweakSettings = & $getVal 'TweakSettings'
+    $getTweak = {
+        param($tkey)
+        if ($tweakSettings -is [System.Collections.IDictionary]) {
+            if ($tweakSettings.Contains($tkey)) { return [bool]$tweakSettings[$tkey] }
+        } elseif ($tweakSettings -and $tweakSettings.PSObject.Properties[$tkey]) {
+            return [bool]$tweakSettings.PSObject.Properties[$tkey].Value
+        }
+        return $false
+    }
+    $setTweak = {
+        param($tkey, $tval)
+        if ($tweakSettings -is [System.Collections.IDictionary]) {
+            $tweakSettings[$tkey] = [bool]$tval
+        } elseif ($tweakSettings -and $tweakSettings.PSObject.Properties[$tkey]) {
+            $tweakSettings.PSObject.Properties[$tkey].Value = [bool]$tval
+        }
+    }
+
+    # 1. Edge conflict
+    if (& $getVal 'KeepEdge') {
+        $expEdge = $expItems | Where-Object { $_ -match 'Edge' }
+        if ($expEdge) {
+            $msg = "KeepEdge is true, but advancedDebloatExperimental contains '$($expEdge -join ', ')lib'."
+            $conf = [PSCustomObject]@{ Rule = "KeepEdge"; Type = "Browser"; Details = $msg; Resolution = "Removed Edge items from experimental debloat" }
+            $conflicts.Add($conf)
+            $warnings.Add("Conflict: $msg")
+            if ($AutoResolve) {
+                foreach ($item in @($expEdge)) { [void]$expItems.Remove($item) }
+            }
+        }
+    }
+
+    # 2. Defender conflict
+    if ((& $getVal 'KeepDefender') -or (-not (& $getVal 'RemoveDefender'))) {
+        $expDef = $expItems | Where-Object { $_ -match 'Defender|Firewall' }
+        if ($expDef) {
+            $msg = "Defender is kept, but advancedDebloatExperimental contains '$($expDef -join ', ')lib'."
+            $conf = [PSCustomObject]@{ Rule = "Defender"; Type = "Security"; Details = $msg; Resolution = "Removed Defender items from experimental debloat" }
+            $conflicts.Add($conf)
+            $warnings.Add("Conflict: $msg")
+            if ($AutoResolve) {
+                foreach ($item in @($expDef)) { [void]$expItems.Remove($item) }
+            }
+        }
+    }
+
+    # 3. Recovery / WinRE conflict
+    if (& $getVal 'KeepRecoveryEnv') {
+        $stdWinre = $stdItems | Where-Object { $_ -match 'WinRE' }
+        if ($stdWinre) {
+            $msg = "KeepRecoveryEnv is true, but advancedDebloatStandard contains '$($stdWinre -join ', ')lib'."
+            $conf = [PSCustomObject]@{ Rule = "WinRE"; Type = "Recovery"; Details = $msg; Resolution = "Removed WinRE removal from debloat" }
+            $conflicts.Add($conf)
+            $warnings.Add("Conflict: $msg")
+            if ($AutoResolve) {
+                foreach ($item in @($stdWinre)) { [void]$stdItems.Remove($item) }
+            }
+        }
+    }
+
+    # 4. Search index conflict
+    if (& $getVal 'KeepSearchIndex') {
+        $expSearch = $expItems | Where-Object { $_ -match 'Search index' }
+        if ($expSearch) {
+            $msg = "KeepSearchIndex is true, but advancedDebloatExperimental contains '$($expSearch -join ', ')lib'."
+            $conf = [PSCustomObject]@{ Rule = "SearchIndex"; Type = "System"; Details = $msg; Resolution = "Removed Search index removal from debloat" }
+            $conflicts.Add($conf)
+            $warnings.Add("Conflict: $msg")
+            if ($AutoResolve) {
+                foreach ($item in @($expSearch)) { [void]$expItems.Remove($item) }
+            }
+        }
+    }
+
+    # 5. Xbox conflict
+    if (& $getVal 'KeepXboxServices') {
+        $stdXbox = $stdItems | Where-Object { $_ -match 'Xbox' }
+        if ($stdXbox) {
+            $msg = "KeepXboxServices is true, but debloat contains '$($stdXbox -join ', ')lib'."
+            $conf = [PSCustomObject]@{ Rule = "XboxServices"; Type = "Gaming"; Details = $msg; Resolution = "Removed Xbox debloat items" }
+            $conflicts.Add($conf)
+            $warnings.Add("Conflict: $msg")
+            if ($AutoResolve) {
+                foreach ($item in @($stdXbox)) { [void]$stdItems.Remove($item) }
+                foreach ($item in @($expItems | Where-Object { $_ -match 'Xbox' })) { [void]$expItems.Remove($item) }
+            }
+        }
+    }
+
+    # 6. Bluetooth conflict
+    if (& $getVal 'KeepBT') {
+        $stdBT = $stdItems | Where-Object { $_ -match 'Bluetooth' }
+        $expBT = $expItems | Where-Object { $_ -match 'Bluetooth' }
+        if ($stdBT -or $expBT) {
+            $msg = "KeepBT is true, but debloat contains Bluetooth items."
+            $conf = [PSCustomObject]@{ Rule = "Bluetooth"; Type = "Hardware"; Details = $msg; Resolution = "Removed Bluetooth debloat items" }
+            $conflicts.Add($conf)
+            $warnings.Add("Conflict: $msg")
+            if ($AutoResolve) {
+                foreach ($item in @($stdBT)) { [void]$stdItems.Remove($item) }
+                foreach ($item in @($expBT)) { [void]$expItems.Remove($item) }
+            }
+        }
+    }
+
+    # 7. Microsoft Store vs Windows Update dependency
+    $removeStoreVal = [bool](& $getVal 'RemoveStore')
+    $keepStoreVal = [bool](& $getVal 'KeepStore')
+    $storeRetained = (-not $removeStoreVal) -or $keepStoreVal
+    $disableWUVal = [bool](& $getVal 'DisableWindowsUpdate')
+
+    if ($storeRetained -and $disableWUVal) {
+        $msg = "Microsoft Store is kept, but DisableWindowsUpdate is true. Store downloads/updates require Windows Update."
+        $conf = [PSCustomObject]@{ Rule = "StoreWindowsUpdateDependency"; Type = "Dependency"; Details = $msg; Resolution = "Set DisableWindowsUpdate = $false to ensure Store functionality" }
+        $conflicts.Add($conf)
+        $warnings.Add("Conflict: $msg")
+        if ($AutoResolve) {
+            & $setVal 'DisableWindowsUpdate' $false
+        }
+    }
+
+    # 8. Store retention conflict (KeepStore vs RemoveStore)
+    if ($keepStoreVal -and $removeStoreVal) {
+        $msg = "KeepStore is true, but RemoveStore is also set to true."
+        $conf = [PSCustomObject]@{ Rule = "KeepStoreVsRemoveStore"; Type = "Logic"; Details = $msg; Resolution = "Set RemoveStore = $false (KeepStore takes precedence)" }
+        $conflicts.Add($conf)
+        $warnings.Add("Conflict: $msg")
+        if ($AutoResolve) {
+            & $setVal 'RemoveStore' $false
+        }
+    }
+
+    # 9. Physical Debloat Safety Gate (-AllowPhysicalDebloat guard)
+    $allowPhys = [bool](& $getVal 'AllowPhysicalDebloat')
+    $physTweak = & $getTweak 'PhysicalDebloat'
+    $hasPhysExp = ($expItems.Count -gt 0)
+    if ((-not $allowPhys) -and ($physTweak -or $hasPhysExp)) {
+        $msg = "Destructive physical debloat is requested, but -AllowPhysicalDebloat safety guard is not enabled."
+        $conf = [PSCustomObject]@{ Rule = "PhysicalDebloatSafetyGate"; Type = "Safety"; Details = $msg; Resolution = "Disabled PhysicalDebloat tweak and cleared experimental deletions" }
+        $conflicts.Add($conf)
+        $warnings.Add("Conflict: $msg")
+        if ($AutoResolve) {
+            & $setTweak 'PhysicalDebloat' $false
+            $expItems.Clear()
+        }
+    }
+
+    # 10. Asian IME Preservation
+    if (& $getVal 'KeepAsianIME') {
+        $imeItems = $stdItems | Where-Object { $_ -match 'IME' }
+        if ($imeItems) {
+            $msg = "KeepAsianIME is true, but debloat contains IME removal items."
+            $conf = [PSCustomObject]@{ Rule = "KeepAsianIME"; Type = "Localization"; Details = $msg; Resolution = "Removed IME removal items" }
+            $conflicts.Add($conf)
+            $warnings.Add("Conflict: $msg")
+            if ($AutoResolve) {
+                foreach ($item in @($imeItems)) { [void]$stdItems.Remove($item) }
+            }
+        }
+    }
+
+    # 11. Extra Fonts Preservation
+    if (& $getVal 'KeepExtraFonts') {
+        $fontItems = $stdItems | Where-Object { $_ -match 'font' }
+        if ($fontItems) {
+            $msg = "KeepExtraFonts is true, but debloat contains font removal items."
+            $conf = [PSCustomObject]@{ Rule = "KeepExtraFonts"; Type = "Localization"; Details = $msg; Resolution = "Removed font removal items" }
+            $conflicts.Add($conf)
+            $warnings.Add("Conflict: $msg")
+            if ($AutoResolve) {
+                foreach ($item in @($fontItems)) { [void]$stdItems.Remove($item) }
+            }
+        }
+    }
+
+    if ($AutoResolve) {
+        & $setVal 'advancedDebloatStandard' ($stdItems.ToArray())
+        & $setVal 'advancedDebloatExperimental' ($expItems.ToArray())
+    }
+
+    return [PSCustomObject]@{
+        HasConflicts   = ($conflicts.Count -gt 0)
+        Conflicts      = [object[]]$conflicts
+        Warnings       = [string[]]$warnings
+        ResolvedConfig = $Config
+    }
+}
+
+# ==============================================================================
+# Helper function: Validate image and workspace integrity before resuming
+# ==============================================================================
+function Test-Nano11ResumeIntegrity {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$WorkspaceDir,
+        [int]$TargetPhase = 0,
+        [switch]$IsIsoOnly
+    )
+    $errors = [System.Collections.Generic.List[string]]::new()
+    $warnings = [System.Collections.Generic.List[string]]::new()
+    $payloadPath = $null
+    $payloadType = $null
+    $bootWimPath = $null
+
+    if (-not (Test-Path -LiteralPath $WorkspaceDir)) {
+        $errors.Add("Workspace directory '$WorkspaceDir' does not exist.")
+        return [PSCustomObject]@{ IsValid = $false; Errors = [string[]]$errors; Warnings = [string[]]$warnings; BuildDir = $null; PayloadPath = $null; PayloadType = $null; BootWimPath = $null }
+    }
+
+    $buildDir = Join-Path -Path $WorkspaceDir -ChildPath "build"
+    if (-not (Test-Path -LiteralPath $buildDir)) {
+        $errors.Add("Workspace build directory '$buildDir' does not exist.")
+        return [PSCustomObject]@{ IsValid = $false; Errors = [string[]]$errors; Warnings = [string[]]$warnings; BuildDir = $null; PayloadPath = $null; PayloadType = $null; BootWimPath = $null }
+    }
+
+    $sourcesDir = Join-Path -Path $buildDir -ChildPath "sources"
+    if (-not (Test-Path -LiteralPath $sourcesDir)) {
+        $errors.Add("Build sources directory '$sourcesDir' does not exist.")
+    } else {
+        foreach ($cand in @('install.wim', 'install.esd')) {
+            $p = Join-Path -Path $sourcesDir -ChildPath $cand
+            if (Test-Path -LiteralPath $p) {
+                $item = Get-Item -LiteralPath $p -ErrorAction SilentlyContinue
+                if ($item.Length -gt 500MB) {
+                    $payloadPath = $p
+                    $payloadType = [System.IO.Path]::GetExtension($cand).TrimStart('.').ToUpperInvariant()
+                    # Validate WIM header magic bytes MSWIM\0\0
+                    try {
+                        $fs = [System.IO.File]::OpenRead($p)
+                        $hdr = New-Object byte[] 8
+                        $read = $fs.Read($hdr, 0, 8)
+                        $fs.Close()
+                        $sig = [System.Text.Encoding]::ASCII.GetString($hdr, 0, 5)
+                        if ($sig -ne 'MSWIM') {
+                            $errors.Add("File '$p' does not have valid MSWIM header signature (got '$sig').")
+                        }
+                    } catch {
+                        $errors.Add("Could not read WIM header of '$p': $_")
+                    }
+                    break
+                }
+            }
+        }
+        if (-not $payloadPath) {
+            $errors.Add("No valid install.wim or install.esd (>500MB) found in '$sourcesDir'.")
+        }
+        $bootWimPath = Join-Path -Path $sourcesDir -ChildPath "boot.wim"
+        if (-not (Test-Path -LiteralPath $bootWimPath)) {
+            $errors.Add("boot.wim is missing in '$sourcesDir'.")
+        }
+    }
+
+    # ISO root items validation for resume ISO mode
+    if ($IsIsoOnly -or $TargetPhase -ge 13) {
+        $requiredRootItems = @('boot', 'efi', 'bootmgr', 'bootmgr.efi', 'bootmgfw.efi', 'setup.exe', 'autounattend.xml')
+        foreach ($item in $requiredRootItems) {
+            $itemPath = Join-Path -Path $buildDir -ChildPath $item
+            if (-not (Test-Path -LiteralPath $itemPath)) {
+                $errors.Add("Required ISO root component '$item' is missing in '$buildDir'.")
+            }
+        }
+    }
+
+    return [PSCustomObject]@{
+        IsValid     = ($errors.Count -eq 0)
+        Errors      = [string[]]$errors
+        Warnings    = [string[]]$warnings
+        BuildDir    = $buildDir
+        PayloadPath = $payloadPath
+        PayloadType = $payloadType
+        BootWimPath = $bootWimPath
+    }
+}
+
+# ============================================================================
+# Statistical Analysis & Benchmark Comparison Utilities
+# ============================================================================
+
+function Get-Nano11MetricStatistics {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [AllowNull()]
+        [double[]]$Values
+    )
+
+    if ($null -eq $Values -or $Values.Count -eq 0) {
+        return [PSCustomObject]@{
+            Count  = 0
+            Mean   = 0.0
+            Median = 0.0
+            Min    = 0.0
+            Max    = 0.0
+            StdDev = 0.0
+            IQR    = 0.0
+        }
+    }
+
+    $sorted = $Values | Sort-Object
+    $count = $sorted.Count
+
+    # Mean
+    $sum = 0.0
+    foreach ($v in $sorted) { $sum += $v }
+    $mean = [math]::Round($sum / $count, 3)
+
+    # Median (p50)
+    $median = if ($count % 2 -eq 1) {
+        [double]$sorted[[math]::Floor($count / 2)]
+    } else {
+        $mid = [int]($count / 2)
+        [double](([double]$sorted[$mid - 1] + [double]$sorted[$mid]) / 2.0)
+    }
+    $median = [math]::Round($median, 3)
+
+    # Min / Max
+    $min = [double]$sorted[0]
+    $max = [double]$sorted[$count - 1]
+
+    # Sample StdDev (if count > 1, else 0)
+    $stddev = 0.0
+    if ($count -gt 1) {
+        $sumSqDiff = 0.0
+        foreach ($v in $sorted) {
+            $diff = $v - $mean
+            $sumSqDiff += ($diff * $diff)
+        }
+        $variance = $sumSqDiff / ($count - 1)
+        $stddev = [math]::Round([math]::Sqrt($variance), 3)
+    }
+
+    # Interquartile Range (IQR) = Q3 - Q1
+    $getPercentile = {
+        param([double[]]$arr, [double]$p)
+        if ($arr.Count -eq 1) { return [double]$arr[0] }
+        $idx = ($arr.Count - 1) * $p
+        $low = [int][math]::Floor($idx)
+        $high = [int][math]::Ceiling($idx)
+        if ($low -eq $high) { return [double]$arr[$low] }
+        $weight = $idx - $low
+        return [double]($arr[$low] * (1.0 - $weight) + $arr[$high] * $weight)
+    }
+
+    $q1 = & $getPercentile $sorted 0.25
+    $q3 = & $getPercentile $sorted 0.75
+    $iqr = [math]::Round(($q3 - $q1), 3)
+
+    return [PSCustomObject]@{
+        Count  = $count
+        Mean   = $mean
+        Median = $median
+        Min    = $min
+        Max    = $max
+        StdDev = $stddev
+        IQR    = $iqr
+    }
+}
+
+function Compare-Nano11BenchmarkSeries {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [PSCustomObject[]]$BaselineRuns,
+
+        [Parameter(Mandatory = $true)]
+        [PSCustomObject[]]$OptimizedRuns,
+
+        [string]$OptimizedLabel = "nano11 Standard"
+    )
+
+    if ($null -eq $BaselineRuns -or $BaselineRuns.Count -eq 0 -or
+        $null -eq $OptimizedRuns -or $OptimizedRuns.Count -eq 0) {
+        return @{}
+    }
+
+    $extractValues = {
+        param([PSCustomObject[]]$runs, [string]$metricName)
+        $vals = [System.Collections.Generic.List[double]]::new()
+        foreach ($r in $runs) {
+            $val = $null
+            if ($r.PSObject.Properties[$metricName]) {
+                $val = $r.$metricName
+            } elseif ($metricName -eq "CommittedMemoryMB" -and $r.Memory -and $r.Memory.CommittedMB) {
+                $val = $r.Memory.CommittedMB
+            } elseif ($metricName -eq "ProcessCount" -and $r.Memory -and $r.Memory.ProcessCount) {
+                $val = $r.Memory.ProcessCount
+            } elseif ($metricName -eq "ThreadCount" -and $r.Memory -and $r.Memory.ThreadCount) {
+                $val = $r.Memory.ThreadCount
+            } elseif ($metricName -eq "HandleCount" -and $r.Memory -and $r.Memory.HandleCount) {
+                $val = $r.Memory.HandleCount
+            } elseif ($metricName -eq "ColdCmdLatencyMs" -and $r.Probes -and $r.Probes.ColdLaunch -and $r.Probes.ColdLaunch.CmdExeMs) {
+                $val = $r.Probes.ColdLaunch.CmdExeMs
+            } elseif ($metricName -eq "WarmCmdLatencyMs" -and $r.Probes -and $r.Probes.WarmLaunch -and $r.Probes.WarmLaunch.CmdExeMs) {
+                $val = $r.Probes.WarmLaunch.CmdExeMs
+            } elseif ($metricName -eq "WindowsDirMB" -and $r.DiskFootprint -and $r.DiskFootprint.WindowsDirMB) {
+                $val = $r.DiskFootprint.WindowsDirMB
+            }
+
+            if ($null -ne $val) {
+                $num = 0.0
+                if ([double]::TryParse([string]$val, [ref]$num)) {
+                    $vals.Add($num)
+                }
+            }
+        }
+        return [double[]]$vals.ToArray()
+    }
+
+    $metricList = @(
+        'CommittedMemoryMB',
+        'ProcessCount',
+        'ThreadCount',
+        'HandleCount',
+        'ColdCmdLatencyMs',
+        'WarmCmdLatencyMs',
+        'WindowsDirMB'
+    )
+
+    $comparison = [ordered]@{}
+
+    foreach ($m in $metricList) {
+        $baseVals = & $extractValues $BaselineRuns $m
+        $optVals  = & $extractValues $OptimizedRuns $m
+
+        if ($baseVals.Count -gt 0 -and $optVals.Count -gt 0) {
+            $baseStats = Get-Nano11MetricStatistics -Values $baseVals
+            $optStats  = Get-Nano11MetricStatistics -Values $optVals
+
+            $pctImprovement = 0.0
+            if ($baseStats.Median -gt 0) {
+                $pctImprovement = [math]::Round((($baseStats.Median - $optStats.Median) / $baseStats.Median) * 100.0, 2)
+            }
+
+            $comparison[$m] = [PSCustomObject]@{
+                Metric             = $m
+                Baseline           = $baseStats
+                Optimized          = $optStats
+                OptimizedLabel     = $OptimizedLabel
+                ImprovementPercent = $pctImprovement
+            }
+        }
+    }
+
+    return $comparison
+}
+

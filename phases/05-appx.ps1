@@ -118,9 +118,27 @@ $folderCleanupScript = {
     param($folderPath, $scratchPath)
     if (Test-Path -LiteralPath $folderPath) {
         try {
-            # Reuse the same ownership/robocopy technique as Remove-ProtectedDirectory (lightweight inline)
-            & takeown.exe /F "$folderPath" /A /R /D Y > $null 2>&1
-            & icacls.exe "$folderPath" /grant "*S-1-5-32-544:(OI)(CI)F" /T /C /Q > $null 2>&1
+            $rootItem = Get-Item -LiteralPath $folderPath -Force -ErrorAction SilentlyContinue
+            if ($rootItem -and ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+                [System.IO.Directory]::Delete($folderPath, $false)
+                return (-not (Test-Path -LiteralPath $folderPath))
+            }
+            $queue = [System.Collections.Generic.Queue[string]]::new()
+            $queue.Enqueue($folderPath)
+            while ($queue.Count -gt 0) {
+                $curr = $queue.Dequeue()
+                $children = Get-ChildItem -LiteralPath $curr -Force -ErrorAction SilentlyContinue
+                foreach ($c in $children) {
+                    if ($c.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                        try {
+                            if ($c.PSIsContainer) { [System.IO.Directory]::Delete($c.FullName, $false) }
+                            else { [System.IO.File]::Delete($c.FullName) }
+                        } catch {}
+                    } elseif ($c.PSIsContainer) {
+                        $queue.Enqueue($c.FullName)
+                    }
+                }
+            }
             & cmd.exe /c "rd /s /q `"$folderPath`"" > $null 2>&1
             if (Test-Path -LiteralPath $folderPath) { return $false }
             return $true
@@ -138,7 +156,7 @@ foreach ($package in $successfullyRemovedPackages) {
 if ($parallelism -le 1 -or $folderPaths.Count -le 1) {
     foreach ($fp in $folderPaths) {
         if (Test-Path -LiteralPath $fp) {
-            Remove-ProtectedDirectory -Path $fp -ScratchPath $scratchDir
+            Remove-Nano11TreeRobust -Path $fp -SafetyRoot $scratchDir
         }
     }
 } else {
@@ -167,7 +185,7 @@ if ($parallelism -le 1 -or $folderPaths.Count -le 1) {
     # Verify + sequential fallback for any survivors
     foreach ($fp in $folderPaths) {
         if (Test-Path -LiteralPath $fp) {
-            Remove-ProtectedDirectory -Path $fp -ScratchPath $scratchDir
+            Remove-Nano11TreeRobust -Path $fp -SafetyRoot $scratchDir
         }
     }
 }

@@ -71,44 +71,79 @@ $scripts = @(
 		# Custom Post-Install User Scripts Execution Hook (from tools/custom-scripts/)
 		$customDir = "C:\Windows\Setup\Scripts\Custom";
 		$customLogDir = "C:\ProgramData\nano11\Logs";
-		$customLogFile = "$customLogDir\custom-scripts.log";
+		$customLogFiles = @(
+			"$customDir\custom-scripts.log",
+			"$customLogDir\custom-scripts.log"
+		);
+
+		function Redact-Nano11Secret {
+			param([string]$Text)
+			if ([string]::IsNullOrEmpty($Text)) { return $Text; }
+			$masked = $Text -replace '(?i)(password|secret|token|apikey|key)\s*[:=]\s*[^\s]+', '$1: [REDACTED]';
+			$masked = $masked -replace '[A-Za-z0-9]{5}-[A-Za-z0-9]{5}-[A-Za-z0-9]{5}-[A-Za-z0-9]{5}-[A-Za-z0-9]{5}', 'XXXXX-XXXXX-XXXXX-XXXXX-XXXXX';
+			return $masked;
+		}
 
 		function Write-CustomScriptLog {
 			param([string]$Message)
-			$ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss";
-			$line = "[$ts] $Message";
-			try {
-				if (-not (Test-Path -LiteralPath $customLogDir)) {
-					New-Item -ItemType Directory -Force -Path $customLogDir -ErrorAction SilentlyContinue | Out-Null;
-				}
-				[System.IO.File]::AppendAllText($customLogFile, "$line`r`n", [System.Text.Encoding]::UTF8);
-			} catch {
+			$ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff";
+			$cleanMsg = Redact-Nano11Secret -Text $Message;
+			$line = "[$ts] $cleanMsg";
+			foreach ($logPath in $customLogFiles) {
 				try {
-					Add-Content -LiteralPath $customLogFile -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue;
+					$parentDir = Split-Path -Path $logPath -Parent;
+					if ($parentDir -and -not (Test-Path -LiteralPath $parentDir)) {
+						New-Item -ItemType Directory -Force -Path $parentDir -ErrorAction SilentlyContinue | Out-Null;
+					}
+					[System.IO.File]::AppendAllText($logPath, "$line`r`n", [System.Text.Encoding]::UTF8);
 				} catch {
 					try {
-						Add-Content -LiteralPath "$customDir\custom-scripts.log" -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue;
-					} catch {}
+						Add-Content -LiteralPath $logPath -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue;
+					} catch {
+						Write-Warning "[CUSTOM-SCRIPT-LOG-WARNING] Failed to append log entry to '$logPath': $($_.Exception.Message)";
+					}
 				}
 			}
 		}
 
 		if (Test-Path -LiteralPath $customDir) {
 			$validExts = @('.ps1', '.bat', '.cmd', '.reg');
-			$targetFiles = @(Get-ChildItem -Path $customDir -File -ErrorAction SilentlyContinue |
+			$allCandidateFiles = @(Get-ChildItem -Path $customDir -File -ErrorAction SilentlyContinue |
 				Where-Object {
-					$validExts -contains $_.Extension.ToLower() -and
 					$_.Name -ne 'custom-scripts.log' -and
+					$_.Extension.ToLower() -ne '.log' -and
 					$_.Name -ne 'README.md'
 				} |
 				Sort-Object Name);
 
+			$targetFiles = [System.Collections.Generic.List[System.IO.FileInfo]]::new();
+			foreach ($cand in $allCandidateFiles) {
+				$ext = $cand.Extension.ToLower();
+				if ($validExts -contains $ext) {
+					$targetFiles.Add($cand);
+				} else {
+					Write-CustomScriptLog "[SKIPPED] File: $($cand.Name) | Path: $($cand.FullName) | Reason: Unsupported or disabled extension ('$ext')";
+				}
+			}
+
 			if ($targetFiles.Count -gt 0) {
 				Write-CustomScriptLog "================================================================================";
-				Write-CustomScriptLog "Custom Scripts Execution Pipeline Started";
+				Write-CustomScriptLog "Custom Scripts Execution Pipeline Started (Elevated Administrator Context)";
 				Write-CustomScriptLog "Directory: $customDir";
-				Write-CustomScriptLog "Found Scripts ($($targetFiles.Count)): $(($targetFiles | ForEach-Object { $_.Name }) -join ', ')";
+				Write-CustomScriptLog "Target Scripts ($($targetFiles.Count)): $(($targetFiles | ForEach-Object { $_.Name }) -join ', ')";
 				Write-CustomScriptLog "================================================================================";
+
+				# Load SHA256 integrity manifest if present
+				$manifestPath = "C:\Windows\Setup\Scripts\custom-scripts-manifest.json";
+				$manifest = $null;
+				if (Test-Path -LiteralPath $manifestPath) {
+					try {
+						$manifest = Get-Content -LiteralPath $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json;
+						Write-CustomScriptLog "Loaded custom scripts integrity manifest ($($manifest.psobject.properties.name.Count) entries).";
+					} catch {
+						Write-CustomScriptLog "[SECURITY WARNING] Failed to read custom-scripts-manifest.json: $($_.Exception.Message)";
+					}
+				}
 
 				$pipelineSw = [System.Diagnostics.Stopwatch]::StartNew();
 				$successCount = 0;
@@ -120,20 +155,43 @@ $scripts = @(
 					$scriptName = $file.Name;
 					$scriptPath = $file.FullName;
 					$ext = $file.Extension.ToLower();
-					$scriptSw = [System.Diagnostics.Stopwatch]::StartNew();
+					$startDt = Get-Date;
+					$startStr = $startDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
 
-					Write-CustomScriptLog "[$idx/$($targetFiles.Count)] [START] $scriptName";
+					# Enforce SHA256 verification against build-time manifest
+					if ($manifest) {
+						$expectedHash = $manifest."$scriptName";
+						if (-not $expectedHash) {
+							$endDt = Get-Date;
+							$endStr = $endDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
+							Write-CustomScriptLog "[$idx/$($targetFiles.Count)] [SECURITY REFUSAL] Script: $scriptName | Path: $scriptPath | StartTime: $startStr | EndTime: $endStr | Reason: File is not listed in build-time integrity manifest. Execution blocked.";
+							$failCount++;
+							continue;
+						}
+						$actualHash = (Get-FileHash -LiteralPath $scriptPath -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash;
+						if ($actualHash -ine $expectedHash) {
+							$endDt = Get-Date;
+							$endStr = $endDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
+							Write-CustomScriptLog "[$idx/$($targetFiles.Count)] [SECURITY REFUSAL] Script: $scriptName | Path: $scriptPath | StartTime: $startStr | EndTime: $endStr | Reason: Hash mismatch (Expected: $expectedHash, Got: $actualHash). Execution blocked.";
+							$failCount++;
+							continue;
+						}
+					}
+
+					$scriptSw = [System.Diagnostics.Stopwatch]::StartNew();
+					Write-CustomScriptLog "[$idx/$($targetFiles.Count)] [START] Script: $scriptName | Path: $scriptPath | StartTime: $startStr";
 
 					$exitCode = 0;
 					$isSuccess = $false;
 					$errDetail = $null;
 
+					$global:LASTEXITCODE = 0;
 					$prevEap = $ErrorActionPreference;
 					$ErrorActionPreference = 'Continue';
 					try {
 						$output = switch ($ext) {
 							'.ps1' {
-								& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -NoProfile -NonInteractive -File $scriptPath 2>&1
+								& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -NoProfile -NonInteractive -Command "& { `$ErrorActionPreference = 'Stop'; & '$scriptPath'; if (`$null -ne `$LASTEXITCODE -and `$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE } }" 2>&1
 							}
 							'.bat' {
 								& "$env:SystemRoot\System32\cmd.exe" /c "`"$scriptPath`"" 2>&1
@@ -142,10 +200,10 @@ $scripts = @(
 								& "$env:SystemRoot\System32\cmd.exe" /c "`"$scriptPath`"" 2>&1
 							}
 							'.reg' {
-								& "$env:SystemRoot\System32\reg.exe" import $scriptPath 2>&1
+								& "$env:SystemRoot\System32\reg.exe" import "$scriptPath" 2>&1
 							}
 						}
-						$exitCode = if ($LASTEXITCODE -ne $null) { $LASTEXITCODE } else { 0 };
+						$exitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 };
 
 						if ($exitCode -eq 0) {
 							$isSuccess = $true;
@@ -154,31 +212,30 @@ $scripts = @(
 							$errLines = ($output | Out-String).Trim();
 							if (-not [string]::IsNullOrWhiteSpace($errLines)) {
 								$lastLine = ($errLines -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Last 1);
-								$errDetail = "Process exited with code $exitCode (Output: $lastLine)";
+								$errDetail = "Process exited with code $exitCode (Output: $(Redact-Nano11Secret -Text $lastLine))";
 							} else {
 								$errDetail = "Process exited with non-zero exit code: $exitCode";
 							}
 						}
 					} catch {
 						$isSuccess = $false;
-						$exitCode = if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) { $LASTEXITCODE } else { -1 };
-						$errDetail = "Execution exception (Code $exitCode): $($_.Exception.Message)";
+						$exitCode = if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) { $LASTEXITCODE } else { -1 };
+						$errDetail = "Execution exception (Code $exitCode): $(Redact-Nano11Secret -Text $_.Exception.Message)";
 					} finally {
 						$ErrorActionPreference = $prevEap;
 					}
 
 					$scriptSw.Stop();
 					$elapsedSec = [math]::Round($scriptSw.Elapsed.TotalSeconds, 2);
+					$endDt = Get-Date;
+					$endStr = $endDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
 
 					if ($isSuccess) {
 						$successCount++;
-						Write-CustomScriptLog "[$idx/$($targetFiles.Count)] [SUCCESS] $scriptName (Duration: ${elapsedSec}s, ExitCode: $exitCode)";
+						Write-CustomScriptLog "[$idx/$($targetFiles.Count)] [SUCCESS] Script: $scriptName | Path: $scriptPath | StartTime: $startStr | EndTime: $endStr | Duration: ${elapsedSec}s | ExitCode: 0";
 					} else {
 						$failCount++;
-						Write-CustomScriptLog "[$idx/$($targetFiles.Count)] [FAILED] $scriptName (Duration: ${elapsedSec}s, ExitCode: $exitCode)";
-						if ($errDetail) {
-							Write-CustomScriptLog "  Reason: $errDetail";
-						}
+						Write-CustomScriptLog "[$idx/$($targetFiles.Count)] [FAILED] Script: $scriptName | Path: $scriptPath | StartTime: $startStr | EndTime: $endStr | Duration: ${elapsedSec}s | ExitCode: $exitCode | Reason: $errDetail";
 					}
 				}
 
@@ -197,35 +254,30 @@ $scripts = @(
 			try {
 				$webViewDir = 'C:\Windows\System32\Microsoft-Edge-WebView';
 				if (Test-Path -LiteralPath $webViewDir) {
-					$yesKey = try { ($null | choice.exe).Substring(1, 1) } catch { 'Y' };
-					& takeown.exe /f $webViewDir /r /a /d $yesKey >$null 2>&1;
-					& icacls.exe $webViewDir /grant "*S-1-5-32-544:F" /t /c /q >$null 2>&1;
-					Remove-Item -LiteralPath $webViewDir -Recurse -Force -ErrorAction SilentlyContinue;
+					$wvItem = Get-Item -LiteralPath $webViewDir -Force -ErrorAction SilentlyContinue;
+					if ($wvItem -and ($wvItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+						try { [System.IO.Directory]::Delete($webViewDir, $false); } catch { Write-Warning "Failed to delete WebView2 junction: $_"; }
+					} else {
+						$yesKey = try { ($null | choice.exe).Substring(1, 1) } catch { 'Y' };
+						& takeown.exe /f $webViewDir /r /a /d $yesKey >$null 2>&1;
+						& icacls.exe $webViewDir /grant "*S-1-5-32-544:F" /t /c /q >$null 2>&1;
+						Remove-Item -LiteralPath $webViewDir -Recurse -Force -ErrorAction SilentlyContinue;
+					}
 				}
 				Remove-Item "C:\Windows\Setup\Scripts\remove-webview.flag" -Force -ErrorAction SilentlyContinue;
-			} catch {}
+			} catch {
+				Write-Warning "remove-webview post-OOBE task failed: $_";
+			}
 		}
 	};
 	{
-		# Windows Activation Restriction Bypass & Silent Digital License Activation
+		# Windows Activation Restriction Bypass (Safe local SPP notification suppression)
 		$actFlag = "C:\Windows\Setup\Scripts\bypass-activation.flag";
 		if (Test-Path $actFlag) {
 			try {
 				& schtasks.exe /change /tn "\Microsoft\Windows\SoftwareProtectionPlatform\SvcRestartTask" /disable 2>$null;
 				& schtasks.exe /change /tn "\Microsoft\Windows\SoftwareProtectionPlatform\SvcRestartTaskLogon" /disable 2>$null;
 				& schtasks.exe /change /tn "\Microsoft\Windows\SoftwareProtectionPlatform\SvcRestartTaskNetwork" /disable 2>$null;
-
-				$isOnline = $false;
-				try {
-					$ping = Test-Connection -ComputerName "1.1.1.1" -Count 1 -Quiet -ErrorAction SilentlyContinue;
-					if (-not $ping) { $ping = Test-Connection -ComputerName "8.8.8.8" -Count 1 -Quiet -ErrorAction SilentlyContinue; }
-					$isOnline = [bool]$ping;
-				} catch {}
-
-				if ($isOnline) {
-					[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13;
-					& ([ScriptBlock]::Create((Invoke-RestMethod -Uri 'https://get.activated.win' -UseBasicParsing))) /HWID /NoEditionChange 2>$null;
-				}
 				Remove-Item -LiteralPath $actFlag -Force -ErrorAction SilentlyContinue;
 			} catch {}
 		}

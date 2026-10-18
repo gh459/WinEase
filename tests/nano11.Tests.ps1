@@ -360,3 +360,217 @@ Describe "nano11 builder - phase timing telemetry" {
         Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
     }
 }
+
+Describe "nano11 helpers - atomic file I/O (Write-Nano11TextFileAtomic)" {
+    It "writes text content atomically and cleans temporary files" {
+        $tempFile = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("nano11_test_atomic_" + [guid]::NewGuid().ToString('N') + ".txt")
+        $c1 = "First line of content"
+        $ok1 = Write-Nano11TextFileAtomic -Path $tempFile -Content $c1
+        $ok1 | Should Be $true
+        (Test-Path -LiteralPath $tempFile) | Should Be $true
+        [System.IO.File]::ReadAllText($tempFile, [System.Text.Encoding]::UTF8) | Should Be $c1
+
+        $c2 = "Second line replaced content"
+        $ok2 = Write-Nano11TextFileAtomic -Path $tempFile -Content $c2
+        $ok2 | Should Be $true
+        [System.IO.File]::ReadAllText($tempFile, [System.Text.Encoding]::UTF8) | Should Be $c2
+
+        $dir = [System.IO.Path]::GetDirectoryName($tempFile)
+        $orphans = Get-ChildItem -Path $dir -Filter "*nano11_test_atomic*.*.tmp" -ErrorAction SilentlyContinue
+        ($null -eq $orphans -or $orphans.Count -eq 0) | Should Be $true
+
+        Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Describe "nano11 helpers - configuration conflict resolution (Test-Nano11ConfigConflicts)" {
+    It "detects and auto-resolves Store and Windows Update dependency conflict" {
+        $cfg = [PSCustomObject]@{
+            KeepStore = $true
+            RemoveStore = $false
+            DisableWindowsUpdate = $true
+        }
+        $res = Test-Nano11ConfigConflicts -Config $cfg -AutoResolve
+        $res.HasConflicts | Should Be $true
+        $res.ResolvedConfig.DisableWindowsUpdate | Should Be $false
+    }
+
+    It "enforces safety gate on physical debloat when -AllowPhysicalDebloat is false" {
+        $cfg = [PSCustomObject]@{
+            AllowPhysicalDebloat = $false
+            advancedDebloatExperimental = @("Physical deletion candidate")
+            TweakSettings = @{ PhysicalDebloat = $true }
+        }
+        $res = Test-Nano11ConfigConflicts -Config $cfg -AutoResolve
+        $res.HasConflicts | Should Be $true
+        $res.ResolvedConfig.TweakSettings.PhysicalDebloat | Should Be $false
+        $res.ResolvedConfig.advancedDebloatExperimental.Count | Should Be 0
+    }
+}
+
+Describe "nano11 helpers - build resume integrity (Test-Nano11ResumeIntegrity)" {
+    It "fails validation on non-existent or empty workspace" {
+        $dummyDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("nano11_empty_" + [guid]::NewGuid().ToString('N'))
+        $res = Test-Nano11ResumeIntegrity -WorkspaceDir $dummyDir
+        $res.IsValid | Should Be $false
+        $res.Errors.Count | Should BeGreaterThan 0
+    }
+
+    It "passes validation when WIM payload has valid MSWIM magic header and root files" {
+        $tempResume = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("nano11_resume_" + [guid]::NewGuid().ToString('N'))
+        $sourcesDir = Join-Path -Path $tempResume -ChildPath "build\sources"
+        New-Item -ItemType Directory -Path $sourcesDir -Force | Out-Null
+
+        $fakeWim = Join-Path -Path $sourcesDir -ChildPath "install.wim"
+        $magicBytes = [System.Text.Encoding]::ASCII.GetBytes("MSWIM`0`0`0")
+        $fs = [System.IO.File]::Create($fakeWim)
+        $fs.Write($magicBytes, 0, $magicBytes.Length)
+        $fs.SetLength(600 * 1024 * 1024)
+        $fs.Close()
+
+        $fakeBoot = Join-Path -Path $sourcesDir -ChildPath "boot.wim"
+        [System.IO.File]::WriteAllBytes($fakeBoot, $magicBytes)
+
+        foreach ($req in @('boot', 'efi', 'bootmgr', 'bootmgr.efi', 'bootmgfw.efi', 'setup.exe', 'autounattend.xml')) {
+            $t = Join-Path -Path (Join-Path $tempResume "build") -ChildPath $req
+            if ($req -in @('boot', 'efi')) { New-Item -ItemType Directory -Path $t -Force | Out-Null }
+            else { [System.IO.File]::WriteAllText($t, "dummy") }
+        }
+
+        $res = Test-Nano11ResumeIntegrity -WorkspaceDir $tempResume -IsIsoOnly
+        $res.IsValid | Should Be $true
+        $res.PayloadPath | Should Be $fakeWim
+        $res.PayloadType | Should Be "WIM"
+
+        Remove-Item -LiteralPath $tempResume -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Describe "nano11 helpers - BuildContext lifecycle" {
+    It "instantiates BuildContext with all required properties and initial values" {
+        $helpersPath = Join-Path $script:RepoRoot "nano11helpers.ps1"
+        . $helpersPath
+        $ctx = [BuildContext]::new()
+        ($null -ne $ctx) | Should Be $true
+        $ctx.IsoCreatedSuccessfully | Should Be $false
+        $ctx.IsoPayloadMatch | Should Be $false
+        $ctx.ExportSucceeded | Should Be $false
+        $ctx.IsoGenerated | Should Be $false
+        $ctx.AllowPhysicalDebloat | Should Be $false
+        ($null -ne $ctx.PhaseTimings) | Should Be $true
+        ($null -ne $ctx.DiagnosticData) | Should Be $true
+        ($null -ne $ctx.ManagedMountDirs) | Should Be $true
+    }
+}
+
+Describe "nano11 helpers - Path and Directory Safety Guards" {
+    BeforeAll {
+        $helpersPath = Join-Path $script:RepoRoot "nano11helpers.ps1"
+        . $helpersPath
+    }
+
+    It "Test-Nano11PathWithin blocks .. traversal escape attempts" {
+        $base = "C:\TestFolder\Work"
+        $traversal = "C:\TestFolder\Work\..\..\Windows"
+        Test-Nano11PathWithin -Path $traversal -Root $base | Should Be $false
+    }
+
+    It "Test-Nano11PathWithin accepts legitimate subpaths" {
+        $base = "C:\TestFolder\Work"
+        $sub = "C:\TestFolder\Work\Subdir\file.txt"
+        Test-Nano11PathWithin -Path $sub -Root $base | Should Be $true
+    }
+
+    It "Test-IsSafePathToDelete protects OS root and protected system folders" {
+        Test-IsSafePathToDelete -Path "C:\" | Should Be $false
+        Test-IsSafePathToDelete -Path "C:\Windows" | Should Be $false
+        Test-IsSafePathToDelete -Path "C:\Program Files" | Should Be $false
+        Test-IsSafePathToDelete -Path "C:\Users" | Should Be $false
+    }
+
+    It "Test-IsSafePathToDelete protects repo root and parent directories" {
+        Test-IsSafePathToDelete -Path $script:RepoRoot | Should Be $false
+        Test-IsSafePathToDelete -Path (Join-Path $script:RepoRoot "nano11helpers.ps1") | Should Be $false
+    }
+
+    It "Get-Nano11VolumeFreeSpaceGB returns positive value for valid drive and throws on invalid" {
+        $freeGB = Get-Nano11VolumeFreeSpaceGB -Path "C:\"
+        $freeGB | Should BeGreaterThan 0
+        { Get-Nano11VolumeFreeSpaceGB -Path "" } | Should Throw
+        { Get-Nano11VolumeFreeSpaceGB -Path "Z:\NonExistentDriveXYZ" } | Should Throw
+    }
+
+    It "Test-CanSafelyDeleteDirectory refuses to delete workspace base directory itself" {
+        $baseDir = "C:\TestFolder\BaseWork"
+        Test-CanSafelyDeleteDirectory -Path $baseDir -ExpectedBaseDir $baseDir | Should Be $false
+    }
+}
+
+Describe "nano11 helpers - Statistical Analysis and Benchmark Comparison" {
+    BeforeAll {
+        $helpersPath = Join-Path $script:RepoRoot "nano11helpers.ps1"
+        . $helpersPath
+    }
+
+    It "Get-Nano11MetricStatistics calculates correct mean, median, min, max, stddev, IQR" {
+        $values = @(10.0, 20.0, 30.0, 40.0, 50.0)
+        $stats = Get-Nano11MetricStatistics -Values $values
+        $stats.Count | Should Be 5
+        $stats.Mean | Should Be 30.0
+        $stats.Median | Should Be 30.0
+        $stats.Min | Should Be 10.0
+        $stats.Max | Should Be 50.0
+        $stats.StdDev | Should BeGreaterThan 15.0
+        $stats.StdDev | Should BeLessThan 16.0
+        $stats.IQR | Should Be 20.0
+    }
+
+    It "Get-Nano11MetricStatistics handles empty input gracefully" {
+        $stats = Get-Nano11MetricStatistics -Values @()
+        $stats.Count | Should Be 0
+        $stats.Mean | Should Be 0.0
+        $stats.Median | Should Be 0.0
+    }
+
+    It "Compare-Nano11BenchmarkSeries computes percentage improvement across series" {
+        $baseRuns = @(
+            [PSCustomObject]@{ Memory = [PSCustomObject]@{ CommittedMB = 2000.0; ProcessCount = 100 } },
+            [PSCustomObject]@{ Memory = [PSCustomObject]@{ CommittedMB = 2000.0; ProcessCount = 100 } },
+            [PSCustomObject]@{ Memory = [PSCustomObject]@{ CommittedMB = 2000.0; ProcessCount = 100 } }
+        )
+        $optRuns = @(
+            [PSCustomObject]@{ Memory = [PSCustomObject]@{ CommittedMB = 1000.0; ProcessCount = 50 } },
+            [PSCustomObject]@{ Memory = [PSCustomObject]@{ CommittedMB = 1000.0; ProcessCount = 50 } },
+            [PSCustomObject]@{ Memory = [PSCustomObject]@{ CommittedMB = 1000.0; ProcessCount = 50 } }
+        )
+
+        $comp = Compare-Nano11BenchmarkSeries -BaselineRuns $baseRuns -OptimizedRuns $optRuns -OptimizedLabel "nano11 Test"
+        $comp.CommittedMemoryMB | Should Not Be $null
+        $comp.CommittedMemoryMB.Baseline.Median | Should Be 2000.0
+        $comp.CommittedMemoryMB.Optimized.Median | Should Be 1000.0
+        $comp.CommittedMemoryMB.ImprovementPercent | Should Be 50.0
+        $comp.ProcessCount.ImprovementPercent | Should Be 50.0
+    }
+}
+
+Describe "nano11 setup scripts - Custom Scripts Logging" {
+    It "scripts/FirstLogon.ps1 contains dual-log recording and stop preference wrapper" {
+        $firstLogonPath = Join-Path $script:RepoRoot "scripts\FirstLogon.ps1"
+        $content = [System.IO.File]::ReadAllText($firstLogonPath, [System.Text.Encoding]::UTF8)
+        $content | Should Match "custom-scripts\.log"
+        $content | Should Match "Duration:"
+        $content | Should Match "FAILED"
+        $content | Should Match "SUCCESS"
+        $content | Should Match "LASTEXITCODE = 0"
+    }
+
+    It "scripts/UserOnce.ps1 contains execution logging and redaction" {
+        $userOncePath = Join-Path $script:RepoRoot "scripts\UserOnce.ps1"
+        $content = [System.IO.File]::ReadAllText($userOncePath, [System.Text.Encoding]::UTF8)
+        $content | Should Match "UserOnce-custom\.log"
+        $content | Should Match "Redact-Nano11UserSecret"
+        $content | Should Match "Duration:"
+    }
+}
+
+

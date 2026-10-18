@@ -1067,10 +1067,32 @@ $customScriptsDir = Join-Path -Path $scriptDir -ChildPath "tools\custom-scripts"
 if (Test-Path -LiteralPath $customScriptsDir) {
     $targetCustomDir = Join-Path -Path $scratchDir -ChildPath "Windows\Setup\Scripts\Custom"
     New-Item -Path $targetCustomDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+    $customManifest = [ordered]@{}
     Get-ChildItem -Path $customScriptsDir -File | Where-Object { $_.Name -ne "README.md" } | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination $targetCustomDir -Force -ErrorAction SilentlyContinue
+        $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+        $customManifest[$_.Name] = $hash
     }
-    Write-Host "  - Bundled custom post-install scripts to Windows\Setup\Scripts\Custom" -ForegroundColor Green
+    $userScriptsDir = Join-Path -Path $customScriptsDir -ChildPath "user"
+    if (Test-Path -LiteralPath $userScriptsDir) {
+        $targetUserDir = Join-Path -Path $scratchDir -ChildPath "Windows\Setup\Scripts\UserCustom"
+        New-Item -Path $targetUserDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+        Get-ChildItem -Path $userScriptsDir -File | Where-Object { $_.Name -ne "README.md" } | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination $targetUserDir -Force -ErrorAction SilentlyContinue
+            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+            $customManifest["user/$($_.Name)"] = $hash
+        }
+    }
+    if ($customManifest.Count -gt 0) {
+        $manifestPath = Join-Path -Path $scratchDir -ChildPath "Windows\Setup\Scripts\custom-scripts-manifest.json"
+        $manifestJson = $customManifest | ConvertTo-Json -Depth 2
+        if (Get-Command -Name "Write-Nano11TextFileAtomic" -ErrorAction SilentlyContinue) {
+            Write-Nano11TextFileAtomic -Path $manifestPath -Content $manifestJson | Out-Null
+        } else {
+            [System.IO.File]::WriteAllText($manifestPath, $manifestJson, [System.Text.Encoding]::UTF8)
+        }
+    }
+    Write-Host "  - Bundled custom post-install scripts ($($customManifest.Count) files) with SHA256 manifest to Windows\Setup\Scripts\Custom" -ForegroundColor Green
 }
 
 # Deploy Zero-Footprint Browser Grabber and Nano11 Control Center to Public Desktop & Setup Tools
@@ -1463,12 +1485,17 @@ pause
     $tool7MAS = @'
 @echo off
 setlocal
-title Windows Activation - MAS
+title Windows Activation Status
 echo ========================================================
-echo   nano11 Tool: Windows Activation (MAS HWID)
+echo   nano11 Tool: Windows Activation Status & Helper
 echo ========================================================
-echo Connecting to Microsoft Activation service...
-powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13; & ([ScriptBlock]::Create((irm https://get.activated.win))) /HWID /NoEditionChange"
+echo Checking Windows license status...
+cscript.exe //nologo %SystemRoot%\System32\slmgr.vbs /dli
+echo.
+echo To activate Windows with a legitimate digital product key:
+echo   slmgr.vbs /ipk YOUR-PRODUCT-KEY
+echo   slmgr.vbs /ato
+echo.
 pause
 '@
 
@@ -1478,7 +1505,7 @@ pause
     $tool4BT    | Set-Content -LiteralPath (Join-Path -Path $atlasDir -ChildPath "4. Toggle Bluetooth.bat") -Encoding ascii
     $tool5Spool | Set-Content -LiteralPath (Join-Path -Path $atlasDir -ChildPath "5. Toggle Print Spooler.bat") -Encoding ascii
     $tool6Mem   | Set-Content -LiteralPath (Join-Path -Path $atlasDir -ChildPath "6. Free Memory & Clear Temp.bat") -Encoding ascii
-    $tool7MAS   | Set-Content -LiteralPath (Join-Path -Path $atlasDir -ChildPath "7. Activate Windows (MAS).bat") -Encoding ascii
+    $tool7MAS   | Set-Content -LiteralPath (Join-Path -Path $atlasDir -ChildPath "7. Check Activation Status.bat") -Encoding ascii
     Write-Host "  - Staged Atlas-ReviOS maintenance tools to Windows\Setup\Tools\Atlas-ReviOS Tools" -ForegroundColor Green
     
     # Ensure Public Desktop is clean of tools folders

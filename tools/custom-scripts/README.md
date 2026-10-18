@@ -1,39 +1,59 @@
 # Custom Post-Install Scripts
 
-Place custom automation scripts in this folder and they will be executed
-**sequentially (alphabetical order) at the end of first logon** by the
-nano11 first-logon pipeline (see `FirstLogon.ps1` → `Custom Post-Install User
-Scripts Execution Hook` in the embedded unattend scripts).
+Place custom automation scripts in this folder and they will be executed during initial Windows setup.
 
-## Supported file types
+## Privilege Separation: Elevated (Admin) vs Non-Elevated (User)
 
-| Extension | How it runs |
+To ensure minimum necessary privileges (Principle of Least Privilege), scripts are segregated into two distinct contexts:
+
+### 1. Elevated Administrator Context (`tools/custom-scripts/`)
+- **Location**: Put scripts directly into `tools/custom-scripts/`.
+- **Timing**: Executed sequentially at first logon via `FirstLogon.ps1` with **Full Administrator Privileges**.
+- **Use for**: System-level drivers, Windows services, scheduled tasks, firewall rules, machine-wide software installation.
+- **Log**: `C:\ProgramData\nano11\Logs\custom-scripts.log`.
+
+### 2. Standard User Context (`tools/custom-scripts/user/`)
+- **Location**: Put scripts inside the subfolder `tools/custom-scripts/user/`.
+- **Timing**: Executed after the user profile is initialized via `UserOnce.ps1` with **Standard Non-Elevated User Rights**.
+- **Use for**: Per-user configurations, desktop shortcuts, taskbar pins, user environment variables, user registry keys (`HKCU`).
+- **Log**: `%TEMP%\UserOnce-custom.log`.
+
+---
+
+## Supported File Types
+
+| Extension | Execution Engine |
 | :--- | :--- |
-| `.ps1`  | `powershell.exe -ExecutionPolicy Bypass -NoProfile -File <script>` |
+| `.ps1`  | `powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -File <script>` |
 | `.bat`  | `cmd.exe /c "<script>"` |
 | `.cmd`  | `cmd.exe /c "<script>"` |
 | `.reg`  | `reg.exe import <script>` |
 
-Scripts run in the first-logon session with administrator rights.
-All script executions, durations, and exit codes are automatically logged to:
-`C:\ProgramData\nano11\Logs\custom-scripts.log` (with fallback to `C:\Windows\Setup\Scripts\Custom\custom-scripts.log`).
+---
 
-A failing script will not abort the pipeline; subsequent scripts continue to execute, and the failure details (exit code, error reason, timestamp) are recorded in the log file. Wrapping risky operations in `try/catch` within PowerShell scripts is still recommended.
+## Security & Tamper Protection
 
-## Naming convention
+1. **SHA-256 Manifest Verification**:
+   During ISO creation (Phase 11), a cryptographic manifest (`custom-scripts-manifest.json`) is generated recording the SHA-256 hash of each custom script. At first logon, before any script is executed, its hash is verified against the build manifest. If an unauthorized script is injected or an existing script has been tampered with, execution is refused with a `[SECURITY REFUSAL]` log notice.
 
-Use a numeric prefix to control order, e.g.:
+2. **Secret Redaction**:
+   All log outputs automatically redact sensitive patterns such as passwords, tokens, API keys, and product keys with `[REDACTED]`.
+
+3. **Resilience**:
+   A failing script will not abort the pipeline; subsequent scripts continue to execute, and the failure details (exit code, error reason, duration) are recorded in the log file.
+
+---
+
+## Naming Convention
+
+Use a numeric prefix to control execution order:
 
 ```text
-01-disable-hibernation.reg
-10-install-winget-apps.ps1
-20-restore-vm-support.ps1
+tools/custom-scripts/
+├── 01-configure-services.ps1
+├── 10-install-packages.cmd
+├── 20-security-hardening.reg
+└── user/
+    ├── 01-set-wallpaper.ps1
+    └── 10-user-preferences.reg
 ```
-
-Files are copied into the image at build time (`C:\Windows\Setup\Scripts\Custom`)
-and run on every installation created with that ISO.
-
-## Example
-
-See `example.ps1.disabled` - remove the `.disabled` suffix to activate the
-snippet.

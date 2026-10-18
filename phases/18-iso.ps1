@@ -260,6 +260,28 @@ try {
         ApplyVerified     = $script:FinalPayloadVerified
         IsoPayloadMatch   = $script:IsoPayloadVerified
     }
+    # 3-Axis Sizing & Guest Benchmark Telemetry (Domain 5)
+    $sourceIsoBytes = 0
+    if ($SourceDrive -and $SourceDrive.EndsWith(".iso", [System.StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $SourceDrive)) {
+        try { $sourceIsoBytes = (Get-Item -LiteralPath $SourceDrive).Length } catch {}
+    }
+    $finalPayloadBytes = 0
+    if ($activePayloadPath -and (Test-Path -LiteralPath $activePayloadPath)) {
+        try { $finalPayloadBytes = (Get-Item -LiteralPath $activePayloadPath).Length } catch {}
+    }
+    $benchPath = Join-Path -Path $reportOutputDir -ChildPath "nano11_guest_benchmark.json"
+    if (-not (Test-Path -LiteralPath $benchPath)) {
+        $benchPath = Join-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -ChildPath "nano11_guest_benchmark.json"
+    }
+    $guestBench = $null
+    if (Test-Path -LiteralPath $benchPath) {
+        try { $guestBench = (Get-Content -LiteralPath $benchPath -Raw -Encoding UTF8) | ConvertFrom-Json } catch {}
+    }
+    $reportData['SourceIsoSizeBytes']     = $sourceIsoBytes
+    $reportData['FinalIsoSizeBytes']      = $isoItem.Length
+    $reportData['SourcePayloadSizeBytes'] = if ($sourceWimSize -gt 0) { $sourceWimSize } else { 0 }
+    $reportData['FinalPayloadSizeBytes']  = $finalPayloadBytes
+    $reportData['GuestBenchmark']         = $guestBench
     $reportData['RemovedPackagesCount'] = if ($script:RemovedPackages) { $script:RemovedPackages.Count } else { 0 }
     $reportData['WinSxSSavedMB']        = if ($script:WinSxSSavedMB) { $script:WinSxSSavedMB } else { 0 }
     $reportData['WinSxSBeforeMB']       = if ($script:WinSxsBeforeMB) { $script:WinSxsBeforeMB } else { 0 }

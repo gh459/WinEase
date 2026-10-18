@@ -1,18 +1,14 @@
-﻿use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use windows::core::{PCWSTR, PWSTR};
+use windows::core::PCWSTR;
 use windows::Win32::Foundation::{
-    BOOL, CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, GetLastError, HANDLE, LUID,
+    CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, GetLastError, HANDLE, LUID,
 };
 use windows::Win32::Security::{
-    AddAccessAllowedAce, AdjustTokenPrivileges, CreateWellKnownSid, InitializeAcl,
-    InitializeSecurityDescriptor, LookupPrivilegeValueW, SetSecurityDescriptorDacl,
-    SetSecurityDescriptorOwner, WinBuiltinAdministratorsSid, ACL, ACL_REVISION,
-    DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
-    SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES,
-    TOKEN_PRIVILEGES, TOKEN_QUERY,
+    AdjustTokenPrivileges, LookupPrivilegeValueW,
+    SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
 };
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, DeleteFileW, RemoveDirectoryW, SetFileAttributesW,
@@ -20,12 +16,40 @@ use windows::Win32::Storage::FileSystem::{
     FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
     OPEN_EXISTING,
 };
-use windows::Win32::System::Registry::{
-    RegCloseKey, RegDeleteTreeW, RegEnumKeyExW, RegLoadKeyW, RegOpenKeyExW, RegQueryValueExW,
-    RegSetKeySecurity, RegUnLoadKeyW, KEY_ALL_ACCESS, KEY_READ, REG_DWORD, REG_SAM_FLAGS,
-    REG_VALUE_TYPE, HKEY, HKEY_LOCAL_MACHINE,
-};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+pub const KNOWN_EXPERIMENTAL_KEYS: &[&str] = &[
+    "physical_edge",
+    "physical_defender",
+    "physical_crash_dumps",
+    "physical_help",
+    "physical_temp_files",
+    "physical_hiberfil",
+    "physical_pagefile",
+    "physical_swapfile",
+    "physical_patchcache",
+    "physical_delivery_optimization",
+    "physical_search_index",
+    "physical_provisioning",
+    "physical_windows_old",
+    "physical_minidump",
+    "physical_memory_dmp",
+    "physical_cortana",
+    "physical_onedrive",
+    "physical_telemetry",
+    "physical_hyperv",
+    "physical_iis",
+    "physical_firewall",
+    "physical_bluetooth",
+    "physical_spooler",
+    "physical_touch_pen",
+    "physical_accessibility",
+    "physical_media_player",
+    "physical_rdp",
+    "physical_bitlocker",
+    "physical_sandbox",
+    "physical_wsl",
+];
 
 #[derive(Debug, Deserialize, Default, Clone)]
 struct DebloatConfig {
@@ -35,6 +59,8 @@ struct DebloatConfig {
     mount_path: String,
     #[serde(default)]
     log_path: String,
+    #[serde(default)]
+    confirm_offline_image: bool,
     #[serde(default)]
     experimental: HashMap<String, bool>,
 }
@@ -110,8 +136,7 @@ fn is_reparse_point(p: &Path) -> bool {
     }
 }
 
-/// Strip the `\\?\` verbatim prefix on local drive paths (registry APIs prefer the plain
-/// `C:\...` form). UNC verbatim paths are left untouched.
+/// Strip the `\\?\` verbatim prefix on local drive paths. UNC verbatim paths are left untouched.
 fn strip_verbatim_prefix(p: PathBuf) -> PathBuf {
     let s = p.to_string_lossy();
     if let Some(rest) = s.strip_prefix("\\\\?\\") {
@@ -123,31 +148,62 @@ fn strip_verbatim_prefix(p: PathBuf) -> PathBuf {
 }
 
 /// Validate the configured mount directory before any destructive operation.
-/// Rejects empty paths, reparse-point roots, non-directories, drive/volume roots, and
-/// trees without the `Windows\System32\config\SYSTEM` marker (offline-image proof).
-fn validate_mount_path(mount: &str) -> Result<PathBuf, String> {
-    if mount.trim().is_empty() {
+/// Rejects empty paths, reparse-point roots, non-directories, drive/volume roots,
+/// the host's active Windows directory, and trees without the
+/// `Windows\System32\config\SYSTEM` and `Windows\System32\ntoskrnl.exe` markers.
+pub fn validate_mount_path(mount: &str) -> Result<PathBuf, String> {
+    let trimmed = mount.trim();
+    if trimmed.is_empty() {
         return Err("mount_path is empty".to_string());
     }
-    let p = Path::new(mount);
+    if trimmed.contains("..") {
+        return Err(format!("mount_path contains traversal '..': {}", trimmed));
+    }
+    let p = Path::new(trimmed);
     if is_reparse_point(p) {
-        return Err(format!("mount_path is a reparse point (junction/symlink): {}", mount));
+        return Err(format!("mount_path is a reparse point (junction/symlink): {}", trimmed));
     }
     let md = fs::symlink_metadata(p)
-        .map_err(|e| format!("mount_path is not accessible ({}): {}", mount, e))?;
+        .map_err(|e| format!("mount_path is not accessible ({}): {}", trimmed, e))?;
     if !md.is_dir() {
-        return Err(format!("mount_path is not a directory: {}", mount));
+        return Err(format!("mount_path is not a directory: {}", trimmed));
     }
     let canon = fs::canonicalize(p)
-        .map_err(|e| format!("mount_path canonicalization failed ({}): {}", mount, e))?;
+        .map_err(|e| format!("mount_path canonicalization failed ({}): {}", trimmed, e))?;
     if canon.parent().is_none() {
         return Err(format!("mount_path resolves to a drive/volume root: {}", canon.display()));
     }
     let canon = strip_verbatim_prefix(canon);
-    let marker = canon.join("Windows").join("System32").join("config").join("SYSTEM");
-    if !marker.is_file() {
+
+    // Reject drive root or too-shallow directory
+    if canon.components().count() <= 2 {
+        return Err(format!("mount_path is too shallow or a drive root: {}", canon.display()));
+    }
+
+    // Host OS protection: NEVER permit the host's active SystemRoot (e.g. C:\Windows) or SystemDrive
+    if let Ok(sys_root) = std::env::var("SystemRoot") {
+        if let Ok(canon_sys) = fs::canonicalize(Path::new(&sys_root)) {
+            let canon_sys = strip_verbatim_prefix(canon_sys);
+            if canon == canon_sys || canon.starts_with(&canon_sys) || canon_sys.starts_with(&canon) {
+                return Err(format!("Refusing host SystemRoot as mount_path: {}", canon.display()));
+            }
+        }
+    }
+    if let Ok(sys_drive) = std::env::var("SystemDrive") {
+        let drive_root = format!("{}\\", sys_drive);
+        if let Ok(canon_drive) = fs::canonicalize(Path::new(&drive_root)) {
+            let canon_drive = strip_verbatim_prefix(canon_drive);
+            if canon == canon_drive {
+                return Err(format!("Refusing host SystemDrive as mount_path: {}", canon.display()));
+            }
+        }
+    }
+
+    let sys_hive = canon.join("Windows").join("System32").join("config").join("SYSTEM");
+    let ntoskrnl = canon.join("Windows").join("System32").join("ntoskrnl.exe");
+    if !sys_hive.is_file() || !ntoskrnl.is_file() {
         return Err(format!(
-            "Windows\\System32\\config\\SYSTEM marker not found (not a mounted Windows image): {}",
+            "Windows offline image markers not found (missing SYSTEM hive or ntoskrnl.exe): {}",
             canon.display()
         ));
     }
@@ -155,14 +211,28 @@ fn validate_mount_path(mount: &str) -> Result<PathBuf, String> {
     Ok(canon)
 }
 
+/// Validate that a relative target path stays strictly inside the mounted image root.
+pub fn validate_target_path(mount: &Path, rel_path: &str) -> Result<PathBuf, String> {
+    let trimmed = rel_path.trim().trim_start_matches('\\').trim_start_matches('/');
+    if trimmed.is_empty() {
+        return Err("Relative target path cannot be empty".to_string());
+    }
+    if trimmed.contains("..") {
+        return Err(format!("Relative path contains traversal '..': {}", trimmed));
+    }
+    let full = mount.join(trimmed);
+    if !full.starts_with(mount) {
+        return Err(format!("Target path escapes mount directory: {}", full.display()));
+    }
+    Ok(full)
+}
+
 // --- File/directory deletion ---
 
 /// Delete a file. Returns `Ok(true)` when the file was deleted, `Ok(false)`
-/// when it did not exist (reported as `[SKIP]`, not an error), and `Err` only
-/// for genuine failures (locked, access denied, ...).
+/// when it did not exist, and `Err` only for genuine failures.
 fn delete_file(path: &str, dry_run: bool) -> Result<bool, String> {
     if dry_run {
-        // Report only targets that actually exist: counters must not overstate the run.
         if fs::symlink_metadata(path).is_ok() {
             println!("[DRY] Would delete file: {}", path);
             return Ok(true);
@@ -172,7 +242,6 @@ fn delete_file(path: &str, dry_run: bool) -> Result<bool, String> {
     }
     let wide = to_wide(path);
     unsafe {
-        // Remove read-only attribute first
         let attrs = windows::Win32::Storage::FileSystem::GetFileAttributesW(PCWSTR(wide.as_ptr()));
         if attrs == u32::MAX {
             let err = GetLastError();
@@ -183,7 +252,6 @@ fn delete_file(path: &str, dry_run: bool) -> Result<bool, String> {
         } else {
             let _ = SetFileAttributesW(PCWSTR(wide.as_ptr()), FILE_ATTRIBUTE_NORMAL);
         }
-        // Try direct delete first
         match DeleteFileW(PCWSTR(wide.as_ptr())) {
             Ok(()) => return Ok(true),
             Err(e) => {
@@ -196,7 +264,6 @@ fn delete_file(path: &str, dry_run: bool) -> Result<bool, String> {
                 }
             }
         }
-        // Fallback: open with backup semantics and set disposition
         let handle = CreateFileW(
             PCWSTR(wide.as_ptr()),
             0x00010000, // DELETE
@@ -212,10 +279,9 @@ fn delete_file(path: &str, dry_run: bool) -> Result<bool, String> {
                 let info = FILE_DISPOSITION_INFO { DeleteFile: true.into() };
                 let result = SetFileInformationByHandle(h, FileDispositionInfo, &info as *const _ as *const _, std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32);
                 let _ = CloseHandle(h);
-                if result.is_ok() { Ok(true) } else { Err(format!("SetFileInformationByHandle failed")) }
+                if result.is_ok() { Ok(true) } else { Err("SetFileInformationByHandle failed".to_string()) }
             }
             Err(e) => {
-                // The file may have vanished between the checks: treat as skip
                 let code = e.code();
                 if code == windows::core::HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0)
                     || code == windows::core::HRESULT::from_win32(ERROR_PATH_NOT_FOUND.0)
@@ -230,13 +296,9 @@ fn delete_file(path: &str, dry_run: bool) -> Result<bool, String> {
     }
 }
 
-/// Delete a directory tree. Returns `Ok(true)` only when the tree is gone,
-/// `Ok(false)` when the directory did not exist (reported as `[SKIP]`), and `Err`
-/// when the directory (or parts of it) could not be removed.
-/// Reparse points (junctions/symlinks) are never traversed and never deleted through.
+/// Delete a directory tree. Reparse points (junctions/symlinks) are never traversed and never deleted through.
 fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
     let p = Path::new(path);
-    // B5: a reparse-point root would make `read_dir` enumerate the *target* tree.
     if is_reparse_point(p) {
         println!("  [SKIP] Reparse point (junction/symlink) is never deleted: {}", path);
         return Ok(false);
@@ -245,8 +307,6 @@ fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
         println!("  [SKIP] Directory not found: {}", path);
         return Ok(false);
     }
-    // Target registered as a directory but is actually a file (config drift):
-    // delete it as a file so success/failure reporting stays accurate.
     if p.is_file() {
         println!("  [INFO] Target is a file, not a directory; deleting as file: {}", path);
         return delete_file(path, dry_run);
@@ -255,14 +315,11 @@ fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
         println!("[DRY] Would delete directory: {}", path);
         return Ok(true);
     }
-    // Collect all entries bottom-up (reparse points are skipped, not followed)
     let mut entries: Vec<PathBuf> = Vec::new();
     fn collect(path: &Path, entries: &mut Vec<PathBuf>) {
         if let Ok(rd) = fs::read_dir(path) {
             for entry in rd.flatten() {
                 let ep = entry.path();
-                // B5: never descend into junctions/symlinks; deleting through them would
-                // destroy data outside the intended tree.
                 if is_reparse_point(&ep) {
                     println!("  [SKIP] Reparse point (junction/symlink) not traversed: {}", ep.to_string_lossy());
                     continue;
@@ -275,7 +332,6 @@ fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
         }
     }
     collect(p, &mut entries);
-    // Delete in order (children first)
     for entry in &entries {
         if entry.is_dir() {
             let s = entry.to_string_lossy();
@@ -285,7 +341,6 @@ fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
             let _ = delete_file(&entry.to_string_lossy(), false);
         }
     }
-    // Delete root and verify the outcome so success is not reported for failed removals
     let s = p.to_string_lossy();
     let wide = to_wide(&s);
     unsafe { let _ = RemoveDirectoryW(PCWSTR(wide.as_ptr())); }
@@ -305,7 +360,6 @@ fn has_wildcard(s: &str) -> bool {
     s.contains('*') || s.contains('?')
 }
 
-/// Case-insensitive wildcard matcher supporting `*` and `?`.
 fn wildcard_match(pattern: &str, name: &str) -> bool {
     let p: Vec<char> = pattern.to_lowercase().chars().collect();
     let n: Vec<char> = name.to_lowercase().chars().collect();
@@ -320,6 +374,7 @@ fn wildcard_match(pattern: &str, name: &str) -> bool {
             star_pi = Some(pi);
             star_ni = ni;
             pi += 1;
+            ni += 1;
         } else if let Some(sp) = star_pi {
             pi = sp + 1;
             star_ni += 1;
@@ -334,10 +389,6 @@ fn wildcard_match(pattern: &str, name: &str) -> bool {
     pi == p.len()
 }
 
-/// Expand a relative pattern such as `Windows\SystemApps\Microsoft.Cortana*`
-/// against the mount root into concrete existing paths. Expansion is
-/// component-wise and case-insensitive. Returns matched paths (sorted),
-/// or an empty list when nothing matches.
 fn expand_dir_pattern(mount: &str, rel_pattern: &str) -> Vec<PathBuf> {
     let mut bases: Vec<PathBuf> = vec![PathBuf::from(mount)];
     for comp in rel_pattern.split('\\') {
@@ -370,239 +421,12 @@ fn expand_dir_pattern(mount: &str, rel_pattern: &str) -> Vec<PathBuf> {
     bases
 }
 
-// --- Registry deletion ---
-
-/// Resolve the offline hive's active control set (`Select\Current`) into a
-/// concrete name such as `ControlSet001`. Falls back to `ControlSet001` when
-/// the value cannot be read. The mounted hive root equals the SYSTEM hive
-/// itself, so keys must never carry a `SYSTEM\` prefix, and `CurrentControlSet`
-/// is resolved explicitly instead of relying on the hive link.
-fn resolve_current_control_set(mount_name: &str) -> String {
-    let select_path = format!("{}\\Select", mount_name);
-    let select_wide = to_wide(&select_path);
-    let value_wide = to_wide("Current");
-    unsafe {
-        let mut hkey = HKEY::default();
-        let open = RegOpenKeyExW(
-            HKEY_LOCAL_MACHINE,
-            PCWSTR(select_wide.as_ptr()),
-            0,
-            KEY_READ,
-            &mut hkey,
-        );
-        if open.is_ok() {
-            let mut ty = REG_VALUE_TYPE(0);
-            let mut data: u32 = 0;
-            let mut size: u32 = std::mem::size_of::<u32>() as u32;
-            let query = RegQueryValueExW(
-                hkey,
-                PCWSTR(value_wide.as_ptr()),
-                None,
-                Some(&mut ty),
-                Some(&mut data as *mut u32 as *mut u8),
-                Some(&mut size),
-            );
-            let _ = RegCloseKey(hkey);
-            if query.is_ok() && ty.0 == REG_DWORD.0 && data >= 1 {
-                return format!("ControlSet{:03}", data);
-            }
-        }
-    }
-    println!("[WARN] Could not read Select\\Current; falling back to ControlSet001");
-    "ControlSet001".to_string()
-}
-
-/// Normalize a target key path so it is valid under the mounted hive root:
-/// strips any legacy `SYSTEM\` prefix and resolves `CurrentControlSet`.
-fn normalize_registry_key(key_path: &str, mount_name: &str) -> String {
-    let key = key_path.strip_prefix("SYSTEM\\").unwrap_or(key_path);
-    if key == "CurrentControlSet" {
-        return resolve_current_control_set(mount_name);
-    }
-    if let Some(rest) = key.strip_prefix("CurrentControlSet\\") {
-        return format!("{}\\{}", resolve_current_control_set(mount_name), rest);
-    }
-    key.to_string()
-}
-
-// Generic access rights that the windows crate does not expose as constants
-const WRITE_DAC_ACCESS: REG_SAM_FLAGS = REG_SAM_FLAGS(0x0004_0000);
-const WRITE_OWNER_ACCESS: REG_SAM_FLAGS = REG_SAM_FLAGS(0x0008_0000);
-
-/// Create the BUILTIN\Administrators SID inside `buf` (>= SECURITY_MAX_SID_SIZE
-/// bytes) and return a pointer to it.
-fn administrators_sid(buf: &mut [u8]) -> PSID {
-    let mut size = buf.len() as u32;
-    unsafe {
-        let _ = CreateWellKnownSid(
-            WinBuiltinAdministratorsSid,
-            PSID(std::ptr::null_mut()),
-            PSID(buf.as_mut_ptr() as *mut core::ffi::c_void),
-            &mut size,
-        );
-    }
-    PSID(buf.as_mut_ptr() as *mut core::ffi::c_void)
-}
-
-/// Take ownership of a registry key and its subkeys, granting Administrators
-/// full control. Some offline keys (e.g. Control\Terminal Server subkeys) are
-/// owned by NT SERVICE\TrustedInstaller and deny Administrators delete access,
-/// which makes RegDeleteTreeW fail with ERROR_ACCESS_DENIED.
-///
-/// Pass 1 becomes the owner using WRITE_OWNER, which SeTakeOwnershipPrivilege
-/// grants even when the DACL denies regular access. Pass 2 opens again with
-/// WRITE_DAC (implicitly granted to the owner), replaces the DACL with
-/// "Administrators: Full Control", and recurses into subkeys.
-unsafe fn unlock_registry_tree(base: HKEY, path: &str, admins: PSID) {
-    let path_wide = to_wide(path);
-
-    // Pass 1: become the owner
-    let mut hkey = HKEY::default();
-    if RegOpenKeyExW(
-        base,
-        PCWSTR(path_wide.as_ptr()),
-        0,
-        WRITE_OWNER_ACCESS | KEY_READ,
-        &mut hkey,
-    )
-    .is_ok()
-    {
-        let mut sd = SECURITY_DESCRIPTOR::default();
-        let psd =
-            PSECURITY_DESCRIPTOR(&mut sd as *mut SECURITY_DESCRIPTOR as *mut core::ffi::c_void);
-        if InitializeSecurityDescriptor(psd, 1).is_ok()
-            && SetSecurityDescriptorOwner(psd, admins, BOOL(0)).is_ok()
-        {
-            let _ = RegSetKeySecurity(hkey, OWNER_SECURITY_INFORMATION, psd);
-        }
-        let _ = RegCloseKey(hkey);
-    }
-
-    // Pass 2: as the owner, rewrite the DACL and recurse into subkeys
-    let mut hkey = HKEY::default();
-    let mut can_enumerate = true;
-    if RegOpenKeyExW(
-        base,
-        PCWSTR(path_wide.as_ptr()),
-        0,
-        WRITE_DAC_ACCESS | KEY_READ,
-        &mut hkey,
-    )
-    .is_err()
-    {
-        can_enumerate = false;
-        if RegOpenKeyExW(base, PCWSTR(path_wide.as_ptr()), 0, WRITE_DAC_ACCESS, &mut hkey).is_err() {
-            return;
-        }
-    }
-
-    let mut acl_buf = [0u16; 64];
-    let acl = acl_buf.as_mut_ptr() as *mut ACL;
-    let mut acl_ready = InitializeAcl(acl, (acl_buf.len() * 2) as u32, ACL_REVISION).is_ok();
-    if acl_ready {
-        acl_ready = AddAccessAllowedAce(acl, ACL_REVISION, KEY_ALL_ACCESS.0, admins).is_ok();
-    }
-    if acl_ready {
-        let mut sd = SECURITY_DESCRIPTOR::default();
-        let psd = PSECURITY_DESCRIPTOR(&mut sd as *mut SECURITY_DESCRIPTOR as *mut core::ffi::c_void);
-        if InitializeSecurityDescriptor(psd, 1).is_ok()
-            && SetSecurityDescriptorDacl(psd, BOOL(1), Some(acl), BOOL(0)).is_ok()
-        {
-            let _ = RegSetKeySecurity(hkey, DACL_SECURITY_INFORMATION, psd);
-        }
-    }
-
-    if can_enumerate {
-        let mut index = 0u32;
-        loop {
-            let mut name_buf = [0u16; 256];
-            let mut name_len = (name_buf.len() - 1) as u32;
-            let res = RegEnumKeyExW(
-                hkey,
-                index,
-                PWSTR(name_buf.as_mut_ptr()),
-                &mut name_len,
-                None,
-                PWSTR(std::ptr::null_mut()),
-                None,
-                None,
-            );
-            if res.is_err() {
-                break;
-            }
-            let sub_name = String::from_utf16_lossy(&name_buf[..name_len as usize]);
-            unlock_registry_tree(hkey, &sub_name, admins);
-            index += 1;
-        }
-    }
-    let _ = RegCloseKey(hkey);
-}
-
-fn delete_registry_key(hive_path: &str, key_path: &str, dry_run: bool) -> Result<(), String> {
-    if dry_run {
-        println!("[DRY] Would delete registry key: {}\\{}", hive_path, key_path);
-        return Ok(());
-    }
-    let mount_name = "NANO11_TEMP_HIVE";
-    let mount_wide = to_wide(mount_name);
-    let hive_wide = to_wide(hive_path);
-    
-    unsafe {
-        // RegLoadKeyW
-        let load_result = RegLoadKeyW(
-            HKEY_LOCAL_MACHINE,
-            PCWSTR(mount_wide.as_ptr()),
-            PCWSTR(hive_wide.as_ptr()),
-        );
-        if load_result.is_err() {
-            return Err(format!("RegLoadKeyW failed: {:?}", load_result));
-        }
-        
-        // Build full key path under mounted hive (CurrentControlSet resolved
-        // via Select\Current, e.g. ControlSet001)
-        let normalized = normalize_registry_key(key_path, mount_name);
-        let full_key = format!("{}\\{}", mount_name, normalized);
-        let full_key_wide = to_wide(&full_key);
-        
-        // Delete the key tree
-        let mut del_result = RegDeleteTreeW(
-            HKEY_LOCAL_MACHINE,
-            PCWSTR(full_key_wide.as_ptr()),
-        );
-        
-        // ERROR_ACCESS_DENIED (5): some subkeys (e.g. under Control\Terminal
-        // Server) are owned by NT SERVICE\TrustedInstaller and deny
-        // Administrators deletion. Take ownership + grant full control, retry.
-        if del_result.is_err() && del_result.0 == 5 {
-            println!("  [INFO] Access denied; taking ownership of: {}", normalized);
-            let mut sid_buf = [0u8; SECURITY_MAX_SID_SIZE as usize];
-            let admins = administrators_sid(&mut sid_buf);
-            unlock_registry_tree(HKEY_LOCAL_MACHINE, &full_key, admins);
-            del_result = RegDeleteTreeW(
-                HKEY_LOCAL_MACHINE,
-                PCWSTR(full_key_wide.as_ptr()),
-            );
-        }
-        
-        // Unload hive
-        let _ = RegUnLoadKeyW(HKEY_LOCAL_MACHINE, PCWSTR(mount_wide.as_ptr()));
-        
-        if del_result.is_ok() {
-            Ok(())
-        } else {
-            // RegDeleteTreeW might fail if key doesn't exist - that's OK
-            Err(format!("RegDeleteTreeW: {:?}", del_result))
-        }
-    }
-}
-
-// --- Target definitions ---
+// --- Target definitions (Filesystem Only - Host Registry Protected) ---
 
 struct DeletionTarget {
     name: &'static str,
     files: Vec<&'static str>,
     dirs: Vec<&'static str>,
-    registry_keys: Vec<&'static str>, // key paths under SYSTEM hive
 }
 
 fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
@@ -616,7 +440,6 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "Program Files (x86)\\Microsoft\\Edge",
                 "Program Files\\WindowsApps\\MicrosoftEdge*",
             ],
-            registry_keys: vec![],
         });
     }
     
@@ -626,13 +449,6 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             files: vec![],
             dirs: vec![
                 "ProgramData\\Microsoft\\Windows Defender",
-            ],
-            registry_keys: vec![
-                "CurrentControlSet\\Services\\WinDefend",
-                "CurrentControlSet\\Services\\Sense",
-                "CurrentControlSet\\Services\\WdNisSvc",
-                "CurrentControlSet\\Services\\WdBoot",
-                "CurrentControlSet\\Services\\WdFilter",
             ],
         });
     }
@@ -644,7 +460,6 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             dirs: vec![
                 "Windows\\Minidump",
             ],
-            registry_keys: vec![],
         });
     }
     
@@ -655,7 +470,6 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             dirs: vec![
                 "Windows\\Help",
             ],
-            registry_keys: vec![],
         });
     }
     
@@ -666,7 +480,6 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             dirs: vec![
                 "Windows\\Temp",
             ],
-            registry_keys: vec![],
         });
     }
     
@@ -677,7 +490,6 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "hiberfil.sys",
             ],
             dirs: vec![],
-            registry_keys: vec![],
         });
     }
     
@@ -688,7 +500,6 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "pagefile.sys",
             ],
             dirs: vec![],
-            registry_keys: vec![],
         });
     }
     
@@ -699,7 +510,6 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "swapfile.sys",
             ],
             dirs: vec![],
-            registry_keys: vec![],
         });
     }
     
@@ -710,7 +520,6 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             dirs: vec![
                 "Windows\\Installer\\$PatchCache$",
             ],
-            registry_keys: vec![],
         });
     }
     
@@ -721,7 +530,6 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             dirs: vec![
                 "Windows\\SoftwareDistribution\\DeliveryOptimization",
             ],
-            registry_keys: vec![],
         });
     }
     
@@ -732,7 +540,6 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             dirs: vec![
                 "ProgramData\\Microsoft\\Search\\Data",
             ],
-            registry_keys: vec![],
         });
     }
     
@@ -743,7 +550,6 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             dirs: vec![
                 "Windows\\Provisioning",
             ],
-            registry_keys: vec![],
         });
     }
     
@@ -754,7 +560,6 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             dirs: vec![
                 "Windows.old",
             ],
-            registry_keys: vec![],
         });
     }
     
@@ -765,7 +570,6 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             dirs: vec![
                 "Windows\\Minidump",
             ],
-            registry_keys: vec![],
         });
     }
     
@@ -776,11 +580,9 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "Windows\\Memory.dmp",
             ],
             dirs: vec![],
-            registry_keys: vec![],
         });
     }
     
-    // Cortana/Search physical deletion
     if config.experimental.get("physical_cortana").copied().unwrap_or(false) {
         targets.push(DeletionTarget {
             name: "Cortana/Search",
@@ -789,11 +591,9 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "Windows\\SystemApps\\Microsoft.Windows.Search*",
                 "Windows\\SystemApps\\Microsoft.Cortana*",
             ],
-            registry_keys: vec![],
         });
     }
     
-    // OneDrive physical deletion
     if config.experimental.get("physical_onedrive").copied().unwrap_or(false) {
         targets.push(DeletionTarget {
             name: "OneDrive",
@@ -801,11 +601,9 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "Windows\\System32\\OneDriveSetup.exe",
             ],
             dirs: vec![],
-            registry_keys: vec![],
         });
     }
     
-    // Telemetry physical deletion
     if config.experimental.get("physical_telemetry").copied().unwrap_or(false) {
         targets.push(DeletionTarget {
             name: "Telemetry",
@@ -813,27 +611,17 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             dirs: vec![
                 "ProgramData\\Microsoft\\Diagnosis",
             ],
-            registry_keys: vec![
-                "CurrentControlSet\\Services\\DiagTrack",
-            ],
         });
     }
     
-    // Hyper-V physical deletion
     if config.experimental.get("physical_hyperv").copied().unwrap_or(false) {
         targets.push(DeletionTarget {
             name: "Hyper-V",
             files: vec![],
             dirs: vec![],
-            registry_keys: vec![
-                "CurrentControlSet\\Services\\vmcompute",
-                "CurrentControlSet\\Services\\vmms",
-                "CurrentControlSet\\Services\\HvHost",
-            ],
         });
     }
     
-    // IIS physical deletion
     if config.experimental.get("physical_iis").copied().unwrap_or(false) {
         targets.push(DeletionTarget {
             name: "IIS",
@@ -841,49 +629,33 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             dirs: vec![
                 "Windows\\System32\\inetsrv",
             ],
-            registry_keys: vec![],
         });
     }
     
-    // Firewall physical deletion
     if config.experimental.get("physical_firewall").copied().unwrap_or(false) {
         targets.push(DeletionTarget {
             name: "Firewall",
             files: vec![],
             dirs: vec![],
-            registry_keys: vec![
-                "CurrentControlSet\\Services\\MpsSvc",
-                "CurrentControlSet\\Services\\BFE",
-            ],
         });
     }
     
-    // Bluetooth physical deletion
     if config.experimental.get("physical_bluetooth").copied().unwrap_or(false) {
         targets.push(DeletionTarget {
             name: "Bluetooth",
             files: vec![],
             dirs: vec![],
-            registry_keys: vec![
-                "CurrentControlSet\\Services\\bthserv",
-                "CurrentControlSet\\Services\\BthAvctpSvc",
-            ],
         });
     }
     
-    // Spooler physical deletion
     if config.experimental.get("physical_spooler").copied().unwrap_or(false) {
         targets.push(DeletionTarget {
             name: "Spooler",
             files: vec![],
             dirs: vec![],
-            registry_keys: vec![
-                "CurrentControlSet\\Services\\Spooler",
-            ],
         });
     }
     
-    // Touch/Pen physical deletion
     if config.experimental.get("physical_touch_pen").copied().unwrap_or(false) {
         targets.push(DeletionTarget {
             name: "Touch/Pen",
@@ -892,19 +664,9 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "Windows\\System32\\inkobj.dll",
             ],
             dirs: vec![],
-            registry_keys: vec![
-                "CurrentControlSet\\Services\\TabletInputService",
-            ],
         });
     }
     
-    // Accessibility physical deletion
-    // NOTE: Narrator.exe / Magnify.exe / osk.exe MUST be preserved in System32 (README design):
-    // they keep the OOBE Ease of Access subsystem stable during setup and are neutralized
-    // post-OOBE via IFEO debugger redirection in scripts\FirstLogon.ps1.
-    // (Intentionally no DeletionTarget here.)
-    
-    // Media Player physical deletion
     if config.experimental.get("physical_media_player").copied().unwrap_or(false) {
         targets.push(DeletionTarget {
             name: "Media Player",
@@ -912,51 +674,30 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             dirs: vec![
                 "Program Files\\Windows Media Player",
             ],
-            registry_keys: vec![],
         });
     }
     
-    // RDP physical deletion
-    // NOTE: "CurrentControlSet\Control\Terminal Server" MUST be preserved:
-    // deleting this registry tree offline breaks the first-session bring-up (session csrss
-    // fails to initialize -> smss kills the session -> CRITICAL_PROCESS_DIED / 0xEF boot loop).
-    // The tree is only a few KB and keeping it has no user-visible impact on a debloated image.
-    // (Root cause verified by bisect on 2026-10-18: restoring this tree alone made OOBE pass.)
-    // (Intentionally no DeletionTarget here.)
-    
-    // BitLocker physical deletion
     if config.experimental.get("physical_bitlocker").copied().unwrap_or(false) {
         targets.push(DeletionTarget {
             name: "BitLocker",
             files: vec![],
             dirs: vec![],
-            registry_keys: vec![
-                "CurrentControlSet\\Services\\BDESVC",
-            ],
         });
     }
     
-    // Sandbox physical deletion
     if config.experimental.get("physical_sandbox").copied().unwrap_or(false) {
         targets.push(DeletionTarget {
             name: "Sandbox",
             files: vec![],
             dirs: vec![],
-            registry_keys: vec![
-                "CurrentControlSet\\Services\\vmcompute",
-            ],
         });
     }
     
-    // WSL physical deletion
     if config.experimental.get("physical_wsl").copied().unwrap_or(false) {
         targets.push(DeletionTarget {
             name: "WSL",
             files: vec![],
             dirs: vec![],
-            registry_keys: vec![
-                "CurrentControlSet\\Services\\LxssManager",
-            ],
         });
     }
     
@@ -977,21 +718,22 @@ fn main() {
     let mut config_path = String::new();
     let mut log_path_override: Option<String> = None;
     let mut dry_run = false;
+    let mut confirm_offline_image = false;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--config" => { if i + 1 < args.len() { config_path = args[i+1].clone(); i += 1; } }
             "--log-path" => { if i + 1 < args.len() { log_path_override = Some(args[i+1].clone()); i += 1; } }
             "--dry-run" => { dry_run = true; }
+            "--confirm-offline-image" => { confirm_offline_image = true; }
             _ => {}
         }
         i += 1;
     }
     
-    println!("nano11-physical-debloat v0.2.0");
+    println!("nano11-physical-debloat v0.3.0 (Hardened)");
     println!("Config: {}", config_path);
     
-    // Read config
     let raw_bytes = match fs::read(&config_path) {
         Ok(b) => b,
         Err(e) => { eprintln!("Failed to read config: {}", e); std::process::exit(1); }
@@ -1003,17 +745,26 @@ fn main() {
         Err(e) => { eprintln!("Failed to parse config: {}", e); std::process::exit(1); }
     };
     
-    // Override dry_run from CLI
     if dry_run { config.dry_run = true; }
-    // Override log path from CLI (lets dry-run reports go to a dedicated file
-    // without clobbering the main result JSON)
+    if confirm_offline_image { config.confirm_offline_image = true; }
     if let Some(lp) = log_path_override { config.log_path = lp; }
+    
+    // Strict verification of experimental keys against allowlist
+    for key in config.experimental.keys() {
+        if !KNOWN_EXPERIMENTAL_KEYS.contains(&key.as_str()) {
+            eprintln!("[REJECTED] Unknown experimental key not in allowlist: {}", key);
+            std::process::exit(2);
+        }
+    }
     
     println!("Dry run: {}", config.dry_run);
     println!("Mount path: {}", config.mount_path);
     
-    // E1 SAFETY: refuse to run against anything that is not a mounted Windows image.
-    // Exit code 3 tells the PowerShell phase to skip its DISM fallback as well.
+    if !config.dry_run && !config.confirm_offline_image {
+        eprintln!("[BLOCKED] Real file deletion requires --confirm-offline-image flag or confirm_offline_image: true in config.");
+        std::process::exit(4);
+    }
+    
     let mount_path = match validate_mount_path(&config.mount_path) {
         Ok(p) => p,
         Err(e) => {
@@ -1023,14 +774,12 @@ fn main() {
     };
     let mount = mount_path.to_string_lossy().to_string();
     
-    // E1: escalate privileges only for real deletions (dry runs must stay non-invasive).
     if config.dry_run {
         println!("[PRIV] Dry run: privilege escalation skipped");
     } else {
         escalate_privileges();
     }
     
-    // Get targets
     let targets = get_targets(&config);
     println!("Targets to process: {}", targets.len());
     
@@ -1045,21 +794,31 @@ fn main() {
         println!("\n=== Processing: {} ===", target.name);
         result.targets_processed.push(target.name.to_string());
         
-        // Delete files
         for f in &target.files {
-            let full_path = format!("{}\\{}", mount, f);
-            match delete_file(&full_path, config.dry_run) {
-                Ok(true) => {
-                    result.deleted_files += 1;
-                    if !config.dry_run { println!("  [OK] Deleted file: {}", f); }
+            match validate_target_path(&mount_path, f) {
+                Ok(target_file_path) => {
+                    let full_path = target_file_path.to_string_lossy().to_string();
+                    match delete_file(&full_path, config.dry_run) {
+                        Ok(true) => {
+                            result.deleted_files += 1;
+                            if !config.dry_run { println!("  [OK] Deleted file: {}", f); }
+                        }
+                        Ok(false) => { /* skipped */ }
+                        Err(e) => {
+                            result.errors.push(format!("[{}] file {}: {}", target.name, f, e));
+                            result.success = false;
+                            println!("  [ERR] {}", e);
+                        }
+                    }
                 }
-                Ok(false) => { /* not found: [SKIP] already printed */ }
-                Err(e) => { result.errors.push(format!("[{}] file {}: {}", target.name, f, e)); result.success = false; println!("  [ERR] {}", e); }
+                Err(e) => {
+                    result.errors.push(format!("[{}] Invalid target file path {}: {}", target.name, f, e));
+                    result.success = false;
+                    println!("  [GUARD REJECT] {}", e);
+                }
             }
         }
         
-        // Delete directories (wildcard patterns such as
-        // "Windows\SystemApps\Microsoft.Cortana*" are expanded to concrete matches)
         for d in &target.dirs {
             if has_wildcard(d) {
                 let matches = expand_dir_pattern(&mount, d);
@@ -1068,43 +827,53 @@ fn main() {
                     continue;
                 }
                 for m in &matches {
+                    if !m.starts_with(&mount_path) {
+                        result.errors.push(format!("[{}] Wildcard match escaped mount: {}", target.name, m.display()));
+                        result.success = false;
+                        println!("  [GUARD REJECT] Escaped mount: {}", m.display());
+                        continue;
+                    }
                     let ms = m.to_string_lossy().to_string();
                     match delete_directory(&ms, config.dry_run) {
                         Ok(true) => {
                             result.deleted_dirs += 1;
                             if !config.dry_run { println!("  [OK] Deleted dir: {}", ms); }
                         }
-                        Ok(false) => { /* not found: [SKIP] already printed */ }
-                        Err(e) => { result.errors.push(format!("[{}] dir {}: {}", target.name, ms, e)); result.success = false; println!("  [ERR] {}", e); }
+                        Ok(false) => { /* skipped */ }
+                        Err(e) => {
+                            result.errors.push(format!("[{}] dir {}: {}", target.name, ms, e));
+                            result.success = false;
+                            println!("  [ERR] {}", e);
+                        }
                     }
                 }
             } else {
-                let full_path = format!("{}\\{}", mount, d);
-                match delete_directory(&full_path, config.dry_run) {
-                    Ok(true) => {
-                        result.deleted_dirs += 1;
-                        if !config.dry_run { println!("  [OK] Deleted dir: {}", d); }
+                match validate_target_path(&mount_path, d) {
+                    Ok(target_dir_path) => {
+                        let full_path = target_dir_path.to_string_lossy().to_string();
+                        match delete_directory(&full_path, config.dry_run) {
+                            Ok(true) => {
+                                result.deleted_dirs += 1;
+                                if !config.dry_run { println!("  [OK] Deleted dir: {}", d); }
+                            }
+                            Ok(false) => { /* skipped */ }
+                            Err(e) => {
+                                result.errors.push(format!("[{}] dir {}: {}", target.name, d, e));
+                                result.success = false;
+                                println!("  [ERR] {}", e);
+                            }
+                        }
                     }
-                    Ok(false) => { /* not found: [SKIP] already printed */ }
-                    Err(e) => { result.errors.push(format!("[{}] dir {}: {}", target.name, d, e)); result.success = false; println!("  [ERR] {}", e); }
+                    Err(e) => {
+                        result.errors.push(format!("[{}] Invalid target dir path {}: {}", target.name, d, e));
+                        result.success = false;
+                        println!("  [GUARD REJECT] {}", e);
+                    }
                 }
-            }
-        }
-        
-        // Delete registry keys
-        for key in &target.registry_keys {
-            let hive_path = format!("{}\\Windows\\System32\\config\\SYSTEM", mount);
-            match delete_registry_key(&hive_path, key, config.dry_run) {
-                Ok(()) => {
-                    result.deleted_registry_keys += 1;
-                    if !config.dry_run { println!("  [OK] Deleted reg key: {}", key); }
-                }
-                Err(e) => { println!("  [WARN] reg {}: {}", key, e); /* Don't fail on missing keys */ }
             }
         }
     }
     
-    // Write result
     if !config.log_path.is_empty() {
         let result_json = serde_json::to_string_pretty(&result).unwrap();
         let _ = fs::write(&config.log_path, result_json);
@@ -1115,7 +884,6 @@ fn main() {
     let verb = if config.dry_run { "Would delete" } else { "Deleted" };
     println!("{} files: {}", verb, result.deleted_files);
     println!("{} dirs: {}", verb, result.deleted_dirs);
-    println!("{} registry keys: {}", verb, result.deleted_registry_keys);
     println!("Errors: {}", result.errors.len());
     for e in &result.errors {
         println!("  - {}", e);
@@ -1126,9 +894,40 @@ fn main() {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn test_empty_mount_rejected() {
+        assert!(validate_mount_path("").is_err());
+        assert!(validate_mount_path("   ").is_err());
+    }
 
+    #[test]
+    fn test_traversal_mount_rejected() {
+        assert!(validate_mount_path("C:\\foo\\..\\bar").is_err());
+    }
 
+    #[test]
+    fn test_validate_target_path_bounds() {
+        let mount = Path::new("C:\\fake\\mount");
+        assert!(validate_target_path(mount, "Windows\\Temp").is_ok());
+        assert!(validate_target_path(mount, "..\\escaped").is_err());
+        assert!(validate_target_path(mount, "Windows\\..\\escaped").is_err());
+    }
 
+    #[test]
+    fn test_wildcard_matcher() {
+        assert!(wildcard_match("Microsoft.Cortana*", "Microsoft.Cortana_1.2.3"));
+        assert!(wildcard_match("*.exe", "cmd.exe"));
+        assert!(!wildcard_match("*.exe", "cmd.dll"));
+    }
 
-
+    #[test]
+    fn test_known_experimental_keys_not_empty() {
+        assert!(KNOWN_EXPERIMENTAL_KEYS.len() >= 30);
+        assert!(KNOWN_EXPERIMENTAL_KEYS.contains(&"physical_edge"));
+        assert!(KNOWN_EXPERIMENTAL_KEYS.contains(&"physical_defender"));
+    }
+}
