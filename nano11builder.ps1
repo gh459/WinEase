@@ -4841,6 +4841,51 @@ function Show-Nano11GUI {
     $clbExp.CheckOnClick = $true
     $grpExpDeb.Controls.Add($clbExp)
 
+    # Select All / Clear All bar at the bottom of each debloat group. The target list
+    # travels on each button's Tag so the Click handler doesn't depend on scope.
+    foreach ($pair in @(@($grpStdDeb, $clbStd, $false), @($grpExpDeb, $clbExp, $true))) {
+        $grp = $pair[0]; $clb = $pair[1]; $isDestructive = $pair[2]
+        $barList = New-Object System.Windows.Forms.Panel
+        $barList.Dock = [System.Windows.Forms.DockStyle]::Bottom
+        $barList.Height = 34
+        $grp.Controls.Add($barList)
+        $clb.BringToFront()
+
+        $btnListAll = New-Object System.Windows.Forms.Button
+        $btnListAll.Text = "Select All"
+        $btnListAll.Location = New-Object System.Drawing.Point(5, 4)
+        $btnListAll.Size = New-Object System.Drawing.Size(95, 26)
+        $btnListAll.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
+        $btnListAll.ForeColor = [System.Drawing.Color]::White
+        $btnListAll.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+        $btnListAll.Tag = @{ List = $clb; Confirm = $isDestructive }
+        $btnListAll.Add_Click({
+            $t = $this.Tag
+            if ($t.Confirm) {
+                $ans = [System.Windows.Forms.MessageBox]::Show(
+                    "Select ALL experimental physical deletions?`nThis permanently breaks Windows Update and sfc.",
+                    "Confirm", [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                    [System.Windows.Forms.MessageBoxIcon]::Warning)
+                if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+            }
+            for ($i = 0; $i -lt $t.List.Items.Count; $i++) { $t.List.SetItemChecked($i, $true) }
+        })
+        $barList.Controls.Add($btnListAll)
+
+        $btnListClear = New-Object System.Windows.Forms.Button
+        $btnListClear.Text = "Clear All"
+        $btnListClear.Location = New-Object System.Drawing.Point(105, 4)
+        $btnListClear.Size = New-Object System.Drawing.Size(95, 26)
+        $btnListClear.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
+        $btnListClear.ForeColor = [System.Drawing.Color]::White
+        $btnListClear.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+        $btnListClear.Tag = $clb
+        $btnListClear.Add_Click({
+            for ($i = 0; $i -lt $this.Tag.Items.Count; $i++) { $this.Tag.SetItemChecked($i, $false) }
+        })
+        $barList.Controls.Add($btnListClear)
+    }
+
     # Populate standard and experimental debloat lists
     $stdItems = @(
         "Remove WinRE (reagentc /disable + file delete) [500-700MB]",
