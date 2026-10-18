@@ -700,10 +700,10 @@ Describe "nano11 settings - config\tweaks.psd1 is the single source of truth" {
         }
     }
 
-    It "every GUI checkbox key (createToggleChk) exists in the definition file" {
+    It "every GUI checkbox key (New-Nano11ToggleCheckBox) exists in the definition file" {
         # The GUI builds its tweak tabs from AllTweakDefs and the Services tab from $svcDefs; both
-        # come from the definition file, so no literal setting key may be passed to createToggleChk.
-        $calls = [regex]::Matches($guiText,"& \`$createToggleChk \S+ (\S+) ")
+        # come from the definition file, so no literal setting key may be passed as -Key.
+        $calls = [regex]::Matches($guiText, "New-Nano11ToggleCheckBox -Parent \S+ -Key (\S+) ")
         $calls.Count | Should BeGreaterThan 0
         foreach ($m in $calls) {
             $keyArg = $m.Groups[1].Value
@@ -763,5 +763,86 @@ Describe "nano11 settings - config\tweaks.psd1 is the single source of truth" {
                 }
             }
         }
+    }
+}
+
+Describe "nano11 GUI - smoke test (form built without ShowDialog)" {
+    # Same derived tables the builder hands the GUI, built from config\tweaks.psd1
+    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+    $script:AllTweakDefs = [ordered]@{}
+    foreach ($td in $settingsDef.Tweaks) { $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description } }
+    $script:ComponentDefs = [ordered]@{}
+    foreach ($cd in $settingsDef.Components) { $script:ComponentDefs[$cd.Key] = $cd }
+    function Get-Nano11Preset { param([string]$Name) $null }
+
+    . $script:GuiPath
+    # Never block on the experimental Select All confirmation
+    function Confirm-Nano11GuiAction { param([string]$Message, [string]$Title) $true }
+
+    function Get-AllControls($ctl) { foreach ($c in $ctl.Controls) { $c; Get-AllControls $c } }
+
+    # PerformClick only fires on visible controls: show off-screen, select each tab, click its buttons
+    function Invoke-SelectButtons($form) {
+        $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+        $form.Location = New-Object System.Drawing.Point(-20000, -20000)
+        $form.ShowInTaskbar = $false
+        [void]$form.Show()
+        $clicked = 0
+        try {
+            $tabControl = @(Get-AllControls $form | Where-Object { $_ -is [System.Windows.Forms.TabControl] })[0]
+            foreach ($tab in $tabControl.TabPages) {
+                $tabControl.SelectedTab = $tab
+                [void][System.Windows.Forms.Application]::DoEvents()
+                $buttons = @(Get-AllControls $tab | Where-Object { $_ -is [System.Windows.Forms.Button] -and $_.Text -match '^(Select All|Clear All|Deselect All)$' })
+                foreach ($btn in ($buttons | Sort-Object { $_.Text -ne 'Select All' })) {
+                    $target = $btn.Tag.Target
+                    $want = $btn.Text -eq 'Select All'
+                    # Start from the opposite state so the click has to change every box
+                    Set-Nano11Checked -Target $target -Checked (-not $want)
+                    [void]$btn.PerformClick()
+                    if ($target -is [System.Windows.Forms.CheckedListBox]) {
+                        $target.Items.Count | Should BeGreaterThan 0 | Out-Null
+                        $target.CheckedItems.Count | Should Be $(if ($want) { $target.Items.Count } else { 0 }) | Out-Null
+                    } else {
+                        @($target).Count | Should BeGreaterThan 0 | Out-Null
+                        @($target | Where-Object { $_.Checked -ne $want }).Count | Should Be 0 | Out-Null
+                    }
+                    $clicked++
+                }
+            }
+        } finally {
+            $form.Close(); $form.Dispose()
+        }
+        return $clicked
+    }
+
+    It "main window: every Select All / Clear All button changes its boxes" {
+        $gui = Show-Nano11GUI -NoShow
+        $gui.Form.Tag | Should Be $gui
+        $gui.TweakCheckboxes.Count | Should Be $script:AllTweakDefs.Count
+        Invoke-SelectButtons $gui.Form | Should Be 14
+        # Toggle handlers reached the shared context: preset switched to Custom
+        $gui.Preset.SelectedIndex | Should Be ($gui.Preset.Items.Count - 1)
+    }
+
+    It "main window: result hashtable keeps its contract" {
+        $gui = Show-Nano11GUI -NoShow -InitialSettings @{ SourceDrive = 'E:\'; TweakSettings = [ordered]@{} }
+        try {
+            Complete-Nano11GuiResult -Gui $gui | Should Be $true
+            $r = $gui.Result
+            foreach ($k in 'Success', 'UserName', 'ComputerName', 'PresetKey', 'BasePresetKey', 'SourceDrive', 'WorkDir', 'Index',
+                           'InjectDrivers', 'DryRun', 'UseVHDX', 'ExportESDMode', 'SplitWIMMode', 'TweakSettings',
+                           'AdvancedDebloatStandard', 'AdvancedDebloatExperimental') {
+                $r.ContainsKey($k) | Should Be $true
+            }
+            $r.Success | Should Be $true
+            $r.TweakSettings.Count | Should Be $script:AllTweakDefs.Count
+            foreach ($k in $gui.ComponentCheckboxes.Keys) { $r.ContainsKey($k) | Should Be $true }
+        } finally { $gui.Form.Dispose() }
+    }
+
+    It "Advanced Debloat dialog: every Select All / Deselect All button changes its list" {
+        $dlg = Show-AdvancedDebloatDialog -NoShow
+        Invoke-SelectButtons $dlg | Should Be 4
     }
 }

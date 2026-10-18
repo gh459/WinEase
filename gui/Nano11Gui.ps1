@@ -1,15 +1,315 @@
 # Nano11Gui.ps1 - WinForms GUI for nano11builder.ps1
 # Dot-sourced by nano11builder.ps1 only when a GUI can be shown (-GUI or menu option [7]).
 # Needs $script:AllTweakDefs, $script:ComponentDefs and Get-Nano11Preset from the builder.
+#
+# Event handlers never read locals of the function that built the form: by click time that
+# scope may be gone. A handler gets its target from $this.Tag, or the shared GUI context
+# (controls, checkbox tables, result) from $this.FindForm().Tag.
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
 # Repository root (this file lives in <repo>\gui)
 $script:Nano11GuiRepoRoot = Split-Path -Parent $PSScriptRoot
 
-# Helper function: Display Graphical User Interface (GUI) for nano11 builder
+# =========================================================================
+# Control helpers
+# =========================================================================
+
+# Flat dark button; -Tag carries whatever the -OnClick handler needs (read it as $this.Tag)
+function New-Nano11Button {
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [int]$X, [int]$Y, [int]$Width, [int]$Height,
+        [System.Drawing.Color]$BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60),
+        [System.Drawing.Color]$ForeColor = [System.Drawing.Color]::White,
+        [System.Drawing.Font]$Font,
+        [object]$Tag,
+        [scriptblock]$OnClick,
+        [object]$Parent
+    )
+    $btn = New-Object System.Windows.Forms.Button
+    $btn.Text = $Text
+    if ($Font) { $btn.Font = $Font }
+    $btn.Location = New-Object System.Drawing.Point($X, $Y)
+    $btn.Size = New-Object System.Drawing.Size($Width, $Height)
+    $btn.BackColor = $BackColor
+    $btn.ForeColor = $ForeColor
+    $btn.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    if ($PSBoundParameters.ContainsKey('Tag')) { $btn.Tag = $Tag }
+    if ($OnClick) { $btn.Add_Click($OnClick) }
+    if ($Parent) { $Parent.Controls.Add($btn) }
+    return $btn
+}
+
+function New-Nano11Label {
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [int]$X, [int]$Y, [int]$Width, [int]$Height,
+        [switch]$AutoSize,
+        [System.Drawing.Color]$ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245),
+        [System.Drawing.Font]$Font,
+        [object]$Parent
+    )
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text = $Text
+    if ($Font) { $lbl.Font = $Font }
+    $lbl.ForeColor = $ForeColor
+    $lbl.Location = New-Object System.Drawing.Point($X, $Y)
+    if ($AutoSize) { $lbl.AutoSize = $true } else { $lbl.Size = New-Object System.Drawing.Size($Width, $Height) }
+    if ($Parent) { $Parent.Controls.Add($lbl) }
+    return $lbl
+}
+
+function New-Nano11TextBox {
+    param(
+        [int]$X, [int]$Y, [int]$Width, [int]$Height = 24,
+        [string]$Text,
+        [object]$Parent
+    )
+    $txt = New-Object System.Windows.Forms.TextBox
+    $txt.Location = New-Object System.Drawing.Point($X, $Y)
+    $txt.Size = New-Object System.Drawing.Size($Width, $Height)
+    $txt.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
+    $txt.ForeColor = [System.Drawing.Color]::White
+    if ($Text) { $txt.Text = $Text }
+    if ($Parent) { $Parent.Controls.Add($txt) }
+    return $txt
+}
+
+# CheckBox, or RadioButton with -Radio
+function New-Nano11CheckBox {
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [int]$X, [int]$Y, [int]$Width, [int]$Height,
+        [bool]$Checked = $false,
+        [switch]$Radio,
+        [object]$Parent
+    )
+    $chk = if ($Radio) { New-Object System.Windows.Forms.RadioButton } else { New-Object System.Windows.Forms.CheckBox }
+    $chk.Text = $Text
+    $chk.Location = New-Object System.Drawing.Point($X, $Y)
+    $chk.Size = New-Object System.Drawing.Size($Width, $Height)
+    $chk.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    if ($Checked) { $chk.Checked = $true }
+    if ($Parent) { $Parent.Controls.Add($chk) }
+    return $chk
+}
+
+# GroupBox; without -X/-Y it is left for a FlowLayoutPanel to place
+function New-Nano11GroupBox {
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [int]$X, [int]$Y, [int]$Width, [int]$Height,
+        [System.Drawing.Color]$ForeColor = [System.Drawing.Color]::FromArgb(0, 190, 255),
+        [object]$Parent
+    )
+    $grp = New-Object System.Windows.Forms.GroupBox
+    $grp.Text = $Text
+    if ($PSBoundParameters.ContainsKey('X') -or $PSBoundParameters.ContainsKey('Y')) {
+        $grp.Location = New-Object System.Drawing.Point($X, $Y)
+    }
+    $grp.Size = New-Object System.Drawing.Size($Width, $Height)
+    $grp.ForeColor = $ForeColor
+    if ($Parent) { $Parent.Controls.Add($grp) }
+    return $grp
+}
+
+# CheckedListBox filled with -Items, pre-checking those in -Selected; docked (-Fill) or placed
+function New-Nano11CheckedList {
+    param(
+        [string[]]$Items = @(),
+        [object[]]$Selected = @(),
+        [switch]$Fill,
+        [int]$X, [int]$Y, [int]$Width, [int]$Height,
+        [System.Drawing.Font]$Font,
+        [object]$Parent
+    )
+    $clb = New-Object System.Windows.Forms.CheckedListBox
+    if ($Fill) {
+        $clb.Dock = [System.Windows.Forms.DockStyle]::Fill
+    } else {
+        $clb.Location = New-Object System.Drawing.Point($X, $Y)
+        $clb.Size = New-Object System.Drawing.Size($Width, $Height)
+    }
+    $clb.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
+    $clb.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    if ($Font) { $clb.Font = $Font }
+    $clb.CheckOnClick = $true
+    foreach ($item in $Items) { [void]$clb.Items.Add($item, ($Selected -contains $item)) }
+    if ($Parent) { $Parent.Controls.Add($clb) }
+    return $clb
+}
+
+function New-Nano11TabPage {
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [Parameter(Mandatory = $true)][System.Windows.Forms.TabControl]$TabControl,
+        [System.Drawing.Color]$BackColor = [System.Drawing.Color]::FromArgb(26, 28, 34)
+    )
+    $tab = New-Object System.Windows.Forms.TabPage
+    $tab.Text = $Text
+    $tab.BackColor = $BackColor
+    $TabControl.TabPages.Add($tab)
+    return $tab
+}
+
+# Docked strip holding Select All / Clear All buttons; -BackColor $null keeps the parent's color
+function New-Nano11ButtonBar {
+    param(
+        [Parameter(Mandatory = $true)][object]$Parent,
+        [System.Windows.Forms.DockStyle]$Dock = [System.Windows.Forms.DockStyle]::Top,
+        [int]$Height = 40,
+        [object]$BackColor = [System.Drawing.Color]::FromArgb(20, 22, 28)
+    )
+    $bar = New-Object System.Windows.Forms.Panel
+    $bar.Dock = $Dock
+    $bar.Height = $Height
+    if ($null -ne $BackColor) { $bar.BackColor = $BackColor }
+    $Parent.Controls.Add($bar)
+    return $bar
+}
+
+# Scrolling panel that fills what the bars leave of -Parent
+function New-Nano11FlowPanel {
+    param(
+        [Parameter(Mandatory = $true)][object]$Parent,
+        [switch]$TopDown
+    )
+    $flow = New-Object System.Windows.Forms.FlowLayoutPanel
+    $flow.Dock = [System.Windows.Forms.DockStyle]::Fill
+    $flow.AutoScroll = $true
+    $flow.Padding = New-Object System.Windows.Forms.Padding(15, 10, 15, 10)
+    if ($TopDown) {
+        $flow.FlowDirection = [System.Windows.Forms.FlowDirection]::TopDown
+        $flow.WrapContents = $true
+    }
+    $Parent.Controls.Add($flow)
+    $flow.BringToFront()
+    return $flow
+}
+
+# Tab page with a top button bar (optional caption) and a top-down flow panel for toggles.
+# Returns @{ Tab; Bar; Flow }.
+function New-Nano11ToggleTab {
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [Parameter(Mandatory = $true)][System.Windows.Forms.TabControl]$TabControl,
+        [string]$Caption
+    )
+    $tab = New-Nano11TabPage -Text $Text -TabControl $TabControl
+    $bar = New-Nano11ButtonBar -Parent $tab
+    if ($Caption) {
+        [void](New-Nano11Label -Text $Caption -X 230 -Y 11 -Width 400 -Height 20 -ForeColor ([System.Drawing.Color]::FromArgb(0, 190, 255)) -Parent $bar)
+    }
+    $flow = New-Nano11FlowPanel -Parent $tab -TopDown
+    return @{ Tab = $tab; Bar = $bar; Flow = $flow }
+}
+
+# Check or uncheck every item of a CheckedListBox, or every CheckBox of a list
+function Set-Nano11Checked {
+    param([object]$Target, [bool]$Checked)
+    if ($Target -is [System.Windows.Forms.CheckedListBox]) {
+        for ($i = 0; $i -lt $Target.Items.Count; $i++) { $Target.SetItemChecked($i, $Checked) }
+    } else {
+        foreach ($c in $Target) { $c.Checked = $Checked }
+    }
+}
+
+function Confirm-Nano11GuiAction {
+    param([string]$Message, [string]$Title = "Confirm")
+    $ans = [System.Windows.Forms.MessageBox]::Show($Message, $Title,
+        [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Warning)
+    return ($ans -eq [System.Windows.Forms.DialogResult]::Yes)
+}
+
+# Select All / Clear All pair for -Target (a CheckedListBox or a list of CheckBoxes). The target
+# travels on each button's Tag, so the handler works whatever scope is left at click time.
+# -ConfirmSelect asks before Select All. Returns @{ Select; Clear }.
+function Add-Nano11SelectButtons {
+    param(
+        [Parameter(Mandatory = $true)][object]$Parent,
+        [Parameter(Mandatory = $true)][object]$Target,
+        [int]$X, [int]$Y,
+        [int]$Width = 95, [int]$Height = 26, [int]$Step = 105,
+        [string]$SelectText = "Select All",
+        [string]$ClearText = "Clear All",
+        [System.Drawing.Color]$ForeColor = [System.Drawing.Color]::White,
+        [string]$ConfirmSelect
+    )
+    $onClick = {
+        $t = $this.Tag
+        if ($t.Confirm -and -not (Confirm-Nano11GuiAction -Message $t.Confirm)) { return }
+        Set-Nano11Checked -Target $t.Target -Checked $t.Checked
+    }
+    $btnSelect = New-Nano11Button -Text $SelectText -X $X -Y $Y -Width $Width -Height $Height -ForeColor $ForeColor `
+        -Tag @{ Target = $Target; Checked = $true; Confirm = $ConfirmSelect } -OnClick $onClick -Parent $Parent
+    $btnClear = New-Nano11Button -Text $ClearText -X ($X + $Step) -Y $Y -Width $Width -Height $Height -ForeColor $ForeColor `
+        -Tag @{ Target = $Target; Checked = $false; Confirm = $null } -OnClick $onClick -Parent $Parent
+    return @{ Select = $btnSelect; Clear = $btnClear }
+}
+
+# Toggle checkbox for one setting key. Changing it by hand switches the preset to Custom
+# and refreshes the size estimate (both found through the form's GUI context).
+function New-Nano11ToggleCheckBox {
+    param(
+        [Parameter(Mandatory = $true)][object]$Parent,
+        [Parameter(Mandatory = $true)][string]$Key,
+        [string]$Text,
+        [System.Windows.Forms.ToolTip]$ToolTip,
+        [string]$ToolTipText,
+        [bool]$Checked
+    )
+    $chk = New-Object System.Windows.Forms.CheckBox
+    $chk.Text = $Text
+    $chk.Size = New-Object System.Drawing.Size(400, 28)
+    $chk.AutoEllipsis = $true
+    $chk.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $chk.Checked = $Checked
+    $chk.Tag = $Key
+    if ($ToolTip) { $ToolTip.SetToolTip($chk, $ToolTipText) }
+    $chk.Add_CheckedChanged({
+        if (-not $script:updatingPreset) {
+            $form = $this.FindForm()
+            $gui = if ($form) { $form.Tag } else { $null }
+            if ($gui) {
+                if ($gui.Preset -and $gui.Preset.Items.Count -gt 0) {
+                    $script:updatingPreset = $true
+                    $gui.Preset.SelectedIndex = ($gui.Preset.Items.Count - 1) # Custom
+                    $script:updatingPreset = $false
+                }
+                Update-Nano11GuiEstimate -Gui $gui
+            }
+        }
+    })
+    $Parent.Controls.Add($chk)
+    return $chk
+}
+
+function Disable-Nano11Mnemonic {
+    param([object]$Control)
+    foreach ($c in $Control.Controls) {
+        if ($c.PSObject.Properties['UseMnemonic']) { $c.UseMnemonic = $false }
+        Disable-Nano11Mnemonic -Control $c
+    }
+}
+
+# Collect checked items of a CheckedListBox
+function Get-Nano11CheckedItems {
+    param([System.Windows.Forms.CheckedListBox]$List)
+    $sel = @()
+    for ($i = 0; $i -lt $List.Items.Count; $i++) { if ($List.GetItemChecked($i)) { $sel += $List.Items[$i] } }
+    return ,$sel
+}
+
+# =========================================================================
+# Advanced Debloat dialog (standalone; -NoShow returns the built dialog for tests)
+# =========================================================================
 function Show-AdvancedDebloatDialog {
     param(
         [hashtable]$InitialSettings = @{},
-        [string]$UiFontName = "Segoe UI"
+        [string]$UiFontName = "Segoe UI",
+        [switch]$NoShow
     )
 
     $stdItems = @(
@@ -93,6 +393,10 @@ function Show-AdvancedDebloatDialog {
         "Physical: BitLocker (complete removal) [~30-50MB]"
     )
 
+    $dlgBack = [System.Drawing.Color]::FromArgb(24, 26, 31)
+    $dlgFore = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $listFont = New-Object System.Drawing.Font($UiFontName, 9)
+
     $dlg = New-Object System.Windows.Forms.Form
     $dlg.Text = "Advanced Debloat Options (Standard + Experimental)"
     $dlg.Size = New-Object System.Drawing.Size(700, 620)
@@ -100,7 +404,7 @@ function Show-AdvancedDebloatDialog {
     $dlg.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
     $dlg.MaximizeBox = $false
     $dlg.MinimizeBox = $false
-    $dlg.BackColor = [System.Drawing.Color]::FromArgb(24, 26, 31)
+    $dlg.BackColor = $dlgBack
 
     $tabControl = New-Object System.Windows.Forms.TabControl
     $tabControl.Location = New-Object System.Drawing.Point(10, 10)
@@ -108,111 +412,28 @@ function Show-AdvancedDebloatDialog {
     $dlg.Controls.Add($tabControl)
 
     # Standard tab
-    $tabStd = New-Object System.Windows.Forms.TabPage
-    $tabStd.Text = "Standard (Safe - DISM/PS)"
-    $tabStd.BackColor = [System.Drawing.Color]::FromArgb(24, 26, 31)
-    $tabControl.TabPages.Add($tabStd)
-
-    $clbStd = New-Object System.Windows.Forms.CheckedListBox
-    $clbStd.Location = New-Object System.Drawing.Point(10, 10)
-    $clbStd.Size = New-Object System.Drawing.Size(640, 380)
-    $clbStd.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
-    $clbStd.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $clbStd.Font = New-Object System.Drawing.Font($UiFontName, 9)
-    $clbStd.CheckOnClick = $true
+    $tabStd = New-Nano11TabPage -Text "Standard (Safe - DISM/PS)" -TabControl $tabControl -BackColor $dlgBack
     $preStd = @()
     if ($InitialSettings -and $InitialSettings.AdvancedDebloatStandard) { $preStd = @($InitialSettings.AdvancedDebloatStandard) }
-    foreach ($item in $stdItems) {
-        $chk = $preStd -contains $item
-        [void]$clbStd.Items.Add($item, $chk)
-    }
-    $tabStd.Controls.Add($clbStd)
-
-    $btnStdAll = New-Object System.Windows.Forms.Button
-    $btnStdAll.Text = "Select All"
-    $btnStdAll.Location = New-Object System.Drawing.Point(10, 395)
-    $btnStdAll.Size = New-Object System.Drawing.Size(100, 28)
-    $btnStdAll.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
-    $btnStdAll.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $btnStdAll.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $tabStd.Controls.Add($btnStdAll)
-
-    $btnStdNone = New-Object System.Windows.Forms.Button
-    $btnStdNone.Text = "Deselect All"
-    $btnStdNone.Location = New-Object System.Drawing.Point(115, 395)
-    $btnStdNone.Size = New-Object System.Drawing.Size(100, 28)
-    $btnStdNone.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
-    $btnStdNone.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $btnStdNone.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $tabStd.Controls.Add($btnStdNone)
-
-    $btnStdAll.Add_Click({ for ($i = 0; $i -lt $clbStd.Items.Count; $i++) { $clbStd.SetItemChecked($i, $true) } })
-    $btnStdNone.Add_Click({ for ($i = 0; $i -lt $clbStd.Items.Count; $i++) { $clbStd.SetItemChecked($i, $false) } })
+    $clbStd = New-Nano11CheckedList -Items $stdItems -Selected $preStd -X 10 -Y 10 -Width 640 -Height 380 -Font $listFont -Parent $tabStd
+    [void](Add-Nano11SelectButtons -Parent $tabStd -Target $clbStd -X 10 -Y 395 -Width 100 -Height 28 -ClearText "Deselect All" -ForeColor $dlgFore)
 
     # Experimental tab
-    $tabExp = New-Object System.Windows.Forms.TabPage
-    $tabExp.Text = "Experimental (Physical Deletion)"
-    $tabExp.BackColor = [System.Drawing.Color]::FromArgb(24, 26, 31)
-    $tabControl.TabPages.Add($tabExp)
-
-    $lblWarn = New-Object System.Windows.Forms.Label
-    $lblWarn.Text = "WARNING: Physical deletion permanently breaks Windows Update and sfc."
-    $lblWarn.Location = New-Object System.Drawing.Point(10, 5)
-    $lblWarn.Size = New-Object System.Drawing.Size(640, 20)
-    $lblWarn.ForeColor = [System.Drawing.Color]::FromArgb(255, 100, 100)
-    $lblWarn.Font = New-Object System.Drawing.Font($UiFontName, 9, [System.Drawing.FontStyle]::Bold)
-    $tabExp.Controls.Add($lblWarn)
-
-    $clbExp = New-Object System.Windows.Forms.CheckedListBox
-    $clbExp.Location = New-Object System.Drawing.Point(10, 30)
-    $clbExp.Size = New-Object System.Drawing.Size(640, 365)
-    $clbExp.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
-    $clbExp.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $clbExp.Font = New-Object System.Drawing.Font($UiFontName, 9)
-    $clbExp.CheckOnClick = $true
+    $tabExp = New-Nano11TabPage -Text "Experimental (Physical Deletion)" -TabControl $tabControl -BackColor $dlgBack
+    [void](New-Nano11Label -Text "WARNING: Physical deletion permanently breaks Windows Update and sfc." -X 10 -Y 5 -Width 640 -Height 20 `
+        -ForeColor ([System.Drawing.Color]::FromArgb(255, 100, 100)) -Font (New-Object System.Drawing.Font($UiFontName, 9, [System.Drawing.FontStyle]::Bold)) -Parent $tabExp)
     $preExp = @()
     if ($InitialSettings -and $InitialSettings.AdvancedDebloatExperimental) { $preExp = @($InitialSettings.AdvancedDebloatExperimental) }
-    foreach ($item in $expItems) {
-        $chk = $preExp -contains $item
-        [void]$clbExp.Items.Add($item, $chk)
-    }
-    $tabExp.Controls.Add($clbExp)
+    $clbExp = New-Nano11CheckedList -Items $expItems -Selected $preExp -X 10 -Y 30 -Width 640 -Height 365 -Font $listFont -Parent $tabExp
+    [void](Add-Nano11SelectButtons -Parent $tabExp -Target $clbExp -X 10 -Y 400 -Width 100 -Height 28 -ClearText "Deselect All" -ForeColor $dlgFore)
 
-    $btnExpAll = New-Object System.Windows.Forms.Button
-    $btnExpAll.Text = "Select All"
-    $btnExpAll.Location = New-Object System.Drawing.Point(10, 400)
-    $btnExpAll.Size = New-Object System.Drawing.Size(100, 28)
-    $btnExpAll.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
-    $btnExpAll.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $btnExpAll.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $tabExp.Controls.Add($btnExpAll)
+    # Both lists travel on the dialog's Tag for the Preview / OK handlers
+    $dlg.Tag = @{ Std = $clbStd; Exp = $clbExp }
 
-    $btnExpNone = New-Object System.Windows.Forms.Button
-    $btnExpNone.Text = "Deselect All"
-    $btnExpNone.Location = New-Object System.Drawing.Point(115, 400)
-    $btnExpNone.Size = New-Object System.Drawing.Size(100, 28)
-    $btnExpNone.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
-    $btnExpNone.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $btnExpNone.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $tabExp.Controls.Add($btnExpNone)
-
-    $btnExpAll.Add_Click({ for ($i = 0; $i -lt $clbExp.Items.Count; $i++) { $clbExp.SetItemChecked($i, $true) } })
-    $btnExpNone.Add_Click({ for ($i = 0; $i -lt $clbExp.Items.Count; $i++) { $clbExp.SetItemChecked($i, $false) } })
-
-    # Preview button
-    $btnPreview = New-Object System.Windows.Forms.Button
-    $btnPreview.Text = "Preview"
-    $btnPreview.Location = New-Object System.Drawing.Point(10, 500)
-    $btnPreview.Size = New-Object System.Drawing.Size(100, 30)
-    $btnPreview.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
-    $btnPreview.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $btnPreview.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $dlg.Controls.Add($btnPreview)
-
-    $btnPreview.Add_Click({
-        $stdSel = @(); $expSel = @()
-        for ($i = 0; $i -lt $clbStd.Items.Count; $i++) { if ($clbStd.GetItemChecked($i)) { $stdSel += $clbStd.Items[$i] } }
-        for ($i = 0; $i -lt $clbExp.Items.Count; $i++) { if ($clbExp.GetItemChecked($i)) { $expSel += $clbExp.Items[$i] } }
+    [void](New-Nano11Button -Text "Preview" -X 10 -Y 500 -Width 100 -Height 30 -ForeColor $dlgFore -Parent $dlg -OnClick {
+        $t = $this.FindForm().Tag
+        $stdSel = Get-Nano11CheckedItems -List $t.Std
+        $expSel = Get-Nano11CheckedItems -List $t.Exp
         $msg = "Selected: Standard=$($stdSel.Count) / Experimental=$($expSel.Count)`n`n"
         $msg += "Standard ($($stdSel.Count) items)`n"
         foreach ($s in $stdSel) { $msg += "  - $s`n" }
@@ -225,34 +446,20 @@ function Show-AdvancedDebloatDialog {
     })
 
     # OK / Cancel
-    $btnOK = New-Object System.Windows.Forms.Button
-    $btnOK.Text = "OK"
-    $btnOK.Location = New-Object System.Drawing.Point(480, 500)
-    $btnOK.Size = New-Object System.Drawing.Size(90, 30)
-    $btnOK.BackColor = [System.Drawing.Color]::FromArgb(0, 120, 215)
-    $btnOK.ForeColor = [System.Drawing.Color]::White
-    $btnOK.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $dlg.Controls.Add($btnOK)
-
-    $btnCancel = New-Object System.Windows.Forms.Button
-    $btnCancel.Text = "Cancel"
-    $btnCancel.Location = New-Object System.Drawing.Point(575, 500)
-    $btnCancel.Size = New-Object System.Drawing.Size(90, 30)
-    $btnCancel.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
-    $btnCancel.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $btnCancel.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $dlg.Controls.Add($btnCancel)
-
-    $btnOK.Add_Click({
-        $stdSel = @(); $expSel = @()
-        for ($i = 0; $i -lt $clbStd.Items.Count; $i++) { if ($clbStd.GetItemChecked($i)) { $stdSel += $clbStd.Items[$i] } }
-        for ($i = 0; $i -lt $clbExp.Items.Count; $i++) { if ($clbExp.GetItemChecked($i)) { $expSel += $clbExp.Items[$i] } }
-        $script:advDebloatStd = $stdSel
-        $script:advDebloatExp = $expSel
-        $dlg.DialogResult = [System.Windows.Forms.DialogResult]::OK
-        $dlg.Close()
+    [void](New-Nano11Button -Text "OK" -X 480 -Y 500 -Width 90 -Height 30 -BackColor ([System.Drawing.Color]::FromArgb(0, 120, 215)) -Parent $dlg -OnClick {
+        $f = $this.FindForm()
+        $script:advDebloatStd = Get-Nano11CheckedItems -List $f.Tag.Std
+        $script:advDebloatExp = Get-Nano11CheckedItems -List $f.Tag.Exp
+        $f.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $f.Close()
     })
-    $btnCancel.Add_Click({ $dlg.DialogResult = [System.Windows.Forms.DialogResult]::Cancel; $dlg.Close() })
+    [void](New-Nano11Button -Text "Cancel" -X 575 -Y 500 -Width 90 -Height 30 -ForeColor $dlgFore -Parent $dlg -OnClick {
+        $f = $this.FindForm()
+        $f.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $f.Close()
+    })
+
+    if ($NoShow) { return $dlg }
 
     $dlg.TopMost = $true
     $result = $dlg.ShowDialog()
@@ -262,13 +469,191 @@ function Show-AdvancedDebloatDialog {
     return @{ Success = $false; StandardSelected = @(); ExperimentalSelected = @() }
 }
 
+# =========================================================================
+# Main window helpers (all take the GUI context stored on the form's Tag)
+# =========================================================================
+
+# Fill the source combo with detected Windows 11 media drives and ISO files
+function Update-Nano11GuiSources {
+    param([System.Windows.Forms.ComboBox]$Combo)
+    $Combo.Items.Clear()
+    $detectedSources = @()
+    foreach ($psd in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
+        if (-not $psd.Root) { continue }
+        $r = $psd.Root.TrimEnd('\')
+        $wim = Join-Path -Path "$r\sources" -ChildPath "install.wim"
+        $esd = Join-Path -Path "$r\sources" -ChildPath "install.esd"
+        $vol = Get-Volume -DriveLetter ($r.TrimEnd(':')) -ErrorAction SilentlyContinue
+        $volLabel = if ($vol -and $vol.FileSystemLabel) { " [$($vol.FileSystemLabel)]" } else { "" }
+        if ((Test-Path -LiteralPath $wim) -and ((Get-Item -LiteralPath $wim).Length -gt 500MB)) {
+            $detectedSources += "$r\$volLabel (Windows 11 Media - install.wim)"
+        } elseif ((Test-Path -LiteralPath $esd) -and ((Get-Item -LiteralPath $esd).Length -gt 500MB)) {
+            $detectedSources += "$r\$volLabel (Windows 11 Media - install.esd)"
+        }
+    }
+    $desktopDir = Join-Path -Path $env:USERPROFILE -ChildPath "Desktop"
+    $downloadsDir = Join-Path -Path $env:USERPROFILE -ChildPath "Downloads"
+    foreach ($p in @("E:\", "D:\", "C:\", (Split-Path -Parent $script:Nano11GuiRepoRoot), $env:USERPROFILE, $desktopDir, $downloadsDir)) {
+        if (Test-Path -LiteralPath $p) {
+            $foundIsos = Get-ChildItem -Path $p -Filter "*.iso" -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Length -gt 3GB -and ($_.Name -like "*Win11*" -or $_.Name -like "*Windows11*" -or $_.Name -like "*26300*" -or $_.Name -like "*24H2*") -and $_.Name -notlike "*nano11*" }
+            foreach ($iso in $foundIsos) { $detectedSources += $iso.FullName }
+        }
+    }
+    foreach ($srcItem in $detectedSources) { [void]$Combo.Items.Add($srcItem) }
+}
+
+function Update-Nano11GuiEstimate {
+    param([hashtable]$Gui)
+    try {
+        $componentCheckboxes = $Gui.ComponentCheckboxes
+        $mb = 5500.0
+        if ($componentCheckboxes['KeepExtraFonts'] -and $componentCheckboxes['KeepExtraFonts'].Checked) { $mb += 150 }
+        if ($componentCheckboxes['KeepAsianIME'] -and $componentCheckboxes['KeepAsianIME'].Checked)     { $mb += 400 }
+        if ($componentCheckboxes['RemoveDefender'] -and -not $componentCheckboxes['RemoveDefender'].Checked) { $mb += 200 }
+        if ($componentCheckboxes['RemoveStore'] -and -not $componentCheckboxes['RemoveStore'].Checked)       { $mb += 120 }
+        if ($componentCheckboxes['DisableWindowsUpdate'] -and -not $componentCheckboxes['DisableWindowsUpdate'].Checked) { $mb += 50 }
+        if ($componentCheckboxes['KeepBasicApps'] -and $componentCheckboxes['KeepBasicApps'].Checked)       { $mb += 30 }
+        if ($componentCheckboxes['KeepSearchIndex'] -and $componentCheckboxes['KeepSearchIndex'].Checked)   { $mb += 20 }
+        if ($componentCheckboxes['KeepXboxServices'] -and $componentCheckboxes['KeepXboxServices'].Checked) { $mb += 40 }
+        if ($componentCheckboxes['RemoveDrivers'] -and $componentCheckboxes['RemoveDrivers'].Checked)       { $mb -= 80 }
+        if ($componentCheckboxes['UltraSlimMode'] -and $componentCheckboxes['UltraSlimMode'].Checked)       { $mb -= 200 }
+        if ($Gui.RadESD.Checked) { $mb = [math]::Round($mb * 0.82) }
+        $Gui.Estimate.Text = ("Estimated ISO Size: ~{0} GB (LZX baseline)" -f [math]::Round($mb / 1024, 2))
+    } catch {}
+}
+
+# Apply built-in preset number -PresetIndex (order of $Gui.PresetKeyMap) to every checkbox
+function Set-Nano11GuiPreset {
+    param([hashtable]$Gui, [int]$PresetIndex)
+    $presetKeyMap = $Gui.PresetKeyMap
+    $script:updatingPreset = $true
+    if ($PresetIndex -ge 0 -and $PresetIndex -lt $presetKeyMap.Count) {
+        $pKey = $presetKeyMap[$PresetIndex]
+        $pObj = Get-Nano11Preset -Name $pKey
+        if ($pObj) {
+            # Update component checkboxes
+            foreach ($k in $Gui.ComponentCheckboxes.Keys) {
+                if ($pObj.Contains($k)) {
+                    $Gui.ComponentCheckboxes[$k].Checked = [bool]$pObj[$k]
+                }
+            }
+            # Update tweak checkboxes
+            $pTweaks = if ($pObj.TweakSettings) { $pObj.TweakSettings } else { $null }
+            foreach ($tk in $Gui.TweakCheckboxes.Keys) {
+                if ($pTweaks -and $pTweaks.Contains($tk)) {
+                    $Gui.TweakCheckboxes[$tk].Checked = [bool]$pTweaks[$tk]
+                } elseif ($pObj.Contains($tk)) {
+                    $Gui.TweakCheckboxes[$tk].Checked = [bool]$pObj[$tk]
+                } else {
+                    $Gui.TweakCheckboxes[$tk].Checked = [bool]$script:AllTweakDefs[$tk].Default
+                }
+            }
+            # Update payload radio
+            $fmt = "$($pObj.PayloadFormat)".ToUpper()
+            if ($fmt -eq 'ESD') { $Gui.RadESD.Checked = $true }
+            elseif ($fmt -eq 'SWM') { $Gui.RadSWM.Checked = $true }
+            else { $Gui.RadWIM.Checked = $true }
+            $script:guiBasePresetKey = $pKey
+        }
+    }
+    $script:updatingPreset = $false
+    Update-Nano11GuiEstimate -Gui $Gui
+}
+
+# Validate the form and fill $Gui.Result; returns $false (after a message) if input is invalid
+function Complete-Nano11GuiResult {
+    param([hashtable]$Gui)
+    $srcText = $Gui.Source.Text.Trim()
+    if (-not $srcText) {
+        [void][System.Windows.Forms.MessageBox]::Show("Please specify Windows 11 installation media or ISO image.", "Source Required", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+        return $false
+    }
+
+    if ($srcText -match '^([A-Za-z]:)') {
+        $candLetter = $matches[1]
+        $wimCheck = Join-Path -Path "$candLetter\sources" -ChildPath "install.wim"
+        if (Test-Path -LiteralPath $wimCheck) {
+            $resolvedSource = $candLetter
+        } elseif ($srcText.EndsWith(".iso", [System.StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $srcText)) {
+            $resolvedSource = $srcText
+        } else {
+            $resolvedSource = $candLetter
+        }
+    } elseif ($srcText.EndsWith(".iso", [System.StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $srcText)) {
+        $resolvedSource = $srcText
+    } else {
+        $resolvedSource = $srcText
+    }
+
+    $wDir = $Gui.Work.Text.Trim()
+    if (-not $wDir) {
+        $docsDir = [Environment]::GetFolderPath('MyDocuments')
+        if (-not $docsDir) { $docsDir = Join-Path $env:USERPROFILE "Documents" }
+        $wDir = Join-Path -Path $docsDir -ChildPath "nano11_workspace"
+    }
+
+    $guiUserName = $Gui.UserName.Text.Trim()
+    $guiComputerName = $Gui.ComputerName.Text.Trim()
+    if (-not $guiComputerName) { $guiComputerName = '*' }
+    if ($guiUserName -notmatch '^[\p{L}\p{N}_][\p{L}\p{N} ._-]{0,19}$') {
+        [void][System.Windows.Forms.MessageBox]::Show("Username must contain only letters, digits, spaces, '.', '_', or '-' (max 20 chars).", "Invalid Username", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+        return $false
+    }
+    if ($guiComputerName -notmatch '^(\*|[A-Za-z0-9][A-Za-z0-9-]{0,14})$') {
+        [void][System.Windows.Forms.MessageBox]::Show("ComputerName must be '*' or up to 15 alphanumeric characters and hyphens.", "Invalid ComputerName", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+        return $false
+    }
+
+    $formResult = $Gui.Result
+    $cmbPreset = $Gui.Preset
+    $presetKeyMap = $Gui.PresetKeyMap
+    $formResult.Success                      = $true
+    $formResult.UserName                     = $guiUserName
+    $formResult.ComputerName                 = $guiComputerName
+    $formResult.PresetKey                    = if ($cmbPreset.SelectedIndex -ge 0 -and $cmbPreset.SelectedIndex -lt $presetKeyMap.Count) { $presetKeyMap[$cmbPreset.SelectedIndex] } else { $null }
+    $formResult.BasePresetKey                = $script:guiBasePresetKey
+    $formResult.SourceDrive                  = $resolvedSource
+    $formResult.WorkDir                      = $wDir
+    $formResult.Index                        = $Gui.Index.Text.Trim()
+    $formResult.InjectDrivers                = $Gui.Drivers.Text.Trim()
+    $formResult.DryRun                       = $Gui.DryRun.Checked
+    $formResult.UseVHDX                      = $Gui.VHDX.Checked
+    $formResult.ExportESDMode                = $Gui.RadESD.Checked
+    $formResult.SplitWIMMode                 = $Gui.RadSWM.Checked
+
+    # Component values
+    foreach ($k in $Gui.ComponentCheckboxes.Keys) {
+        $formResult[$k] = $Gui.ComponentCheckboxes[$k].Checked
+    }
+
+    # Granular TweakSettings
+    $resolvedTweaks = [ordered]@{}
+    foreach ($k in $Gui.TweakCheckboxes.Keys) {
+        $resolvedTweaks[$k] = $Gui.TweakCheckboxes[$k].Checked
+    }
+    $formResult.TweakSettings = $resolvedTweaks
+
+    # Advanced Debloat items
+    $stdSelected = @()
+    foreach ($item in $Gui.ClbStd.CheckedItems) { $stdSelected += "$item" }
+    $expSelected = @()
+    foreach ($item in $Gui.ClbExp.CheckedItems) { $expSelected += "$item" }
+    $formResult.AdvancedDebloatStandard     = $stdSelected
+    $formResult.AdvancedDebloatExperimental = $expSelected
+    return $true
+}
+
+# =========================================================================
+# Main window. Returns the result hashtable (Success = $false on cancel);
+# -NoShow returns the GUI context (Form, checkbox tables, ...) without showing it, for tests.
+# =========================================================================
 function Show-Nano11GUI {
     param(
-        [hashtable]$InitialSettings = @{}
+        [hashtable]$InitialSettings = @{},
+        [switch]$NoShow
     )
 
-    Add-Type -AssemblyName System.Windows.Forms
-    Add-Type -AssemblyName System.Drawing
     [System.Windows.Forms.Application]::EnableVisualStyles()
 
     $uiFontName = "Segoe UI"
@@ -298,73 +683,44 @@ function Show-Nano11GUI {
         }
     } catch {}
 
+    # Shared state for event handlers: they read it back as $this.FindForm().Tag
+    $gui = @{
+        Form                = $form
+        TweakCheckboxes     = @{}
+        ComponentCheckboxes = @{}
+        PresetKeyMap        = @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')
+        Result              = @{ Success = $false }
+    }
+    $form.Tag = $gui
+    $script:updatingPreset = $false
+
     $toolTip = New-Object System.Windows.Forms.ToolTip
+    $accent = [System.Drawing.Color]::FromArgb(0, 190, 255)
+    $headerBack = [System.Drawing.Color]::FromArgb(18, 20, 24)
 
     # Header Panel
-    $headerPanel = New-Object System.Windows.Forms.Panel
-    $headerPanel.Dock = [System.Windows.Forms.DockStyle]::Top
-    $headerPanel.Height = 65
-    $headerPanel.BackColor = [System.Drawing.Color]::FromArgb(18, 20, 24)
-    $form.Controls.Add($headerPanel)
-
-    $titleLabel = New-Object System.Windows.Forms.Label
-    $titleLabel.Text = "nano11 Builder v2.1"
-    $titleLabel.Font = New-Object System.Drawing.Font($uiFontName, 14, [System.Drawing.FontStyle]::Bold)
-    $titleLabel.ForeColor = [System.Drawing.Color]::FromArgb(0, 190, 255)
-    $titleLabel.Location = New-Object System.Drawing.Point(16, 10)
-    $titleLabel.AutoSize = $true
-    $headerPanel.Controls.Add($titleLabel)
-
-    $subTitleLabel = New-Object System.Windows.Forms.Label
-    $subTitleLabel.Text = "Universal, Language-Independent Windows 11 Modular Reducer & Full-Toggle Optimizer"
-    $subTitleLabel.Font = New-Object System.Drawing.Font($uiFontName, 8.5)
-    $subTitleLabel.ForeColor = [System.Drawing.Color]::FromArgb(160, 165, 175)
-    $subTitleLabel.Location = New-Object System.Drawing.Point(18, 38)
-    $subTitleLabel.AutoSize = $true
-    $headerPanel.Controls.Add($subTitleLabel)
+    $headerPanel = New-Nano11ButtonBar -Parent $form -Height 65 -BackColor $headerBack
+    [void](New-Nano11Label -Text "nano11 Builder v2.1" -X 16 -Y 10 -AutoSize -ForeColor $accent `
+        -Font (New-Object System.Drawing.Font($uiFontName, 14, [System.Drawing.FontStyle]::Bold)) -Parent $headerPanel)
+    [void](New-Nano11Label -Text "Universal, Language-Independent Windows 11 Modular Reducer & Full-Toggle Optimizer" -X 18 -Y 38 -AutoSize `
+        -ForeColor ([System.Drawing.Color]::FromArgb(160, 165, 175)) -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $headerPanel)
 
     # Bottom Button & Estimate Panel
-    $bottomPanel = New-Object System.Windows.Forms.Panel
-    $bottomPanel.Dock = [System.Windows.Forms.DockStyle]::Bottom
-    $bottomPanel.Height = 70
-    $bottomPanel.BackColor = [System.Drawing.Color]::FromArgb(18, 20, 24)
-    $form.Controls.Add($bottomPanel)
+    $bottomPanel = New-Nano11ButtonBar -Parent $form -Dock Bottom -Height 70 -BackColor $headerBack
+    $gui.DryRun = New-Nano11CheckBox -Text "DryRun (Simulation Mode)" -X 20 -Y 12 -Width 200 -Height 22 -Parent $bottomPanel
+    $gui.Estimate = New-Nano11Label -Text "Estimated ISO: ~5.5 GB (LZX baseline)" -X 20 -Y 38 -Width 380 -Height 20 `
+        -ForeColor ([System.Drawing.Color]::FromArgb(148, 163, 184)) -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel
 
-    $chkDryRun = New-Object System.Windows.Forms.CheckBox
-    $chkDryRun.Text = "DryRun (Simulation Mode)"
-    $chkDryRun.Location = New-Object System.Drawing.Point(20, 12)
-    $chkDryRun.Size = New-Object System.Drawing.Size(200, 22)
-    $chkDryRun.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $bottomPanel.Controls.Add($chkDryRun)
-
-    $lblEstimate = New-Object System.Windows.Forms.Label
-    $lblEstimate.Text = "Estimated ISO: ~5.5 GB (LZX baseline)"
-    $lblEstimate.Location = New-Object System.Drawing.Point(20, 38)
-    $lblEstimate.Size = New-Object System.Drawing.Size(380, 20)
-    $lblEstimate.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
-    $lblEstimate.Font = New-Object System.Drawing.Font($uiFontName, 9)
-    $bottomPanel.Controls.Add($lblEstimate)
-
-    $btnBuild = New-Object System.Windows.Forms.Button
-    $btnBuild.Text = "Start nano11 Build"
-    $btnBuild.Location = New-Object System.Drawing.Point(540, 15)
-    $btnBuild.Size = New-Object System.Drawing.Size(200, 40)
-    $btnBuild.BackColor = [System.Drawing.Color]::FromArgb(0, 120, 215)
-    $btnBuild.ForeColor = [System.Drawing.Color]::White
-    $btnBuild.Font = New-Object System.Drawing.Font($uiFontName, 10, [System.Drawing.FontStyle]::Bold)
-    $btnBuild.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $bottomPanel.Controls.Add($btnBuild)
-
-    $btnCancel = New-Object System.Windows.Forms.Button
-    $btnCancel.Text = "Cancel"
-    $btnCancel.Font = New-Object System.Drawing.Font($uiFontName, 9.5)
-    $btnCancel.Location = New-Object System.Drawing.Point(750, 15)
-    $btnCancel.Size = New-Object System.Drawing.Size(110, 40)
-    $btnCancel.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
-    $btnCancel.ForeColor = [System.Drawing.Color]::White
-    $btnCancel.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    [void](New-Nano11Button -Text "Start nano11 Build" -X 540 -Y 15 -Width 200 -Height 40 -BackColor ([System.Drawing.Color]::FromArgb(0, 120, 215)) `
+        -Font (New-Object System.Drawing.Font($uiFontName, 10, [System.Drawing.FontStyle]::Bold)) -Parent $bottomPanel -OnClick {
+        $f = $this.FindForm()
+        if (Complete-Nano11GuiResult -Gui $f.Tag) {
+            $f.DialogResult = [System.Windows.Forms.DialogResult]::OK
+            $f.Close()
+        }
+    })
+    $btnCancel = New-Nano11Button -Text "Cancel" -X 750 -Y 15 -Width 110 -Height 40 -Font (New-Object System.Drawing.Font($uiFontName, 9.5)) -Parent $bottomPanel
     $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
-    $bottomPanel.Controls.Add($btnCancel)
 
     # Main Tab Control
     $tabControl = New-Object System.Windows.Forms.TabControl
@@ -373,252 +729,75 @@ function Show-Nano11GUI {
     $form.Controls.Add($tabControl)
     $tabControl.BringToFront()
 
-    $tweakCheckboxes = @{}
-    $componentCheckboxes = @{}
-    $script:updatingPreset = $false
-
-    # Helper function to create standard toggle checkboxes
-    $createToggleChk = {
-        param($parent, $name, $text, $toolTipText, $checked, $tag)
-        $chk = New-Object System.Windows.Forms.CheckBox
-        $chk.Text = $text
-        $chk.Size = New-Object System.Drawing.Size(400, 28)
-        $chk.AutoEllipsis = $true
-        $chk.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-        $chk.Checked = [bool]$checked
-        $chk.Tag = $tag
-        $toolTip.SetToolTip($chk, $toolTipText)
-        $chk.Add_CheckedChanged({
-            if (-not $script:updatingPreset) {
-                if ($cmbPreset -and $cmbPreset.Items.Count -gt 0) {
-                    $script:updatingPreset = $true
-                    $cmbPreset.SelectedIndex = ($cmbPreset.Items.Count - 1) # Custom
-                    $script:updatingPreset = $false
-                }
-                & $updateEstimate
-            }
-        })
-        $parent.Controls.Add($chk)
-        return $chk
-    }
-
     # =========================================================================
     # TAB 1: Media & Workspace & Preset
     # =========================================================================
-    $tabMedia = New-Object System.Windows.Forms.TabPage
-    $tabMedia.Text = " 1. Media & Output "
-    $tabMedia.BackColor = [System.Drawing.Color]::FromArgb(26, 28, 34)
-    $tabControl.TabPages.Add($tabMedia)
+    $tabMedia = New-Nano11TabPage -Text " 1. Media & Output " -TabControl $tabControl
 
-    $grpMedia = New-Object System.Windows.Forms.GroupBox
-    $grpMedia.Text = " Source Media & Paths "
-    $grpMedia.Location = New-Object System.Drawing.Point(15, 10)
-    $grpMedia.Size = New-Object System.Drawing.Size(835, 185)
-    $grpMedia.ForeColor = [System.Drawing.Color]::FromArgb(0, 190, 255)
-    $tabMedia.Controls.Add($grpMedia)
+    $grpMedia = New-Nano11GroupBox -Text " Source Media & Paths " -X 15 -Y 10 -Width 835 -Height 185 -Parent $tabMedia
 
-    $lblSource = New-Object System.Windows.Forms.Label
-    $lblSource.Text = "Source Drive / ISO:"
-    $lblSource.Location = New-Object System.Drawing.Point(15, 28)
-    $lblSource.Size = New-Object System.Drawing.Size(130, 20)
-    $lblSource.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $grpMedia.Controls.Add($lblSource)
-
+    [void](New-Nano11Label -Text "Source Drive / ISO:" -X 15 -Y 28 -Width 130 -Height 20 -Parent $grpMedia)
     $cmbSource = New-Object System.Windows.Forms.ComboBox
     $cmbSource.Location = New-Object System.Drawing.Point(150, 25)
     $cmbSource.Size = New-Object System.Drawing.Size(370, 24)
     $cmbSource.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
     $cmbSource.ForeColor = [System.Drawing.Color]::White
     $grpMedia.Controls.Add($cmbSource)
+    $gui.Source = $cmbSource
 
-    $populateSources = {
-        $cmbSource.Items.Clear()
-        $detectedSources = @()
-        foreach ($psd in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
-            if (-not $psd.Root) { continue }
-            $r = $psd.Root.TrimEnd('\')
-            $wim = Join-Path -Path "$r\sources" -ChildPath "install.wim"
-            $esd = Join-Path -Path "$r\sources" -ChildPath "install.esd"
-            $vol = Get-Volume -DriveLetter ($r.TrimEnd(':')) -ErrorAction SilentlyContinue
-            $volLabel = if ($vol -and $vol.FileSystemLabel) { " [$($vol.FileSystemLabel)]" } else { "" }
-            if ((Test-Path -LiteralPath $wim) -and ((Get-Item -LiteralPath $wim).Length -gt 500MB)) {
-                $detectedSources += "$r\$volLabel (Windows 11 Media - install.wim)"
-            } elseif ((Test-Path -LiteralPath $esd) -and ((Get-Item -LiteralPath $esd).Length -gt 500MB)) {
-                $detectedSources += "$r\$volLabel (Windows 11 Media - install.esd)"
-            }
-        }
-        $desktopDir = Join-Path -Path $env:USERPROFILE -ChildPath "Desktop"
-        $downloadsDir = Join-Path -Path $env:USERPROFILE -ChildPath "Downloads"
-        foreach ($p in @("E:\", "D:\", "C:\", (Split-Path -Parent $script:Nano11GuiRepoRoot), $env:USERPROFILE, $desktopDir, $downloadsDir)) {
-            if (Test-Path -LiteralPath $p) {
-                $foundIsos = Get-ChildItem -Path $p -Filter "*.iso" -File -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Length -gt 3GB -and ($_.Name -like "*Win11*" -or $_.Name -like "*Windows11*" -or $_.Name -like "*26300*" -or $_.Name -like "*24H2*") -and $_.Name -notlike "*nano11*" }
-                foreach ($iso in $foundIsos) { $detectedSources += $iso.FullName }
-            }
-        }
-        foreach ($srcItem in $detectedSources) { [void]$cmbSource.Items.Add($srcItem) }
-    }
-    & $populateSources
+    Update-Nano11GuiSources -Combo $cmbSource
 
     if ($InitialSettings.SourceDrive) { $cmbSource.Text = $InitialSettings.SourceDrive }
     elseif ($cmbSource.Items.Count -gt 0) { $cmbSource.SelectedIndex = 0 }
     else { $cmbSource.Text = "E:\" }
 
-    $btnBrowseDrive = New-Object System.Windows.Forms.Button
-    $btnBrowseDrive.Text = "Browse Drive..."
-    $btnBrowseDrive.Location = New-Object System.Drawing.Point(530, 24)
-    $btnBrowseDrive.Size = New-Object System.Drawing.Size(110, 26)
-    $btnBrowseDrive.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
-    $btnBrowseDrive.ForeColor = [System.Drawing.Color]::White
-    $btnBrowseDrive.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $btnBrowseDrive.Add_Click({
+    # Browse / rescan buttons carry the control they fill on their Tag
+    [void](New-Nano11Button -Text "Browse Drive..." -X 530 -Y 24 -Width 110 -Height 26 -Tag $cmbSource -Parent $grpMedia -OnClick {
         $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
         $fbd.Description = "Select Windows 11 installation media or mounted virtual DVD drive"
         if ($fbd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
             $p = $fbd.SelectedPath
             if ($p -match '^[A-Za-z]:\\?$') { $p = $p.Substring(0, 2) + "\" }
-            $cmbSource.Text = $p
+            $this.Tag.Text = $p
         }
     })
-    $grpMedia.Controls.Add($btnBrowseDrive)
-
-    $btnBrowseIso = New-Object System.Windows.Forms.Button
-    $btnBrowseIso.Text = "Browse ISO..."
-    $btnBrowseIso.Location = New-Object System.Drawing.Point(645, 24)
-    $btnBrowseIso.Size = New-Object System.Drawing.Size(100, 26)
-    $btnBrowseIso.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
-    $btnBrowseIso.ForeColor = [System.Drawing.Color]::White
-    $btnBrowseIso.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $btnBrowseIso.Add_Click({
+    [void](New-Nano11Button -Text "Browse ISO..." -X 645 -Y 24 -Width 100 -Height 26 -Tag $cmbSource -Parent $grpMedia -OnClick {
         $ofd = New-Object System.Windows.Forms.OpenFileDialog
         $ofd.Filter = "Windows 11 ISO (*.iso)|*.iso|All Files (*.*)|*.*"
-        if ($ofd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $cmbSource.Text = $ofd.FileName }
+        if ($ofd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $this.Tag.Text = $ofd.FileName }
     })
-    $grpMedia.Controls.Add($btnBrowseIso)
+    [void](New-Nano11Button -Text "Rescan" -X 750 -Y 24 -Width 70 -Height 26 -Tag $cmbSource -Parent $grpMedia -OnClick {
+        Update-Nano11GuiSources -Combo $this.Tag
+    })
 
-    $btnRefresh = New-Object System.Windows.Forms.Button
-    $btnRefresh.Text = "Rescan"
-    $btnRefresh.Location = New-Object System.Drawing.Point(750, 24)
-    $btnRefresh.Size = New-Object System.Drawing.Size(70, 26)
-    $btnRefresh.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
-    $btnRefresh.ForeColor = [System.Drawing.Color]::White
-    $btnRefresh.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $btnRefresh.Add_Click({ & $populateSources })
-    $grpMedia.Controls.Add($btnRefresh)
+    $browseFolder = {
+        $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
+        if ($fbd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $this.Tag.Text = $fbd.SelectedPath }
+    }
 
     # WorkDir
-    $lblWork = New-Object System.Windows.Forms.Label
-    $lblWork.Text = "Workspace Dir:"
-    $lblWork.Location = New-Object System.Drawing.Point(15, 60)
-    $lblWork.Size = New-Object System.Drawing.Size(130, 20)
-    $lblWork.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $grpMedia.Controls.Add($lblWork)
-
-    $txtWork = New-Object System.Windows.Forms.TextBox
-    $txtWork.Location = New-Object System.Drawing.Point(150, 57)
-    $txtWork.Size = New-Object System.Drawing.Size(535, 24)
-    $txtWork.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
-    $txtWork.ForeColor = [System.Drawing.Color]::White
+    [void](New-Nano11Label -Text "Workspace Dir:" -X 15 -Y 60 -Width 130 -Height 20 -Parent $grpMedia)
     $docsDir = [Environment]::GetFolderPath('MyDocuments')
     if (-not $docsDir) { $docsDir = Join-Path $env:USERPROFILE "Documents" }
-    $txtWork.Text = if ($InitialSettings.WorkDir) { $InitialSettings.WorkDir } else { Join-Path -Path $docsDir -ChildPath "nano11_workspace" }
-    $grpMedia.Controls.Add($txtWork)
-
-    $btnBrowseWork = New-Object System.Windows.Forms.Button
-    $btnBrowseWork.Text = "Browse Folder..."
-    $btnBrowseWork.Location = New-Object System.Drawing.Point(695, 56)
-    $btnBrowseWork.Size = New-Object System.Drawing.Size(125, 26)
-    $btnBrowseWork.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
-    $btnBrowseWork.ForeColor = [System.Drawing.Color]::White
-    $btnBrowseWork.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $btnBrowseWork.Add_Click({
-        $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
-        if ($fbd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $txtWork.Text = $fbd.SelectedPath }
-    })
-    $grpMedia.Controls.Add($btnBrowseWork)
+    $workText = if ($InitialSettings.WorkDir) { $InitialSettings.WorkDir } else { Join-Path -Path $docsDir -ChildPath "nano11_workspace" }
+    $gui.Work = New-Nano11TextBox -X 150 -Y 57 -Width 535 -Text $workText -Parent $grpMedia
+    [void](New-Nano11Button -Text "Browse Folder..." -X 695 -Y 56 -Width 125 -Height 26 -Tag $gui.Work -OnClick $browseFolder -Parent $grpMedia)
 
     # Index & Drivers
-    $lblIndex = New-Object System.Windows.Forms.Label
-    $lblIndex.Text = "Image Index:"
-    $lblIndex.Location = New-Object System.Drawing.Point(15, 95)
-    $lblIndex.Size = New-Object System.Drawing.Size(130, 20)
-    $lblIndex.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $grpMedia.Controls.Add($lblIndex)
-
-    $txtIndex = New-Object System.Windows.Forms.TextBox
-    $txtIndex.Location = New-Object System.Drawing.Point(150, 92)
-    $txtIndex.Size = New-Object System.Drawing.Size(70, 24)
-    $txtIndex.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
-    $txtIndex.ForeColor = [System.Drawing.Color]::White
-    if ($InitialSettings.Index) { $txtIndex.Text = "$($InitialSettings.Index)" }
-    $grpMedia.Controls.Add($txtIndex)
-
-    $lblDrivers = New-Object System.Windows.Forms.Label
-    $lblDrivers.Text = 'Inject Drivers ($OEM$):'
-    $lblDrivers.Location = New-Object System.Drawing.Point(235, 95)
-    $lblDrivers.Size = New-Object System.Drawing.Size(140, 20)
-    $lblDrivers.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $grpMedia.Controls.Add($lblDrivers)
-
-    $txtDrivers = New-Object System.Windows.Forms.TextBox
-    $txtDrivers.Location = New-Object System.Drawing.Point(380, 92)
-    $txtDrivers.Size = New-Object System.Drawing.Size(305, 24)
-    $txtDrivers.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
-    $txtDrivers.ForeColor = [System.Drawing.Color]::White
-    if ($InitialSettings.InjectDrivers) { $txtDrivers.Text = "$($InitialSettings.InjectDrivers)" }
-    $grpMedia.Controls.Add($txtDrivers)
-
-    $btnBrowseDrivers = New-Object System.Windows.Forms.Button
-    $btnBrowseDrivers.Text = "Browse..."
-    $btnBrowseDrivers.Location = New-Object System.Drawing.Point(695, 91)
-    $btnBrowseDrivers.Size = New-Object System.Drawing.Size(125, 26)
-    $btnBrowseDrivers.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
-    $btnBrowseDrivers.ForeColor = [System.Drawing.Color]::White
-    $btnBrowseDrivers.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $btnBrowseDrivers.Add_Click({
-        $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
-        if ($fbd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $txtDrivers.Text = $fbd.SelectedPath }
-    })
-    $grpMedia.Controls.Add($btnBrowseDrivers)
+    [void](New-Nano11Label -Text "Image Index:" -X 15 -Y 95 -Width 130 -Height 20 -Parent $grpMedia)
+    $gui.Index = New-Nano11TextBox -X 150 -Y 92 -Width 70 -Text $(if ($InitialSettings.Index) { "$($InitialSettings.Index)" }) -Parent $grpMedia
+    [void](New-Nano11Label -Text 'Inject Drivers ($OEM$):' -X 235 -Y 95 -Width 140 -Height 20 -Parent $grpMedia)
+    $gui.Drivers = New-Nano11TextBox -X 380 -Y 92 -Width 305 -Text $(if ($InitialSettings.InjectDrivers) { "$($InitialSettings.InjectDrivers)" }) -Parent $grpMedia
+    [void](New-Nano11Button -Text "Browse..." -X 695 -Y 91 -Width 125 -Height 26 -Tag $gui.Drivers -OnClick $browseFolder -Parent $grpMedia)
 
     # User & Computer
-    $lblUserName = New-Object System.Windows.Forms.Label
-    $lblUserName.Text = "Local Username:"
-    $lblUserName.Location = New-Object System.Drawing.Point(15, 130)
-    $lblUserName.Size = New-Object System.Drawing.Size(130, 20)
-    $lblUserName.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $grpMedia.Controls.Add($lblUserName)
-
-    $txtUserName = New-Object System.Windows.Forms.TextBox
-    $txtUserName.Location = New-Object System.Drawing.Point(150, 127)
-    $txtUserName.Size = New-Object System.Drawing.Size(160, 24)
-    $txtUserName.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
-    $txtUserName.ForeColor = [System.Drawing.Color]::White
-    $txtUserName.Text = if ($InitialSettings.UserName) { "$($InitialSettings.UserName)" } else { "User" }
-    $grpMedia.Controls.Add($txtUserName)
-
-    $lblComputerName = New-Object System.Windows.Forms.Label
-    $lblComputerName.Text = "Computer Name:"
-    $lblComputerName.Location = New-Object System.Drawing.Point(330, 130)
-    $lblComputerName.Size = New-Object System.Drawing.Size(120, 20)
-    $lblComputerName.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $grpMedia.Controls.Add($lblComputerName)
-
-    $txtComputerName = New-Object System.Windows.Forms.TextBox
-    $txtComputerName.Location = New-Object System.Drawing.Point(450, 127)
-    $txtComputerName.Size = New-Object System.Drawing.Size(160, 24)
-    $txtComputerName.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
-    $txtComputerName.ForeColor = [System.Drawing.Color]::White
-    $txtComputerName.Text = if ($InitialSettings.ComputerName) { "$($InitialSettings.ComputerName)" } else { "*" }
-    $grpMedia.Controls.Add($txtComputerName)
+    [void](New-Nano11Label -Text "Local Username:" -X 15 -Y 130 -Width 130 -Height 20 -Parent $grpMedia)
+    $gui.UserName = New-Nano11TextBox -X 150 -Y 127 -Width 160 -Text $(if ($InitialSettings.UserName) { "$($InitialSettings.UserName)" } else { "User" }) -Parent $grpMedia
+    [void](New-Nano11Label -Text "Computer Name:" -X 330 -Y 130 -Width 120 -Height 20 -Parent $grpMedia)
+    $gui.ComputerName = New-Nano11TextBox -X 450 -Y 127 -Width 160 -Text $(if ($InitialSettings.ComputerName) { "$($InitialSettings.ComputerName)" } else { "*" }) -Parent $grpMedia
 
     # Preset Group
-    $grpPreset = New-Object System.Windows.Forms.GroupBox
-    $grpPreset.Text = " Configuration Profile Preset "
-    $grpPreset.Location = New-Object System.Drawing.Point(15, 205)
-    $grpPreset.Size = New-Object System.Drawing.Size(835, 75)
-    $grpPreset.ForeColor = [System.Drawing.Color]::FromArgb(0, 190, 255)
-    $tabMedia.Controls.Add($grpPreset)
+    $grpPreset = New-Nano11GroupBox -Text " Configuration Profile Preset " -X 15 -Y 205 -Width 835 -Height 75 -Parent $tabMedia
 
     $cmbPreset = New-Object System.Windows.Forms.ComboBox
     $cmbPreset.Location = New-Object System.Drawing.Point(15, 28)
@@ -636,100 +815,32 @@ function Show-Nano11GUI {
         "Custom Configuration (Manual Tweak Switches)"
     ))
     $grpPreset.Controls.Add($cmbPreset)
+    $gui.Preset = $cmbPreset
 
     # Payload Format Group
-    $grpPayload = New-Object System.Windows.Forms.GroupBox
-    $grpPayload.Text = " Output Payload Format & Scratch Acceleration "
-    $grpPayload.Location = New-Object System.Drawing.Point(15, 290)
-    $grpPayload.Size = New-Object System.Drawing.Size(835, 95)
-    $grpPayload.ForeColor = [System.Drawing.Color]::FromArgb(0, 190, 255)
-    $tabMedia.Controls.Add($grpPayload)
+    $grpPayload = New-Nano11GroupBox -Text " Output Payload Format & Scratch Acceleration " -X 15 -Y 290 -Width 835 -Height 95 -Parent $tabMedia
+    $gui.RadWIM = New-Nano11CheckBox -Radio -Text "install.wim (LZX - Recommended, High Compatibility)" -X 15 -Y 28 -Width 350 -Height 24 -Checked $true -Parent $grpPayload
+    $gui.RadESD = New-Nano11CheckBox -Radio -Text "install.esd (LZMS - Ultra Compression)" -X 380 -Y 28 -Width 250 -Height 24 -Parent $grpPayload
+    $gui.RadSWM = New-Nano11CheckBox -Radio -Text "install.swm (Split-WIM for FAT32 USB)" -X 640 -Y 28 -Width 185 -Height 24 -Parent $grpPayload
 
-    $radWIM = New-Object System.Windows.Forms.RadioButton
-    $radWIM.Text = "install.wim (LZX - Recommended, High Compatibility)"
-    $radWIM.Location = New-Object System.Drawing.Point(15, 28)
-    $radWIM.Size = New-Object System.Drawing.Size(350, 24)
-    $radWIM.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $radWIM.Checked = $true
-    $grpPayload.Controls.Add($radWIM)
+    if ($InitialSettings.ExportESDMode) { $gui.RadESD.Checked = $true }
+    elseif ($InitialSettings.SplitWIMMode) { $gui.RadSWM.Checked = $true }
 
-    $radESD = New-Object System.Windows.Forms.RadioButton
-    $radESD.Text = "install.esd (LZMS - Ultra Compression)"
-    $radESD.Location = New-Object System.Drawing.Point(380, 28)
-    $radESD.Size = New-Object System.Drawing.Size(250, 24)
-    $radESD.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $grpPayload.Controls.Add($radESD)
+    $gui.VHDX = New-Nano11CheckBox -Text "Use Fast VHDX Scratch Disk (Accelerates DISM image servicing file I/O)" -X 15 -Y 60 -Width 550 -Height 24 `
+        -Checked ([bool]$InitialSettings.UseVHDX) -Parent $grpPayload
 
-    $radSWM = New-Object System.Windows.Forms.RadioButton
-    $radSWM.Text = "install.swm (Split-WIM for FAT32 USB)"
-    $radSWM.Location = New-Object System.Drawing.Point(640, 28)
-    $radSWM.Size = New-Object System.Drawing.Size(185, 24)
-    $radSWM.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $grpPayload.Controls.Add($radSWM)
-
-    if ($InitialSettings.ExportESDMode) { $radESD.Checked = $true }
-    elseif ($InitialSettings.SplitWIMMode) { $radSWM.Checked = $true }
-
-    $chkVHDX = New-Object System.Windows.Forms.CheckBox
-    $chkVHDX.Text = "Use Fast VHDX Scratch Disk (Accelerates DISM image servicing file I/O)"
-    $chkVHDX.Location = New-Object System.Drawing.Point(15, 60)
-    $chkVHDX.Size = New-Object System.Drawing.Size(550, 24)
-    $chkVHDX.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $chkVHDX.Checked = [bool]$InitialSettings.UseVHDX
-    $grpPayload.Controls.Add($chkVHDX)
-
-    # Function to create toggle tab with select all / clear all buttons
-    $createTweakTab = {
-        param([string]$title, [string]$category)
-        $tab = New-Object System.Windows.Forms.TabPage
-        $tab.Text = " $title "
-        $tab.BackColor = [System.Drawing.Color]::FromArgb(26, 28, 34)
-        $tabControl.TabPages.Add($tab)
-
-        # Top Button Bar
-        $bar = New-Object System.Windows.Forms.Panel
-        $bar.Dock = [System.Windows.Forms.DockStyle]::Top
-        $bar.Height = 40
-        $bar.BackColor = [System.Drawing.Color]::FromArgb(20, 22, 28)
-        $tab.Controls.Add($bar)
-
-        $btnSelectAll = New-Object System.Windows.Forms.Button
-        $btnSelectAll.Text = "Select All"
-        $btnSelectAll.Location = New-Object System.Drawing.Point(15, 7)
-        $btnSelectAll.Size = New-Object System.Drawing.Size(95, 26)
-        $btnSelectAll.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
-        $btnSelectAll.ForeColor = [System.Drawing.Color]::White
-        $btnSelectAll.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-        $bar.Controls.Add($btnSelectAll)
-
-        $btnClearAll = New-Object System.Windows.Forms.Button
-        $btnClearAll.Text = "Clear All"
-        $btnClearAll.Location = New-Object System.Drawing.Point(120, 7)
-        $btnClearAll.Size = New-Object System.Drawing.Size(95, 26)
-        $btnClearAll.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
-        $btnClearAll.ForeColor = [System.Drawing.Color]::White
-        $btnClearAll.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-        $bar.Controls.Add($btnClearAll)
-
-        $lblCount = New-Object System.Windows.Forms.Label
-        $lblCount.Text = "Switches: $category"
-        $lblCount.Location = New-Object System.Drawing.Point(230, 11)
-        $lblCount.Size = New-Object System.Drawing.Size(400, 20)
-        $lblCount.ForeColor = [System.Drawing.Color]::FromArgb(0, 190, 255)
-        $bar.Controls.Add($lblCount)
-
-        # Scrollable flow panel
-        $flow = New-Object System.Windows.Forms.FlowLayoutPanel
-        $flow.Dock = [System.Windows.Forms.DockStyle]::Fill
-        $flow.AutoScroll = $true
-        $flow.Padding = New-Object System.Windows.Forms.Padding(15, 10, 15, 10)
-        $flow.FlowDirection = [System.Windows.Forms.FlowDirection]::TopDown
-        $flow.WrapContents = $true
-        $tab.Controls.Add($flow)
-        $flow.BringToFront()
-
+    # =========================================================================
+    # TABS 2-5: tweak toggles from config\tweaks.psd1, one tab per category
+    # =========================================================================
+    foreach ($cat in @(
+        @(" 2. Security & Bypass ", "Security"),
+        @(" 3. Privacy & AI ", "Privacy"),
+        @(" 4. Performance ", "Performance"),
+        @(" 5. UI & Shell ", "UI")
+    )) {
+        $category = $cat[1]
+        $page = New-Nano11ToggleTab -Text $cat[0] -TabControl $tabControl -Caption "Switches: $category"
         $tabCheckboxes = [System.Collections.Generic.List[System.Windows.Forms.CheckBox]]::new()
-
         foreach ($tk in $script:AllTweakDefs.Keys) {
             $def = $script:AllTweakDefs[$tk]
             if ($def.Category -ne $category) { continue }
@@ -739,53 +850,17 @@ function Show-Nano11GUI {
             } elseif ($InitialSettings.ContainsKey($tk)) {
                 $initVal = [bool]$InitialSettings[$tk]
             }
-            $chk = & $createToggleChk $flow $tk "$tk - $($def.Description)" $def.Description $initVal $tk
-            $tweakCheckboxes[$tk] = $chk
+            $chk = New-Nano11ToggleCheckBox -Parent $page.Flow -Key $tk -Text "$tk - $($def.Description)" -ToolTip $toolTip -ToolTipText $def.Description -Checked $initVal
+            $gui.TweakCheckboxes[$tk] = $chk
             $tabCheckboxes.Add($chk)
         }
-
-        # $tabCheckboxes is local to this scriptblock's scope and is gone by the time a
-        # Click handler runs, so carry the list on the buttons themselves via Tag.
-        $btnSelectAll.Tag = $tabCheckboxes
-        $btnClearAll.Tag = $tabCheckboxes
-        $btnSelectAll.Add_Click({
-            foreach ($c in $this.Tag) { $c.Checked = $true }
-        })
-        $btnClearAll.Add_Click({
-            foreach ($c in $this.Tag) { $c.Checked = $false }
-        })
-
-        return $tab
+        [void](Add-Nano11SelectButtons -Parent $page.Bar -Target $tabCheckboxes -X 15 -Y 7)
     }
-
-    # Create Categories
-    $tabSec  = & $createTweakTab "2. Security & Bypass" "Security"
-    $tabPriv = & $createTweakTab "3. Privacy & AI" "Privacy"
-    $tabPerf = & $createTweakTab "4. Performance" "Performance"
-    $tabUI   = & $createTweakTab "5. UI & Shell" "UI"
 
     # =========================================================================
     # TAB 6: Components & Services
     # =========================================================================
-    $tabServices = New-Object System.Windows.Forms.TabPage
-    $tabServices.Text = " 6. Services & Apps "
-    $tabServices.BackColor = [System.Drawing.Color]::FromArgb(26, 28, 34)
-    $tabControl.TabPages.Add($tabServices)
-
-    $barSvc = New-Object System.Windows.Forms.Panel
-    $barSvc.Dock = [System.Windows.Forms.DockStyle]::Top
-    $barSvc.Height = 40
-    $barSvc.BackColor = [System.Drawing.Color]::FromArgb(20, 22, 28)
-    $tabServices.Controls.Add($barSvc)
-
-    $flowSvc = New-Object System.Windows.Forms.FlowLayoutPanel
-    $flowSvc.Dock = [System.Windows.Forms.DockStyle]::Fill
-    $flowSvc.AutoScroll = $true
-    $flowSvc.Padding = New-Object System.Windows.Forms.Padding(15, 10, 15, 10)
-    $flowSvc.FlowDirection = [System.Windows.Forms.FlowDirection]::TopDown
-    $flowSvc.WrapContents = $true
-    $tabServices.Controls.Add($flowSvc)
-    $flowSvc.BringToFront()
+    $page = New-Nano11ToggleTab -Text " 6. Services & Apps " -TabControl $tabControl
 
     # Components with a Gui entry in config\tweaks.psd1, in their Gui.Order
     $svcDefs = @($script:ComponentDefs.Values | Where-Object { $_.Gui } | Sort-Object { [int]$_.Gui.Order } | ForEach-Object {
@@ -795,133 +870,15 @@ function Show-Nano11GUI {
     foreach ($sd in $svcDefs) {
         $initVal = [bool]$sd.Def
         if ($InitialSettings.ContainsKey($sd.Key)) { $initVal = [bool]$InitialSettings[$sd.Key] }
-        $chk = & $createToggleChk $flowSvc $sd.Key "$($sd.Key) - $($sd.Text)" $sd.Desc $initVal $sd.Key
-        $componentCheckboxes[$sd.Key] = $chk
+        $chk = New-Nano11ToggleCheckBox -Parent $page.Flow -Key $sd.Key -Text "$($sd.Key) - $($sd.Text)" -ToolTip $toolTip -ToolTipText $sd.Desc -Checked $initVal
+        $gui.ComponentCheckboxes[$sd.Key] = $chk
         $svcCheckboxes.Add($chk)
     }
-
-    $btnSvcAll = New-Object System.Windows.Forms.Button
-    $btnSvcAll.Text = "Select All"
-    $btnSvcAll.Location = New-Object System.Drawing.Point(15, 7)
-    $btnSvcAll.Size = New-Object System.Drawing.Size(95, 26)
-    $btnSvcAll.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
-    $btnSvcAll.ForeColor = [System.Drawing.Color]::White
-    $btnSvcAll.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $btnSvcAll.Add_Click({ foreach ($c in $svcCheckboxes) { $c.Checked = $true } })
-    $barSvc.Controls.Add($btnSvcAll)
-
-    $btnSvcClear = New-Object System.Windows.Forms.Button
-    $btnSvcClear.Text = "Clear All"
-    $btnSvcClear.Location = New-Object System.Drawing.Point(120, 7)
-    $btnSvcClear.Size = New-Object System.Drawing.Size(95, 26)
-    $btnSvcClear.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
-    $btnSvcClear.ForeColor = [System.Drawing.Color]::White
-    $btnSvcClear.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $btnSvcClear.Add_Click({ foreach ($c in $svcCheckboxes) { $c.Checked = $false } })
-    $barSvc.Controls.Add($btnSvcClear)
+    [void](Add-Nano11SelectButtons -Parent $page.Bar -Target $svcCheckboxes -X 15 -Y 7)
 
     # =========================================================================
     # TAB 7: Advanced Debloat (Physical Deletion)
     # =========================================================================
-    $tabDebloat = New-Object System.Windows.Forms.TabPage
-    $tabDebloat.Text = " 7. Advanced Debloat "
-    $tabDebloat.BackColor = [System.Drawing.Color]::FromArgb(26, 28, 34)
-    $tabControl.TabPages.Add($tabDebloat)
-
-    $barDeb = New-Object System.Windows.Forms.Panel
-    $barDeb.Dock = [System.Windows.Forms.DockStyle]::Top
-    $barDeb.Height = 40
-    $barDeb.BackColor = [System.Drawing.Color]::FromArgb(20, 22, 28)
-    $tabDebloat.Controls.Add($barDeb)
-
-    $lblDebWarn = New-Object System.Windows.Forms.Label
-    $lblDebWarn.Text = "Notice: Standard uses CBS safe operations. Experimental physically deletes files."
-    $lblDebWarn.Location = New-Object System.Drawing.Point(15, 11)
-    $lblDebWarn.Size = New-Object System.Drawing.Size(650, 20)
-    $lblDebWarn.ForeColor = [System.Drawing.Color]::FromArgb(255, 140, 100)
-    $lblDebWarn.Font = New-Object System.Drawing.Font($uiFontName, 8.5)
-    $barDeb.Controls.Add($lblDebWarn)
-
-    $flowDeb = New-Object System.Windows.Forms.FlowLayoutPanel
-    $flowDeb.Dock = [System.Windows.Forms.DockStyle]::Fill
-    $flowDeb.AutoScroll = $true
-    $flowDeb.Padding = New-Object System.Windows.Forms.Padding(15, 10, 15, 10)
-    $tabDebloat.Controls.Add($flowDeb)
-    $flowDeb.BringToFront()
-
-    # Standard Debloat group
-    $grpStdDeb = New-Object System.Windows.Forms.GroupBox
-    $grpStdDeb.Text = " Standard Debloat (Safe Component Pruning) "
-    $grpStdDeb.Size = New-Object System.Drawing.Size(410, 480)
-    $grpStdDeb.ForeColor = [System.Drawing.Color]::FromArgb(0, 190, 255)
-    $flowDeb.Controls.Add($grpStdDeb)
-
-    $clbStd = New-Object System.Windows.Forms.CheckedListBox
-    $clbStd.Dock = [System.Windows.Forms.DockStyle]::Fill
-    $clbStd.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
-    $clbStd.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $clbStd.CheckOnClick = $true
-    $grpStdDeb.Controls.Add($clbStd)
-
-    # Experimental Debloat group
-    $grpExpDeb = New-Object System.Windows.Forms.GroupBox
-    $grpExpDeb.Text = " Experimental Physical Debloat (Destructive / Breaks WU) "
-    $grpExpDeb.Size = New-Object System.Drawing.Size(410, 480)
-    $grpExpDeb.ForeColor = [System.Drawing.Color]::FromArgb(255, 100, 100)
-    $flowDeb.Controls.Add($grpExpDeb)
-
-    $clbExp = New-Object System.Windows.Forms.CheckedListBox
-    $clbExp.Dock = [System.Windows.Forms.DockStyle]::Fill
-    $clbExp.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
-    $clbExp.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $clbExp.CheckOnClick = $true
-    $grpExpDeb.Controls.Add($clbExp)
-
-    # Select All / Clear All bar at the bottom of each debloat group. The target list
-    # travels on each button's Tag so the Click handler doesn't depend on scope.
-    foreach ($pair in @(@($grpStdDeb, $clbStd, $false), @($grpExpDeb, $clbExp, $true))) {
-        $grp = $pair[0]; $clb = $pair[1]; $isDestructive = $pair[2]
-        $barList = New-Object System.Windows.Forms.Panel
-        $barList.Dock = [System.Windows.Forms.DockStyle]::Bottom
-        $barList.Height = 34
-        $grp.Controls.Add($barList)
-        $clb.BringToFront()
-
-        $btnListAll = New-Object System.Windows.Forms.Button
-        $btnListAll.Text = "Select All"
-        $btnListAll.Location = New-Object System.Drawing.Point(5, 4)
-        $btnListAll.Size = New-Object System.Drawing.Size(95, 26)
-        $btnListAll.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
-        $btnListAll.ForeColor = [System.Drawing.Color]::White
-        $btnListAll.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-        $btnListAll.Tag = @{ List = $clb; Confirm = $isDestructive }
-        $btnListAll.Add_Click({
-            $t = $this.Tag
-            if ($t.Confirm) {
-                $ans = [System.Windows.Forms.MessageBox]::Show(
-                    "Select ALL experimental physical deletions?`nThis permanently breaks Windows Update and sfc.",
-                    "Confirm", [System.Windows.Forms.MessageBoxButtons]::YesNo,
-                    [System.Windows.Forms.MessageBoxIcon]::Warning)
-                if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) { return }
-            }
-            for ($i = 0; $i -lt $t.List.Items.Count; $i++) { $t.List.SetItemChecked($i, $true) }
-        })
-        $barList.Controls.Add($btnListAll)
-
-        $btnListClear = New-Object System.Windows.Forms.Button
-        $btnListClear.Text = "Clear All"
-        $btnListClear.Location = New-Object System.Drawing.Point(105, 4)
-        $btnListClear.Size = New-Object System.Drawing.Size(95, 26)
-        $btnListClear.BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60)
-        $btnListClear.ForeColor = [System.Drawing.Color]::White
-        $btnListClear.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-        $btnListClear.Tag = $clb
-        $btnListClear.Add_Click({
-            for ($i = 0; $i -lt $this.Tag.Items.Count; $i++) { $this.Tag.SetItemChecked($i, $false) }
-        })
-        $barList.Controls.Add($btnListClear)
-    }
-
     # Populate standard and experimental debloat lists
     $stdItems = @(
         "Remove WinRE (reagentc /disable + file delete) [500-700MB]",
@@ -993,22 +950,34 @@ function Show-Nano11GUI {
 
     $preStd = @()
     if ($InitialSettings.AdvancedDebloatStandard) { $preStd = @($InitialSettings.AdvancedDebloatStandard) }
-    foreach ($item in $stdItems) {
-        $chk = $preStd -contains $item
-        [void]$clbStd.Items.Add($item, $chk)
-    }
-
     $preExp = @()
     if ($InitialSettings.AdvancedDebloatExperimental) { $preExp = @($InitialSettings.AdvancedDebloatExperimental) }
-    foreach ($item in $expItems) {
-        $chk = $preExp -contains $item
-        [void]$clbExp.Items.Add($item, $chk)
+
+    $tabDebloat = New-Nano11TabPage -Text " 7. Advanced Debloat " -TabControl $tabControl
+    $barDeb = New-Nano11ButtonBar -Parent $tabDebloat
+    [void](New-Nano11Label -Text "Notice: Standard uses CBS safe operations. Experimental physically deletes files." -X 15 -Y 11 -Width 650 -Height 20 `
+        -ForeColor ([System.Drawing.Color]::FromArgb(255, 140, 100)) -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $barDeb)
+    $flowDeb = New-Nano11FlowPanel -Parent $tabDebloat
+
+    # Standard Debloat group
+    $grpStdDeb = New-Nano11GroupBox -Text " Standard Debloat (Safe Component Pruning) " -Width 410 -Height 480 -Parent $flowDeb
+    $gui.ClbStd = New-Nano11CheckedList -Items $stdItems -Selected $preStd -Fill -Parent $grpStdDeb
+
+    # Experimental Debloat group
+    $grpExpDeb = New-Nano11GroupBox -Text " Experimental Physical Debloat (Destructive / Breaks WU) " -Width 410 -Height 480 `
+        -ForeColor ([System.Drawing.Color]::FromArgb(255, 100, 100)) -Parent $flowDeb
+    $gui.ClbExp = New-Nano11CheckedList -Items $expItems -Selected $preExp -Fill -Parent $grpExpDeb
+
+    # Select All / Clear All bar at the bottom of each debloat group
+    foreach ($pair in @(@($grpStdDeb, $gui.ClbStd, $null), @($grpExpDeb, $gui.ClbExp, "Select ALL experimental physical deletions?`nThis permanently breaks Windows Update and sfc."))) {
+        $barList = New-Nano11ButtonBar -Parent $pair[0] -Dock Bottom -Height 34 -BackColor $null
+        $pair[1].BringToFront()
+        [void](Add-Nano11SelectButtons -Parent $barList -Target $pair[1] -X 5 -Y 4 -Step 100 -ConfirmSelect $pair[2])
     }
 
     # =========================================================================
     # Synchronization & Presets Handling
     # =========================================================================
-    $presetKeyMap = @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')
     $initPresetKeys = @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')
     $initPresetName = "$($InitialSettings.PresetKey)".Trim().ToLower()
     $initPresetIdx = [array]::IndexOf($initPresetKeys, $initPresetName)
@@ -1017,168 +986,32 @@ function Show-Nano11GUI {
     }
     $cmbPreset.SelectedIndex = $initPresetIdx
 
-    $script:guiBasePresetKey = if ($initPresetIdx -lt $presetKeyMap.Count) { $presetKeyMap[$initPresetIdx] } else { $null }
-
-    $updateEstimate = {
-        try {
-            $mb = 5500.0
-            if ($componentCheckboxes['KeepExtraFonts'] -and $componentCheckboxes['KeepExtraFonts'].Checked) { $mb += 150 }
-            if ($componentCheckboxes['KeepAsianIME'] -and $componentCheckboxes['KeepAsianIME'].Checked)     { $mb += 400 }
-            if ($componentCheckboxes['RemoveDefender'] -and -not $componentCheckboxes['RemoveDefender'].Checked) { $mb += 200 }
-            if ($componentCheckboxes['RemoveStore'] -and -not $componentCheckboxes['RemoveStore'].Checked)       { $mb += 120 }
-            if ($componentCheckboxes['DisableWindowsUpdate'] -and -not $componentCheckboxes['DisableWindowsUpdate'].Checked) { $mb += 50 }
-            if ($componentCheckboxes['KeepBasicApps'] -and $componentCheckboxes['KeepBasicApps'].Checked)       { $mb += 30 }
-            if ($componentCheckboxes['KeepSearchIndex'] -and $componentCheckboxes['KeepSearchIndex'].Checked)   { $mb += 20 }
-            if ($componentCheckboxes['KeepXboxServices'] -and $componentCheckboxes['KeepXboxServices'].Checked) { $mb += 40 }
-            if ($componentCheckboxes['RemoveDrivers'] -and $componentCheckboxes['RemoveDrivers'].Checked)       { $mb -= 80 }
-            if ($componentCheckboxes['UltraSlimMode'] -and $componentCheckboxes['UltraSlimMode'].Checked)       { $mb -= 200 }
-            if ($radESD.Checked) { $mb = [math]::Round($mb * 0.82) }
-            $lblEstimate.Text = ("Estimated ISO Size: ~{0} GB (LZX baseline)" -f [math]::Round($mb / 1024, 2))
-        } catch {}
-    }
-
-    $applyPreset = {
-        param($presetIndex)
-        $script:updatingPreset = $true
-        if ($presetIndex -ge 0 -and $presetIndex -lt $presetKeyMap.Count) {
-            $pKey = $presetKeyMap[$presetIndex]
-            $pObj = Get-Nano11Preset -Name $pKey
-            if ($pObj) {
-                # Update component checkboxes
-                foreach ($k in $componentCheckboxes.Keys) {
-                    if ($pObj.Contains($k)) {
-                        $componentCheckboxes[$k].Checked = [bool]$pObj[$k]
-                    }
-                }
-                # Update tweak checkboxes
-                $pTweaks = if ($pObj.TweakSettings) { $pObj.TweakSettings } else { $null }
-                foreach ($tk in $tweakCheckboxes.Keys) {
-                    if ($pTweaks -and $pTweaks.Contains($tk)) {
-                        $tweakCheckboxes[$tk].Checked = [bool]$pTweaks[$tk]
-                    } elseif ($pObj.Contains($tk)) {
-                        $tweakCheckboxes[$tk].Checked = [bool]$pObj[$tk]
-                    } else {
-                        $tweakCheckboxes[$tk].Checked = [bool]$script:AllTweakDefs[$tk].Default
-                    }
-                }
-                # Update payload radio
-                $fmt = "$($pObj.PayloadFormat)".ToUpper()
-                if ($fmt -eq 'ESD') { $radESD.Checked = $true }
-                elseif ($fmt -eq 'SWM') { $radSWM.Checked = $true }
-                else { $radWIM.Checked = $true }
-                $script:guiBasePresetKey = $pKey
-            }
-        }
-        $script:updatingPreset = $false
-        & $updateEstimate
-    }
+    $script:guiBasePresetKey = if ($initPresetIdx -lt $gui.PresetKeyMap.Count) { $gui.PresetKeyMap[$initPresetIdx] } else { $null }
 
     $cmbPreset.Add_SelectedIndexChanged({
-        if (-not $script:updatingPreset -and $cmbPreset.SelectedIndex -ne ($cmbPreset.Items.Count - 1)) {
-            & $applyPreset $cmbPreset.SelectedIndex
+        if (-not $script:updatingPreset -and $this.SelectedIndex -ne ($this.Items.Count - 1)) {
+            Set-Nano11GuiPreset -Gui $this.FindForm().Tag -PresetIndex $this.SelectedIndex
         }
     })
 
-    foreach ($r in @($radWIM, $radESD, $radSWM)) {
-        $r.Add_CheckedChanged({ & $updateEstimate })
+    foreach ($r in @($gui.RadWIM, $gui.RadESD, $gui.RadSWM)) {
+        $r.Add_CheckedChanged({ Update-Nano11GuiEstimate -Gui $this.FindForm().Tag })
     }
-    & $updateEstimate
+    Update-Nano11GuiEstimate -Gui $gui
 
-    # Build Button Action
-    $formResult = @{ Success = $false }
+    Disable-Nano11Mnemonic -Control $form
 
-    $btnBuild.Add_Click({
-        $srcText = $cmbSource.Text.Trim()
-        if (-not $srcText) {
-            [System.Windows.Forms.MessageBox]::Show("Please specify Windows 11 installation media or ISO image.", "Source Required", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
-            return
-        }
-
-        if ($srcText -match '^([A-Za-z]:)') {
-            $candLetter = $matches[1]
-            $wimCheck = Join-Path -Path "$candLetter\sources" -ChildPath "install.wim"
-            if (Test-Path -LiteralPath $wimCheck) {
-                $resolvedSource = $candLetter
-            } elseif ($srcText.EndsWith(".iso", [System.StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $srcText)) {
-                $resolvedSource = $srcText
-            } else {
-                $resolvedSource = $candLetter
-            }
-        } elseif ($srcText.EndsWith(".iso", [System.StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $srcText)) {
-            $resolvedSource = $srcText
-        } else {
-            $resolvedSource = $srcText
-        }
-
-        $wDir = $txtWork.Text.Trim()
-        if (-not $wDir) {
-            $docsDir = [Environment]::GetFolderPath('MyDocuments')
-            if (-not $docsDir) { $docsDir = Join-Path $env:USERPROFILE "Documents" }
-            $wDir = Join-Path -Path $docsDir -ChildPath "nano11_workspace"
-        }
-
-        $guiUserName = $txtUserName.Text.Trim()
-        $guiComputerName = $txtComputerName.Text.Trim()
-        if (-not $guiComputerName) { $guiComputerName = '*' }
-        if ($guiUserName -notmatch '^[\p{L}\p{N}_][\p{L}\p{N} ._-]{0,19}$') {
-            [System.Windows.Forms.MessageBox]::Show("Username must contain only letters, digits, spaces, '.', '_', or '-' (max 20 chars).", "Invalid Username", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
-            return
-        }
-        if ($guiComputerName -notmatch '^(\*|[A-Za-z0-9][A-Za-z0-9-]{0,14})$') {
-            [System.Windows.Forms.MessageBox]::Show("ComputerName must be '*' or up to 15 alphanumeric characters and hyphens.", "Invalid ComputerName", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
-            return
-        }
-
-        $formResult.Success                      = $true
-        $formResult.UserName                     = $guiUserName
-        $formResult.ComputerName                 = $guiComputerName
-        $formResult.PresetKey                    = if ($cmbPreset.SelectedIndex -ge 0 -and $cmbPreset.SelectedIndex -lt $presetKeyMap.Count) { $presetKeyMap[$cmbPreset.SelectedIndex] } else { $null }
-        $formResult.BasePresetKey                = $script:guiBasePresetKey
-        $formResult.SourceDrive                  = $resolvedSource
-        $formResult.WorkDir                      = $wDir
-        $formResult.Index                        = $txtIndex.Text.Trim()
-        $formResult.InjectDrivers                = $txtDrivers.Text.Trim()
-        $formResult.DryRun                       = $chkDryRun.Checked
-        $formResult.UseVHDX                      = $chkVHDX.Checked
-        $formResult.ExportESDMode                = $radESD.Checked
-        $formResult.SplitWIMMode                 = $radSWM.Checked
-
-        # Component values
-        foreach ($k in $componentCheckboxes.Keys) {
-            $formResult[$k] = $componentCheckboxes[$k].Checked
-        }
-
-        # Granular TweakSettings
-        $resolvedTweaks = [ordered]@{}
-        foreach ($k in $tweakCheckboxes.Keys) {
-            $resolvedTweaks[$k] = $tweakCheckboxes[$k].Checked
-        }
-        $formResult.TweakSettings = $resolvedTweaks
-
-        # Advanced Debloat items
-        $stdSelected = @()
-        foreach ($item in $clbStd.CheckedItems) { $stdSelected += "$item" }
-        $expSelected = @()
-        foreach ($item in $clbExp.CheckedItems) { $expSelected += "$item" }
-        $formResult.AdvancedDebloatStandard     = $stdSelected
-        $formResult.AdvancedDebloatExperimental = $expSelected
-
-        $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
-        $form.Close()
-    })
-
-    $disableMnemonic = { param($ctl) foreach ($c in $ctl.Controls) { if ($c.PSObject.Properties['UseMnemonic']) { $c.UseMnemonic = $false }; & $disableMnemonic $c } }
-    & $disableMnemonic $form
+    if ($NoShow) { return $gui }
 
     $form.TopMost = $true
     $form.Add_Shown({
-        $form.Activate()
-        $form.TopMost = $false
+        $this.Activate()
+        $this.TopMost = $false
     })
 
     $diagResult = $form.ShowDialog()
     if ($diagResult -eq [System.Windows.Forms.DialogResult]::OK) {
-        return $formResult
+        return $gui.Result
     }
     return @{ Success = $false }
 }
