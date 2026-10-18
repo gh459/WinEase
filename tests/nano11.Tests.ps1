@@ -849,3 +849,23 @@ Describe "nano11 GUI - smoke test (form built without ShowDialog)" {
         Invoke-SelectButtons $dlg | Should Be 4
     }
 }
+
+Describe "nano11 code quality - PSScriptAnalyzer" {
+    $analyzerAvailable = [bool](Get-Module -ListAvailable -Name PSScriptAnalyzer)
+    if (-not $analyzerAvailable) {
+        Write-Warning "PSScriptAnalyzer is not installed - skipping the analyzer test. Install it with: Install-Module PSScriptAnalyzer -Scope CurrentUser"
+    }
+
+    It "reports zero Error/Warning findings with PSScriptAnalyzerSettings.psd1" -Skip:(-not $analyzerAvailable) {
+        $settingsPath = Join-Path -Path $script:RepoRoot -ChildPath "PSScriptAnalyzerSettings.psd1"
+        $targets = @(
+            (Join-Path $script:RepoRoot "nano11builder.ps1"),
+            (Join-Path $script:RepoRoot "nano11helpers.ps1"),
+            $script:GuiPath
+        ) + @(Get-ChildItem -Path (Join-Path $script:RepoRoot "phases"), (Join-Path $script:RepoRoot "scripts"), (Join-Path $script:RepoRoot "tools"), (Join-Path $script:RepoRoot "tests") -Filter "*.ps1" -File | ForEach-Object { $_.FullName })
+        $findings = @(foreach ($target in $targets) {
+            Invoke-ScriptAnalyzer -Path $target -Settings $settingsPath -Severity Error, Warning
+        })
+        ($findings | ForEach-Object { "$($_.RuleName) $(Split-Path -Leaf $_.ScriptPath):$($_.Line) $($_.Message)" }) -join "`n" | Should Be ''
+    }
+}
