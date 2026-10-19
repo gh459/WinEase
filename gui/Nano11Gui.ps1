@@ -12,6 +12,24 @@ Add-Type -AssemblyName System.Drawing
 # Repository root (this file lives in <repo>\gui)
 $script:Nano11GuiRepoRoot = Split-Path -Parent $PSScriptRoot
 
+# The one colour table of the GUI (and of tools\migrator\Nano11-Migrator.ps1, which loads this file)
+$script:Nano11GuiColors = @{
+    Text       = [System.Drawing.Color]::FromArgb(235, 238, 245)  # default text
+    Input      = [System.Drawing.Color]::FromArgb(35, 38, 46)     # text boxes, lists, combo boxes
+    Accent     = [System.Drawing.Color]::FromArgb(0, 190, 255)    # captions, group titles
+    Button     = [System.Drawing.Color]::FromArgb(45, 50, 60)     # flat button face
+    Primary    = [System.Drawing.Color]::FromArgb(0, 120, 215)    # build / OK button
+    Window     = [System.Drawing.Color]::FromArgb(26, 28, 34)     # main window and tab pages
+    Header     = [System.Drawing.Color]::FromArgb(18, 20, 24)     # header and bottom panels
+    Bar        = [System.Drawing.Color]::FromArgb(20, 22, 28)     # button bars
+    Dialog     = [System.Drawing.Color]::FromArgb(24, 26, 32)     # small dialogs
+    DialogAlt  = [System.Drawing.Color]::FromArgb(24, 26, 31)     # Advanced Debloat dialog, migrator window
+    Muted      = [System.Drawing.Color]::FromArgb(148, 163, 184)  # secondary text
+    Subtle     = [System.Drawing.Color]::FromArgb(160, 165, 175)  # sub-title text
+    Warn       = [System.Drawing.Color]::FromArgb(255, 140, 100)  # notices, load errors
+    Danger     = [System.Drawing.Color]::FromArgb(255, 100, 100)  # destructive options
+}
+
 # =========================================================================
 # Control helpers
 # =========================================================================
@@ -21,7 +39,7 @@ function New-Nano11Button {
     param(
         [Parameter(Mandatory = $true)][string]$Text,
         [int]$X, [int]$Y, [int]$Width, [int]$Height,
-        [System.Drawing.Color]$BackColor = [System.Drawing.Color]::FromArgb(45, 50, 60),
+        [System.Drawing.Color]$BackColor = $script:Nano11GuiColors.Button,
         [System.Drawing.Color]$ForeColor = [System.Drawing.Color]::White,
         [System.Drawing.Font]$Font,
         [object]$Tag,
@@ -47,7 +65,7 @@ function New-Nano11Label {
         [Parameter(Mandatory = $true)][string]$Text,
         [int]$X, [int]$Y, [int]$Width, [int]$Height,
         [switch]$AutoSize,
-        [System.Drawing.Color]$ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245),
+        [System.Drawing.Color]$ForeColor = $script:Nano11GuiColors.Text,
         [System.Drawing.Font]$Font,
         [object]$Parent
     )
@@ -70,7 +88,7 @@ function New-Nano11TextBox {
     $txt = New-Object System.Windows.Forms.TextBox
     $txt.Location = New-Object System.Drawing.Point($X, $Y)
     $txt.Size = New-Object System.Drawing.Size($Width, $Height)
-    $txt.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
+    $txt.BackColor = $script:Nano11GuiColors.Input
     $txt.ForeColor = [System.Drawing.Color]::White
     if ($Text) { $txt.Text = $Text }
     if ($Parent) { $Parent.Controls.Add($txt) }
@@ -90,7 +108,7 @@ function New-Nano11CheckBox {
     $chk.Text = $Text
     $chk.Location = New-Object System.Drawing.Point($X, $Y)
     $chk.Size = New-Object System.Drawing.Size($Width, $Height)
-    $chk.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $chk.ForeColor = $script:Nano11GuiColors.Text
     if ($Checked) { $chk.Checked = $true }
     if ($Parent) { $Parent.Controls.Add($chk) }
     return $chk
@@ -101,7 +119,7 @@ function New-Nano11GroupBox {
     param(
         [Parameter(Mandatory = $true)][string]$Text,
         [int]$X, [int]$Y, [int]$Width, [int]$Height,
-        [System.Drawing.Color]$ForeColor = [System.Drawing.Color]::FromArgb(0, 190, 255),
+        [System.Drawing.Color]$ForeColor = $script:Nano11GuiColors.Accent,
         [object]$Parent
     )
     $grp = New-Object System.Windows.Forms.GroupBox
@@ -132,8 +150,8 @@ function New-Nano11CheckedList {
         $clb.Location = New-Object System.Drawing.Point($X, $Y)
         $clb.Size = New-Object System.Drawing.Size($Width, $Height)
     }
-    $clb.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
-    $clb.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $clb.BackColor = $script:Nano11GuiColors.Input
+    $clb.ForeColor = $script:Nano11GuiColors.Text
     if ($Font) { $clb.Font = $Font }
     $clb.CheckOnClick = $true
     foreach ($item in $Items) { [void]$clb.Items.Add($item, ($Selected -contains $item)) }
@@ -145,7 +163,7 @@ function New-Nano11TabPage {
     param(
         [Parameter(Mandatory = $true)][string]$Text,
         [Parameter(Mandatory = $true)][System.Windows.Forms.TabControl]$TabControl,
-        [System.Drawing.Color]$BackColor = [System.Drawing.Color]::FromArgb(26, 28, 34)
+        [System.Drawing.Color]$BackColor = $script:Nano11GuiColors.Window
     )
     $tab = New-Object System.Windows.Forms.TabPage
     $tab.Text = $Text
@@ -160,7 +178,7 @@ function New-Nano11ButtonBar {
         [Parameter(Mandatory = $true)][object]$Parent,
         [System.Windows.Forms.DockStyle]$Dock = [System.Windows.Forms.DockStyle]::Top,
         [int]$Height = 40,
-        [object]$BackColor = [System.Drawing.Color]::FromArgb(20, 22, 28)
+        [object]$BackColor = $script:Nano11GuiColors.Bar
     )
     $bar = New-Object System.Windows.Forms.Panel
     $bar.Dock = $Dock
@@ -200,7 +218,7 @@ function New-Nano11ToggleTab {
     $tab = New-Nano11TabPage -Text $Text -TabControl $TabControl
     $bar = New-Nano11ButtonBar -Parent $tab
     if ($Caption) {
-        [void](New-Nano11Label -Text $Caption -X 230 -Y 11 -Width 400 -Height 20 -ForeColor ([System.Drawing.Color]::FromArgb(0, 190, 255)) -Parent $bar)
+        [void](New-Nano11Label -Text $Caption -X 230 -Y 11 -Width 400 -Height 20 -ForeColor ($script:Nano11GuiColors.Accent) -Parent $bar)
     }
     $flow = New-Nano11FlowPanel -Parent $tab -TopDown
     return @{ Tab = $tab; Bar = $bar; Flow = $flow }
@@ -264,7 +282,7 @@ function New-Nano11ToggleCheckBox {
     $chk.Text = $Text
     $chk.Size = New-Object System.Drawing.Size(400, 28)
     $chk.AutoEllipsis = $true
-    $chk.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $chk.ForeColor = $script:Nano11GuiColors.Text
     $chk.Checked = $Checked
     $chk.Tag = $Key
     if ($ToolTip) { $ToolTip.SetToolTip($chk, $ToolTipText) }
@@ -393,8 +411,8 @@ function Show-AdvancedDebloatDialog {
         "Physical: BitLocker (complete removal) [~30-50MB]"
     )
 
-    $dlgBack = [System.Drawing.Color]::FromArgb(24, 26, 31)
-    $dlgFore = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $dlgBack = $script:Nano11GuiColors.DialogAlt
+    $dlgFore = $script:Nano11GuiColors.Text
     $listFont = New-Object System.Drawing.Font($UiFontName, 9)
 
     $dlg = New-Object System.Windows.Forms.Form
@@ -421,7 +439,7 @@ function Show-AdvancedDebloatDialog {
     # Experimental tab
     $tabExp = New-Nano11TabPage -Text "Experimental (Physical Deletion)" -TabControl $tabControl -BackColor $dlgBack
     [void](New-Nano11Label -Text "WARNING: Physical deletion permanently breaks Windows Update and sfc." -X 10 -Y 5 -Width 640 -Height 20 `
-        -ForeColor ([System.Drawing.Color]::FromArgb(255, 100, 100)) -Font (New-Object System.Drawing.Font($UiFontName, 9, [System.Drawing.FontStyle]::Bold)) -Parent $tabExp)
+        -ForeColor ($script:Nano11GuiColors.Danger) -Font (New-Object System.Drawing.Font($UiFontName, 9, [System.Drawing.FontStyle]::Bold)) -Parent $tabExp)
     $preExp = @()
     if ($InitialSettings -and $InitialSettings.AdvancedDebloatExperimental) { $preExp = @($InitialSettings.AdvancedDebloatExperimental) }
     $clbExp = New-Nano11CheckedList -Items $expItems -Selected $preExp -X 10 -Y 30 -Width 640 -Height 365 -Font $listFont -Parent $tabExp
@@ -446,7 +464,7 @@ function Show-AdvancedDebloatDialog {
     })
 
     # OK / Cancel
-    [void](New-Nano11Button -Text "OK" -X 480 -Y 500 -Width 90 -Height 30 -BackColor ([System.Drawing.Color]::FromArgb(0, 120, 215)) -Parent $dlg -OnClick {
+    [void](New-Nano11Button -Text "OK" -X 480 -Y 500 -Width 90 -Height 30 -BackColor ($script:Nano11GuiColors.Primary) -Parent $dlg -OnClick {
         $f = $this.FindForm()
         $script:advDebloatStd = Get-Nano11CheckedItems -List $f.Tag.Std
         $script:advDebloatExp = Get-Nano11CheckedItems -List $f.Tag.Exp
@@ -583,7 +601,7 @@ function Show-Nano11GuiTextDialog {
         $dlg.Text = $Title
         $dlg.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
         $dlg.ClientSize = New-Object System.Drawing.Size(720, 520)
-        $dlg.BackColor = [System.Drawing.Color]::FromArgb(24, 26, 32)
+        $dlg.BackColor = $script:Nano11GuiColors.Dialog
         $txt = New-Object System.Windows.Forms.TextBox
         $txt.Multiline = $true
         $txt.ReadOnly = $true
@@ -591,7 +609,7 @@ function Show-Nano11GuiTextDialog {
         $txt.WordWrap = $false
         $txt.Font = New-Object System.Drawing.Font('Consolas', 9)
         $txt.Dock = [System.Windows.Forms.DockStyle]::Fill
-        $txt.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
+        $txt.BackColor = $script:Nano11GuiColors.Input
         $txt.ForeColor = [System.Drawing.Color]::White
         $txt.Text = ($Text -replace "(?<!`r)`n", "`r`n")
         $dlg.Controls.Add($txt)
@@ -613,7 +631,7 @@ function Show-Nano11GuiPresetDiff {
         $dlg.MaximizeBox = $false
         $dlg.MinimizeBox = $false
         $dlg.ClientSize = New-Object System.Drawing.Size(400, 160)
-        $dlg.BackColor = [System.Drawing.Color]::FromArgb(24, 26, 32)
+        $dlg.BackColor = $script:Nano11GuiColors.Dialog
         $dlg.ForeColor = [System.Drawing.Color]::White
         $combos = @{}
         $rows = @(@('From', 'Compare from:', 20, 0), @('To', 'Compare to:', 55, [Math]::Min(1, $names.Count - 1)))
@@ -943,8 +961,8 @@ function Show-Nano11GUI {
     $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
     $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
     $form.MaximizeBox = $false
-    $form.BackColor = [System.Drawing.Color]::FromArgb(26, 28, 34)
-    $form.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $form.BackColor = $script:Nano11GuiColors.Window
+    $form.ForeColor = $script:Nano11GuiColors.Text
 
     try {
         $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
@@ -966,21 +984,21 @@ function Show-Nano11GUI {
     $script:updatingPreset = $false
 
     $toolTip = New-Object System.Windows.Forms.ToolTip
-    $accent = [System.Drawing.Color]::FromArgb(0, 190, 255)
-    $headerBack = [System.Drawing.Color]::FromArgb(18, 20, 24)
+    $accent = $script:Nano11GuiColors.Accent
+    $headerBack = $script:Nano11GuiColors.Header
 
     # Header Panel
     $headerPanel = New-Nano11ButtonBar -Parent $form -Height 65 -BackColor $headerBack
     [void](New-Nano11Label -Text "nano11 Builder v2.1" -X 16 -Y 10 -AutoSize -ForeColor $accent `
         -Font (New-Object System.Drawing.Font($uiFontName, 14, [System.Drawing.FontStyle]::Bold)) -Parent $headerPanel)
     [void](New-Nano11Label -Text "Universal, Language-Independent Windows 11 Modular Reducer & Full-Toggle Optimizer" -X 18 -Y 38 -AutoSize `
-        -ForeColor ([System.Drawing.Color]::FromArgb(160, 165, 175)) -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $headerPanel)
+        -ForeColor ($script:Nano11GuiColors.Subtle) -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $headerPanel)
 
     # Bottom Button & Estimate Panel
     $bottomPanel = New-Nano11ButtonBar -Parent $form -Dock Bottom -Height 70 -BackColor $headerBack
     $gui.DryRun = New-Nano11CheckBox -Text "DryRun (Simulation Mode)" -X 20 -Y 12 -Width 200 -Height 22 -Parent $bottomPanel
     $gui.Estimate = New-Nano11Label -Text "Estimated ISO: ~5.5 GB (LZX baseline)" -X 20 -Y 38 -Width 380 -Height 20 `
-        -ForeColor ([System.Drawing.Color]::FromArgb(148, 163, 184)) -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel
+        -ForeColor ($script:Nano11GuiColors.Muted) -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel
 
     [void](New-Nano11Button -Text "Preset Diff" -X 250 -Y 15 -Width 110 -Height 40 -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel -OnClick {
         $g = $this.FindForm().Tag
@@ -1003,7 +1021,7 @@ function Show-Nano11GUI {
             [void][System.Windows.Forms.MessageBox]::Show("Dependency check failed: $($_.Exception.Message)", "nano11 - Dependency Check", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
         }
     })
-    [void](New-Nano11Button -Text "Start nano11 Build" -X 530 -Y 15 -Width 210 -Height 40 -BackColor ([System.Drawing.Color]::FromArgb(0, 120, 215)) `
+    [void](New-Nano11Button -Text "Start nano11 Build" -X 530 -Y 15 -Width 210 -Height 40 -BackColor ($script:Nano11GuiColors.Primary) `
         -Font (New-Object System.Drawing.Font($uiFontName, 10, [System.Drawing.FontStyle]::Bold)) -Parent $bottomPanel -OnClick {
         $f = $this.FindForm()
         $g = $f.Tag
@@ -1046,7 +1064,7 @@ function Show-Nano11GUI {
     $cmbSource = New-Object System.Windows.Forms.ComboBox
     $cmbSource.Location = New-Object System.Drawing.Point(150, 25)
     $cmbSource.Size = New-Object System.Drawing.Size(370, 24)
-    $cmbSource.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
+    $cmbSource.BackColor = $script:Nano11GuiColors.Input
     $cmbSource.ForeColor = [System.Drawing.Color]::White
     $grpMedia.Controls.Add($cmbSource)
     $gui.Source = $cmbSource
@@ -1108,7 +1126,7 @@ function Show-Nano11GUI {
     $cmbPreset = New-Object System.Windows.Forms.ComboBox
     $cmbPreset.Location = New-Object System.Drawing.Point(15, 28)
     $cmbPreset.Size = New-Object System.Drawing.Size(805, 24)
-    $cmbPreset.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
+    $cmbPreset.BackColor = $script:Nano11GuiColors.Input
     $cmbPreset.ForeColor = [System.Drawing.Color]::White
     $cmbPreset.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
     $cmbPreset.Items.AddRange(@(
@@ -1262,7 +1280,7 @@ function Show-Nano11GUI {
     $tabDebloat = New-Nano11TabPage -Text " 7. Advanced Debloat " -TabControl $tabControl
     $barDeb = New-Nano11ButtonBar -Parent $tabDebloat
     [void](New-Nano11Label -Text "Notice: Standard uses CBS safe operations. Experimental physically deletes files." -X 15 -Y 11 -Width 650 -Height 20 `
-        -ForeColor ([System.Drawing.Color]::FromArgb(255, 140, 100)) -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $barDeb)
+        -ForeColor ($script:Nano11GuiColors.Warn) -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $barDeb)
     $flowDeb = New-Nano11FlowPanel -Parent $tabDebloat
 
     # Standard Debloat group
@@ -1271,7 +1289,7 @@ function Show-Nano11GUI {
 
     # Experimental Debloat group
     $grpExpDeb = New-Nano11GroupBox -Text " Experimental Physical Debloat (Destructive / Breaks WU) " -Width 410 -Height 480 `
-        -ForeColor ([System.Drawing.Color]::FromArgb(255, 100, 100)) -Parent $flowDeb
+        -ForeColor ($script:Nano11GuiColors.Danger) -Parent $flowDeb
     $gui.ClbExp = New-Nano11CheckedList -Items $expItems -Selected $preExp -Fill -Parent $grpExpDeb
 
     # Select All / Clear All bar at the bottom of each debloat group
@@ -1489,8 +1507,8 @@ function Show-Nano11GUI {
     $txtCustomPaths.Size = New-Object System.Drawing.Size(560, 60)
     $txtCustomPaths.Multiline = $true
     $txtCustomPaths.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
-    $txtCustomPaths.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
-    $txtCustomPaths.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $txtCustomPaths.BackColor = $script:Nano11GuiColors.Input
+    $txtCustomPaths.ForeColor = $script:Nano11GuiColors.Text
     $grpCustom.Controls.Add($txtCustomPaths)
     $gui.CustomPaths = $txtCustomPaths
 
@@ -1551,7 +1569,7 @@ function Show-Nano11GUI {
     }
     [void](New-Nano11Label -Text $extText -X 15 -Y 24 -Width 600 -Height 20 -Parent $grpExt)
     $gui.ExtensionsLabel = New-Nano11Label -Text $(if ($extErrors.Count -gt 0) { "Load errors: " + ($extErrors -join '; ') } else { "No load errors." }) `
-        -X 15 -Y 48 -Width 600 -Height 52 -ForeColor $(if ($extErrors.Count -gt 0) { [System.Drawing.Color]::FromArgb(255, 140, 100) } else { [System.Drawing.Color]::FromArgb(148, 163, 184) }) -Parent $grpExt
+        -X 15 -Y 48 -Width 600 -Height 52 -ForeColor $(if ($extErrors.Count -gt 0) { $script:Nano11GuiColors.Warn } else { $script:Nano11GuiColors.Muted }) -Parent $grpExt
     [void](New-Nano11Button -Text "Open Extensibility Guide" -X 630 -Y 24 -Width 190 -Height 32 -Parent $grpExt -OnClick {
         $guide = Join-Path $script:Nano11GuiRepoRoot "docs\EXTENSIBILITY_GUIDE.md"
         try {
