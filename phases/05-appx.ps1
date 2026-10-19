@@ -201,7 +201,3 @@ Write-Host "Disabling Recall and modern AI optional features..." -ForegroundColo
 if (Get-Command -Name Invoke-Nano11UserExtensionActions -ErrorAction SilentlyContinue) {
     try { Invoke-Nano11UserExtensionActions -PhaseType Appx -ScratchDir $scratchDir -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
-# M2: Custom scripts (OfflineImage stage)
-if (Get-Command -Name Invoke-Nano11CustomScriptsStage -ErrorAction SilentlyContinue) {
-    try { Invoke-Nano11CustomScriptsStage -Stage 'OfflineImage' -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-}

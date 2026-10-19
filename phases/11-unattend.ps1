@@ -1583,6 +1583,10 @@ $script:WinSxsSavedMB  = if ($script:WinSxsBeforeMB -gt 0 -and $script:WinSxsAft
 if (Get-Command -Name Invoke-Nano11UserExtensionActions -ErrorAction SilentlyContinue) {
     try { Invoke-Nano11UserExtensionActions -PhaseType SetupScripts -ScratchDir $scratchDir -DryRun:$DryRun -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
+# M2: Custom scripts (OfflineImage stage) - runs after the registry/unattend work, before FirstLogon/UserOnce staging
+if (Get-Command -Name Invoke-Nano11CustomScriptsStage -ErrorAction SilentlyContinue) {
+    try { Invoke-Nano11CustomScriptsStage -Stage 'OfflineImage' -Context @{ ScratchDir = $scratchDir; Nano11Dir = $nano11Dir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+}
 # M2: Custom scripts (FirstLogon & UserOnce stages -> copy to offline image)
 $customFirstLogonDir = Join-Path -Path $scratchDir -ChildPath 'Windows\Setup\Scripts\Custom\FirstLogon'
 $customUserOnceDir = Join-Path -Path $scratchDir -ChildPath 'Windows\Setup\Scripts\Custom\UserOnce'
