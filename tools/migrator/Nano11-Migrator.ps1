@@ -52,7 +52,6 @@ param(
 $ErrorActionPreference = 'Stop'
 $script:MigratorToolPath = $MyInvocation.MyCommand.Path
 $script:MigratorDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
-$script:DefaultPackagePath = Join-Path -Path ([Environment]::GetFolderPath('MyDocuments')) -ChildPath 'nano11_migration_backup'
 
 # Repository layout: <root>\tools\migrator (this script, engine, rules) + <root>\config\user (user rules) + <root>\nano11helpers.ps1.
 # ISO bundle: everything in this folder.
@@ -62,6 +61,17 @@ function Find-Nano11MigratorFile {
     return $null
 }
 $script:MigratorParent = Split-Path -Parent (Split-Path -Parent $script:MigratorDir)
+# Shared WinForms parts, colour table and default backup folder: gui\Nano11Gui.ps1 in the repository,
+# Nano11Gui.ps1 in this folder when bundled. Loaded first so the helpers and the engine win any name clash.
+$script:GuiPartsPath = Find-Nano11MigratorFile @(
+    (Join-Path $script:MigratorParent 'gui\Nano11Gui.ps1'), (Join-Path $script:MigratorDir 'Nano11Gui.ps1'))
+if ($script:GuiPartsPath) { . $script:GuiPartsPath }
+$script:DefaultPackagePath = if (Get-Command -Name Get-Nano11DefaultMigrationBackupPath -ErrorAction SilentlyContinue) {
+    Get-Nano11DefaultMigrationBackupPath -Base Documents
+} else {
+    # Only without Nano11Gui.ps1 (CLI use of a bundle that does not ship it)
+    Join-Path -Path ([Environment]::GetFolderPath('MyDocuments')) -ChildPath 'nano11_migration_backup'
+}
 $script:HelpersPath = Find-Nano11MigratorFile @(
     (Join-Path $script:MigratorParent 'nano11helpers.ps1'), (Join-Path $script:MigratorDir 'nano11helpers.ps1'))
 $script:LibPath = Find-Nano11MigratorFile @((Join-Path $script:MigratorDir 'Nano11Migration.ps1'))
@@ -162,58 +172,26 @@ function Write-MigratorEstimate {
 }
 
 # =========================================================================
-# GUI (handlers read state from $this / $this.FindForm().Tag, never from locals of the builder)
+# GUI (handlers read state from $this / $this.FindForm().Tag, never from locals of the builder).
+# Controls, colours, message boxes and the background-job loop come from gui\Nano11Gui.ps1.
 # =========================================================================
-$script:MigDark = [System.Drawing.Color]::FromArgb(24, 26, 31)
-$script:MigPanel = [System.Drawing.Color]::FromArgb(35, 38, 46)
-$script:MigText = [System.Drawing.Color]::FromArgb(235, 238, 245)
-$script:MigAccent = [System.Drawing.Color]::FromArgb(0, 190, 255)
-$script:MigButton = [System.Drawing.Color]::FromArgb(45, 50, 60)
-
-function New-MigControl {
-    param([string]$Type, [string]$Text, [int]$X, [int]$Y, [int]$W, [int]$H, $Parent, [object]$Tag, [scriptblock]$OnClick)
-    $c = New-Object "System.Windows.Forms.$Type"
-    if ($Text) { $c.Text = $Text }
-    $c.Location = New-Object System.Drawing.Point($X, $Y)
-    $c.Size = New-Object System.Drawing.Size($W, $H)
-    $c.ForeColor = $script:MigText
-    if ($Type -eq 'Button') {
-        $c.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-        $c.BackColor = $script:MigButton
-    } elseif ($Type -in 'TextBox', 'CheckedListBox', 'ComboBox') {
-        $c.BackColor = $script:MigPanel
-    }
-    if ($null -ne $Tag) { $c.Tag = $Tag }
-    if ($OnClick) { $c.Add_Click($OnClick) }
-    [void]$Parent.Controls.Add($c)
-    return $c
-}
-
 function Add-MigLog {
     param($Form, [string]$Line)
     $Form.Tag.Log.AppendText($Line + [Environment]::NewLine)
 }
 
-# Runs this tool's CLI in a background job so the window stays responsive; returns the last result object
+# Runs this tool's CLI in a background job so the window stays responsive; returns the last result object.
+# -Button is disabled and -Form shows the wait cursor while the job runs.
 function Invoke-MigratorJob {
-    param($Form, [hashtable]$Params)
-    $Form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-    $job = Start-Job -ScriptBlock {
+    param($Form, [hashtable]$Params, $Button)
+    $o = Invoke-Nano11GuiBackgroundJob -Button $Button -Form $Form -ArgumentList $script:MigratorToolPath, $Params -ScriptBlock {
         param($tool, $p)
         & $tool @p
-    } -ArgumentList $script:MigratorToolPath, $Params
-    while ($job.State -eq 'Running') {
-        [System.Windows.Forms.Application]::DoEvents()
-        Start-Sleep -Milliseconds 100
     }
-    $result = $null; $err = $null
-    if ($job.State -eq 'Failed') { $err = $job.ChildJobs[0].JobStateInfo.Reason.Message }
-    else {
-        try { $out = @(Receive-Job -Job $job -ErrorAction Stop) } catch { $err = $_.Exception.Message; $out = @() }
-        $result = $out | Where-Object { $_ -and $_.PSObject.Properties['Mode'] } | Select-Object -Last 1
-    }
-    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
-    $Form.Cursor = [System.Windows.Forms.Cursors]::Default
+    $result = $null
+    $err = $o.Error
+    if (-not $err -and @($o.Errors).Count -gt 0) { $err = $o.Errors[0] }
+    if (-not $err) { $result = $o.Output | Where-Object { $_ -and $_.PSObject.Properties['Mode'] } | Select-Object -Last 1 }
     return [PSCustomObject]@{ Result = $result; Error = $err }
 }
 
@@ -246,149 +224,146 @@ function Get-MigSelection {
     return @{ PackagePath = $root; UserFolders = $known; CustomPaths = $custom; RuleIds = ($ids -join ','); IncludeSecrets = (-not $g.ExcludeSecrets.Checked) }
 }
 
-function Show-Nano11MigratorDialog {
-    param([string]$PackagePath = '')
-    Add-Type -AssemblyName System.Windows.Forms
-    Add-Type -AssemblyName System.Drawing
-    if ([string]::IsNullOrWhiteSpace($PackagePath)) { $PackagePath = $script:DefaultPackagePath }
+# "ID - Name" rows for a rule list; rules with a cloud-save note get a [Cloud] mark
+function Get-MigRuleRows {
+    param($Rules)
+    $rows = @()
+    foreach ($r in @($Rules)) {
+        if (-not $r) { continue }
+        $mark = if ($r.CloudSaveNotice) { '  [Cloud]' } else { '' }
+        $rows += "$($r.Id) - $($r.Name)$mark"
+    }
+    return $rows
+}
 
-    $form = New-Object System.Windows.Forms.Form
-    $form.Text = 'Nano11 PC Migration & Backup Wizard'
-    $form.Size = New-Object System.Drawing.Size(900, 680)
-    $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
-    $form.BackColor = $script:MigDark
-    $form.ForeColor = $script:MigText
-
-    $tabs = New-Object System.Windows.Forms.TabControl
-    $tabs.Location = New-Object System.Drawing.Point(8, 8)
-    $tabs.Size = New-Object System.Drawing.Size(868, 470)
-    [void]$form.Controls.Add($tabs)
-    $t1 = New-Object System.Windows.Forms.TabPage; $t1.Text = 'Export / Backup'; $t1.BackColor = $script:MigDark
-    $t2 = New-Object System.Windows.Forms.TabPage; $t2.Text = 'Restore & Reinstall'; $t2.BackColor = $script:MigDark
-    [void]$tabs.TabPages.Add($t1); [void]$tabs.TabPages.Add($t2)
-
-    $log = New-MigControl TextBox '' 8 486 868 150 $form
-    $log.Multiline = $true; $log.ReadOnly = $true; $log.ScrollBars = 'Vertical'
-
-    $g = @{ Log = $log; KnownFolderNames = @('Documents', 'Desktop', 'Pictures', 'Videos', 'Downloads') }
-    $form.Tag = $g
-
-    # ---- Tab 1: Export / Backup
-    [void](New-MigControl Label 'Backup folder:' 12 16 95 20 $t1)
-    $g.BackupRoot = New-MigControl TextBox $PackagePath 110 13 580 24 $t1
-    $g.BackupRoot.Add_TextChanged({ Update-MigFreeSpace -Form $this.FindForm() })
-    [void](New-MigControl Button 'Browse...' 700 11 90 28 $t1 $null {
+# Tab 1: Export / Backup
+function New-MigBackupTab {
+    param([hashtable]$Gui, $Tab, [string]$PackagePath)
+    $c = $script:Nano11GuiColors
+    [void](New-Nano11Label -Text 'Backup folder:' -X 12 -Y 16 -Width 95 -Height 20 -Parent $Tab)
+    $Gui.BackupRoot = New-Nano11TextBox -X 110 -Y 13 -Width 580 -Height 24 -Text $PackagePath -ForeColor $c.Text -Parent $Tab
+    $Gui.BackupRoot.Add_TextChanged({ Update-MigFreeSpace -Form $this.FindForm() })
+    [void](New-Nano11Button -Text 'Browse...' -X 700 -Y 11 -Width 90 -Height 28 -ForeColor $c.Text -Parent $Tab -OnClick {
         $f = $this.FindForm(); $d = New-Object System.Windows.Forms.FolderBrowserDialog
         if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $f.Tag.BackupRoot.Text = $d.SelectedPath }
     })
-    $g.FreeLabel = New-MigControl Label 'Free space: -' 110 40 580 20 $t1
-    $g.FreeLabel.ForeColor = $script:MigAccent
+    $Gui.FreeLabel = New-Nano11Label -Text 'Free space: -' -X 110 -Y 40 -Width 580 -Height 20 -ForeColor $c.Accent -Parent $Tab
 
-    [void](New-MigControl Label 'Personal data folders:' 12 70 270 20 $t1)
-    $g.Folders = New-MigControl CheckedListBox '' 12 92 270 150 $t1
-    $g.Folders.CheckOnClick = $true
-    foreach ($n in $g.KnownFolderNames) { [void]$g.Folders.Items.Add($n, ($n -in 'Documents', 'Desktop', 'Pictures')) }
-    [void](New-MigControl Button 'Add Custom Folder...' 12 246 270 28 $t1 $null {
+    [void](New-Nano11Label -Text 'Personal data folders:' -X 12 -Y 70 -Width 270 -Height 20 -Parent $Tab)
+    $Gui.Folders = New-Nano11CheckedList -Items $Gui.KnownFolderNames -Selected @('Documents', 'Desktop', 'Pictures') -X 12 -Y 92 -Width 270 -Height 150 -Parent $Tab
+    [void](New-Nano11Button -Text 'Add Custom Folder...' -X 12 -Y 246 -Width 270 -Height 28 -ForeColor $c.Text -Parent $Tab -OnClick {
         $f = $this.FindForm(); $d = New-Object System.Windows.Forms.FolderBrowserDialog
         if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [void]$f.Tag.Folders.Items.Add($d.SelectedPath, $true) }
     })
 
     $rules = Get-MigratorRules
-    [void](New-MigControl Label 'Game save rules ([Cloud] = cloud save note)' 296 70 290 20 $t1)
-    $g.GameRules = New-MigControl CheckedListBox '' 296 92 280 182 $t1
-    $g.GameRules.CheckOnClick = $true
-    foreach ($r in @($rules.GameRules)) {
-        $mark = if ($r.CloudSaveNotice) { '  [Cloud]' } else { '' }
-        [void]$g.GameRules.Items.Add("$($r.Id) - $($r.Name)$mark")
-    }
-    [void](New-MigControl Label 'App settings rules' 590 70 270 20 $t1)
-    $g.AppRules = New-MigControl CheckedListBox '' 590 92 260 182 $t1
-    $g.AppRules.CheckOnClick = $true
-    foreach ($r in @($rules.AppConfigRules)) {
-        $mark = if ($r.CloudSaveNotice) { '  [Cloud]' } else { '' }
-        [void]$g.AppRules.Items.Add("$($r.Id) - $($r.Name)$mark")
-    }
+    [void](New-Nano11Label -Text 'Game save rules ([Cloud] = cloud save note)' -X 296 -Y 70 -Width 290 -Height 20 -Parent $Tab)
+    $Gui.GameRules = New-Nano11CheckedList -Items (Get-MigRuleRows $rules.GameRules) -X 296 -Y 92 -Width 280 -Height 182 -Parent $Tab
+    [void](New-Nano11Label -Text 'App settings rules' -X 590 -Y 70 -Width 270 -Height 20 -Parent $Tab)
+    $Gui.AppRules = New-Nano11CheckedList -Items (Get-MigRuleRows $rules.AppConfigRules) -X 590 -Y 92 -Width 260 -Height 182 -Parent $Tab
 
-    $g.ExcludeSecrets = New-MigControl CheckBox 'Exclude credentials/tokens (Recommended)' 12 290 400 24 $t1
-    $g.ExcludeSecrets.Checked = $true
+    $Gui.ExcludeSecrets = New-Nano11CheckBox -Text 'Exclude credentials/tokens (Recommended)' -X 12 -Y 290 -Width 400 -Height 24 -Checked $true -Parent $Tab
 
-    [void](New-MigControl Button 'Estimate Size & Pre-flight Check' 12 328 300 36 $t1 $null {
-        $f = $this.FindForm(); $this.Enabled = $false
+    [void](New-Nano11Button -Text 'Estimate Size & Pre-flight Check' -X 12 -Y 328 -Width 300 -Height 36 -ForeColor $c.Text -Parent $Tab -OnClick {
+        $f = $this.FindForm()
         $s = Get-MigSelection -Form $f
         $s.Mode = 'Estimate'
         Add-MigLog $f 'Estimating...'
-        $o = Invoke-MigratorJob -Form $f -Params $s
+        $o = Invoke-MigratorJob -Form $f -Params $s -Button $this
         if ($o.Error) { Add-MigLog $f "Error: $($o.Error)" }
         elseif ($o.Result) {
             $e = $o.Result.Estimate
             Add-MigLog $f ("Files: {0}, required {1} MB, free {2} MB, enough space: {3}" -f $e.TotalFiles, $e.TotalMB, $e.DestinationFreeMB, $e.HasEnoughSpace)
             if (@($e.RunningProcesses).Count -gt 0) { Add-MigLog $f ('Close these first: ' + (@($e.RunningProcesses) -join ', ')) }
         }
-        $this.Enabled = $true
     })
-    [void](New-MigControl Button 'Start Backup & Verify (SHA-256)' 326 328 320 36 $t1 $null {
-        $f = $this.FindForm(); $this.Enabled = $false
+    [void](New-Nano11Button -Text 'Start Backup & Verify (SHA-256)' -X 326 -Y 328 -Width 320 -Height 36 -ForeColor $c.Text -Parent $Tab -OnClick {
+        $f = $this.FindForm()
         $s = Get-MigSelection -Form $f
         $s.Mode = 'Backup'
         Add-MigLog $f "Backup started: $($s.PackagePath)"
-        $o = Invoke-MigratorJob -Form $f -Params $s
+        $o = Invoke-MigratorJob -Form $f -Params $s -Button $this
         if ($o.Error) {
             Add-MigLog $f "Error: $($o.Error)"
-            [void][System.Windows.Forms.MessageBox]::Show("Error: $($o.Error)", 'Backup', 'OK', 'Error')
+            Show-Nano11GuiMessage -Text "Error: $($o.Error)" -Title 'Backup' -Kind Error
         } elseif ($o.Result) {
             Add-MigLog $f ('Backup finished. ' + $o.Result.Verify.Message)
             $f.Tag.RestoreRoot.Text = $s.PackagePath
             $rp = $o.Result.ReportPath
             if ($rp -and (Test-Path -LiteralPath $rp)) { Start-Process -FilePath $rp }
         }
-        $this.Enabled = $true
     })
+}
 
-    # ---- Tab 2: Restore & Reinstall
-    [void](New-MigControl Label 'Backup to restore:' 12 16 110 20 $t2)
-    $g.RestoreRoot = New-MigControl TextBox $PackagePath 125 13 565 24 $t2
-    [void](New-MigControl Button 'Browse...' 700 11 90 28 $t2 $null {
+# Tab 2: Restore & Reinstall
+function New-MigRestoreTab {
+    param([hashtable]$Gui, $Tab, [string]$PackagePath)
+    $c = $script:Nano11GuiColors
+    [void](New-Nano11Label -Text 'Backup to restore:' -X 12 -Y 16 -Width 110 -Height 20 -Parent $Tab)
+    $Gui.RestoreRoot = New-Nano11TextBox -X 125 -Y 13 -Width 565 -Height 24 -Text $PackagePath -ForeColor $c.Text -Parent $Tab
+    [void](New-Nano11Button -Text 'Browse...' -X 700 -Y 11 -Width 90 -Height 28 -ForeColor $c.Text -Parent $Tab -OnClick {
         $f = $this.FindForm(); $d = New-Object System.Windows.Forms.FolderBrowserDialog
         $d.Description = 'Select the folder that contains migration-manifest.json'
         if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
             if (Test-Path -LiteralPath (Join-Path $d.SelectedPath 'migration-manifest.json')) { $f.Tag.RestoreRoot.Text = $d.SelectedPath }
-            else { [void][System.Windows.Forms.MessageBox]::Show('migration-manifest.json was not found in that folder.', 'Restore', 'OK', 'Warning') }
+            else { Show-Nano11GuiMessage -Text 'migration-manifest.json was not found in that folder.' -Title 'Restore' -Kind Warning }
         }
     })
-    [void](New-MigControl Label 'If a file already exists:' 12 56 150 20 $t2)
-    $g.Policy = New-MigControl ComboBox '' 165 53 300 24 $t2
-    $g.Policy.DropDownStyle = 'DropDownList'
-    foreach ($p in 'BackupExisting', 'Skip', 'OverwriteIfNewer', 'Overwrite') { [void]$g.Policy.Items.Add($p) }
-    $g.Policy.SelectedIndex = 0
-    [void](New-MigControl Label 'BackupExisting keeps the old file as .nano11.bak' 475 56 380 20 $t2)
+    [void](New-Nano11Label -Text 'If a file already exists:' -X 12 -Y 56 -Width 150 -Height 20 -Parent $Tab)
+    $Gui.Policy = New-Nano11ComboBox -Items @('BackupExisting', 'Skip', 'OverwriteIfNewer', 'Overwrite') -SelectedIndex 0 -DropList `
+        -X 165 -Y 53 -Width 300 -BackColor $c.Input -ForeColor $c.Text -Parent $Tab
+    [void](New-Nano11Label -Text 'BackupExisting keeps the old file as .nano11.bak' -X 475 -Y 56 -Width 380 -Height 20 -Parent $Tab)
 
     $restoreHandler = {
         $f = $this.FindForm(); $g2 = $f.Tag; $kind = [string]$this.Tag
         $root = $g2.RestoreRoot.Text.Trim()
         if (-not (Test-Path -LiteralPath (Join-Path $root 'migration-manifest.json'))) {
-            [void][System.Windows.Forms.MessageBox]::Show('Select a backup folder that contains migration-manifest.json.', 'Restore', 'OK', 'Warning')
+            Show-Nano11GuiMessage -Text 'Select a backup folder that contains migration-manifest.json.' -Title 'Restore' -Kind Warning
             return
         }
-        $this.Enabled = $false
         $p = @{ PackagePath = $root; ConflictPolicy = [string]$g2.Policy.SelectedItem }
         if ($kind -eq 'Verify') { $p.Mode = 'Verify' } else { $p.Mode = 'Restore'; if ($kind -eq 'Retry') { $p.RetryFailedOnly = $true } }
         Add-MigLog $f "$($p.Mode) ($kind) started: $root"
-        $o = Invoke-MigratorJob -Form $f -Params $p
+        $o = Invoke-MigratorJob -Form $f -Params $p -Button $this
         if ($o.Error) { Add-MigLog $f "Error: $($o.Error)" }
         elseif ($o.Result -and $p.Mode -eq 'Verify') { Add-MigLog $f $o.Result.Message }
         elseif ($o.Result) {
             foreach ($r in @($o.Result.Results)) { Add-MigLog $f ('  {0}: {1}' -f $r.TaskId, $r.Status) }
             if ($o.Result.ReportPath -and (Test-Path -LiteralPath $o.Result.ReportPath)) { Start-Process -FilePath $o.Result.ReportPath }
         }
-        $this.Enabled = $true
     }
-    [void](New-MigControl Button 'Verify Backup Integrity' 12 100 230 36 $t2 'Verify' $restoreHandler)
-    [void](New-MigControl Button 'Restore Selected Items' 256 100 230 36 $t2 'Restore' $restoreHandler)
-    [void](New-MigControl Button 'Retry Failed Tasks Only' 500 100 230 36 $t2 'Retry' $restoreHandler)
+    [void](New-Nano11Button -Text 'Verify Backup Integrity' -X 12 -Y 100 -Width 230 -Height 36 -ForeColor $c.Text -Tag 'Verify' -OnClick $restoreHandler -Parent $Tab)
+    [void](New-Nano11Button -Text 'Restore Selected Items' -X 256 -Y 100 -Width 230 -Height 36 -ForeColor $c.Text -Tag 'Restore' -OnClick $restoreHandler -Parent $Tab)
+    [void](New-Nano11Button -Text 'Retry Failed Tasks Only' -X 500 -Y 100 -Width 230 -Height 36 -ForeColor $c.Text -Tag 'Retry' -OnClick $restoreHandler -Parent $Tab)
+}
+
+function Show-Nano11MigratorDialog {
+    param([string]$PackagePath = '')
+    if (-not (Get-Command -Name New-Nano11Form -ErrorAction SilentlyContinue)) {
+        throw "gui\Nano11Gui.ps1 (shared WinForms parts) not found next to '$script:MigratorDir'. The Migration Assistant bundle must include it."
+    }
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    if ([string]::IsNullOrWhiteSpace($PackagePath)) { $PackagePath = $script:DefaultPackagePath }
+    $c = $script:Nano11GuiColors
+
+    $form = New-Nano11Form -Text 'Nano11 PC Migration & Backup Wizard' -Width 900 -Height 680 -StartPosition CenterScreen `
+        -BackColor $c.DialogAlt -ForeColor $c.Text
+    $tabs = New-Nano11TabControl -X 8 -Y 8 -Width 868 -Height 470 -Parent $form
+    $t1 = New-Nano11TabPage -Text 'Export / Backup' -TabControl $tabs -BackColor $c.DialogAlt
+    $t2 = New-Nano11TabPage -Text 'Restore & Reinstall' -TabControl $tabs -BackColor $c.DialogAlt
+    $log = New-Nano11TextBox -X 8 -Y 486 -Width 868 -Height 150 -Multiline -ReadOnly -ScrollBars Vertical -ForeColor $c.Text -Parent $form
+
+    $g = @{ Log = $log; KnownFolderNames = @('Documents', 'Desktop', 'Pictures', 'Videos', 'Downloads') }
+    $form.Tag = $g
+
+    New-MigBackupTab -Gui $g -Tab $t1 -PackagePath $PackagePath
+    New-MigRestoreTab -Gui $g -Tab $t2 -PackagePath $PackagePath
 
     Update-MigFreeSpace -Form $form
     [void]$form.ShowDialog()
 }
+
 
 # =========================================================================
 # Entry point
