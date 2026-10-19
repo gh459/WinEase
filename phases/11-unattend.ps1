@@ -322,7 +322,7 @@ try {
             $nsmgr = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
             $nsmgr.AddNamespace('u', 'urn:schemas-microsoft-com:unattend')
             $nsmgr.AddNamespace('ext', 'https://schneegans.de/windows/unattend-generator/')
-            
+
             $fileNodes = $xml.SelectNodes('//ext:File | //u:File | //File', $nsmgr)
             if ($fileNodes -and $fileNodes.Count -gt 0) {
                 Log-Extract "Found $($fileNodes.Count) embedded file nodes."
@@ -440,7 +440,7 @@ try {
         [GC]::Collect()
         [GC]::WaitForPendingFinalizers()
         Start-Sleep -Seconds 1
-        
+
         $unloaded = $false
         for ($i = 1; $i -le 5; $i++) {
             & reg.exe unload HKU\DefaultUser
@@ -512,7 +512,7 @@ function Invoke-ChildScriptWithLog {
         [string]$Description
     )
     Write-FirstLogonLog "Starting $Description (Script: $ScriptPath, Log: $LogPath)"
-    
+
     $targetLogDir = [System.IO.Path]::GetDirectoryName($LogPath)
     if (-not (Test-Path -LiteralPath $targetLogDir)) {
         New-Item -ItemType Directory -Force -Path $targetLogDir -ErrorAction Stop | Out-Null
@@ -601,7 +601,7 @@ try {
     # 1. Verify existence of required setup scripts
     $winhanceScript = 'C:\ProgramData\Winhance\Unattend\Scripts\Winhancements.ps1'
     $firstLogonScript = 'C:\Windows\Setup\Scripts\FirstLogon.ps1'
-    
+
     if (-not (Test-Path -LiteralPath $winhanceScript)) {
         throw "CRITICAL ERROR: Winhancements.ps1 not found at $winhanceScript"
     }
