@@ -1812,22 +1812,50 @@ Describe "Builder cleanup S11" {
 }
 
 Describe "Documentation S12" {
+    # Files the docs mention that are created at run/build time, or live outside the repo.
+    $script:DocPathExclusions = @(
+        'migration-manifest.json',      # written into the built ISO/image by the migration engine
+        'restore-state.json',           # written at run time by the restore tooling
+        'custom-scripts-manifest.json', # generated at build time from the custom scripts folder
+        'SetupComplete.cmd',            # written into the image by phases\11-unattend.ps1 at build time
+        'ErrorHandler.cmd',             # written into the image by phases\11-unattend.ps1 at build time
+        'implementation_plan.md'        # planning note outside the repository
+    )
+
+    function Get-MissingDocPath {
+        param([string]$Text, [string]$RepoRoot, [string[]]$Files, [string[]]$Exclude = @())
+        $topDirs = 'config|lib|phases|gui|tools|docs|scripts|templates|profiles|tests|\.github'
+        $fileExt = 'ps1|psd1|psm1|json|md|xml|txt|cmd|bat|yml|yaml'
+        $missing = @()
+        foreach ($m in [regex]::Matches($Text, '`([^`\r\n]+)`')) {
+            $p = ($m.Groups[1].Value -replace '/', '\').TrimEnd('\')
+            if ($p -notmatch '^[A-Za-z0-9_.\\-]+$') { continue }
+            if ($Exclude -contains $p) { continue }
+            if ($p -match ('^(' + $topDirs + ')(\\|$)')) {
+                if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot $p))) { $missing += $p }
+            }
+            elseif ($p -match ('^[A-Za-z0-9_.\-]+\.(' + $fileExt + ')$')) {
+                # a bare file name may live anywhere in the repo
+                if (-not (@($Files | Where-Object { $_ -eq $p -or $_.EndsWith('\' + $p) }).Count -gt 0)) { $missing += $p }
+            }
+        }
+        $missing | Select-Object -Unique
+    }
+
     It "repo file paths in backticks in README, CHANGELOG and the extensibility guide exist" {
         $files = @(Get-ChildItem -LiteralPath $script:RepoRoot -Recurse -File | Where-Object { $_.FullName -notmatch '[\/](\.git|\.claude|logs)[\/]' } | ForEach-Object { $_.FullName.Substring($script:RepoRoot.Length).TrimStart('\') })
-        $topDirs = 'config|lib|phases|gui|tools|docs|scripts|templates|profiles|tests|\.github'
         $missing = @()
         foreach ($doc in @('README.md', 'CHANGELOG.md', 'docs\EXTENSIBILITY_GUIDE.md', 'docs\EXTENSIBILITY_GUIDE.ja.md')) {
             $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot $doc))
-            foreach ($m in [regex]::Matches($text, '`([^`\r\n]+)`')) {
-                $p = ($m.Groups[1].Value -replace '/', '\').TrimEnd('\')
-                if ($p -notmatch '^[A-Za-z0-9_.\-]+$') { continue }
-                # a repo path starts at a top-level folder; a bare Nano11*.ps1 / NN-name.ps1 name is searched for anywhere
-                $isRepoPath = ($p -match "^($topDirs)(\|$)") -or ($p -match '^(Nano11[A-Za-z]*|\d\d-[a-z-]+)\.ps1$') -or ($p -match '^(nano11builder|nano11helpers)\.ps1$')
-                if (-not $isRepoPath) { continue }
-                $found = @($files | Where-Object { $_ -eq $p -or $_.StartsWith($p + '\') -or $_.EndsWith('\' + $p) }).Count -gt 0
-                if (-not $found) { $missing += "${doc}: $p" }
-            }
+            foreach ($p in @(Get-MissingDocPath -Text $text -RepoRoot $script:RepoRoot -Files $files -Exclude $script:DocPathExclusions)) { $missing += "${doc}: $p" }
         }
         ($missing | Select-Object -Unique) -join "`n" | Should Be ''
+    }
+
+    It "the doc path check detects missing paths and accepts existing ones" {
+        $files = @('phases\18-iso.ps1')
+        $text = 'ok `config\tweaks.psd1` `docs/EXTENSIBILITY_GUIDE.md` `18-iso.ps1` bad `config\does-not-exist.psd1` `nope\x.ps1` `gone.ps1` `config/*.psd1` `migration-manifest.json`'
+        $r = @(Get-MissingDocPath -Text $text -RepoRoot $script:RepoRoot -Files $files -Exclude @('migration-manifest.json'))
+        ($r -join '|') | Should Be 'config\does-not-exist.psd1|gone.ps1'
     }
 }
