@@ -317,7 +317,7 @@ function New-Nano11ToggleTab {
     $tab = New-Nano11TabPage -Text $Text -TabControl $TabControl
     $bar = New-Nano11ButtonBar -Parent $tab
     if ($Caption) {
-        [void](New-Nano11Label -Text $Caption -X 230 -Y 11 -Width 400 -Height 20 -ForeColor ($script:Nano11GuiColors.Accent) -Parent $bar)
+        [void](New-Nano11Label -Text $Caption -X 230 -Y 11 -Width 400 -Height 20 -ForeColor $script:Nano11GuiColors.Accent -Parent $bar)
     }
     $flow = New-Nano11FlowPanel -Parent $tab -TopDown
     return @{ Tab = $tab; Bar = $bar; Flow = $flow }
@@ -595,7 +595,7 @@ function Show-AdvancedDebloatDialog {
     # Experimental tab
     $tabExp = New-Nano11TabPage -Text "Experimental (Physical Deletion)" -TabControl $tabControl -BackColor $dlgBack
     [void](New-Nano11Label -Text "WARNING: Physical deletion permanently breaks Windows Update and sfc." -X 10 -Y 5 -Width 640 -Height 20 `
-        -ForeColor ($script:Nano11GuiColors.Danger) -Font (New-Object System.Drawing.Font($UiFontName, 9, [System.Drawing.FontStyle]::Bold)) -Parent $tabExp)
+        -ForeColor $script:Nano11GuiColors.Danger -Font (New-Object System.Drawing.Font($UiFontName, 9, [System.Drawing.FontStyle]::Bold)) -Parent $tabExp)
     $preExp = @()
     if ($InitialSettings -and $InitialSettings.AdvancedDebloatExperimental) { $preExp = @($InitialSettings.AdvancedDebloatExperimental) }
     $clbExp = New-Nano11CheckedList -Items $expItems -Selected $preExp -X 10 -Y 30 -Width 640 -Height 365 -Font $listFont -Parent $tabExp
@@ -620,7 +620,7 @@ function Show-AdvancedDebloatDialog {
     })
 
     # OK / Cancel
-    [void](New-Nano11Button -Text "OK" -X 480 -Y 500 -Width 90 -Height 30 -BackColor ($script:Nano11GuiColors.Primary) -Parent $dlg -OnClick {
+    [void](New-Nano11Button -Text "OK" -X 480 -Y 500 -Width 90 -Height 30 -BackColor $script:Nano11GuiColors.Primary -Parent $dlg -OnClick {
         $f = $this.FindForm()
         $script:advDebloatStd = Get-Nano11CheckedItems -List $f.Tag.Std
         $script:advDebloatExp = Get-Nano11CheckedItems -List $f.Tag.Exp
@@ -1049,114 +1049,16 @@ function Complete-Nano11GuiResult {
 }
 
 # =========================================================================
-# Main window. Returns the result hashtable (Success = $false on cancel);
-# -NoShow returns the GUI context (Form, checkbox tables, ...) without showing it, for tests.
+# Main window tabs. Each takes the GUI context ($gui) and adds its controls and
+# checkbox tables to it; handlers read them back from $this.FindForm().Tag.
 # =========================================================================
-function Show-Nano11GUI {
+# Tab 1: media, workspace, preset and payload format
+function New-Nano11MediaTab {
     param(
-        [hashtable]$InitialSettings = @{},
-        [switch]$NoShow
+        [hashtable]$Gui,
+        [System.Windows.Forms.TabControl]$TabControl,
+        [hashtable]$InitialSettings
     )
-
-    [System.Windows.Forms.Application]::EnableVisualStyles()
-
-    $uiFontName = "Segoe UI"
-    foreach ($fName in @("Yu Gothic UI", "Meiryo UI", "Segoe UI")) {
-        try {
-            $testFont = New-Object System.Drawing.Font($fName, 9)
-            if ($testFont.Name -eq $fName) { $uiFontName = $fName; break }
-        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-    }
-
-    $form = New-Nano11Form -Text "nano11 Builder v2.1 - Next-Gen Windows 11 Modular Optimizer & Reducer" -Width 880 -Height 820 -ClientSize `
-        -NoAutoScale -Font (New-Object System.Drawing.Font($uiFontName, 9)) -StartPosition CenterScreen -FixedDialog -NoMaximize `
-        -BackColor $script:Nano11GuiColors.Window -ForeColor $script:Nano11GuiColors.Text
-
-    try {
-        $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-        $frameH = $form.Height - $form.ClientSize.Height
-        if ($form.Height -gt $wa.Height) {
-            $form.ClientSize = New-Object System.Drawing.Size(880, ($wa.Height - $frameH - 10))
-        }
-    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-
-    # Shared state for event handlers: they read it back as $this.FindForm().Tag
-    $gui = @{
-        Form                = $form
-        TweakCheckboxes     = @{}
-        ComponentCheckboxes = @{}
-        PresetKeyMap        = @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')
-        Result              = @{ Success = $false }
-    }
-    $form.Tag = $gui
-    $script:updatingPreset = $false
-
-    $toolTip = New-Object System.Windows.Forms.ToolTip
-    $accent = $script:Nano11GuiColors.Accent
-    $headerBack = $script:Nano11GuiColors.Header
-
-    # Header Panel
-    $headerPanel = New-Nano11ButtonBar -Parent $form -Height 65 -BackColor $headerBack
-    [void](New-Nano11Label -Text "nano11 Builder v2.1" -X 16 -Y 10 -AutoSize -ForeColor $accent `
-        -Font (New-Object System.Drawing.Font($uiFontName, 14, [System.Drawing.FontStyle]::Bold)) -Parent $headerPanel)
-    [void](New-Nano11Label -Text "Universal, Language-Independent Windows 11 Modular Reducer & Full-Toggle Optimizer" -X 18 -Y 38 -AutoSize `
-        -ForeColor ($script:Nano11GuiColors.Subtle) -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $headerPanel)
-
-    # Bottom Button & Estimate Panel
-    $bottomPanel = New-Nano11ButtonBar -Parent $form -Dock Bottom -Height 70 -BackColor $headerBack
-    $gui.DryRun = New-Nano11CheckBox -Text "DryRun (Simulation Mode)" -X 20 -Y 12 -Width 200 -Height 22 -Parent $bottomPanel
-    $gui.Estimate = New-Nano11Label -Text "Estimated ISO: ~5.5 GB (LZX baseline)" -X 20 -Y 38 -Width 380 -Height 20 `
-        -ForeColor ($script:Nano11GuiColors.Muted) -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel
-
-    [void](New-Nano11Button -Text "Preset Diff" -X 250 -Y 15 -Width 110 -Height 40 -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel -OnClick {
-        $g = $this.FindForm().Tag
-        try {
-            Show-Nano11GuiPresetDiff -Gui $g
-        } catch {
-            Show-Nano11GuiMessage -Text "Preset Diff failed: $($_.Exception.Message)" -Title "nano11 - Preset Diff" -Kind Error
-        }
-    })
-    [void](New-Nano11Button -Text "Check Dependencies" -X 370 -Y 15 -Width 150 -Height 40 -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel -OnClick {
-        $f = $this.FindForm()
-        $g = $f.Tag
-        try {
-            $cfg = Get-Nano11GuiDraftConfig -Gui $g
-            $res = Test-Nano11Dependencies -Config $cfg
-            $txt = Format-Nano11DependencyReport -Result $res
-            if (-not $txt) { $txt = "No conflicts, unknowns or impacts detected." }
-            Show-Nano11GuiMessage -Text $txt -Title "nano11 - Dependency Check" -Kind Info
-        } catch {
-            Show-Nano11GuiMessage -Text "Dependency check failed: $($_.Exception.Message)" -Title "nano11 - Dependency Check" -Kind Error
-        }
-    })
-    [void](New-Nano11Button -Text "Start nano11 Build" -X 530 -Y 15 -Width 210 -Height 40 -BackColor ($script:Nano11GuiColors.Primary) `
-        -Font (New-Object System.Drawing.Font($uiFontName, 10, [System.Drawing.FontStyle]::Bold)) -Parent $bottomPanel -OnClick {
-        $f = $this.FindForm()
-        $g = $f.Tag
-        # Dependency / feature-impact pre-check before starting the build
-        try {
-            $depCfg = Get-Nano11GuiDraftConfig -Gui $g
-            $depResult = Test-Nano11Dependencies -Config $depCfg
-            if ($depResult.HasIssues) {
-                $depText = Format-Nano11DependencyReport -Result $depResult
-                $msg = "Dependency / feature-impact issues detected:`n`n$depText`n`nContinue with build anyway?"
-                if (-not (Confirm-Nano11GuiAction -Message $msg -Title "nano11 - Dependency Check")) { return }
-            }
-        } catch {
-            Write-Verbose "Dependency check skipped: $($_.Exception.Message)"
-        }
-        if (Complete-Nano11GuiResult -Gui $g) {
-            $f.DialogResult = [System.Windows.Forms.DialogResult]::OK
-            $f.Close()
-        }
-    })
-    $btnCancel = New-Nano11Button -Text "Cancel" -X 750 -Y 15 -Width 110 -Height 40 -Font (New-Object System.Drawing.Font($uiFontName, 9.5)) -Parent $bottomPanel
-    $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
-
-    # Main Tab Control
-    $tabControl = New-Nano11TabControl -Fill -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $form
-    $tabControl.BringToFront()
-
     # =========================================================================
     # TAB 1: Media & Workspace & Preset
     # =========================================================================
@@ -1244,7 +1146,16 @@ function Show-Nano11GUI {
 
     $gui.VHDX = New-Nano11CheckBox -Text "Use Fast VHDX Scratch Disk (Accelerates DISM image servicing file I/O)" -X 15 -Y 60 -Width 550 -Height 24 `
         -Checked ([bool]$InitialSettings.UseVHDX) -Parent $grpPayload
+}
 
+# Tabs 2-5: one toggle tab per tweak category
+function New-Nano11TweakTabs {
+    param(
+        [hashtable]$Gui,
+        [System.Windows.Forms.TabControl]$TabControl,
+        [hashtable]$InitialSettings,
+        [System.Windows.Forms.ToolTip]$ToolTip
+    )
     # =========================================================================
     # TABS 2-5: tweak toggles from config\tweaks.psd1, one tab per category
     # =========================================================================
@@ -1272,7 +1183,16 @@ function Show-Nano11GUI {
         }
         [void](Add-Nano11SelectButtons -Parent $page.Bar -Target $tabCheckboxes -X 15 -Y 7)
     }
+}
 
+# Tab 6: component switches
+function New-Nano11ServicesTab {
+    param(
+        [hashtable]$Gui,
+        [System.Windows.Forms.TabControl]$TabControl,
+        [hashtable]$InitialSettings,
+        [System.Windows.Forms.ToolTip]$ToolTip
+    )
     # =========================================================================
     # TAB 6: Components & Services
     # =========================================================================
@@ -1291,7 +1211,16 @@ function Show-Nano11GUI {
         $svcCheckboxes.Add($chk)
     }
     [void](Add-Nano11SelectButtons -Parent $page.Bar -Target $svcCheckboxes -X 15 -Y 7)
+}
 
+# Tab 7: Advanced Debloat lists
+function New-Nano11DebloatTab {
+    param(
+        [hashtable]$Gui,
+        [System.Windows.Forms.TabControl]$TabControl,
+        [hashtable]$InitialSettings,
+        [string]$UiFontName
+    )
     # =========================================================================
     # TAB 7: Advanced Debloat (Physical Deletion)
     # =========================================================================
@@ -1372,7 +1301,7 @@ function Show-Nano11GUI {
     $tabDebloat = New-Nano11TabPage -Text " 7. Advanced Debloat " -TabControl $tabControl
     $barDeb = New-Nano11ButtonBar -Parent $tabDebloat
     [void](New-Nano11Label -Text "Notice: Standard uses CBS safe operations. Experimental physically deletes files." -X 15 -Y 11 -Width 650 -Height 20 `
-        -ForeColor ($script:Nano11GuiColors.Warn) -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $barDeb)
+        -ForeColor $script:Nano11GuiColors.Warn -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $barDeb)
     $flowDeb = New-Nano11FlowPanel -Parent $tabDebloat
 
     # Standard Debloat group
@@ -1381,7 +1310,7 @@ function Show-Nano11GUI {
 
     # Experimental Debloat group
     $grpExpDeb = New-Nano11GroupBox -Text " Experimental Physical Debloat (Destructive / Breaks WU) " -Width 410 -Height 480 `
-        -ForeColor ($script:Nano11GuiColors.Danger) -Parent $flowDeb
+        -ForeColor $script:Nano11GuiColors.Danger -Parent $flowDeb
     $gui.ClbExp = New-Nano11CheckedList -Items $expItems -Selected $preExp -Fill -Parent $grpExpDeb
 
     # Select All / Clear All bar at the bottom of each debloat group
@@ -1390,65 +1319,13 @@ function Show-Nano11GUI {
         $pair[1].BringToFront()
         [void](Add-Nano11SelectButtons -Parent $barList -Target $pair[1] -X 5 -Y 4 -Step 100 -ConfirmSelect $pair[2])
     }
+}
 
-    # =========================================================================
-    # Tab 8: Migration & Backup
-    # =========================================================================
-    $tabMigration = New-Nano11TabPage -Text " 8. Migration & Backup " -TabControl $tabControl
-    $flowMig = New-Nano11FlowPanel -Parent $tabMigration
-
-    # Top card: Post-Install Migration Assistant (a component switch from config\tweaks.psd1, Gui.Tab = 'Migration')
-    $grpAssist = New-Nano11GroupBox -Text " Post-Install Migration Assistant " -Width 840 -Height 60 -Parent $flowMig
-    $asDef = $script:ComponentDefs['IncludeMigrationAssistant']
-    if ($asDef -and $asDef.Gui) {
-        $asInit = [bool]$asDef.Gui.Default
-        if ($InitialSettings.ContainsKey('IncludeMigrationAssistant')) { $asInit = [bool]$InitialSettings['IncludeMigrationAssistant'] }
-        $chkAssist = New-Nano11ToggleCheckBox -Parent $grpAssist -Key 'IncludeMigrationAssistant' -Text "IncludeMigrationAssistant - $($asDef.Gui.Text)" -ToolTip $toolTip -ToolTipText $asDef.Gui.Description -Checked $asInit
-        $chkAssist.Location = New-Object System.Drawing.Point(15, 24)
-        $chkAssist.Size = New-Object System.Drawing.Size(800, 28)
-        $gui.ComponentCheckboxes['IncludeMigrationAssistant'] = $chkAssist
-    }
-
-    # Backup settings: destination, credential handling, conflict policy
-    $grpTop = New-Nano11GroupBox -Text " Backup Settings " -Width 840 -Height 110 -Parent $flowMig
-    [void](New-Nano11Label -Text "Backup Root:" -X 15 -Y 22 -Width 90 -Height 20 -Parent $grpTop)
-    $txtMigRoot = New-Nano11TextBox -X 110 -Y 20 -Width 420 -Height 24 -Text (Get-Nano11DefaultMigrationBackupPath) -Parent $grpTop
-    $gui.MigRoot = $txtMigRoot
-    [void](New-Nano11Button -Text "Browse..." -X 540 -Y 19 -Width 90 -Height 26 -Parent $grpTop -OnClick {
-        $g = $this.FindForm().Tag
-        $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-        try {
-            $dlg.Description = "Select the migration backup destination"
-            if ($g.MigRoot.Text -and (Test-Path -LiteralPath $g.MigRoot.Text)) { $dlg.SelectedPath = $g.MigRoot.Text }
-            if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $g.MigRoot.Text = $dlg.SelectedPath }
-        } finally { $dlg.Dispose() }
-    })
-    $lblMigStatus = New-Nano11Label -Text "Select folders and rules, then click Backup or Restore." -X 640 -Y 22 -Width 190 -Height 40 -Parent $grpTop
-    $gui.MigStatus = $lblMigStatus
-    $gui.MigExcludeSecrets = New-Nano11CheckBox -Text "Exclude credentials/tokens (Recommended)" -X 15 -Y 52 -Width 320 -Height 24 -Checked $true -Parent $grpTop
-    [void](New-Nano11Label -Text "If a file already exists on restore:" -X 15 -Y 80 -Width 220 -Height 20 -Parent $grpTop)
-    $cmbConflict = New-Nano11ComboBox -Items @('BackupExisting', 'Skip', 'OverwriteIfNewer', 'Overwrite') -SelectedIndex 0 -DropList -X 240 -Y 78 -Width 200 -Parent $grpTop
-    $gui.MigConflict = $cmbConflict
-
-    # Left: personal data folders + migration rules
-    $grpRules = New-Nano11GroupBox -Text " Personal Folders & Migration Rules " -Width 410 -Height 420 -Parent $flowMig
-    $folderNames = @('Documents', 'Desktop', 'Pictures', 'Videos', 'Downloads')
-    $gui.MigFolders = New-Nano11CheckedList -Items $folderNames -Selected @('Documents', 'Desktop', 'Pictures') -X 10 -Y 20 -Width 390 -Height 100 -Parent $grpRules
-    [void](New-Nano11Label -Text "Migration rules (games / app settings):" -X 10 -Y 126 -Width 390 -Height 18 -Parent $grpRules)
-    $clbMig = New-Nano11CheckedList -Items @() -X 10 -Y 146 -Width 390 -Height 264 -Parent $grpRules
-    # Rules are filled in the first time this tab is opened (the migration engine is not loaded before that)
-    $clbMig.Tag = @()
-    $tabMigration.Tag = @{ Loaded = $false; List = $clbMig }
-    $tabMigration.Add_Enter({
-        $st = $this.Tag
-        if ($st.Loaded) { return }
-        $st.Loaded = $true
-        Initialize-Nano11GuiMigrationRules -List $st.List
-    })
-    $gui.MigRulesList = $clbMig
-
+# Tab 8, right column: backup / restore / verify / estimate action buttons
+function New-Nano11MigrationActionsGroup {
+    param([hashtable]$Gui, [object]$Parent)
     # Right: Action buttons
-    $grpActions = New-Nano11GroupBox -Text " Actions " -Width 410 -Height 420 -Parent $flowMig
+    $grpActions = New-Nano11GroupBox -Text " Actions " -Width 410 -Height 420 -Parent $Parent
     $btnY = 22
     $btnStep = 38
     [void](New-Nano11Button -Text "Recovery Readiness Check" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
@@ -1547,9 +1424,13 @@ function Show-Nano11GUI {
         })
         $btnY += $btnStep
     }
+}
 
+# Tab 8: custom file/folder backup and restore
+function New-Nano11MigrationCustomPathsGroup {
+    param([hashtable]$Gui, [object]$Parent)
     # Custom paths backup/restore section
-    $grpCustom = New-Nano11GroupBox -Text " Custom File/Folder Backup (arbitrary paths) " -Width 840 -Height 140 -Parent $flowMig
+    $grpCustom = New-Nano11GroupBox -Text " Custom File/Folder Backup (arbitrary paths) " -Width 840 -Height 140 -Parent $Parent
     [void](New-Nano11Label -Text "Paths (one per line):" -X 15 -Y 20 -Width 140 -Height 20 -Parent $grpCustom)
     $txtCustomPaths = New-Nano11TextBox -X 15 -Y 42 -Width 560 -Height 60 -Multiline -ScrollBars Vertical -ForeColor $script:Nano11GuiColors.Text -Parent $grpCustom
     $gui.CustomPaths = $txtCustomPaths
@@ -1587,9 +1468,13 @@ function Show-Nano11GUI {
             Show-Nano11GuiMessage -Text "Error: $($_.Exception.Message)" -Title "Restore Custom Paths" -Kind Error
         }
     })
+}
 
+# Tab 8: what config\user\user-tweaks.psd1 loaded (set by the builder)
+function New-Nano11MigrationExtensionsGroup {
+    param([hashtable]$Gui, [object]$Parent)
     # User Extensions & Custom Scripts card: what config\user\user-tweaks.psd1 loaded (set by the builder)
-    $grpExt = New-Nano11GroupBox -Text " User Extensions & Custom Scripts " -Width 840 -Height 110 -Parent $flowMig
+    $grpExt = New-Nano11GroupBox -Text " User Extensions & Custom Scripts " -Width 840 -Height 110 -Parent $Parent
     $extRes = $script:UserExtensionsResult
     $extErrors = @()
     if ($extRes -and $extRes.Errors) { $extErrors = @($extRes.Errors | Where-Object { $_ }) }
@@ -1610,6 +1495,85 @@ function Show-Nano11GUI {
             Show-Nano11GuiMessage -Text "Error: $($_.Exception.Message)" -Title "Extensibility Guide" -Kind Error
         }
     })
+}
+
+# Tab 8: Migration & Backup
+function New-Nano11MigrationTab {
+    param(
+        [hashtable]$Gui,
+        [System.Windows.Forms.TabControl]$TabControl,
+        [hashtable]$InitialSettings,
+        [System.Windows.Forms.ToolTip]$ToolTip
+    )
+    # =========================================================================
+    # Tab 8: Migration & Backup
+    # =========================================================================
+    $tabMigration = New-Nano11TabPage -Text " 8. Migration & Backup " -TabControl $tabControl
+    $flowMig = New-Nano11FlowPanel -Parent $tabMigration
+
+    # Top card: Post-Install Migration Assistant (a component switch from config\tweaks.psd1, Gui.Tab = 'Migration')
+    $grpAssist = New-Nano11GroupBox -Text " Post-Install Migration Assistant " -Width 840 -Height 60 -Parent $flowMig
+    $asDef = $script:ComponentDefs['IncludeMigrationAssistant']
+    if ($asDef -and $asDef.Gui) {
+        $asInit = [bool]$asDef.Gui.Default
+        if ($InitialSettings.ContainsKey('IncludeMigrationAssistant')) { $asInit = [bool]$InitialSettings['IncludeMigrationAssistant'] }
+        $chkAssist = New-Nano11ToggleCheckBox -Parent $grpAssist -Key 'IncludeMigrationAssistant' -Text "IncludeMigrationAssistant - $($asDef.Gui.Text)" -ToolTip $toolTip -ToolTipText $asDef.Gui.Description -Checked $asInit
+        $chkAssist.Location = New-Object System.Drawing.Point(15, 24)
+        $chkAssist.Size = New-Object System.Drawing.Size(800, 28)
+        $gui.ComponentCheckboxes['IncludeMigrationAssistant'] = $chkAssist
+    }
+
+    # Backup settings: destination, credential handling, conflict policy
+    $grpTop = New-Nano11GroupBox -Text " Backup Settings " -Width 840 -Height 110 -Parent $flowMig
+    [void](New-Nano11Label -Text "Backup Root:" -X 15 -Y 22 -Width 90 -Height 20 -Parent $grpTop)
+    $txtMigRoot = New-Nano11TextBox -X 110 -Y 20 -Width 420 -Height 24 -Text (Get-Nano11DefaultMigrationBackupPath) -Parent $grpTop
+    $gui.MigRoot = $txtMigRoot
+    [void](New-Nano11Button -Text "Browse..." -X 540 -Y 19 -Width 90 -Height 26 -Parent $grpTop -OnClick {
+        $g = $this.FindForm().Tag
+        $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+        try {
+            $dlg.Description = "Select the migration backup destination"
+            if ($g.MigRoot.Text -and (Test-Path -LiteralPath $g.MigRoot.Text)) { $dlg.SelectedPath = $g.MigRoot.Text }
+            if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $g.MigRoot.Text = $dlg.SelectedPath }
+        } finally { $dlg.Dispose() }
+    })
+    $lblMigStatus = New-Nano11Label -Text "Select folders and rules, then click Backup or Restore." -X 640 -Y 22 -Width 190 -Height 40 -Parent $grpTop
+    $gui.MigStatus = $lblMigStatus
+    $gui.MigExcludeSecrets = New-Nano11CheckBox -Text "Exclude credentials/tokens (Recommended)" -X 15 -Y 52 -Width 320 -Height 24 -Checked $true -Parent $grpTop
+    [void](New-Nano11Label -Text "If a file already exists on restore:" -X 15 -Y 80 -Width 220 -Height 20 -Parent $grpTop)
+    $cmbConflict = New-Nano11ComboBox -Items @('BackupExisting', 'Skip', 'OverwriteIfNewer', 'Overwrite') -SelectedIndex 0 -DropList -X 240 -Y 78 -Width 200 -Parent $grpTop
+    $gui.MigConflict = $cmbConflict
+
+    # Left: personal data folders + migration rules
+    $grpRules = New-Nano11GroupBox -Text " Personal Folders & Migration Rules " -Width 410 -Height 420 -Parent $flowMig
+    $folderNames = @('Documents', 'Desktop', 'Pictures', 'Videos', 'Downloads')
+    $gui.MigFolders = New-Nano11CheckedList -Items $folderNames -Selected @('Documents', 'Desktop', 'Pictures') -X 10 -Y 20 -Width 390 -Height 100 -Parent $grpRules
+    [void](New-Nano11Label -Text "Migration rules (games / app settings):" -X 10 -Y 126 -Width 390 -Height 18 -Parent $grpRules)
+    $clbMig = New-Nano11CheckedList -Items @() -X 10 -Y 146 -Width 390 -Height 264 -Parent $grpRules
+    # Rules are filled in the first time this tab is opened (the migration engine is not loaded before that)
+    $clbMig.Tag = @()
+    $tabMigration.Tag = @{ Loaded = $false; List = $clbMig }
+    $tabMigration.Add_Enter({
+        $st = $this.Tag
+        if ($st.Loaded) { return }
+        $st.Loaded = $true
+        Initialize-Nano11GuiMigrationRules -List $st.List
+    })
+    $gui.MigRulesList = $clbMig
+
+    New-Nano11MigrationActionsGroup -Gui $gui -Parent $flowMig
+    New-Nano11MigrationCustomPathsGroup -Gui $gui -Parent $flowMig
+    New-Nano11MigrationExtensionsGroup -Gui $gui -Parent $flowMig
+}
+
+# Tab 9: user-defined switches outside the built-in categories
+function New-Nano11UserTweaksTab {
+    param(
+        [hashtable]$Gui,
+        [System.Windows.Forms.TabControl]$TabControl,
+        [hashtable]$InitialSettings,
+        [System.Windows.Forms.ToolTip]$ToolTip
+    )
     # =========================================================================
     # TAB 9: user-defined switches whose Category has no tab above (System / Gaming / UserCustom ...)
     # =========================================================================
@@ -1632,6 +1596,128 @@ function Show-Nano11GUI {
     if ($userTweakCount -eq 0) {
         [void](New-Nano11Label -Text "No user-defined switches with a category outside Security / Privacy / Performance / UI." -X 0 -Y 0 -AutoSize -Parent $pageUser.Flow)
     }
+}
+
+# =========================================================================
+# Main window. Returns the result hashtable (Success = $false on cancel);
+# -NoShow returns the GUI context (Form, checkbox tables, ...) without showing it, for tests.
+# =========================================================================
+function Show-Nano11GUI {
+    param(
+        [hashtable]$InitialSettings = @{},
+        [switch]$NoShow
+    )
+
+    [System.Windows.Forms.Application]::EnableVisualStyles()
+
+    $uiFontName = "Segoe UI"
+    foreach ($fName in @("Yu Gothic UI", "Meiryo UI", "Segoe UI")) {
+        try {
+            $testFont = New-Object System.Drawing.Font($fName, 9)
+            if ($testFont.Name -eq $fName) { $uiFontName = $fName; break }
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
+
+    $form = New-Nano11Form -Text "nano11 Builder v2.1 - Next-Gen Windows 11 Modular Optimizer & Reducer" -Width 880 -Height 820 -ClientSize `
+        -NoAutoScale -Font (New-Object System.Drawing.Font($uiFontName, 9)) -StartPosition CenterScreen -FixedDialog -NoMaximize `
+        -BackColor $script:Nano11GuiColors.Window -ForeColor $script:Nano11GuiColors.Text
+
+    try {
+        $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+        $frameH = $form.Height - $form.ClientSize.Height
+        if ($form.Height -gt $wa.Height) {
+            $form.ClientSize = New-Object System.Drawing.Size(880, ($wa.Height - $frameH - 10))
+        }
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+
+    # Shared state for event handlers: they read it back as $this.FindForm().Tag
+    $gui = @{
+        Form                = $form
+        TweakCheckboxes     = @{}
+        ComponentCheckboxes = @{}
+        PresetKeyMap        = @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')
+        Result              = @{ Success = $false }
+    }
+    $form.Tag = $gui
+    $script:updatingPreset = $false
+
+    $toolTip = New-Object System.Windows.Forms.ToolTip
+    $accent = $script:Nano11GuiColors.Accent
+    $headerBack = $script:Nano11GuiColors.Header
+
+    # Header Panel
+    $headerPanel = New-Nano11ButtonBar -Parent $form -Height 65 -BackColor $headerBack
+    [void](New-Nano11Label -Text "nano11 Builder v2.1" -X 16 -Y 10 -AutoSize -ForeColor $accent `
+        -Font (New-Object System.Drawing.Font($uiFontName, 14, [System.Drawing.FontStyle]::Bold)) -Parent $headerPanel)
+    [void](New-Nano11Label -Text "Universal, Language-Independent Windows 11 Modular Reducer & Full-Toggle Optimizer" -X 18 -Y 38 -AutoSize `
+        -ForeColor $script:Nano11GuiColors.Subtle -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $headerPanel)
+
+    # Bottom Button & Estimate Panel
+    $bottomPanel = New-Nano11ButtonBar -Parent $form -Dock Bottom -Height 70 -BackColor $headerBack
+    $gui.DryRun = New-Nano11CheckBox -Text "DryRun (Simulation Mode)" -X 20 -Y 12 -Width 200 -Height 22 -Parent $bottomPanel
+    $gui.Estimate = New-Nano11Label -Text "Estimated ISO: ~5.5 GB (LZX baseline)" -X 20 -Y 38 -Width 380 -Height 20 `
+        -ForeColor $script:Nano11GuiColors.Muted -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel
+
+    [void](New-Nano11Button -Text "Preset Diff" -X 250 -Y 15 -Width 110 -Height 40 -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel -OnClick {
+        $g = $this.FindForm().Tag
+        try {
+            Show-Nano11GuiPresetDiff -Gui $g
+        } catch {
+            Show-Nano11GuiMessage -Text "Preset Diff failed: $($_.Exception.Message)" -Title "nano11 - Preset Diff" -Kind Error
+        }
+    })
+    [void](New-Nano11Button -Text "Check Dependencies" -X 370 -Y 15 -Width 150 -Height 40 -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel -OnClick {
+        $f = $this.FindForm()
+        $g = $f.Tag
+        try {
+            $cfg = Get-Nano11GuiDraftConfig -Gui $g
+            $res = Test-Nano11Dependencies -Config $cfg
+            $txt = Format-Nano11DependencyReport -Result $res
+            if (-not $txt) { $txt = "No conflicts, unknowns or impacts detected." }
+            Show-Nano11GuiMessage -Text $txt -Title "nano11 - Dependency Check" -Kind Info
+        } catch {
+            Show-Nano11GuiMessage -Text "Dependency check failed: $($_.Exception.Message)" -Title "nano11 - Dependency Check" -Kind Error
+        }
+    })
+    [void](New-Nano11Button -Text "Start nano11 Build" -X 530 -Y 15 -Width 210 -Height 40 -BackColor $script:Nano11GuiColors.Primary `
+        -Font (New-Object System.Drawing.Font($uiFontName, 10, [System.Drawing.FontStyle]::Bold)) -Parent $bottomPanel -OnClick {
+        $f = $this.FindForm()
+        $g = $f.Tag
+        # Dependency / feature-impact pre-check before starting the build
+        try {
+            $depCfg = Get-Nano11GuiDraftConfig -Gui $g
+            $depResult = Test-Nano11Dependencies -Config $depCfg
+            if ($depResult.HasIssues) {
+                $depText = Format-Nano11DependencyReport -Result $depResult
+                $msg = "Dependency / feature-impact issues detected:`n`n$depText`n`nContinue with build anyway?"
+                if (-not (Confirm-Nano11GuiAction -Message $msg -Title "nano11 - Dependency Check")) { return }
+            }
+        } catch {
+            Write-Verbose "Dependency check skipped: $($_.Exception.Message)"
+        }
+        if (Complete-Nano11GuiResult -Gui $g) {
+            $f.DialogResult = [System.Windows.Forms.DialogResult]::OK
+            $f.Close()
+        }
+    })
+    $btnCancel = New-Nano11Button -Text "Cancel" -X 750 -Y 15 -Width 110 -Height 40 -Font (New-Object System.Drawing.Font($uiFontName, 9.5)) -Parent $bottomPanel
+    $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+
+    # Main Tab Control
+    $tabControl = New-Nano11TabControl -Fill -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $form
+    $tabControl.BringToFront()
+
+    # =========================================================================
+    # Tabs 1-9 (one function each, above)
+    # =========================================================================
+    New-Nano11MediaTab -Gui $gui -TabControl $tabControl -InitialSettings $InitialSettings
+    New-Nano11TweakTabs -Gui $gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
+    New-Nano11ServicesTab -Gui $gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
+    New-Nano11DebloatTab -Gui $gui -TabControl $tabControl -InitialSettings $InitialSettings -UiFontName $uiFontName
+    New-Nano11MigrationTab -Gui $gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
+    New-Nano11UserTweaksTab -Gui $gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
+    $cmbPreset = $gui.Preset
+
     # =========================================================================
     # Synchronization & Presets Handling
     # =========================================================================
