@@ -490,7 +490,11 @@ function Invoke-Nano11MigrationRulesBackup {
     Write-Verbose "ConflictPolicy: $ConflictPolicy"
     $copied = 0
     $skipped = 0
+    $secretExcluded = 0
     $failed = @()
+    $skipReasons = @()
+    $backedUp = @()
+    $notices = @()
     if (-not (Test-Path -LiteralPath $BackupRoot)) { New-Item -ItemType Directory -Force -Path $BackupRoot | Out-Null }
     foreach ($rid in $RuleIds) {
         $rule = $allRules | Where-Object { $_.Id -eq $rid } | Select-Object -First 1
@@ -504,9 +508,12 @@ function Invoke-Nano11MigrationRulesBackup {
             if ($running.Count -gt 0) {
                 Write-Warning "Rule '$rid' skipped: process(es) running: $($running -join ', ')"
                 $skipped++
+                $skipReasons += [PSCustomObject]@{ Item = $rid; Reason = "Application running ($($running -join ', ')); close it and retry" }
                 continue
             }
         }
+        $backedUp += [PSCustomObject]@{ Id = $rid; Name = $rule.Name }
+        if ($rule.CloudSaveNotice) { $notices += [PSCustomObject]@{ RuleId = $rid; Name = $rule.Name; Notice = [string]$rule.CloudSaveNotice } }
         $ruleBackupDir = Join-Path -Path $BackupRoot -ChildPath "rules\$rid"
         if (-not (Test-Path -LiteralPath $ruleBackupDir)) { New-Item -ItemType Directory -Force -Path $ruleBackupDir | Out-Null }
         # SourcePaths (files/dirs)
@@ -521,6 +528,7 @@ function Invoke-Nano11MigrationRulesBackup {
                         if (-not $IncludeSecrets -and $rule.ExcludeSecrets -and (Test-Nano11SecretPath -FilePath $_.Name -SecretPatterns $secretPatterns)) {
                             Write-Verbose "Excluded secret: $($_.FullName)"
                             $skipped++
+                            $secretExcluded++
                             return
                         }
                         $exclude = $false
@@ -534,7 +542,7 @@ function Invoke-Nano11MigrationRulesBackup {
                     }
                 } else {
                     if (-not $IncludeSecrets -and $rule.ExcludeSecrets -and (Test-Nano11SecretPath -FilePath $item.Name -SecretPatterns $secretPatterns)) {
-                        Write-Verbose "Excluded secret: $($item.FullName)"; $skipped++; continue
+                        Write-Verbose "Excluded secret: $($item.FullName)"; $skipped++; $secretExcluded++; continue
                     }
                     $exclude = $false
                     foreach ($pat in @($rule.ExcludePatterns)) { if ($item.Name -like $pat) { $exclude = $true; break } }
@@ -554,7 +562,8 @@ function Invoke-Nano11MigrationRulesBackup {
             }
         }
     }
-    return [PSCustomObject]@{ CopiedFiles = $copied; SkippedFiles = $skipped; FailedFiles = $failed }
+    if ($secretExcluded -gt 0) { $skipReasons += [PSCustomObject]@{ Item = "$secretExcluded file(s)"; Reason = 'Secret/credential files excluded by default (use -IncludeSecrets to back them up)' } }
+    return [PSCustomObject]@{ CopiedFiles = $copied; SkippedFiles = $skipped; FailedFiles = $failed; SecretExcludedFiles = $secretExcluded; SkipReasons = $skipReasons; BackedUpRules = $backedUp; CloudSaveNotices = $notices }
 }
 
 function Invoke-Nano11MigrationRulesRestore {
