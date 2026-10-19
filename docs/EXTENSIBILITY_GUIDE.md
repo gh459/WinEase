@@ -52,6 +52,7 @@ Example: turn off the Sticky Keys confirmation shown when Shift is pressed five 
 | `Category` | Which GUI tab shows it (see above) |
 | `Default` | Whether it is ticked initially |
 | `Description` | Checkbox text |
+| `DescriptionJa` | Optional. Japanese checkbox text the GUI shows in Japanese mode (display language `-UiLanguage ja`). Save the file as UTF-8 **with BOM** if it contains Japanese |
 | `Impact` | How the dependency check treats it. `'Safe'` = no impact. If omitted it counts as Unknown and is warned about |
 | `Actions` | What runs when the tweak is enabled (see below) |
 

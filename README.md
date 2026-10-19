@@ -220,6 +220,7 @@ The modern dark-mode GUI allows you to:
 - Toggle **High-Speed VHDX Scratch Disk** (`-UseVHDX`) to eliminate host fragmentation.
 - Open **Tab 8 "Migration & Backup"** to check recovery readiness, export an app inventory, estimate and run a backup/restore of personal folders, game saves and app settings, verify a backup (SHA-256), retry only failed restore tasks, diff any preset against the current window ("Preset Diff"), and switch on **Include Migration Assistant (PC-to-PC transfer tools)** (`-IncludeMigrationAssistant`). It also shows how many user extensions were loaded and any load errors. The migration engine is loaded the first time the tab is opened.
 - Open **Tab 9 "User Tweaks"** to see your own switches from `config/user/user-tweaks.psd1` whose category is not Security / Privacy / Performance / UI (those appear on tabs 2-5).
+- Pick the display language (**English / 日本語**) in the header. The window is rebuilt with everything you entered kept, and the choice is saved in `%LOCALAPPDATA%\nano11\gui-settings.json`. Without a saved choice the OS display language is used (Japanese → 日本語, otherwise English). `-UiLanguage en|ja` overrides it for one run, also for `tools/migrator/Nano11-Migrator.ps1`. It only changes what is shown: settings, Advanced Debloat item names passed to the build, logs and reports stay English. The texts live in `config/ui-strings/en.json` and `ja.json` (UTF-8).
 - Click **Start nano11 Build** to launch the build process!
 
 #### **Option B: Interactive Console**
@@ -283,6 +284,7 @@ You can run the builder completely unattended with built-in presets and modular 
 | Parameter | Description |
 | :--- | :--- |
 | `-GUI` (alias: `-UI`) | Launches the dark-themed Graphical User Interface frontend |
+| `-UiLanguage <en\|ja>` | Display language of the GUI windows (display only). Default: the language saved by the GUI, else the OS display language |
 | `-Profile <extreme\|balanced\|fat32\|handheld\|vm\|audio>` (alias: `-Preset`) | Applies an in-memory configuration preset (Built-in: zero external JSON dependency) |
 | `-UseVHDX` (alias: `-FastVHDX`) | Dynamically mounts an expandable 30 GB VHDX volume as the DISM scratch directory, eliminating host fragmentation and accelerating build times |
 | `-DryRun` (supports `-WhatIf`) | Resolves and verifies configuration, options, and paths without modifying disks or servicing images |
