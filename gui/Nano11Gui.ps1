@@ -12,7 +12,7 @@ Add-Type -AssemblyName System.Drawing
 # Repository root (this file lives in <repo>\gui)
 $script:Nano11GuiRepoRoot = Split-Path -Parent $PSScriptRoot
 
-# Default backup folder for the migration tools: <base>\nano11_migration_backup.
+# Default backup folder for the migration tools: <base>\<folder name below>.
 # Base 'Profile' = the user profile (GUI Tab 8), 'Documents' = the Documents folder (Nano11-Migrator).
 $script:Nano11MigrationBackupFolderName = 'nano11_migration_backup'
 function Get-Nano11DefaultMigrationBackupPath {
@@ -1323,8 +1323,7 @@ function New-Nano11DebloatTab {
 
 # Tab 8, right column: backup / restore / verify / estimate action buttons
 function New-Nano11MigrationActionsGroup {
-    param([hashtable]$Gui, [object]$Parent)
-    # Right: Action buttons
+    param([object]$Parent)
     $grpActions = New-Nano11GroupBox -Text " Actions " -Width 410 -Height 420 -Parent $Parent
     $btnY = 22
     $btnStep = 38
@@ -1561,7 +1560,7 @@ function New-Nano11MigrationTab {
     })
     $gui.MigRulesList = $clbMig
 
-    New-Nano11MigrationActionsGroup -Gui $gui -Parent $flowMig
+    New-Nano11MigrationActionsGroup -Parent $flowMig
     New-Nano11MigrationCustomPathsGroup -Gui $gui -Parent $flowMig
     New-Nano11MigrationExtensionsGroup -Gui $gui -Parent $flowMig
 }
