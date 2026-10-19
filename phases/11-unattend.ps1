@@ -1640,3 +1640,42 @@ try {
 } catch {
     Write-Verbose "Ignored: $($_.Exception.Message)"
 }
+
+# Migration Assistant bundle: tool + engine + rule files only (no personal data) and a desktop launcher
+if ($includeMigrationAssistant -eq $true) {
+    try {
+        $migrationFiles = @(
+            'tools\Nano11-Migrator.ps1',
+            'lib\Nano11Migration.ps1',
+            'config\migration-rules.psd1',
+            'config\user-migration-rules.psd1'
+        )
+        $migrationDestDir = Join-Path -Path $scratchDir -ChildPath 'Windows\Setup\Scripts\Migration'
+        $migrationDesktopDir = Join-Path -Path $scratchDir -ChildPath 'Users\Public\Desktop'
+        $migrationLauncherPath = Join-Path -Path $migrationDesktopDir -ChildPath 'Launch-MigrationAssistant.cmd'
+        $migrationLauncherLines = @(
+            '@echo off',
+            'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Windows\Setup\Scripts\Migration\Nano11-Migrator.ps1" -GUI'
+        )
+        if ($DryRun) {
+            Write-Host "  [DryRun] Would copy Migration Assistant files to $migrationDestDir" -ForegroundColor DarkYellow
+            foreach ($mf in $migrationFiles) { Write-Host "    - $mf" -ForegroundColor DarkYellow }
+            Write-Host "  [DryRun] Would create $migrationLauncherPath" -ForegroundColor DarkYellow
+        } else {
+            New-Item -ItemType Directory -Path $migrationDestDir -Force | Out-Null
+            New-Item -ItemType Directory -Path $migrationDesktopDir -Force | Out-Null
+            foreach ($mf in $migrationFiles) {
+                $mfSrc = Join-Path -Path $scriptDir -ChildPath $mf
+                if (Test-Path -LiteralPath $mfSrc) {
+                    Copy-Item -LiteralPath $mfSrc -Destination (Join-Path -Path $migrationDestDir -ChildPath (Split-Path -Path $mf -Leaf)) -Force
+                } else {
+                    Write-Warning "Migration Assistant file not found, skipped: $mfSrc"
+                }
+            }
+            Set-Content -LiteralPath $migrationLauncherPath -Value $migrationLauncherLines -Encoding ASCII
+            Write-Host "  Migration Assistant bundled into the image" -ForegroundColor Green
+        }
+    } catch {
+        Write-Warning "Migration Assistant bundling failed: $($_.Exception.Message)"
+    }
+}

@@ -1489,3 +1489,41 @@ Describe "S7 - GUI Tab 8 (Migration & Backup)" {
         } finally { $gui.Form.Dispose() }
     }
 }
+
+Describe "S5: Migration Assistant bundling" {
+    $s5Root = Split-Path -Parent $PSScriptRoot
+    $s5Text = [System.IO.File]::ReadAllText((Join-Path $s5Root 'phases\11-unattend.ps1'))
+    $s5Defs = Import-PowerShellDataFile -LiteralPath (Join-Path $s5Root 'config\tweaks.psd1')
+
+    It "the component maps to the variable the phase reads" {
+        $cd = @($s5Defs.Components | Where-Object { $_.Key -eq 'IncludeMigrationAssistant' })[0]
+        $cd.Variable | Should Be 'includeMigrationAssistant'
+        $s5Text.Contains('$includeMigrationAssistant') | Should Be $true
+    }
+
+    It "the phase targets the four files and the launcher" {
+        foreach ($f in 'tools\Nano11-Migrator.ps1', 'lib\Nano11Migration.ps1', 'config\migration-rules.psd1', 'config\user-migration-rules.psd1', 'Launch-MigrationAssistant.cmd', 'Windows\Setup\Scripts\Migration', 'Users\Public\Desktop') {
+            $s5Text.Contains($f) | Should Be $true
+        }
+    }
+
+    It "the bundling block copies into a scratch folder and honors DryRun" {
+        $start = $s5Text.IndexOf('if ($includeMigrationAssistant -eq $true)')
+        $start | Should BeGreaterThan 0
+        $block = 'param($scratchDir, $scriptDir, $DryRun, $includeMigrationAssistant)' + "`r`n" + $s5Text.Substring($start)
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("s5_" + [guid]::NewGuid().ToString('N'))
+        try {
+            $scratchDir = Join-Path $tmp 'scratch'
+            New-Item -ItemType Directory -Path $scratchDir -Force | Out-Null
+            $null = & ([scriptblock]::Create($block)) $scratchDir $s5Root $true $true 6>$null
+            (Test-Path (Join-Path $scratchDir 'Windows')) | Should Be $false
+            $null = & ([scriptblock]::Create($block)) $scratchDir $s5Root $false $true 6>$null
+            $dest = Join-Path $scratchDir 'Windows\Setup\Scripts\Migration'
+            foreach ($n in 'Nano11-Migrator.ps1', 'Nano11Migration.ps1', 'migration-rules.psd1', 'user-migration-rules.psd1') {
+                (Test-Path (Join-Path $dest $n)) | Should Be $true
+            }
+            $cmd = Join-Path $scratchDir 'Users\Public\Desktop\Launch-MigrationAssistant.cmd'
+            ([System.IO.File]::ReadAllText($cmd)).Contains('-File "C:\Windows\Setup\Scripts\Migration\Nano11-Migrator.ps1" -GUI') | Should Be $true
+        } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
