@@ -121,8 +121,10 @@ function Invoke-Nano11UserExtensionActions {
         [string]$PhaseType,
         [hashtable]$TweakSettings = $null,
         [string]$ScratchDir = '',
+        [hashtable]$Context = $null,
         [switch]$DryRun
     )
+    if ($Context) { Write-Verbose "Context keys: $(@($Context.Keys) -join ', ')" }
     if ($null -eq $TweakSettings) { $TweakSettings = $script:TweakSettings }
     if ($null -eq $TweakSettings) { $TweakSettings = @{} }
     Write-Verbose "ScratchDir: $ScratchDir"

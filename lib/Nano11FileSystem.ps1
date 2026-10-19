@@ -137,6 +137,9 @@ function Set-ItemOwnershipAndAccess {
         return
     }
 
+    # Language-independent Administrators group via Well-Known SID (S-1-5-32-544)
+    $adminGroupSid = [System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
+
     $failedItems = [System.Collections.Generic.List[string]]::new()
     $pending = [System.Collections.Generic.Queue[string]]::new()
     $pending.Enqueue((Resolve-Path -LiteralPath $Path).Path)

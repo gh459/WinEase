@@ -1544,6 +1544,14 @@ $pkgAfterPath = Join-Path -Path $logDir -ChildPath "packages-after.txt"
 $featAfterPath = Join-Path -Path $logDir -ChildPath "features-after.txt"
 $winsxsAfterPath = Join-Path -Path $logDir -ChildPath "winsxs-after.txt"
 
+# DISM creates its servicing-stack shim folder under <image>\Windows\Temp; if debloat removed it,
+# every /image: query fails with 0x80070003 (exit 87). Recreate it before querying.
+$imageTempDir = Join-Path -Path $scratchDir -ChildPath 'Windows\Temp'
+if (-not (Test-Path -LiteralPath $imageTempDir)) {
+    New-Item -ItemType Directory -Path $imageTempDir -Force | Out-Null
+    Write-Host "  - Recreated missing $imageTempDir (required by DISM servicing stack)" -ForegroundColor Yellow
+}
+
 Invoke-Dism -DismArgs @("/image:$scratchDir", "/Get-Packages", "/Format:Table") -CaptureOutput | Set-Content -LiteralPath $pkgAfterPath -Encoding utf8
 Invoke-Dism -DismArgs @("/image:$scratchDir", "/Get-Features", "/Format:Table") -CaptureOutput | Set-Content -LiteralPath $featAfterPath -Encoding utf8
 if ($safeDebloatMode) {
