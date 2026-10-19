@@ -9,9 +9,13 @@ function Import-Nano11UserExtensions {
         [string]$ConfigPath,
         [switch]$PresetsOnly
     )
-    $script:UserTweakDefs = [ordered]@{}
+    # Reset only what this call repopulates; a -PresetsOnly re-read must keep the tweaks
+    # and scripts loaded by the earlier full call.
+    if (-not $PresetsOnly) {
+        $script:UserTweakDefs = [ordered]@{}
+        $script:UserCustomScripts = @()
+    }
     $script:UserPresets = [ordered]@{}
-    $script:UserCustomScripts = @()
     $errors = @()
 
     if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
@@ -99,9 +103,9 @@ function Import-Nano11UserExtensions {
 
     return [PSCustomObject]@{
         Loaded            = $true
-        UserTweakCount    = $script:UserTweakDefs.Count
+        UserTweakCount    = @($script:UserTweakDefs.Keys).Count
         UserPresetCount   = if ($data.UserPresets) { $data.UserPresets.Count } else { 0 }
-        CustomScriptCount = $script:UserCustomScripts.Count
+        CustomScriptCount = @($script:UserCustomScripts).Count
         Errors            = $errors
     }
 }
