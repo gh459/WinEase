@@ -234,6 +234,21 @@ function Set-Nano11Checked {
     }
 }
 
+# OK-only message box; -Kind picks the icon (Info | Warning | Error)
+function Show-Nano11GuiMessage {
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [string]$Title = "nano11",
+        [ValidateSet('Info', 'Warning', 'Error')][string]$Kind = 'Info'
+    )
+    $icon = switch ($Kind) {
+        'Warning' { [System.Windows.Forms.MessageBoxIcon]::Warning }
+        'Error'   { [System.Windows.Forms.MessageBoxIcon]::Error }
+        default   { [System.Windows.Forms.MessageBoxIcon]::Information }
+    }
+    [void][System.Windows.Forms.MessageBox]::Show($Text, $Title, [System.Windows.Forms.MessageBoxButtons]::OK, $icon)
+}
+
 function Confirm-Nano11GuiAction {
     param([string]$Message, [string]$Title = "Confirm")
     $ans = [System.Windows.Forms.MessageBox]::Show($Message, $Title,
@@ -460,7 +475,7 @@ function Show-AdvancedDebloatDialog {
         if ($expSel.Count -gt 0) {
             $msg += "`nExperimental enabled: Windows Update will be broken"
         }
-        [System.Windows.Forms.MessageBox]::Show($msg, "Deletion Preview", "OK", "Information")
+        Show-Nano11GuiMessage -Text $msg -Title "Deletion Preview" -Kind Info
     })
 
     # OK / Cancel
@@ -654,7 +669,7 @@ function Show-Nano11GuiPresetDiff {
                 $txt = Get-Nano11GuiPresetDiffText -Gui $t.Gui -From ([string]$t.From.SelectedItem) -To ([string]$t.To.SelectedItem)
                 Show-Nano11GuiTextDialog -Title "Preset Diff: $($t.From.SelectedItem) -> $($t.To.SelectedItem)" -Text $txt -Owner $f
             } catch {
-                [void][System.Windows.Forms.MessageBox]::Show("Error: $($_.Exception.Message)", "Preset Diff", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+                Show-Nano11GuiMessage -Text "Error: $($_.Exception.Message)" -Title "Preset Diff" -Kind Error
             }
         })
         $btnClose = New-Nano11Button -Text "Close" -X 260 -Y 105 -Width 120 -Height 32 -Parent $dlg
@@ -813,18 +828,18 @@ function Invoke-Nano11GuiMigrationJob {
 # Job outcome -> message box (errors from the error stream are appended to a successful message)
 function Show-Nano11GuiJobOutcome {
     param($Outcome, [string]$Title, [string]$SuccessMessage)
-    $icon = [System.Windows.Forms.MessageBoxIcon]::Information
+    $kind = 'Info'
     if ($Outcome.Error) {
         $msg = "Error: $($Outcome.Error)"
-        $icon = [System.Windows.Forms.MessageBoxIcon]::Error
+        $kind = 'Error'
     } else {
         $msg = $SuccessMessage
         if (@($Outcome.Errors).Count -gt 0) {
             $msg += "`n`nErrors reported:`n" + (@($Outcome.Errors) -join "`n")
-            $icon = [System.Windows.Forms.MessageBoxIcon]::Warning
+            $kind = 'Warning'
         }
     }
-    [void][System.Windows.Forms.MessageBox]::Show($msg, $Title, [System.Windows.Forms.MessageBoxButtons]::OK, $icon)
+    Show-Nano11GuiMessage -Text $msg -Title $Title -Kind $kind
 }
 
 # Checks every file recorded in migration-manifest.json: present and (when recorded) matching SHA-256
@@ -854,7 +869,7 @@ function Complete-Nano11GuiResult {
     param([hashtable]$Gui)
     $srcText = $Gui.Source.Text.Trim()
     if (-not $srcText) {
-        [void][System.Windows.Forms.MessageBox]::Show("Please specify Windows 11 installation media or ISO image.", "Source Required", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+        Show-Nano11GuiMessage -Text "Please specify Windows 11 installation media or ISO image." -Title "Source Required" -Kind Warning
         return $false
     }
 
@@ -885,11 +900,11 @@ function Complete-Nano11GuiResult {
     $guiComputerName = $Gui.ComputerName.Text.Trim()
     if (-not $guiComputerName) { $guiComputerName = '*' }
     if ($guiUserName -notmatch '^[\p{L}\p{N}_][\p{L}\p{N} ._-]{0,19}$') {
-        [void][System.Windows.Forms.MessageBox]::Show("Username must contain only letters, digits, spaces, '.', '_', or '-' (max 20 chars).", "Invalid Username", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+        Show-Nano11GuiMessage -Text "Username must contain only letters, digits, spaces, '.', '_', or '-' (max 20 chars)." -Title "Invalid Username" -Kind Warning
         return $false
     }
     if ($guiComputerName -notmatch '^(\*|[A-Za-z0-9][A-Za-z0-9-]{0,14})$') {
-        [void][System.Windows.Forms.MessageBox]::Show("ComputerName must be '*' or up to 15 alphanumeric characters and hyphens.", "Invalid ComputerName", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+        Show-Nano11GuiMessage -Text "ComputerName must be '*' or up to 15 alphanumeric characters and hyphens." -Title "Invalid ComputerName" -Kind Warning
         return $false
     }
 
@@ -1005,7 +1020,7 @@ function Show-Nano11GUI {
         try {
             Show-Nano11GuiPresetDiff -Gui $g
         } catch {
-            [void][System.Windows.Forms.MessageBox]::Show("Preset Diff failed: $($_.Exception.Message)", "nano11 - Preset Diff", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+            Show-Nano11GuiMessage -Text "Preset Diff failed: $($_.Exception.Message)" -Title "nano11 - Preset Diff" -Kind Error
         }
     })
     [void](New-Nano11Button -Text "Check Dependencies" -X 370 -Y 15 -Width 150 -Height 40 -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel -OnClick {
@@ -1016,9 +1031,9 @@ function Show-Nano11GUI {
             $res = Test-Nano11Dependencies -Config $cfg
             $txt = Format-Nano11DependencyReport -Result $res
             if (-not $txt) { $txt = "No conflicts, unknowns or impacts detected." }
-            [void][System.Windows.Forms.MessageBox]::Show($txt, "nano11 - Dependency Check", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+            Show-Nano11GuiMessage -Text $txt -Title "nano11 - Dependency Check" -Kind Info
         } catch {
-            [void][System.Windows.Forms.MessageBox]::Show("Dependency check failed: $($_.Exception.Message)", "nano11 - Dependency Check", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+            Show-Nano11GuiMessage -Text "Dependency check failed: $($_.Exception.Message)" -Title "nano11 - Dependency Check" -Kind Error
         }
     })
     [void](New-Nano11Button -Text "Start nano11 Build" -X 530 -Y 15 -Width 210 -Height 40 -BackColor ($script:Nano11GuiColors.Primary) `
@@ -1032,8 +1047,7 @@ function Show-Nano11GUI {
             if ($depResult.HasIssues) {
                 $depText = Format-Nano11DependencyReport -Result $depResult
                 $msg = "Dependency / feature-impact issues detected:`n`n$depText`n`nContinue with build anyway?"
-                $answer = [System.Windows.Forms.MessageBox]::Show($msg, "nano11 - Dependency Check", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Warning)
-                if ($answer -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+                if (-not (Confirm-Nano11GuiAction -Message $msg -Title "nano11 - Dependency Check")) { return }
             }
         } catch {
             Write-Verbose "Dependency check skipped: $($_.Exception.Message)"
@@ -1370,9 +1384,9 @@ function Show-Nano11GUI {
         try {
             $rr = Get-Nano11GuiRecoveryReadiness -Gui $g
             $msg = "Readiness Score: $($rr.ReadinessScore)`nSecondary Drives: $($rr.SecondaryDrives -join ', ')`nSystem Restore: $($rr.SystemRestoreEnabled)`nWinRE on target: $($rr.WinReEnabledOnTarget)`n`n$($rr.Recommendations -join "`n")"
-            [void][System.Windows.Forms.MessageBox]::Show($msg, "Recovery Readiness", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+            Show-Nano11GuiMessage -Text $msg -Title "Recovery Readiness" -Kind Info
         } catch {
-            [void][System.Windows.Forms.MessageBox]::Show("Error: $($_.Exception.Message)", "Recovery Readiness", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+            Show-Nano11GuiMessage -Text "Error: $($_.Exception.Message)" -Title "Recovery Readiness" -Kind Error
         }
     })
     $btnY += $btnStep
@@ -1409,10 +1423,10 @@ function Show-Nano11GUI {
                 # -BackupRoot exists in every Nano11-Migrator.ps1 version (it is a -PackagePath alias after S6)
                 Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$migratorPath`" -GUI -BackupRoot `"$root`"" -WindowStyle Normal
             } catch {
-                [void][System.Windows.Forms.MessageBox]::Show("Error: $($_.Exception.Message)", "Migration Wizard", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+                Show-Nano11GuiMessage -Text "Error: $($_.Exception.Message)" -Title "Migration Wizard" -Kind Error
             }
         } else {
-            [void][System.Windows.Forms.MessageBox]::Show("Nano11-Migrator.ps1 not found.", "Migration Wizard", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+            Show-Nano11GuiMessage -Text "Nano11-Migrator.ps1 not found." -Title "Migration Wizard" -Kind Warning
         }
     })
     $btnY += $btnStep
@@ -1526,10 +1540,10 @@ function Show-Nano11GUI {
             if ($paths.Count -eq 0) { throw "No paths specified." }
             $result = Backup-Nano11CustomPaths -Paths $paths -BackupRoot $root
             $msg = "Custom paths backup completed.`nCopied: $($result.CopiedFiles) files.`nFailed: $($result.FailedFiles.Count)"
-            [void][System.Windows.Forms.MessageBox]::Show($msg, "Backup Custom Paths", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+            Show-Nano11GuiMessage -Text $msg -Title "Backup Custom Paths" -Kind Info
             if ($g.MigStatus) { $g.MigStatus.Text = "Custom backup: $($result.CopiedFiles) files." }
         } catch {
-            [void][System.Windows.Forms.MessageBox]::Show("Error: $($_.Exception.Message)", "Backup Custom Paths", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+            Show-Nano11GuiMessage -Text "Error: $($_.Exception.Message)" -Title "Backup Custom Paths" -Kind Error
         } finally {
             $btn.Enabled = $true
             $f.Cursor = [System.Windows.Forms.Cursors]::Default
@@ -1547,10 +1561,10 @@ function Show-Nano11GUI {
             if (-not $root) { $root = Join-Path $env:USERPROFILE "nano11_migration_backup" }
             $result = Restore-Nano11CustomPaths -BackupRoot $root -ConflictPolicy (Get-Nano11GuiConflictPolicy -Gui $g)
             $msg = "Custom paths restore completed.`nRestored: $($result.RestoredFiles) files.`nFailed: $($result.FailedFiles.Count)"
-            [void][System.Windows.Forms.MessageBox]::Show($msg, "Restore Custom Paths", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+            Show-Nano11GuiMessage -Text $msg -Title "Restore Custom Paths" -Kind Info
             if ($g.MigStatus) { $g.MigStatus.Text = "Custom restore: $($result.RestoredFiles) files." }
         } catch {
-            [void][System.Windows.Forms.MessageBox]::Show("Error: $($_.Exception.Message)", "Restore Custom Paths", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+            Show-Nano11GuiMessage -Text "Error: $($_.Exception.Message)" -Title "Restore Custom Paths" -Kind Error
         } finally {
             $btn.Enabled = $true
             $f.Cursor = [System.Windows.Forms.Cursors]::Default
@@ -1576,7 +1590,7 @@ function Show-Nano11GUI {
             if (-not (Test-Path -LiteralPath $guide)) { throw "Guide not found: $guide" }
             Start-Process -FilePath $guide
         } catch {
-            [void][System.Windows.Forms.MessageBox]::Show("Error: $($_.Exception.Message)", "Extensibility Guide", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+            Show-Nano11GuiMessage -Text "Error: $($_.Exception.Message)" -Title "Extensibility Guide" -Kind Error
         }
     })
     # =========================================================================
