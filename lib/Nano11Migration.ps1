@@ -1,5 +1,7 @@
 ﻿# Nano11Migration.ps1 - PC migration / backup / restore engine for nano11
-# Dot-sourced by nano11builder.ps1 or used standalone (tools/Nano11-Migrator.ps1).
+# Dot-sourced by tools/Nano11-Migrator.ps1 (and the GUI migration tab) and by the test suite.
+# nano11builder.ps1 does NOT load this file. Depends on Test-Nano11PathWithin from
+# nano11helpers.ps1, so the caller must dot-source nano11helpers.ps1 first.
 
 # 1. Expand-Nano11MigrationPath
 function Expand-Nano11MigrationPath {
@@ -306,6 +308,23 @@ function Get-Nano11MigrationSizeEstimate {
     }
 }
 
+# Assert-Nano11BackupRootOutsideSources: refuse a BackupRoot that lives inside a source folder
+# (the copy would pick up its own output and never finish). Runs before any copy starts.
+function Assert-Nano11BackupRootOutsideSources {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BackupRoot,
+        [string[]]$SourcePaths = @()
+    )
+    foreach ($sp in @($SourcePaths)) {
+        if ([string]::IsNullOrWhiteSpace($sp)) { continue }
+        if (Test-Nano11PathWithin -Path $BackupRoot -Root $sp) {
+            throw "BackupRoot '$BackupRoot' is inside the source folder '$sp'. Choose a backup location outside the folders being backed up."
+        }
+    }
+}
+
 # 7. Backup-Nano11UserData
 function Backup-Nano11UserData {
     [CmdletBinding()]
@@ -327,6 +346,7 @@ function Backup-Nano11UserData {
             throw "BackupRoot must not be inside the nano11 directory."
         }
     } catch { throw }
+    Assert-Nano11BackupRootOutsideSources -BackupRoot $BackupRoot -SourcePaths @($FolderMap.Values)
 
     $copied = 0
     $skipped = 0
@@ -691,6 +711,8 @@ function Backup-Nano11CustomPaths {
         [string]$BackupRoot,
         [switch]$DryRun
     )
+    $expandedSources = @($Paths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { Expand-Nano11MigrationPath -RawPath $_.Trim() })
+    Assert-Nano11BackupRootOutsideSources -BackupRoot $BackupRoot -SourcePaths $expandedSources
     $copied = 0
     $skipped = 0
     $failed = @()
