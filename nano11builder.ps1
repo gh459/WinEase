@@ -64,6 +64,7 @@ param(
     [switch]$KeepBasicApps,
     [switch]$KeepSearchIndex,
     [switch]$IncludeMigrationAssistant,
+    [string]$ComparePreset,
 
     # 1. Windows Defender
     [switch]$KeepDefender,
@@ -1871,6 +1872,17 @@ if ($SaveProfile) {
     Export-Nano11Profile -FilePath $SaveProfile -Config $currentCfg
 }
 
+# -ComparePreset: show the difference between the current configuration and a preset (name or JSON path), then exit.
+# No build or disk operation is performed.
+if ($ComparePreset) {
+    $cmpCfg = Get-Nano11CurrentConfig -ProfileName $(if ($selectedProfile) { $selectedProfile } else { "Current Configuration" })
+    $cmpDiff = Compare-Nano11Config -ReferenceConfig $cmpCfg -DifferenceConfig $ComparePreset
+    Write-Host ""
+    Write-Host (Format-Nano11ConfigDiff -DiffResult $cmpDiff)
+    if ($transcriptPath) { Stop-Transcript }
+    exit 0
+}
+
 # Save build configuration snapshot to logs/<timestamp>.config.json
 $logsDir = Join-Path -Path $scriptDir -ChildPath "logs"
 if (-not (Test-Path -LiteralPath $logsDir)) {
@@ -1969,6 +1981,23 @@ try {
 } catch {
     if ($_.Exception.Message -match 'Dependency check failed') { throw }
     Write-Warning "Dependency check skipped: $($_.Exception.Message)"
+}
+
+# Recovery readiness check (advisory only; never stops the build)
+try {
+    $recoveryResult = Test-Nano11RecoveryReadiness -Config $resolvedConfig
+    Write-Host ""
+    Write-Host "Recovery readiness:" -ForegroundColor Cyan
+    if ($recoveryResult) { Write-Host (($recoveryResult | Format-List | Out-String).TrimEnd()) }
+} catch {
+    Write-Warning "Recovery readiness check skipped: $($_.Exception.Message)"
+}
+
+# M2: Custom scripts (PreBuild stage)
+if (Get-Command -Name Invoke-Nano11CustomScriptsStage -ErrorAction SilentlyContinue) {
+    try {
+        Invoke-Nano11CustomScriptsStage -Stage 'PreBuild' -Context @{ Config = $resolvedConfig; ScriptRoot = $scriptDir } -DryRun:$isDryRunMode | Out-Null
+    } catch { Write-Warning "PreBuild custom scripts failed: $($_.Exception.Message)" }
 }
 
 # Early verification of -SourceDrive
