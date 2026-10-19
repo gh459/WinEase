@@ -1668,3 +1668,116 @@ Describe "Folder structure S9" {
         Test-Path -LiteralPath (Join-Path $script:S9Root "templates\report.html") | Should Be $true
     }
 }
+
+Describe "S10 - GUI and migrator cleanup (shared parts)" {
+    $script:S10Gui = Join-Path -Path $script:RepoRoot -ChildPath "gui\Nano11Gui.ps1"
+    $script:S10Mig = Join-Path -Path $script:RepoRoot -ChildPath "tools\migrator\Nano11-Migrator.ps1"
+    $script:S10GuiText = [System.IO.File]::ReadAllText($script:S10Gui)
+    $script:S10MigText = [System.IO.File]::ReadAllText($script:S10Mig)
+    $script:S10GuiAst = [System.Management.Automation.Language.Parser]::ParseFile($script:S10Gui, [ref]$null, [ref]$null)
+
+    It "colours are defined once: FromArgb only appears in the colour table" {
+        ([regex]::Matches($script:S10GuiText, 'FromArgb')).Count | Should Be 14
+        ([regex]::Matches($script:S10MigText, 'FromArgb')).Count | Should Be 0
+    }
+
+    It "OK message boxes go through Show-Nano11GuiMessage (only it and the YesNo confirm call MessageBox)" {
+        ([regex]::Matches($script:S10GuiText, 'MessageBox\]::Show')).Count | Should Be 2
+        ([regex]::Matches($script:S10MigText, 'MessageBox')).Count | Should Be 0
+        $fn = $script:S10GuiAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Show-Nano11GuiMessage' }, $true)
+        $kind = $fn.Body.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Kind' }
+        $set = ($kind.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateSet' }).PositionalArguments | ForEach-Object { $_.Value }
+        (@($set) -join ',') | Should Be 'Info,Warning,Error'
+    }
+
+    It "the default backup folder name is spelled once per file" {
+        ([regex]::Matches($script:S10GuiText, 'nano11_migration_backup')).Count | Should Be 1
+        ([regex]::Matches($script:S10MigText, 'nano11_migration_backup')).Count | Should Be 1
+    }
+
+    It "the migrator builds its window from the shared parts (no raw WinForms controls)" {
+        $script:S10MigText | Should Not Match 'New-Object\s+"?System\.Windows\.Forms\.(Form|TabControl|TabPage|Label|TextBox|Button|CheckBox|CheckedListBox|ComboBox)\b'
+        $script:S10MigText | Should Not Match 'Start-Job'
+        $script:S10MigText | Should Match 'Invoke-Nano11GuiBackgroundJob'
+        $script:S10MigText | Should Match 'Nano11Gui\.ps1'
+    }
+
+    It "the GUI file creates no Form/TabControl/ComboBox/TextBox outside the part functions" {
+        $parts = 'New-Nano11Form', 'New-Nano11TabControl', 'New-Nano11ComboBox', 'New-Nano11TextBox'
+        $calls = $script:S10GuiAst.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'New-Object' -and
+            $n.Extent.Text -match 'System\.Windows\.Forms\.(Form|TabControl|ComboBox|TextBox)\b' }, $true)
+        foreach ($c in $calls) {
+            $owner = $c.Parent
+            while ($owner -and $owner -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) { $owner = $owner.Parent }
+            ($parts -contains $owner.Name) | Should Be $true
+        }
+    }
+
+    It "Show-Nano11GUI is short: tabs are built by their own functions" {
+        $show = $script:S10GuiAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Show-Nano11GUI' }, $true)
+        ($show.Extent.EndLineNumber - $show.Extent.StartLineNumber) | Should BeLessThan 230
+        foreach ($fnName in 'New-Nano11MediaTab', 'New-Nano11TweakTabs', 'New-Nano11ServicesTab', 'New-Nano11DebloatTab', 'New-Nano11MigrationTab', 'New-Nano11UserTweaksTab') {
+            $script:S10GuiAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $fnName }, $true) | Should Not BeNullOrEmpty
+        }
+    }
+
+    It "Invoke-Nano11GuiBackgroundJob returns output and errors, and restores the button and cursor" {
+        . $script:S10Gui
+        $form = New-Object System.Windows.Forms.Form
+        $btn = New-Object System.Windows.Forms.Button
+        $form.Controls.Add($btn)
+        try {
+            $o = Invoke-Nano11GuiBackgroundJob -Button $btn -Form $form -ArgumentList 3, 'x' -ScriptBlock { param($n, $s) "$s$n"; Write-Error 'boom'; 42 }
+            (@($o.Output) -join ',') | Should Be 'x3,42'
+            $o.Error | Should BeNullOrEmpty
+            (@($o.Errors) -join ';') | Should Be 'boom'
+            $btn.Enabled | Should Be $true
+            $form.Cursor | Should Be ([System.Windows.Forms.Cursors]::Default)
+            $o2 = Invoke-Nano11GuiBackgroundJob -Button $btn -Form $form -ScriptBlock { throw 'fail' }
+            $o2.Error | Should Be 'fail'
+            @($o2.Output).Count | Should Be 0
+            $btn.Enabled | Should Be $true
+        } finally { $form.Dispose() }
+    }
+
+    It "Invoke-Nano11GuiBusy restores the button when the action throws" {
+        . $script:S10Gui
+        $form = New-Object System.Windows.Forms.Form
+        $btn = New-Object System.Windows.Forms.Button
+        $form.Controls.Add($btn)
+        try {
+            $threw = $false
+            try { Invoke-Nano11GuiBusy -Button $btn -Form $form -Action { throw 'x' } } catch { $threw = $true }
+            $threw | Should Be $true
+            $btn.Enabled | Should Be $true
+            (Invoke-Nano11GuiBusy -Button $btn -Form $form -ArgumentList 5 -Action { param($v) $v * 2 }) | Should Be 10
+        } finally { $form.Dispose() }
+    }
+
+    It "default backup path and colour table" {
+        . $script:S10Gui
+        (Get-Nano11DefaultMigrationBackupPath) | Should Be (Join-Path $env:USERPROFILE 'nano11_migration_backup')
+        (Get-Nano11DefaultMigrationBackupPath -Base Documents) | Should Be (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'nano11_migration_backup')
+        $script:Nano11GuiColors.Count | Should Be 14
+        $script:Nano11GuiColors.Accent.ToArgb() | Should Be ([System.Drawing.Color]::FromArgb(0, 190, 255).ToArgb())
+    }
+
+    It "part factories keep their geometry and colours" {
+        . $script:S10Gui
+        $cmb = New-Nano11ComboBox -Items 'a', 'b' -SelectedIndex 1 -DropList -X 5 -Y 6 -Width 100
+        $cmb.DropDownStyle | Should Be 'DropDownList'
+        $cmb.SelectedIndex | Should Be 1
+        $cmb.Location.X | Should Be 5
+        $txt = New-Nano11TextBox -X 1 -Y 2 -Width 50 -Height 60 -Multiline -ReadOnly -ScrollBars Vertical
+        $txt.Multiline | Should Be $true
+        $txt.ScrollBars | Should Be 'Vertical'
+        $txt.BackColor.ToArgb() | Should Be ([System.Drawing.Color]::FromArgb(35, 38, 46).ToArgb())
+        $frm = New-Nano11Form -Text 't' -Width 300 -Height 200 -ClientSize -FixedDialog -NoMaximize
+        try {
+            $frm.ClientSize.Width | Should Be 300
+            $frm.MaximizeBox | Should Be $false
+            $frm.FormBorderStyle | Should Be 'FixedDialog'
+        } finally { $frm.Dispose() }
+    }
+}
