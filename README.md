@@ -425,6 +425,13 @@ This working copy carries the following changes on top of the upstream fork:
 nano11-main/
 ├── nano11builder.ps1          # Main orchestrator (params, options, try/catch)
 ├── nano11helpers.ps1          # Pure utility helpers (dot-sourced at startup)
+├── lib/                       # Builder function libraries (dot-sourced into the builder's scope)
+│   ├── Nano11Mount.ps1        # DISM mount discovery/cleanup, mount directories, offline hives
+│   ├── Nano11FileSystem.ps1   # Directory safety checks, ownership/ACL, robust deletion, capacity
+│   ├── Nano11Wim.ps1          # Native WIM export, fingerprinting and repair
+│   ├── Nano11Report.ps1       # HTML build report (nano11_report.html)
+│   ├── Nano11Resume.ps1       # Resume-ISO mode and phase checkpoints
+│   └── Nano11SelfTest.ps1     # Self-test suite (loaded only for -TestSelf)
 ├── gui/
 │   └── Nano11Gui.ps1          # WinForms GUI (loaded only for -GUI / menu [7])
 ├── autounattend.xml           # Unattended setup template (scripts injected at build time)
@@ -445,7 +452,7 @@ nano11-main/
 ├── templates/                 # HTML report template (reference)
 │   └── report.html
 ├── config/
-│   ├── tweaks.psd1            # Single source of truth for every tweak/component setting
+│   ├── tweaks.psd1            # Single source of truth for every tweak/component setting and CLI switch pair
 │   └── nano11.config.schema.json  # JSON Schema for profile validation
 ├── profiles/                  # Saved build profiles (JSON, incl. per-tweak TweakSettings)
 ├── tools/                     # Optional tooling
