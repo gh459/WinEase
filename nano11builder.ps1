@@ -28,6 +28,9 @@ param(
     [switch]$Interactive,
     [alias("UI")]
     [switch]$GUI,
+    # Display language of the GUI windows (display only; default: the saved choice, else the OS language)
+    [ValidateSet("en", "ja")]
+    [string]$UiLanguage,
     [alias("Preset")]
     [string]$Profile,
     [alias("ExportConfig")]
@@ -1431,7 +1434,9 @@ function Invoke-Nano11GuiSession {
     foreach ($cd in $script:ComponentDefs.Values) {
         if ($cd.Gui) { $initialSettings[$cd.Key] = Get-Nano11ComponentValue -Def $cd }
     }
-    $guiResult = Show-Nano11GUI -InitialSettings $initialSettings
+    $guiLanguageArgs = @{}
+    if ($UiLanguage) { $guiLanguageArgs["UiLanguage"] = $UiLanguage }
+    $guiResult = Show-Nano11GUI -InitialSettings $initialSettings @guiLanguageArgs
     if (-not ($guiResult -and $guiResult.Success)) { return $false }
 
     if ($guiResult.BasePresetKey) {

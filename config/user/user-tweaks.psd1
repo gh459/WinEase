@@ -15,6 +15,8 @@
     #   Category    'System' | 'Privacy' | 'Gaming' | 'UI' | 'Security' | 'UserCustom'
     #   Default     $true | $false
     #   Description GUI / CLI description text
+    #   DescriptionJa (optional) Japanese text the GUI shows instead of Description in Japanese mode;
+    #               save this file as UTF-8 with BOM if it contains Japanese
     #   Impact      'Safe' | 'Unknown' | @{ AffectedFeatures = @(...); Severity = 'Warning'; Reason = '...' }
     #   Actions     array of declarative actions executed when the tweak is enabled
     UserTweaks = @(

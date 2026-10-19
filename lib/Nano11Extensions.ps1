@@ -53,6 +53,8 @@ function Import-Nano11UserExtensions {
             $script:UserTweakDefs[$ut.Key] = $ut
             if ($script:AllTweakDefs) {
                 $script:AllTweakDefs[$ut.Key] = @{ Category = $ut.Category; Default = [bool]$ut.Default; Description = $ut.Description; IsUserTweak = $true }
+                # Optional Japanese text for the GUI (display only)
+                if ($ut.DescriptionJa) { $script:AllTweakDefs[$ut.Key].DescriptionJa = [string]$ut.DescriptionJa }
             }
         }
     }
