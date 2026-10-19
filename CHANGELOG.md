@@ -5,6 +5,11 @@ nano11 scheme; entries below are local-fork additions on top of upstream 2.1.
 
 ## Unreleased (local fork, 2026-10-19)
 
+The M1-M4 feature work and the S1-S12 follow-up sessions (design review against
+`implementation_plan.md`, one theme per session) are listed together here. Commit
+subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
+`docs/dev/SESSION_BRIEFS.md`.
+
 ### Added
 - `config/tweaks.psd1`: single source of truth for every tweak and component setting
   (key, GUI tab, default, description, legacy aliases, CLI switch, backing variable).
@@ -22,61 +27,106 @@ nano11 scheme; entries below are local-fork additions on top of upstream 2.1.
   functionality measurement, JSON output) and `tools/Compare-Nano11Benchmarks.ps1`
   (multi-run statistical comparison: mean, median, StdDev, IQR, % improvement).
 - `config/dependencies.psd1`: dependency & feature-impact catalog (174 entries across
-  Components, Tweaks, Advanced Debloat). Surfaces Conflicts, Impacts and Unknowns
-  (fail-safe: unregistered items become Unknown).
-- `lib/Nano11Extensions.ps1`: user extensibility engine (Import-Nano11UserExtensions,
-  Invoke-Nano11UserExtensionActions, Get-Nano11CustomScriptMetadata,
-  Invoke-Nano11CustomScriptsStage, Compare-Nano11Config, Format-Nano11ConfigDiff,
-  Test-Nano11RecoveryReadiness) plus `config/user-tweaks.psd1` template.
-- `lib/Nano11Migration.ps1`: PC migration & backup engine (13 functions) plus
-  `config/migration-rules.psd1` (15 game + 16 app rules) and
-  `config/user-migration-rules.psd1` template.
-- `tools/Nano11-Migrator.ps1`: standalone CLI/GUI migrator (Backup, Restore, ExportApps,
-  ListRules, RecoveryCheck, -CustomPaths, -GUI wizard).
-- `docs/EXTENSIBILITY_GUIDE.md`: extensibility documentation.
-- GUI Tab 8 "Migration & Backup": recovery check, app inventory export, preset diff,
-  backup/restore (rule-based and custom paths), migration wizard launcher.
-- Phase hooks: user extension actions in phases 05/06/10/11; custom script copying
-  (OfflineImage/FirstLogon/UserOnce) and FirstLogonCommands registration.
-- `tools/custom-scripts/user/`: post-install scripts that run in the standard user context.
-- `PSScriptAnalyzerSettings.psd1` plus a Pester test that requires zero Error/Warning
-  findings. Pester suite grew to 64 tests (GUI wiring, single-source settings, GUI smoke
-  test that clicks every Select All / Clear All button).
-- `config/dependencies.psd1`: dependency & feature-impact catalog (174 entries across
   Components, Tweaks and Advanced Debloat). Surfaces Conflicts, Impacts and Unknowns
-  (fail-safe: unregistered items become Unknown).
+  (fail-safe: unregistered items become Unknown). GUI "Check Dependencies" button,
+  `-StrictDependencyCheck` CLI switch and an HTML report section.
 - `lib/Nano11Extensions.ps1`: user extensibility engine (Import-Nano11UserExtensions,
   Invoke-Nano11UserExtensionActions, Get-Nano11CustomScriptMetadata,
   Invoke-Nano11CustomScriptsStage, Compare-Nano11Config, Format-Nano11ConfigDiff,
-  Test-Nano11RecoveryReadiness) plus `config/user-tweaks.psd1` template.
-- `lib/Nano11Migration.ps1`: PC migration & backup engine (Expand-Nano11MigrationPath,
-  Get-Nano11MigrationRules, Test-Nano11SecretPath, Export-Nano11AppInventory,
-  Restore-Nano11Apps, Get-Nano11MigrationSizeEstimate, Backup-Nano11UserData,
-  Restore-Nano11UserData, Invoke-Nano11MigrationRulesBackup,
-  Invoke-Nano11MigrationRulesRestore, Start-Nano11MigrationBackup,
-  Start-Nano11MigrationRestore, Export-Nano11MigrationReport,
-  Backup-Nano11CustomPaths, Restore-Nano11CustomPaths) plus
-  `config/migration-rules.psd1` and `config/user-migration-rules.psd1`.
-- `tools/Nano11-Migrator.ps1`: standalone CLI/GUI migrator (Backup, Restore, ExportApps,
-  ListRules, RecoveryCheck, -CustomPaths, -GUI wizard).
-- `docs/EXTENSIBILITY_GUIDE.md`: extensibility documentation.
-- GUI Tab 8 "Migration & Backup": recovery check, app inventory export, preset diff,
-  backup/restore (rule-based and custom paths), migration wizard launcher.
-- Phase hooks: user extension actions in phases 05/06/10/11; custom script copying
-  (OfflineImage/FirstLogon/UserOnce) and FirstLogonCommands registration.
+  Test-Nano11RecoveryReadiness). User tweaks, presets and custom scripts come from
+  `config/user/user-tweaks.psd1`.
+- PC migration & backup engine `tools/migrator/Nano11Migration.ps1` with the standard
+  rules in `tools/migrator/migration-rules.psd1` (15 game + 16 app rules) and the user
+  template `config/user/user-migration-rules.psd1`.
+- `tools/migrator/Nano11-Migrator.ps1`: standalone migrator. CLI modes ExportApps,
+  Backup, Restore, Verify (SHA-256 against `migration-manifest.json`), Estimate, plus the
+  older ListRules and RecoveryCheck; `-PackagePath` (alias `-BackupRoot`), `-UserFolders`,
+  `-CustomPaths`, `-RuleIds`, `-ConflictPolicy`, `-IncludeSecrets`, `-RetryFailedOnly`,
+  `-DryRun`; a 900x680 two-tab wizard when run without `-Mode`.
+- Task-based restore: one task per app, backed-up folder, rule and custom path, each
+  run independently with Pending/Completed/Failed/Skipped saved to `restore-state.json`
+  after every task; `-RetryFailedOnly` runs only Failed and Pending tasks. The backup
+  manifest now lists Entries, Folders, Rules and CustomPaths.
+- Migration report: dark-theme HTML plus a matching JSON file covering succeeded items
+  (file count, size, SHA-256 status), skipped items, failures with reasons, and manual
+  actions (apps that cannot be reinstalled, cloud-save notices, re-login guidance). All
+  dynamic values are HTML-encoded.
+- `-ComparePreset <name|JSON path>`: shows the difference between the current
+  configuration and a preset, then exits with code 0 without any build or disk work.
+- Recovery readiness check (`Test-Nano11RecoveryReadiness`, advisory) and the PreBuild
+  custom-script stage now run in the builder right after the dependency check.
+- `-IncludeMigrationAssistant` now does something: Phase 11 copies the migrator, engine
+  and rule files to `Windows\Setup\Scripts\Migration` and adds a public-desktop
+  launcher (DryRun only prints). No personal data is included.
+- GUI Tab 8 "Migration & Backup": recovery check (using the current window's draft
+  config), app inventory export (SaveFileDialog), Estimate Size, Verify Backup Integrity,
+  Retry Failed Tasks Only, Browse for the backup folder, credential exclusion and conflict
+  policy inputs, a Documents / Desktop / Pictures / Videos / Downloads checklist, a rule
+  list keyed by real rule Ids, and the Include Migration Assistant switch.
+- GUI Tab 9 "User Tweaks" for user switches whose Category has no built-in tab
+  (System / Gaming / UserCustom ...), a "Preset Diff" dialog that compares any preset or the
+  current window settings, and a User Extensions card on Tab 8 (counts, load errors, a
+  button that opens the extensibility guide).
+- `Resolve-Nano11UserConfigPath` and `Get-Nano11CustomScriptFiles`: one place that decides
+  where user config files and custom scripts live.
+- Custom scripts run per stage from `tools/custom-scripts/<Stage>/` (PreBuild,
+  OfflineImage, FirstLogon, UserOnce; each folder has a `.gitkeep`). PreBuild and
+  OfflineImage scripts get a `$Nano11Context`; FirstLogon and UserOnce scripts are copied
+  into the image and checked against a SHA-256 manifest at first logon.
+- `docs/EXTENSIBILITY_GUIDE.md`: Japanese guide with a quick start (user tweak, user
+  migration rule) and a reference (file roles, the four custom-script stages,
+  `$Nano11Context`, offline hives, `OnError`, safe verification).
+- `PSScriptAnalyzerSettings.psd1` plus a Pester test that requires zero Error/Warning
+  findings. The Pester suite covers GUI wiring, single-source settings, a GUI smoke test
+  that clicks every Select All / Clear All button, and a Describe block per S1-S11 theme.
+- Tests: source-file hygiene check that BOM-less `.ps1` / `.psd1` files are ASCII only.
 
 ### Changed
 - AppX leftover folder cleanup no longer runs recursive `takeown /R` / `icacls /T`; it
   removes reparse points (junctions) as links first so deletion never follows them out
   of the image (`Remove-Nano11TreeRobust`). Folder cleanup still runs on
   `-AppxParallelism` (1-8, default 4) RunspacePool workers; DISM removal stays sequential.
+  The parallel path now also checks that each folder is inside the scratch directory and
+  names failed folders in the log.
 - Rewritten Rust physical-debloat tool and Phase 09 with the explicit
   `-AllowPhysicalDebloat` / GUI consent gate and mount-path safety validation.
+- Folder restructure (S9): the PC migration tool moved to `tools/migrator/`, the user
+  config files to `config/user/`. The builder no longer loads the migration engine; GUI
+  Tab 8 loads it the first time the tab is opened. An old `config/<file>` is still read
+  with a one-time warning when `config/user/<file>` does not exist. The migrator and
+  engine look for rules next to themselves, so the ISO-bundled copy works too.
+- Custom scripts (S9): `tools/custom-scripts/<Stage>/` is the single layout. Files directly
+  in `tools/custom-scripts/` are still treated as FirstLogon and `user/` as UserOnce.
+- OfflineImage custom scripts now run at the end of Phase 11 (before FirstLogon / UserOnce
+  staging) with `ScratchDir`, `Nano11Dir` and `Config`; they used to run right after AppX
+  removal.
+- Dependency check: `RemoveDrivers` is Unknown (its safety depends on the target PC),
+  `AllowPhysicalDebloat` is registered, `NoHypervisor` lists VBS among its impacts, and an
+  enabled user tweak without `Impact` is Unknown (`'Safe'` reports nothing, a hashtable
+  `Impact` is reported as an Impact).
+- Migration backup: a `BackupRoot` inside a folder being backed up is rejected. The rule
+  backup result now carries `CloudSaveNotices`, `SkipReasons`, `SecretExcludedFiles` and
+  `BackedUpRules`. `Restore-Nano11UserData` gained `-Categories` and
+  `Restore-Nano11CustomPaths` gained `-SourcePath`; CustomPath entries are no longer
+  restored by the user-data path. The default backup folder moved out of Documents.
+- GUI structure (S10): `Show-Nano11GUI` is split into one function per tab; colours live in
+  `$script:Nano11GuiColors`; OK message boxes go through `Show-Nano11GuiMessage`; background
+  work goes through `Invoke-Nano11GuiBusy` / `Invoke-Nano11GuiBackgroundJob`; the default
+  backup folder is defined once (`Get-Nano11DefaultMigrationBackupPath`); new form, combo box,
+  tab control and text box parts. The migrator window is built from these shared parts
+  (the control tree is identical to before). Controls, positions and handlers are unchanged.
+- Builder structure (S11): `Invoke-Nano11SelfTest` is split into one small function per
+  check (output and exit code unchanged); `OutputType` declared on helpers flagged by
+  PSScriptAnalyzer.
 - Code hygiene (no behaviour change): empty `catch {}` blocks now log via `Write-Verbose`,
   `$null` moved to the left of comparisons, positional parameters named, unused variables
   removed, trailing whitespace stripped.
+- The regenerated `nano11_report.html` is no longer tracked by git.
 
 ### Fixed
+- `Import-Nano11UserExtensions -PresetsOnly` (the builder's second call) wiped the user's
+  tweaks and custom scripts; the collections are now reset only when they are reloaded.
+  The extension and migration libraries are no longer dot-sourced twice.
 - GUI **Select All / Clear All** buttons on tabs 2-5 did nothing (the click handler
   referenced a variable that was out of scope by click time).
 - 24 GUI tweak switches were never read by the build because their names differed from
@@ -93,10 +143,20 @@ nano11 scheme; entries below are local-fork additions on top of upstream 2.1.
   profiles were not applied (the `elseif` fallback to top-level keys was used instead). The GUI
   loader now uses `Contains`, as does Phase 10's `Test-TweakEnabled` alias lookup - the same
   pattern there would have fallen back to defaults for every toggle in a real build.
-
-### Known issues
-- `nano11builder.ps1` is saved as UTF-8 without BOM but contains emoji in the console
-  preset menu, so Windows PowerShell 5.1 shows them garbled (display only).
+- GUI Tab 8 Run Backup never passed `-FolderMap`, so personal data was not backed up; it now
+  passes the folders ticked in the checklist.
+- The migration backup wrote a manifest without `Entries`, which broke restore.
+- `-IncludeMigrationAssistant` was wired through CLI, profile and GUI but nothing read it.
+- User switches whose category had no GUI tab (System / Gaming / UserCustom) were never
+  shown.
+- Paths after the folder restructure (the user-config lookup now starts at the repository
+  root instead of `lib/`).
+- Emoji in the startup menu and in a report heading showed as mojibake in BOM-less UTF-8
+  sources on Windows PowerShell 5.1; they are now ASCII.
+- The migrator `-GUI` failed in a fresh process because `System.Drawing.Color` was used
+  before the assembly was loaded.
+- The S11 ASCII-only source test also scanned `.claude\worktrees\` on Windows (wrong
+  path-separator pattern).
 
 ### Notes
 - Full end-to-end build re-verified on 2026-10-19 (GUI-driven): the complete pipeline finished
