@@ -415,7 +415,8 @@ function Restore-Nano11UserData {
         [ValidateSet('Skip','BackupExisting','OverwriteIfNewer','Overwrite')]
         [string]$ConflictPolicy = 'BackupExisting',
         [switch]$VerifyHashBeforeRestore,
-        [switch]$DryRun
+        [switch]$DryRun,
+        [string[]]$Categories
     )
     if (-not $PSBoundParameters.ContainsKey('VerifyHashBeforeRestore')) { $VerifyHashBeforeRestore = $true }
     $restored = 0
@@ -426,6 +427,9 @@ function Restore-Nano11UserData {
     if (Test-Path -LiteralPath $manifestPath) {
         try { $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json; $entries = $m.Entries } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
+    # Custom paths have their own restore (Restore-Nano11CustomPaths); an optional category filter narrows the rest
+    $entries = @($entries | Where-Object { $_.Category -ne 'CustomPath' })
+    if ($Categories) { $entries = @($entries | Where-Object { $Categories -contains $_.Category }) }
     foreach ($entry in $entries) {
         $srcPath = Join-Path -Path $BackupRoot -ChildPath $entry.RelativePath
         if ($entry.Category) { $srcPath = Join-Path -Path (Join-Path -Path $BackupRoot -ChildPath $entry.Category) -ChildPath $entry.RelativePath }
@@ -648,24 +652,61 @@ function Start-Nano11MigrationBackup {
         [hashtable]$FolderMap = @{},
         [string]$BackupRoot = '',
         [string[]]$RuleIds = @(),
+        [string[]]$CustomPaths = @(),
         [switch]$IncludeSecrets,
-        [switch]$DryRun
+        [switch]$DryRun,
+        [switch]$OfflineTestMode
     )
     if (-not $BackupRoot) { $BackupRoot = Join-Path -Path $env:USERPROFILE -ChildPath 'Documents\nano11_migration_backup' }
+    # Refuse an unsafe BackupRoot before anything is written (inventory included)
+    $customExpanded = @($CustomPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { Expand-Nano11MigrationPath -RawPath $_.Trim() })
+    Assert-Nano11BackupRootOutsideSources -BackupRoot $BackupRoot -SourcePaths (@($FolderMap.Values) + $customExpanded)
+    if (-not $DryRun -and -not (Test-Path -LiteralPath $BackupRoot)) { New-Item -ItemType Directory -Force -Path $BackupRoot | Out-Null }
     # App inventory
     $invPath = Join-Path -Path $BackupRoot -ChildPath 'apps-inventory.json'
-    $inv = Export-Nano11AppInventory -OutputPath $invPath
+    $inv = Export-Nano11AppInventory -OutputPath $invPath -OfflineTestMode:$OfflineTestMode
     # User data backup
     $ud = Backup-Nano11UserData -FolderMap $FolderMap -BackupRoot $BackupRoot -DryRun:$DryRun
+    # Custom paths backup
+    $cp = $null
+    if ($CustomPaths -and $CustomPaths.Count -gt 0) {
+        $cp = Backup-Nano11CustomPaths -Paths $CustomPaths -BackupRoot $BackupRoot -DryRun:$DryRun
+    }
     # Rules backup
     $rb = $null
-    if ($RuleIds -and $RuleIds.Count -gt 0) {
+    if ($RuleIds -and $RuleIds.Count -gt 0 -and -not $DryRun) {
         $rb = Invoke-Nano11MigrationRulesBackup -RuleIds $RuleIds -BackupRoot $BackupRoot -IncludeSecrets:$IncludeSecrets
     }
-    # Manifest
-    if (-not (Test-Path -LiteralPath $BackupRoot)) { New-Item -ItemType Directory -Force -Path $BackupRoot | Out-Null }
-    $manifest = [PSCustomObject]@{ Created = (Get-Date).ToString('o'); BackupRoot = $BackupRoot; AppInventory = $inv.OutputPath; UserData = $ud; Rules = $rb }
-    $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $BackupRoot 'migration-manifest.json') -Encoding UTF8
+    # Manifest: Entries stay readable by Restore-Nano11UserData / Restore-Nano11CustomPaths;
+    # Folders / Rules / CustomPaths tell Start-Nano11MigrationRestore which tasks exist.
+    $entries = @($ud.ManifestEntries)
+    if ($cp) { $entries += @($cp.ManifestEntries) }
+    $folderList = @()
+    foreach ($k in $FolderMap.Keys) {
+        $folderList += [PSCustomObject]@{ Category = [string]$k; SourcePath = [string]$FolderMap[$k] }
+    }
+    $ruleList = @()
+    if ($rb) { $ruleList = @($rb.BackedUpRules) }
+    $manifest = [PSCustomObject]@{
+        Created      = (Get-Date).ToString('o')
+        BackupRoot   = $BackupRoot
+        AppInventory = $inv.OutputPath
+        Entries      = $entries
+        Folders      = $folderList
+        Rules        = $ruleList
+        CustomPaths  = @($customExpanded)
+        UserData     = $ud
+        RulesResult  = $rb
+        CustomResult = $cp
+        DryRun       = [bool]$DryRun
+    }
+    if (-not $DryRun) {
+        $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $BackupRoot 'migration-manifest.json') -Encoding UTF8
+        try {
+            $rep = Export-Nano11MigrationReport -MigrationResult $manifest -ReportPath (Join-Path $BackupRoot 'migration-report.html')
+            $manifest | Add-Member -NotePropertyName Report -NotePropertyValue $rep -Force
+        } catch { Write-Warning "Migration report could not be written: $($_.Exception.Message)" }
+    }
     return $manifest
 }
 
@@ -680,33 +721,100 @@ function Start-Nano11MigrationRestore {
         [switch]$DryRun
     )
     $statePath = Join-Path -Path $BackupRoot -ChildPath 'restore-state.json'
-    $state = @{}
+    $state = [ordered]@{}
     if (Test-Path -LiteralPath $statePath) {
-        try { $raw = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json; foreach ($p in $raw.PSObject.Properties) { $state[$p.Name] = $p.Value } } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        try { $raw = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json; foreach ($p in $raw.PSObject.Properties) { $state[$p.Name] = [string]$p.Value } } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
+
+    # Build the task list from what the backup recorded
     $manifestPath = Join-Path -Path $BackupRoot -ChildPath 'migration-manifest.json'
-    $tasks = @()
+    $m = $null
     if (Test-Path -LiteralPath $manifestPath) {
-        try { $null = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json; $tasks += 'UserData' } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        try { $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
-    # Simple: restore user data (and rules if present)
-    $results = @()
-    if (-not ($RetryFailedOnly -and $state['UserData'] -eq 'Completed')) {
-        $state['UserData'] = 'Pending'
+    $tasks = @()
+    $invPath = Join-Path -Path $BackupRoot -ChildPath 'apps-inventory.json'
+    if ($m -and $m.AppInventory -and (Test-Path -LiteralPath ([string]$m.AppInventory))) { $invPath = [string]$m.AppInventory }
+    if (Test-Path -LiteralPath $invPath) {
         try {
-            $r = Restore-Nano11UserData -BackupRoot $BackupRoot -ConflictPolicy $ConflictPolicy -DryRun:$DryRun
-            $state['UserData'] = 'Completed'
-            $results += [PSCustomObject]@{ TaskId = 'UserData'; Status = 'Completed'; Detail = $r }
+            $inv = Get-Content -LiteralPath $invPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach ($a in @($inv.Apps)) {
+                if ($a -and $a.Name) { $tasks += [PSCustomObject]@{ TaskId = "App_$($a.Name)"; Kind = 'App'; Target = [string]$a.Name } }
+            }
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
+    if ($m) {
+        foreach ($f in @($m.Folders)) {
+            if ($f -and $f.Category) { $tasks += [PSCustomObject]@{ TaskId = "UserData_$($f.Category)"; Kind = 'UserData'; Target = [string]$f.Category } }
+        }
+        foreach ($r in @($m.Rules)) {
+            if ($r -and $r.Id) { $tasks += [PSCustomObject]@{ TaskId = "Rule_$($r.Id)"; Kind = 'Rule'; Target = [string]$r.Id } }
+        }
+        foreach ($c in @($m.CustomPaths)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$c)) { $tasks += [PSCustomObject]@{ TaskId = "Custom_$c"; Kind = 'Custom'; Target = [string]$c } }
+        }
+    }
+    if ($tasks.Count -eq 0) {
+        # Older / minimal backups: restore whatever the manifest lists in one task
+        $tasks += [PSCustomObject]@{ TaskId = 'UserData'; Kind = 'UserData'; Target = '' }
+    }
+
+    # Record every task as Pending up front so an interrupted run shows what is left
+    if (-not $DryRun) {
+        foreach ($t in $tasks) { if (-not $state.Contains($t.TaskId)) { $state[$t.TaskId] = 'Pending' } }
+        try { $state | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $statePath -Encoding UTF8 } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
+
+    $results = @()
+    foreach ($t in $tasks) {
+        $id = $t.TaskId
+        $prev = if ($state.Contains($id)) { [string]$state[$id] } else { 'Pending' }
+        if ($RetryFailedOnly -and $prev -ne 'Failed' -and $prev -ne 'Pending') {
+            $label = if ($prev -eq 'Completed') { 'Skipped (already completed)' } else { "Skipped (previous status: $prev)" }
+            $results += [PSCustomObject]@{ TaskId = $id; Status = $label; Detail = $null }
+            continue
+        }
+        $status = 'Completed'
+        $detail = $null
+        try {
+            switch ($t.Kind) {
+                'App' {
+                    $detail = Restore-Nano11Apps -InventoryPath $invPath -SelectedAppNames @($t.Target) -DryRun:$DryRun
+                    if (@($detail.Failed).Count -gt 0) { $status = 'Failed' }
+                    elseif (@($detail.ManualGuidance).Count -gt 0) { $status = 'Skipped' }
+                }
+                'Rule' {
+                    if ($DryRun) { $status = 'Skipped'; $detail = 'DryRun: rule restore not simulated' }
+                    else {
+                        $detail = Invoke-Nano11MigrationRulesRestore -RuleIds @($t.Target) -BackupRoot $BackupRoot -ConflictPolicy $ConflictPolicy
+                        if (@($detail.FailedFiles).Count -gt 0) { $status = 'Failed' }
+                    }
+                }
+                'Custom' {
+                    $detail = Restore-Nano11CustomPaths -BackupRoot $BackupRoot -ConflictPolicy $ConflictPolicy -SourcePath $t.Target -DryRun:$DryRun
+                    if (@($detail.FailedFiles).Count -gt 0) { $status = 'Failed' }
+                }
+                default {
+                    if ($t.Target) {
+                        $detail = Restore-Nano11UserData -BackupRoot $BackupRoot -ConflictPolicy $ConflictPolicy -Categories @($t.Target) -DryRun:$DryRun
+                    } else {
+                        $detail = Restore-Nano11UserData -BackupRoot $BackupRoot -ConflictPolicy $ConflictPolicy -DryRun:$DryRun
+                    }
+                    if (@($detail.FailedFiles).Count -gt 0) { $status = 'Failed' }
+                }
+            }
         } catch {
-            $state['UserData'] = 'Failed'
-            $results += [PSCustomObject]@{ TaskId = 'UserData'; Status = 'Failed'; Detail = $_.Exception.Message }
+            $status = 'Failed'
+            $detail = $_.Exception.Message
             Write-Verbose "Ignored: $($_.Exception.Message)"
         }
-    } else {
-        $results += [PSCustomObject]@{ TaskId = 'UserData'; Status = 'Skipped (already completed)' }
+        $results += [PSCustomObject]@{ TaskId = $id; Status = $status; Detail = $detail }
+        if (-not $DryRun) {
+            $state[$id] = $status
+            # persist after every task so an interrupted run can be resumed
+            try { $state | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $statePath -Encoding UTF8 } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        }
     }
-    # persist state
-    try { $state | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $statePath -Encoding UTF8 } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     return [PSCustomObject]@{ Results = @($results); State = $state }
 }
 
@@ -809,7 +917,8 @@ function Restore-Nano11CustomPaths {
         [ValidateSet('Skip','BackupExisting','OverwriteIfNewer','Overwrite')]
         [string]$ConflictPolicy = 'BackupExisting',
         [switch]$VerifyHashBeforeRestore,
-        [switch]$DryRun
+        [switch]$DryRun,
+        [string]$SourcePath
     )
     if (-not $PSBoundParameters.ContainsKey('VerifyHashBeforeRestore')) { $VerifyHashBeforeRestore = $true }
     $restored = 0
@@ -823,6 +932,10 @@ function Restore-Nano11CustomPaths {
     $entries = @()
     if (Test-Path -LiteralPath $manifestPath) {
         try { $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json; if ($m.Entries) { $entries = @($m.Entries | Where-Object { $_.Category -eq 'CustomPath' }) } } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
+    # Optional filter: only entries that came from this original path (the root folder/file or something below it)
+    if (-not [string]::IsNullOrWhiteSpace($SourcePath)) {
+        $entries = @($entries | Where-Object { $_.SourcePath -and $_.SourcePath -ieq $SourcePath })
     }
 
     foreach ($entry in $entries) {
