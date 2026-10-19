@@ -862,7 +862,7 @@ Describe "nano11 code quality - PSScriptAnalyzer" {
             (Join-Path $script:RepoRoot "nano11builder.ps1"),
             (Join-Path $script:RepoRoot "nano11helpers.ps1"),
             $script:GuiPath
-        ) + @(Get-ChildItem -Path (Join-Path $script:RepoRoot "phases"), (Join-Path $script:RepoRoot "scripts"), (Join-Path $script:RepoRoot "tools"), (Join-Path $script:RepoRoot "tests") -Filter "*.ps1" -File | ForEach-Object { $_.FullName })
+        ) + @(Get-ChildItem -Path (Join-Path $script:RepoRoot "phases"), (Join-Path $script:RepoRoot "lib"), (Join-Path $script:RepoRoot "scripts"), (Join-Path $script:RepoRoot "tools"), (Join-Path $script:RepoRoot "tests") -Filter "*.ps1" -File | ForEach-Object { $_.FullName })
         $findings = @(foreach ($target in $targets) {
             Invoke-ScriptAnalyzer -Path $target -Settings $settingsPath -Severity Error, Warning
         })
