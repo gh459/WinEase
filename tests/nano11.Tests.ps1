@@ -1115,3 +1115,96 @@ Describe "PC Migration & Backup Engine (lib/Nano11Migration.ps1)" {
         Test-Nano11SecretPath -FilePath 'normal.txt' -SecretPatterns $patterns | Should Be $false
     }
 }
+
+# --- S3: migration engine (task-based restore, report, BackupRoot guard) ---
+Describe "Migration engine S3 (lib/Nano11Migration.ps1)" {
+    BeforeAll {
+        if (-not (Get-Command -Name Test-Nano11PathWithin -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot -ChildPath "nano11helpers.ps1")
+        }
+        if (-not (Get-Command -Name Start-Nano11MigrationRestore -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot -ChildPath "lib\Nano11Migration.ps1")
+        }
+    }
+
+    It "Start-Nano11MigrationRestore -RetryFailedOnly reruns only Failed tasks" {
+        $bk = Join-Path $TestDrive 'retry'
+        New-Item -ItemType Directory -Force -Path $bk | Out-Null
+        $manifest = @{
+            Created = (Get-Date).ToString('o')
+            Entries = @()
+            Folders = @(@{ Category = 'Documents'; SourcePath = 'C:\x' }, @{ Category = 'Pictures'; SourcePath = 'C:\y' })
+            Rules = @()
+            CustomPaths = @()
+        }
+        $manifest | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $bk 'migration-manifest.json') -Encoding UTF8
+        @{ UserData_Documents = 'Completed'; UserData_Pictures = 'Failed' } | ConvertTo-Json | Set-Content (Join-Path $bk 'restore-state.json') -Encoding UTF8
+        $script:s3Calls = @()
+        Mock Restore-Nano11UserData { $script:s3Calls += ($Categories -join ','); [PSCustomObject]@{ RestoredFiles = 1; SkippedFiles = 0; FailedFiles = @() } }
+        $r = Start-Nano11MigrationRestore -BackupRoot $bk -RetryFailedOnly
+        $script:s3Calls.Count | Should Be 1
+        $script:s3Calls[0] | Should Be 'Pictures'
+        ($r.Results | Where-Object { $_.TaskId -eq 'UserData_Documents' }).Status | Should Match '^Skipped'
+        $state = Get-Content (Join-Path $bk 'restore-state.json') -Raw | ConvertFrom-Json
+        $state.UserData_Pictures | Should Be 'Completed'
+        $state.UserData_Documents | Should Be 'Completed'
+    }
+
+    It "Start-Nano11MigrationRestore continues after a failed task" {
+        $bk = Join-Path $TestDrive 'continue'
+        New-Item -ItemType Directory -Force -Path $bk | Out-Null
+        @{ Entries = @(); Folders = @(@{ Category = 'A'; SourcePath = 'C:\a' }, @{ Category = 'B'; SourcePath = 'C:\b' }); Rules = @(); CustomPaths = @() } |
+            ConvertTo-Json -Depth 5 | Set-Content (Join-Path $bk 'migration-manifest.json') -Encoding UTF8
+        Mock Restore-Nano11UserData {
+            if ($Categories -contains 'A') { throw 'boom' }
+            [PSCustomObject]@{ RestoredFiles = 0; SkippedFiles = 0; FailedFiles = @() }
+        }
+        $r = Start-Nano11MigrationRestore -BackupRoot $bk
+        ($r.Results | Where-Object { $_.TaskId -eq 'UserData_A' }).Status | Should Be 'Failed'
+        ($r.Results | Where-Object { $_.TaskId -eq 'UserData_B' }).Status | Should Be 'Completed'
+    }
+
+    It "Backup writes migration-report.html/json, escapes HTML, and leaves sources untouched" {
+        $src = Join-Path $TestDrive 'src\Docs'
+        $bk = Join-Path $TestDrive 'bk-report'
+        New-Item -ItemType Directory -Force -Path $src | Out-Null
+        $evil = '<script>alert(1)</script>.txt'
+        Set-Content (Join-Path $src 'a.txt') 'hello'
+        $before = (Get-FileHash (Join-Path $src 'a.txt') -Algorithm SHA256).Hash
+        Start-Nano11MigrationBackup -FolderMap @{ 'Docs' = $src } -BackupRoot $bk -OfflineTestMode | Out-Null
+        Test-Path (Join-Path $bk 'migration-report.html') | Should Be $true
+        Test-Path (Join-Path $bk 'migration-report.json') | Should Be $true
+        (Get-FileHash (Join-Path $src 'a.txt') -Algorithm SHA256).Hash | Should Be $before
+        $j = Get-Content (Join-Path $bk 'migration-report.json') -Raw | ConvertFrom-Json
+        $j.Success.Files | Should Be 1
+        $j.Success.Sha256Verified | Should Be 1
+        $mf = Get-Content (Join-Path $bk 'migration-manifest.json') -Raw | ConvertFrom-Json
+        @($mf.Folders).Count | Should Be 1
+        @($mf.Entries).Count | Should Be 1
+        $rep = Export-Nano11MigrationReport -MigrationResult ([PSCustomObject]@{ Results = @([PSCustomObject]@{ TaskId = "App_$evil"; Status = 'Failed'; Detail = $evil }) }) -ReportPath (Join-Path $TestDrive 'r2\migration-report.html')
+        $html = Get-Content $rep.HtmlPath -Raw
+        $html | Should Not Match '<script>alert'
+        $html | Should Match '&lt;script&gt;'
+    }
+
+    It "Backup-Nano11UserData and Backup-Nano11CustomPaths reject a BackupRoot inside the source" {
+        $src = Join-Path $TestDrive 'guard\Docs'
+        New-Item -ItemType Directory -Force -Path $src | Out-Null
+        Set-Content (Join-Path $src 'a.txt') 'x'
+        $inside = Join-Path $src 'backup'
+        { Backup-Nano11UserData -FolderMap @{ Docs = $src } -BackupRoot $inside } | Should Throw
+        { Backup-Nano11CustomPaths -Paths @($src) -BackupRoot $inside } | Should Throw
+        { Start-Nano11MigrationBackup -FolderMap @{ Docs = $src } -BackupRoot $inside -OfflineTestMode } | Should Throw
+        Test-Path $inside | Should Be $false
+        Test-Path (Join-Path $src 'a.txt') | Should Be $true
+    }
+
+    It "Invoke-Nano11MigrationRulesBackup result carries CloudSaveNotices for rules that define one" {
+        $rules = Get-Nano11MigrationRules
+        $rule = @($rules.GameRules + $rules.AppConfigRules) | Where-Object { $_.CloudSaveNotice } | Select-Object -First 1
+        $rule | Should Not BeNullOrEmpty
+        $r = Invoke-Nano11MigrationRulesBackup -RuleIds @($rule.Id) -BackupRoot (Join-Path $TestDrive 'bk-rules') -ForceRunningProcess
+        @($r.CloudSaveNotices).Count | Should Be 1
+        $r.CloudSaveNotices[0].RuleId | Should Be $rule.Id
+    }
+}

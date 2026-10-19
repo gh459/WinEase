@@ -973,6 +973,23 @@ function Restore-Nano11CustomPaths {
     return [PSCustomObject]@{ RestoredFiles = $restored; SkippedFiles = $skipped; FailedFiles = $failed }
 }
 # 10. Export-Nano11MigrationReport
+function ConvertTo-Nano11HtmlText {
+    param($Text)
+    if ($null -eq $Text) { return '' }
+    return [System.Net.WebUtility]::HtmlEncode([string]$Text)
+}
+
+function Format-Nano11ByteSize {
+    param([int64]$Bytes)
+    if ($Bytes -ge 1GB) { return ('{0:N2} GB' -f ($Bytes / 1GB)) }
+    if ($Bytes -ge 1MB) { return ('{0:N2} MB' -f ($Bytes / 1MB)) }
+    if ($Bytes -ge 1KB) { return ('{0:N2} KB' -f ($Bytes / 1KB)) }
+    return "$Bytes B"
+}
+
+# Export-Nano11MigrationReport: writes <ReportPath> (dark HTML) and a .json with the same base name.
+# MigrationResult may be the object returned by Start-Nano11MigrationBackup (UserData / CustomResult /
+# RulesResult / AppInventory) and/or by Start-Nano11MigrationRestore (Results). Every part is optional.
 function Export-Nano11MigrationReport {
     [CmdletBinding()]
     param(
@@ -981,21 +998,157 @@ function Export-Nano11MigrationReport {
         [Parameter(Mandatory = $true)]
         [string]$ReportPath
     )
-    $sb = New-Object System.Text.StringBuilder
-    [void]$sb.AppendLine('<!DOCTYPE html><html><head><meta charset="utf-8"><title>Migration Report</title></head><body>')
-    [void]$sb.AppendLine('<h1>Nano11 Migration Report</h1>')
-    [void]$sb.AppendLine("<p>Generated: $(Get-Date)</p>")
-    if ($MigrationResult.Results) {
-        [void]$sb.AppendLine('<ul>')
-        foreach ($r in $MigrationResult.Results) {
-            [void]$sb.AppendLine("<li>$($r.TaskId): $($r.Status)</li>")
+    $succeeded = @()    # Area, Item, Detail
+    $skippedItems = @() # Item, Reason
+    $failedItems = @()  # Item, Reason
+    $manual = @()       # Item, Note
+    $files = 0
+    $bytes = [int64]0
+    $hashOk = 0
+    $hashMissing = 0
+
+    # --- file-copy results (user data and custom paths share the same shape) ---
+    foreach ($pair in @(@('User data', 'UserData'), @('Custom paths', 'CustomResult'))) {
+        $r = $MigrationResult.PSObject.Properties[$pair[1]]
+        if (-not $r -or -not $r.Value) { continue }
+        $r = $r.Value
+        $files += [int]$r.CopiedFiles
+        $bytes += [int64]$r.TotalBytes
+        foreach ($e in @($r.ManifestEntries)) {
+            if ($e.Sha256) { $hashOk++ } else { $hashMissing++ }
         }
-        [void]$sb.AppendLine('</ul>')
+        $succeeded += [PSCustomObject]@{ Area = $pair[0]; Item = "$($r.CopiedFiles) file(s)"; Detail = (Format-Nano11ByteSize -Bytes ([int64]$r.TotalBytes)) }
+        if ([int]$r.SkippedFiles -gt 0) {
+            $skippedItems += [PSCustomObject]@{ Item = "$($pair[0]): $($r.SkippedFiles) file(s)"; Reason = 'Already present in the backup and protected by the overwrite policy (unchanged or not newer)' }
+        }
+        foreach ($f in @($r.FailedFiles)) {
+            $failedItems += [PSCustomObject]@{ Item = [string]$f.Path; Reason = [string]$f.Error }
+        }
     }
-    [void]$sb.AppendLine('</body></html>')
+
+    # --- rule results ---
+    $rr = $MigrationResult.PSObject.Properties['RulesResult']
+    if ($rr -and $rr.Value) {
+        $rv = $rr.Value
+        $files += [int]$rv.CopiedFiles
+        $succeeded += [PSCustomObject]@{ Area = 'App/game rules'; Item = "$($rv.CopiedFiles) file(s) from $(@($rv.BackedUpRules).Count) rule(s)"; Detail = '' }
+        foreach ($s in @($rv.SkipReasons)) { $skippedItems += [PSCustomObject]@{ Item = [string]$s.Item; Reason = [string]$s.Reason } }
+        foreach ($f in @($rv.FailedFiles)) {
+            $name = if ($f.Rule) { [string]$f.Rule } else { [string]$f.Path }
+            $failedItems += [PSCustomObject]@{ Item = $name; Reason = [string]$f.Error }
+        }
+        foreach ($n in @($rv.CloudSaveNotices)) {
+            $manual += [PSCustomObject]@{ Item = [string]$n.Name; Note = "Cloud save: $($n.Notice)" }
+        }
+    }
+
+    # --- restore task results ---
+    $tasks = @()
+    $tr = $MigrationResult.PSObject.Properties['Results']
+    if ($tr -and $tr.Value) {
+        foreach ($t in @($tr.Value)) {
+            $tasks += [PSCustomObject]@{ TaskId = [string]$t.TaskId; Status = [string]$t.Status }
+            $st = [string]$t.Status
+            if ($st -eq 'Completed') {
+                $succeeded += [PSCustomObject]@{ Area = 'Restore'; Item = [string]$t.TaskId; Detail = '' }
+            } elseif ($st -eq 'Failed') {
+                $reason = if ($t.Detail -is [string]) { [string]$t.Detail } elseif ($t.Detail -and $t.Detail.FailedFiles) { (@($t.Detail.FailedFiles | ForEach-Object { "$($_.Path) $($_.Error)".Trim() }) -join '; ') } elseif ($t.Detail -and $t.Detail.Failed) { (@($t.Detail.Failed | ForEach-Object { "$($_.App): $($_.Error)" }) -join '; ') } else { 'Task failed' }
+                $failedItems += [PSCustomObject]@{ Item = [string]$t.TaskId; Reason = $reason }
+            } else {
+                $skippedItems += [PSCustomObject]@{ Item = [string]$t.TaskId; Reason = $st }
+                if ($t.Detail -and $t.Detail.ManualGuidance) {
+                    foreach ($g in @($t.Detail.ManualGuidance)) { $manual += [PSCustomObject]@{ Item = [string]$g.Name; Note = [string]$g.Hint } }
+                }
+            }
+        }
+    }
+
+    # --- apps that cannot be reinstalled automatically ---
+    $invPath = $null
+    $ip = $MigrationResult.PSObject.Properties['AppInventory']
+    if ($ip -and $ip.Value) { $invPath = [string]$ip.Value }
+    if ($invPath -and (Test-Path -LiteralPath $invPath)) {
+        try {
+            $inv = Get-Content -LiteralPath $invPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach ($a in @($inv.Apps)) {
+                if ($a -and -not $a.AutoReinstallable) {
+                    $hint = if ($a.ManualHint) { [string]$a.ManualHint } else { 'Reinstall manually.' }
+                    $manual += [PSCustomObject]@{ Item = [string]$a.Name; Note = $hint }
+                }
+            }
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
+    $manual += [PSCustomObject]@{ Item = 'Accounts and sign-ins'; Note = 'Sign in again to your Microsoft account, browsers, Steam/Epic/other launchers and any cloud-sync clients. Saved passwords and tokens are not migrated.' }
+
+    $data = [ordered]@{
+        Generated = (Get-Date).ToString('o')
+        Summary   = [ordered]@{ Succeeded = $succeeded.Count; Skipped = $skippedItems.Count; Failed = $failedItems.Count; ManualActions = $manual.Count }
+        Success   = [ordered]@{ Files = $files; TotalBytes = $bytes; TotalSize = (Format-Nano11ByteSize -Bytes $bytes); Sha256Verified = $hashOk; Sha256Missing = $hashMissing; Items = @($succeeded) }
+        Skipped   = @($skippedItems)
+        Failed    = @($failedItems)
+        Manual    = @($manual)
+        Tasks     = @($tasks)
+    }
+
+    # --- JSON ---
     $parent = Split-Path -Parent $ReportPath
     if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-    [System.IO.File]::WriteAllText($ReportPath, $sb.ToString(), [System.Text.Encoding]::UTF8)
+    $jsonPath = [System.IO.Path]::ChangeExtension($ReportPath, '.json')
+    [System.IO.File]::WriteAllText($jsonPath, ($data | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding $true))
+
+    # --- HTML (dark theme, palette matches lib/Nano11Report.ps1). Every dynamic value is HTML-encoded. ---
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Nano11 Migration Report</title>')
+    [void]$sb.AppendLine('<style>')
+    [void]$sb.AppendLine(':root { --bg-main: #0b0f19; --bg-card: #151d2f; --border-card: #22304d; --accent: #00d2ff; --text-primary: #f1f5f9; --text-secondary: #94a3b8; --badge-pass: #10b981; --badge-warn: #f59e0b; --badge-fail: #ef4444; }')
+    [void]$sb.AppendLine('* { box-sizing: border-box; margin: 0; padding: 0; }')
+    [void]$sb.AppendLine('body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background: var(--bg-main); color: var(--text-primary); line-height: 1.6; padding: 30px 20px; }')
+    [void]$sb.AppendLine('.wrap { max-width: 1000px; margin: 0 auto; }')
+    [void]$sb.AppendLine('h1 { font-size: 24px; color: #fff; margin-bottom: 4px; } .sub { color: var(--text-secondary); font-size: 13px; margin-bottom: 24px; }')
+    [void]$sb.AppendLine('.section-card { background: var(--bg-card); border: 1px solid var(--border-card); border-radius: 10px; padding: 22px 24px; margin-bottom: 24px; }')
+    [void]$sb.AppendLine('.section-card h2 { font-size: 18px; margin-bottom: 14px; color: var(--accent); border-bottom: 1px solid var(--border-card); padding-bottom: 8px; }')
+    [void]$sb.AppendLine('table { width: 100%; border-collapse: collapse; font-size: 14px; } th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border-card); vertical-align: top; } th { color: var(--text-secondary); }')
+    [void]$sb.AppendLine('.ok { color: var(--badge-pass); } .warn { color: var(--badge-warn); } .fail { color: var(--badge-fail); } .muted { color: var(--text-secondary); }')
+    [void]$sb.AppendLine('code { font-family: Consolas, monospace; background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 4px; color: #38bdf8; }')
+    [void]$sb.AppendLine('</style></head><body><div class="wrap">')
+    [void]$sb.AppendLine('<h1>Nano11 Migration Report</h1>')
+    [void]$sb.AppendLine("<div class=`"sub`">Generated: $(ConvertTo-Nano11HtmlText $data.Generated)</div>")
+
+    [void]$sb.AppendLine('<div class="section-card"><h2>Succeeded</h2>')
+    [void]$sb.AppendLine("<p><span class=`"ok`">$(ConvertTo-Nano11HtmlText $files) file(s)</span>, $(ConvertTo-Nano11HtmlText $data.Success.TotalSize) total. SHA-256 recorded for <span class=`"ok`">$hashOk</span> file(s); not recorded for <span class=`"warn`">$hashMissing</span>.</p>")
+    if ($succeeded.Count -gt 0) {
+        [void]$sb.AppendLine('<table><tr><th>Area</th><th>Item</th><th>Detail</th></tr>')
+        foreach ($i in $succeeded) { [void]$sb.AppendLine("<tr><td>$(ConvertTo-Nano11HtmlText $i.Area)</td><td>$(ConvertTo-Nano11HtmlText $i.Item)</td><td>$(ConvertTo-Nano11HtmlText $i.Detail)</td></tr>") }
+        [void]$sb.AppendLine('</table>')
+    }
+    [void]$sb.AppendLine('</div>')
+
+    [void]$sb.AppendLine('<div class="section-card"><h2>Skipped</h2>')
+    if ($skippedItems.Count -eq 0) { [void]$sb.AppendLine('<p class="muted">Nothing was skipped.</p>') }
+    else {
+        [void]$sb.AppendLine('<table><tr><th>Item</th><th>Reason</th></tr>')
+        foreach ($i in $skippedItems) { [void]$sb.AppendLine("<tr><td>$(ConvertTo-Nano11HtmlText $i.Item)</td><td class=`"warn`">$(ConvertTo-Nano11HtmlText $i.Reason)</td></tr>") }
+        [void]$sb.AppendLine('</table>')
+    }
+    [void]$sb.AppendLine('</div>')
+
+    [void]$sb.AppendLine('<div class="section-card"><h2>Failed</h2>')
+    if ($failedItems.Count -eq 0) { [void]$sb.AppendLine('<p class="ok">No failures.</p>') }
+    else {
+        [void]$sb.AppendLine('<table><tr><th>Item</th><th>Reason</th></tr>')
+        foreach ($i in $failedItems) { [void]$sb.AppendLine("<tr><td>$(ConvertTo-Nano11HtmlText $i.Item)</td><td class=`"fail`">$(ConvertTo-Nano11HtmlText $i.Reason)</td></tr>") }
+        [void]$sb.AppendLine('</table>')
+    }
+    [void]$sb.AppendLine('</div>')
+
+    [void]$sb.AppendLine('<div class="section-card"><h2>Manual actions required</h2>')
+    [void]$sb.AppendLine('<table><tr><th>Item</th><th>What to do</th></tr>')
+    foreach ($i in $manual) { [void]$sb.AppendLine("<tr><td>$(ConvertTo-Nano11HtmlText $i.Item)</td><td>$(ConvertTo-Nano11HtmlText $i.Note)</td></tr>") }
+    [void]$sb.AppendLine('</table></div>')
+    [void]$sb.AppendLine('</div></body></html>')
+    [System.IO.File]::WriteAllText($ReportPath, $sb.ToString(), (New-Object System.Text.UTF8Encoding $true))
+
+    return [PSCustomObject]@{ HtmlPath = $ReportPath; JsonPath = $jsonPath; Data = [PSCustomObject]$data }
 }
 
 # Compare-Nano11Config & Format-Nano11ConfigDiff
