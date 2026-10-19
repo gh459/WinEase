@@ -732,6 +732,19 @@ Describe "nano11 settings - config\tweaks.psd1 is the single source of truth" {
         $svc.Right.Extent.Text | Should Match 'ComponentDefs'
     }
 
+    It "every CliBindings switch name is a builder parameter or alias" {
+        $paramNames = @(foreach ($p in $builderAst.ParamBlock.Parameters) {
+            $p.Name.VariablePath.UserPath
+            foreach ($a in $p.Attributes | Where-Object { $_.TypeName.Name -eq 'Alias' }) { $a.PositionalArguments | ForEach-Object { $_.Value } }
+        })
+        @($settingsDef.CliBindings).Count | Should BeGreaterThan 0
+        foreach ($cb in $settingsDef.CliBindings) {
+            foreach ($grp in $cb.Switches) {
+                foreach ($n in $grp.Names) { "$($cb.Tag):$n" | Should Be "$($cb.Tag):$(@($paramNames | Where-Object { $_ -eq $n })[0])" }
+            }
+        }
+    }
+
     It "built-in preset and phase-read setting keys all exist in the definition file" {
         $presets = $builderAst.Find({
             param($n)

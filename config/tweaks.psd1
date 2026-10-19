@@ -6,6 +6,7 @@
 #   Components -> $script:Nano11ProfileKeys (profile key order), Apply-ProfileSettings,
 #                 Get-Nano11CurrentConfig, the CLI switch block, the GUI "Services & Apps"
 #                 tab (Gui) and the GUI session hand-off
+#   CliBindings -> the paired Keep/Remove-style CLI switches (see the section comment)
 #
 # Tweak fields:
 #   Key          setting name used in profiles, presets, CLI and the GUI
@@ -148,5 +149,70 @@
         @{ Key = 'UserName'; Variable = 'UserName'; Type = 'String' }
         @{ Key = 'AdvancedDebloatStandard'; Variable = ''; Type = 'Special' }
         @{ Key = 'AdvancedDebloatExperimental'; Variable = ''; Type = 'Special' }
+    )
+
+    # CLI switch pairs nano11builder.ps1 applies in this order. For each entry the first
+    # Switches group with a bound switch wins: the variable gets that switch's value
+    # (negated when Invert), the Also variables are overridden, and Tag is recorded as
+    # set from the command line. Names may include parameter aliases for readability;
+    # $PSBoundParameters only ever holds the canonical name.
+    CliBindings = @(
+        @{ Tag = 'Xbox'; Variable = 'keepXboxServices'; Switches = @(
+            @{ Names = @('KeepXboxServices') }
+            @{ Names = @('RemoveXboxServices', 'NoXboxServices'); Invert = $true }) }
+        @{ Tag = 'Audio'; Variable = 'keepAudioTweaks'; Switches = @(
+            @{ Names = @('KeepAudioTweaks') }) }
+        @{ Tag = 'Defender'; Variable = 'removeDefender'; Switches = @(
+            @{ Names = @('KeepDefender'); Invert = $true }
+            @{ Names = @('RemoveDefender', 'NoDefender') }) }
+        @{ Tag = 'IME'; Variable = 'keepAsianIME'; Switches = @(
+            @{ Names = @('KeepIME', 'KeepAsianIME') }
+            @{ Names = @('RemoveIME', 'RemoveAsianIME', 'NoIME'); Invert = $true }) }
+        @{ Tag = 'Fonts'; Variable = 'keepExtraFonts'; Switches = @(
+            @{ Names = @('KeepFonts', 'KeepExtraFonts') }
+            @{ Names = @('RemoveFonts', 'NoFonts'); Invert = $true }) }
+        @{ Tag = 'Drivers'; Variable = 'removeDrivers'; Switches = @(
+            @{ Names = @('RemoveDrivers') }
+            @{ Names = @('KeepDrivers'); Invert = $true }) }
+        @{ Tag = 'WindowsUpdate'; Variable = 'disableWU'; Switches = @(
+            @{ Names = @('KeepWindowsUpdate', 'EnableWindowsUpdate'); Invert = $true }
+            @{ Names = @('DisableWindowsUpdate', 'NoWindowsUpdate') }) }
+        @{ Tag = 'Bluetooth'; Variable = 'keepBT'; Switches = @(
+            @{ Names = @('DisableBluetooth', 'NoBluetooth'); Invert = $true }
+            @{ Names = @('KeepBluetooth') }) }
+        @{ Tag = 'WSL'; Variable = 'wslSupport'; Switches = @(
+            @{ Names = @('EnableWSL') }
+            @{ Names = @('DisableWSL', 'NoWSL'); Invert = $true }) }
+        @{ Tag = 'Recovery'; Variable = 'keepRecoveryEnv'; Switches = @(
+            @{ Names = @('KeepRecovery', 'KeepWinRE') }
+            @{ Names = @('RemoveRecovery', 'RemoveWinRE', 'NoWinRE', 'NoRecovery'); Invert = $true }) }
+        @{ Tag = 'WinSxS'; Variable = 'safeDebloatMode'; Switches = @(
+            @{ Names = @('AggressiveWinSxS', 'TrimWinSxS'); Invert = $true }
+            @{ Names = @('SafeDebloat', 'SafeWinSxS') }) }
+        @{ Tag = 'UltraSlim'; Variable = 'ultraSlimMode'; Switches = @(
+            @{ Names = @('UltraSlim') }
+            @{ Names = @('NoUltraSlim'); Invert = $true }) }
+        @{ Tag = 'JPKey'; Variable = 'setJapaneseKeyboard'; Switches = @(
+            @{ Names = @('NoJapaneseKeyboard'); Invert = $true }
+            @{ Names = @('JapaneseKeyboard') }) }
+        @{ Tag = 'Atlas'; Variable = 'atlasReviOSMode'; Switches = @(
+            @{ Names = @('NoAtlasReviOS'); Invert = $true }
+            @{ Names = @('AtlasReviOS') }) }
+        @{ Tag = 'Export'; Variable = 'exportESDMode'; Switches = @(
+            @{ Names = @('ExportESD'); Also = @{ splitWIMMode = $false } }
+            @{ Names = @('ExportWIM', 'NoESD'); Invert = $true }) }
+        @{ Tag = 'SplitWIM'; Variable = 'splitWIMMode'; Switches = @(
+            @{ Names = @('SplitWIM', 'FAT32Compatible', 'FAT32'); Also = @{ exportESDMode = $false } }
+            @{ Names = @('NoSplitWIM'); Invert = $true }) }
+        @{ Tag = 'Store'; Variable = 'removeStore'; Switches = @(
+            @{ Names = @('RemoveStore', 'NoStore', 'RemoveMicrosoftStore') }
+            @{ Names = @('KeepStore'); Invert = $true }) }
+        @{ Tag = 'ActivationRestrictions'; Variable = 'bypassActivationRestrictions'; Switches = @(
+            @{ Names = @('BypassActivationRestrictions', 'NoActivationRestrictions', 'UnlockPersonalization') }) }
+        @{ Tag = 'RadicalRAM'; Variable = 'radicalRAM'; Switches = @(
+            @{ Names = @('RadicalRAM', 'UltraLowRAM', 'LowRAM') }
+            @{ Names = @('NoRadicalRAM'); Invert = $true }) }
+        @{ Tag = 'VHDX'; Variable = 'useVHDX'; Switches = @(
+            @{ Names = @('UseVHDX', 'FastVHDX', 'VHDX') }) }
     )
 }
