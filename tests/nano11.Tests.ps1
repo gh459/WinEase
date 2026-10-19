@@ -1527,3 +1527,71 @@ Describe "S5: Migration Assistant bundling" {
         } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
     }
 }
+
+
+
+Describe "S8 - GUI user extensions tab and Preset Diff" {
+    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+    $script:AllTweakDefs = [ordered]@{}
+    foreach ($td in $settingsDef.Tweaks) { $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description } }
+    $script:AllTweakDefs['S8GamingSwitch'] = @{ Category = 'Gaming'; Default = $false; Description = 'S8 user switch' }
+    $script:ComponentDefs = [ordered]@{}
+    foreach ($cd in $settingsDef.Components) { $script:ComponentDefs[$cd.Key] = $cd }
+    $script:BuiltInPresets = [ordered]@{
+        s8a = [ordered]@{ TweakSettings = [ordered]@{ S8GamingSwitch = $false } }
+        s8b = [ordered]@{ TweakSettings = [ordered]@{ S8GamingSwitch = $true } }
+    }
+    $script:UserExtensionsResult = [PSCustomObject]@{ Loaded = $true; UserTweakCount = 1; UserPresetCount = 0; CustomScriptCount = 0; Errors = @('S8 sample error') }
+    function Get-Nano11Preset { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([string]$Name) $null }
+    . (Join-Path $script:RepoRoot 'lib\Nano11Extensions.ps1')
+    . $script:GuiPath
+    function Get-S8Controls($ctl) { foreach ($c in $ctl.Controls) { $c; Get-S8Controls $c } }
+
+    It "shows a Gaming user switch on the User Tweaks tab" {
+        $gui = Show-Nano11GUI -NoShow
+        try {
+            $chk = $gui.TweakCheckboxes['S8GamingSwitch']
+            $chk | Should Not BeNullOrEmpty
+            $tab = @(Get-S8Controls $gui.Form | Where-Object { $_ -is [System.Windows.Forms.TabPage] -and $_.Text -match 'User Tweaks' })[0]
+            $tab | Should Not BeNullOrEmpty
+            @(Get-S8Controls $tab) -contains $chk | Should Be $true
+            $chk.Checked = $true
+            (Get-Nano11GuiDraftConfig -Gui $gui).TweakSettings['S8GamingSwitch'] | Should Be $true
+        } finally { $gui.Form.Dispose() }
+    }
+
+    It "has a Preset Diff button, no fixed compare button, and the bottom buttons do not overlap" {
+        $gui = Show-Nano11GUI -NoShow
+        try {
+            $buttons = @(Get-S8Controls $gui.Form | Where-Object { $_ -is [System.Windows.Forms.Button] })
+            @($buttons | Where-Object { $_.Text -eq 'Preset Diff' }).Count | Should Be 1
+            @($buttons | Where-Object { $_.Text -like 'Compare Presets*' }).Count | Should Be 0
+            $row = @($buttons | Where-Object { $_.Text -in 'Preset Diff', 'Check Dependencies', 'Start nano11 Build', 'Cancel' } | Sort-Object { $_.Left })
+            $row.Count | Should Be 4
+            for ($i = 1; $i -lt $row.Count; $i++) { ($row[$i].Left -ge $row[$i - 1].Right) | Should Be $true }
+            @($buttons | Where-Object { $_.Text -match '^(Select All|Clear All|Deselect All)$' }).Count | Should Be 14
+        } finally { $gui.Form.Dispose() }
+    }
+
+    It "diffs preset vs current window settings" {
+        $gui = Show-Nano11GUI -NoShow
+        try {
+            $gui.TweakCheckboxes['S8GamingSwitch'].Checked = $true
+            $txt = Get-Nano11GuiPresetDiffText -Gui $gui -From 's8a' -To $script:Nano11GuiCurrentSettingsLabel
+            $txt | Should Match 'S8GamingSwitch'
+            $txt = Get-Nano11GuiPresetDiffText -Gui $gui -From 's8a' -To 's8b'
+            $txt | Should Match 'S8GamingSwitch'
+        } finally { $gui.Form.Dispose() }
+    }
+
+    It "Tab 8 shows extension counts, errors and the guide button" {
+        $gui = Show-Nano11GUI -NoShow
+        try {
+            $all = @(Get-S8Controls $gui.Form)
+            @($all | Where-Object { $_ -is [System.Windows.Forms.Label] -and $_.Text -match 'User tweaks: 1\s+User presets: 0\s+Custom scripts: 0' }).Count | Should Be 1
+            $gui.ExtensionsLabel.Text | Should Match 'S8 sample error'
+            @($all | Where-Object { $_ -is [System.Windows.Forms.Button] -and $_.Text -eq 'Open Extensibility Guide' }).Count | Should Be 1
+            Test-Path -LiteralPath (Join-Path $script:RepoRoot 'docs\EXTENSIBILITY_GUIDE.md') | Should Be $true
+        } finally { $gui.Form.Dispose() }
+    }
+}
