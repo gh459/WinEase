@@ -10,6 +10,8 @@ $script:RepoRoot = Split-Path -Parent $PSScriptRoot
 $script:BuilderPath = Join-Path -Path $script:RepoRoot -ChildPath "nano11builder.ps1"
 $script:GuiPath = Join-Path -Path $script:RepoRoot -ChildPath "gui\Nano11Gui.ps1"
 $script:UnattendPath = Join-Path -Path $script:RepoRoot -ChildPath "autounattend.xml"
+# The GUI tests below assume English (they match button texts like "Select All"); the display-language tests at the end set their own.
+$env:NANO11_UI_LANGUAGE = 'en'
 
 Describe "nano11 builder - repository layout" {
     It "builder script exists" {
@@ -1829,5 +1831,462 @@ Describe "Documentation S12" {
             }
         }
         ($missing | Select-Object -Unique) -join "`n" | Should Be ''
+    }
+}
+
+Describe "GUI display language (English / Japanese)" {
+    # These tests run the GUI in English or Japanese explicitly; the rest of this file assumes English
+    # (see NANO11_UI_LANGUAGE at the top). Settings are redirected to a temp folder so the user's saved choice is never touched.
+    $script:LangDir = Join-Path -Path $script:RepoRoot -ChildPath "config\ui-strings"
+    $script:LangTemp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("nano11_lang_" + [guid]::NewGuid().ToString('N'))
+    [void](New-Item -ItemType Directory -Path $script:LangTemp -Force)
+    $script:LangSavedLocalAppData = $env:LOCALAPPDATA
+    $script:LangSavedEnv = $env:NANO11_UI_LANGUAGE
+    $env:LOCALAPPDATA = $script:LangTemp
+
+    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+    $script:AllTweakDefs = [ordered]@{}
+    foreach ($td in $settingsDef.Tweaks) { $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description } }
+    $script:ComponentDefs = [ordered]@{}
+    foreach ($cd in $settingsDef.Components) { $script:ComponentDefs[$cd.Key] = $cd }
+    function Get-Nano11Preset { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([string]$Name) $null }
+
+    . $script:GuiPath
+    function Confirm-Nano11GuiAction { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([string]$Message, [string]$Title) $true }
+
+    function Read-UiTable([string]$Lang) {
+        $json = [System.IO.File]::ReadAllText((Join-Path $script:LangDir "$Lang.json"), (New-Object System.Text.UTF8Encoding($false))) | ConvertFrom-Json
+        $t = @{}
+        foreach ($p in $json.PSObject.Properties) { $t[$p.Name] = [string]$p.Value }
+        return $t
+    }
+    # Literal keys passed to Get-Nano11UiString in a source file (dynamic keys are skipped)
+    function Get-UiKeyUsed([string]$Path) {
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$null)
+        $cmds = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Get-Nano11UiString' }, $true)
+        $keys = @()
+        foreach ($c in $cmds) {
+            $els = @($c.CommandElements)
+            for ($i = 1; $i -lt $els.Count; $i++) {
+                $e = $els[$i]
+                $prev = $els[$i - 1]
+                $isKey = ($prev -is [System.Management.Automation.Language.CommandParameterAst] -and $prev.ParameterName -eq 'Key') -or
+                    ($i -eq 1 -and $e -isnot [System.Management.Automation.Language.CommandParameterAst])
+                if ($isKey -and $e -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $keys += $e.Value }
+            }
+        }
+        return $keys
+    }
+    # English Advanced Debloat item names written in the GUI source (both the tab and the dialog)
+    function Get-DebloatItemFromSource {
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiPath, [ref]$null, [ref]$null)
+        $assigns = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in '$stdItems', '$expItems' }, $true)
+        $items = @()
+        foreach ($a in $assigns) { $items += @($a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value }) }
+        return @($items | Select-Object -Unique)
+    }
+    function Get-AllControls($ctl) { foreach ($c in $ctl.Controls) { $c; Get-AllControls $c } }
+    $script:LangOnlyPrefixes = '^(Tweak\.|Component\.|Debloat:)'
+
+    It "en.json and ja.json have the same keys (tweak, component and Advanced Debloat translations live in ja only)" {
+        $en = Read-UiTable 'en'
+        $ja = Read-UiTable 'ja'
+        $enOnly = @($en.Keys | Where-Object { -not $ja.ContainsKey($_) })
+        $jaOnly = @($ja.Keys | Where-Object { -not $en.ContainsKey($_) -and $_ -notmatch $script:LangOnlyPrefixes })
+        ($enOnly -join ',') | Should Be ''
+        ($jaOnly -join ',') | Should Be ''
+        @($en.Keys | Where-Object { $_ -match $script:LangOnlyPrefixes }).Count | Should Be 0
+        $en.Count | Should BeGreaterThan 100
+    }
+
+    It "every string key used by the GUI and the migrator exists in the English table, and no English key is unused" {
+        $en = Read-UiTable 'en'
+        $used = @(Get-UiKeyUsed $script:GuiPath) + @(Get-UiKeyUsed (Join-Path $script:RepoRoot "tools\migrator\Nano11-Migrator.ps1"))
+        $used.Count | Should BeGreaterThan 100
+        $missing = @($used | Where-Object { $_ -notmatch $script:LangOnlyPrefixes -and -not $en.ContainsKey($_) } | Select-Object -Unique)
+        ($missing -join ',') | Should Be ''
+        # Category.<name> keys are built from the category name at run time
+        $unused = @($en.Keys | Where-Object { $used -notcontains $_ -and $_ -notmatch '^Category\.' })
+        ($unused -join ',') | Should Be ''
+    }
+
+    It "the Japanese table translates every tweak, component switch and Advanced Debloat item, with no orphan entries" {
+        $ja = Read-UiTable 'ja'
+        $missing = @()
+        foreach ($t in $settingsDef.Tweaks) { if (-not $ja.ContainsKey("Tweak.$($t.Key).Description")) { $missing += "Tweak.$($t.Key)" } }
+        foreach ($c in @($settingsDef.Components | Where-Object { $_.Gui })) {
+            foreach ($f in 'Text', 'Description') { if (-not $ja.ContainsKey("Component.$($c.Key).$f")) { $missing += "Component.$($c.Key).$f" } }
+        }
+        $items = Get-DebloatItemFromSource
+        $items.Count | Should BeGreaterThan 50
+        foreach ($i in $items) { if (-not $ja.ContainsKey("Debloat:$i")) { $missing += "Debloat:$i" } }
+        ($missing -join "`n") | Should Be ''
+        $tweakKeys = @($settingsDef.Tweaks | ForEach-Object { $_.Key })
+        $compKeys = @($settingsDef.Components | Where-Object { $_.Gui } | ForEach-Object { $_.Key })
+        $orphans = @()
+        foreach ($k in $ja.Keys) {
+            if ($k -match '^Tweak\.(.+)\.Description$') { if ($tweakKeys -notcontains $Matches[1]) { $orphans += $k } }
+            elseif ($k -match '^Component\.(.+)\.(Text|Description)$') { if ($compKeys -notcontains $Matches[1]) { $orphans += $k } }
+            elseif ($k -match '^Debloat:(.+)$') { if ($items -notcontains $Matches[1]) { $orphans += $k } }
+        }
+        ($orphans -join "`n") | Should Be ''
+    }
+
+    It "placeholders are the same in English and Japanese" {
+        $en = Read-UiTable 'en'
+        $ja = Read-UiTable 'ja'
+        $bad = @()
+        foreach ($k in $en.Keys) {
+            $a = @([regex]::Matches($en[$k], '\{\d+\}') | ForEach-Object { $_.Value } | Sort-Object -Unique) -join ','
+            $b = @([regex]::Matches($ja[$k], '\{\d+\}') | ForEach-Object { $_.Value } | Sort-Object -Unique) -join ','
+            if ($a -ne $b) { $bad += $k }
+        }
+        ($bad -join ',') | Should Be ''
+    }
+
+    It "the Japanese table reads back as Japanese in Windows PowerShell 5.1 (UTF-8 data file, no mojibake)" {
+        $ja = Read-UiTable 'ja'
+        ([int[]][char[]]$ja['Button.SelectAll'] -join ',') | Should Be '12377,12409,12390,36984,25246'
+        ([int[]][char[]]$ja['Language.Name'] -join ',') | Should Be '26085,26412,35486'
+        foreach ($k in $ja.Keys) { $ja[$k].Contains([string][char]0xFFFD) | Should Be $false | Out-Null }
+        # a fresh Windows PowerShell 5.1 process that only dot-sources the GUI file and asks for the string
+        $cmd = ". '$($script:GuiPath)'; `$s = Get-Nano11UiString 'Button.SelectAll' -Language ja; ([int[]][char[]]`$s) -join ','"
+        $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command $cmd
+        (@($out)[-1]) | Should Be '12377,12409,12390,36984,25246'
+    }
+
+    It "the source files stay ASCII: Japanese lives only in the JSON tables" {
+        foreach ($f in 'gui\Nano11Gui.ps1', 'tools\migrator\Nano11-Migrator.ps1', 'nano11builder.ps1', 'lib\Nano11Extensions.ps1', 'config\tweaks.psd1') {
+            $bytes = [System.IO.File]::ReadAllBytes((Join-Path $script:RepoRoot $f))
+            @($bytes | Where-Object { $_ -gt 127 }).Count | Should Be 0
+        }
+    }
+
+    It "Get-Nano11UiString falls back from the chosen language to English, then to the default, then to the key" {
+        Set-Nano11UiLanguage -Language 'ja'
+        try {
+            (Get-Nano11UiString 'No.Such.Key') | Should Be 'No.Such.Key'
+            (Get-Nano11UiString 'No.Such.Key' -Default 'dflt') | Should Be 'dflt'
+            (Get-Nano11UiTable -Language 'en')['Test.OnlyEnglish'] = 'English only'
+            (Get-Nano11UiString 'Test.OnlyEnglish') | Should Be 'English only'
+            (Get-Nano11UiString 'Test.OnlyEnglish' -Language 'en') | Should Be 'English only'
+            (Get-Nano11UiString 'Button.SelectAll') | Should Be (Get-Nano11UiString 'Button.SelectAll' -Language 'ja')
+            (Get-Nano11UiString 'Button.SelectAll') | Should Not Be 'Select All'
+            (Get-Nano11UiString 'Main.Estimate' -Format 2 -Language 'en') | Should Be 'Estimated ISO Size: ~2 GB (LZX baseline)'
+        } finally {
+            [void](Get-Nano11UiTable -Language 'en').Remove('Test.OnlyEnglish')
+            Set-Nano11UiLanguage -Language 'en'
+        }
+    }
+
+    It "a missing or unreadable table never throws (empty table, key comes back)" {
+        $savedTables = $script:Nano11UiTables
+        $savedRoot = $script:Nano11GuiRepoRoot
+        $savedDir = $script:Nano11GuiDir
+        try {
+            $script:Nano11UiTables = @{}
+            $script:Nano11GuiRepoRoot = Join-Path $script:LangTemp 'nowhere'
+            $script:Nano11GuiDir = Join-Path $script:LangTemp 'nowhere'
+            Set-Nano11UiLanguage -Language 'ja'
+            (Get-Nano11UiString 'Button.SelectAll') | Should Be 'Button.SelectAll'
+            (Get-Nano11UiString 'Button.SelectAll' -Default 'Select All') | Should Be 'Select All'
+        } finally {
+            $script:Nano11GuiRepoRoot = $savedRoot
+            $script:Nano11GuiDir = $savedDir
+            $script:Nano11UiTables = $savedTables
+            Set-Nano11UiLanguage -Language 'en'
+        }
+    }
+
+    It "language choice: -UiLanguage beats the environment, which beats the saved choice, which beats the OS language" {
+        $env:NANO11_UI_LANGUAGE = ''
+        $settingsFile = Get-Nano11GuiSettingsPath
+        $settingsFile | Should Be (Join-Path $script:LangTemp 'nano11\gui-settings.json')
+        if (Test-Path -LiteralPath $settingsFile) { Remove-Item -LiteralPath $settingsFile -Force }
+        $osLang = if ([System.Globalization.CultureInfo]::CurrentUICulture.TwoLetterISOLanguageName -eq 'ja') { 'ja' } else { 'en' }
+        (Resolve-Nano11UiLanguage) | Should Be $osLang
+        Save-Nano11GuiLanguage -Language 'ja'
+        (Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json).UiLanguage | Should Be 'ja'
+        (Resolve-Nano11UiLanguage) | Should Be 'ja'
+        (Resolve-Nano11UiLanguage -Requested 'en') | Should Be 'en'
+        $env:NANO11_UI_LANGUAGE = 'en'
+        (Resolve-Nano11UiLanguage) | Should Be 'en'
+        (Resolve-Nano11UiLanguage -Requested 'ja') | Should Be 'ja'
+        (Resolve-Nano11UiLanguage -Requested 'xx') | Should Be 'en'
+        $env:NANO11_UI_LANGUAGE = ''
+        Save-Nano11GuiLanguage -Language 'en'
+        (Resolve-Nano11UiLanguage) | Should Be 'en'
+        # other keys of the settings file survive a save
+        [System.IO.File]::WriteAllText($settingsFile, '{ "Other": 5, "UiLanguage": "en" }')
+        Save-Nano11GuiLanguage -Language 'ja'
+        $after = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
+        $after.Other | Should Be 5
+        $after.UiLanguage | Should Be 'ja'
+        # an unreadable settings file is ignored
+        [System.IO.File]::WriteAllText($settingsFile, 'not json')
+        (Resolve-Nano11UiLanguage) | Should Be $osLang
+        $env:NANO11_UI_LANGUAGE = 'en'
+    }
+
+    It "failing to save the language does not throw" {
+        $blocker = Join-Path $script:LangTemp 'blocked'
+        [System.IO.File]::WriteAllText($blocker, 'x')
+        $env:LOCALAPPDATA = $blocker
+        try {
+            { Save-Nano11GuiLanguage -Language 'ja' } | Should Not Throw
+            (Resolve-Nano11UiLanguage -Requested 'ja') | Should Be 'ja'
+        } finally { $env:LOCALAPPDATA = $script:LangTemp }
+    }
+
+    It "tweak description: language table first, then DescriptionJa of a user tweak (Japanese only), then the Description" {
+        Set-Nano11UiLanguage -Language 'ja'
+        try {
+            (Get-Nano11TweakDescription -Key 'DisableUAC' -Def @{ Description = 'x' }) | Should Be (Get-Nano11UiString 'Tweak.DisableUAC.Description' -Language 'ja')
+            (Get-Nano11TweakDescription -Key 'User_Test' -Def @{ Description = 'plain'; DescriptionJa = 'ja text' }) | Should Be 'ja text'
+            (Get-Nano11TweakDescription -Key 'User_Test' -Def @{ Description = 'plain' }) | Should Be 'plain'
+            Set-Nano11UiLanguage -Language 'en'
+            (Get-Nano11TweakDescription -Key 'User_Test' -Def @{ Description = 'plain'; DescriptionJa = 'ja text' }) | Should Be 'plain'
+            (Get-Nano11TweakDescription -Key 'DisableUAC' -Def $script:AllTweakDefs['DisableUAC']) | Should Be $script:AllTweakDefs['DisableUAC'].Description
+        } finally { Set-Nano11UiLanguage -Language 'en' }
+    }
+
+    It "user tweaks keep DescriptionJa in AllTweakDefs" {
+        $src = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "lib\Nano11Extensions.ps1"))
+        $src | Should Match 'DescriptionJa'
+    }
+
+    It "builder and migrator take -UiLanguage en|ja" {
+        foreach ($f in 'nano11builder.ps1', 'tools\migrator\Nano11-Migrator.ps1') {
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:RepoRoot $f), [ref]$null, [ref]$null)
+            $p = @($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'UiLanguage' })
+            $p.Count | Should Be 1
+            $set = @(($p[0].Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateSet' }).PositionalArguments | ForEach-Object { $_.Value })
+            ($set -join ',') | Should Be 'en,ja'
+        }
+    }
+
+    It "English window: texts are the same English as before the language option existed" {
+        $gui = Show-Nano11GUI -NoShow -UiLanguage en
+        try {
+            $gui.Form.Text | Should Be 'nano11 Builder v2.1 - Next-Gen Windows 11 Modular Optimizer & Reducer'
+            $tabs = @($gui.Tabs.TabPages | ForEach-Object { $_.Text })
+            ($tabs -join '|') | Should Be ' 1. Media & Output | 2. Security & Bypass | 3. Privacy & AI | 4. Performance | 5. UI & Shell | 6. Services & Apps | 7. Advanced Debloat | 8. Migration & Backup | 9. User Tweaks '
+            $gui.Preset.Items[0] | Should Be 'Extreme Slim & Gaming (Max debloat, minimal memory, ultra-low latency)'
+            $gui.DryRun.Text | Should Be 'DryRun (Simulation Mode)'
+            $gui.TweakCheckboxes['DisableUAC'].Text | Should Be ('DisableUAC - ' + $script:AllTweakDefs['DisableUAC'].Description)
+            $gui.ComponentCheckboxes['RemoveDefender'].Text | Should Be ('RemoveDefender - ' + $script:ComponentDefs['RemoveDefender'].Gui.Text)
+            @(Get-AllControls $gui.Form | Where-Object { $_ -is [System.Windows.Forms.Button] -and $_.Text -match '^(Select All|Clear All|Deselect All)$' }).Count | Should Be 14
+            # plain strings, not wrapped items, so English behaves exactly as before
+            ($gui.ClbStd.Items[0] -is [string]) | Should Be $true
+        } finally { $gui.Form.Dispose() }
+    }
+
+    It "Japanese window: builds without showing, texts are Japanese, Advanced Debloat results stay English" {
+        $ja = Read-UiTable 'ja'
+        $english = Get-DebloatItemFromSource
+        $gui = Show-Nano11GUI -NoShow -UiLanguage ja -InitialSettings @{ SourceDrive = 'E:\'; TweakSettings = [ordered]@{} }
+        try {
+            $gui.Form.Text | Should Be $ja['Main.WindowTitle']
+            $gui.Tabs.TabPages[0].Text | Should Be $ja['Tab.Media']
+            $gui.DryRun.Text | Should Be $ja['Main.DryRun']
+            $gui.TweakCheckboxes['DisableUAC'].Text | Should Be ('DisableUAC - ' + $ja['Tweak.DisableUAC.Description'])
+            $gui.ComponentCheckboxes['RemoveDefender'].Text | Should Be ('RemoveDefender - ' + $ja['Component.RemoveDefender.Text'])
+            @(Get-AllControls $gui.Form | Where-Object { $_ -is [System.Windows.Forms.Button] -and ($_.Text -eq $ja['Button.SelectAll'] -or $_.Text -eq $ja['Button.ClearAll']) }).Count | Should Be 14
+            # every item shows its translation, and checking all of them hands the English text on
+            $gui.ClbStd.Items.Count | Should BeGreaterThan 20
+            $gui.ClbStd.Items[0].ToString() | Should Be $ja['Debloat:Remove WinRE (reagentc /disable + file delete) [500-700MB]']
+            Set-Nano11Checked -Target $gui.ClbStd -Checked $true
+            Set-Nano11Checked -Target $gui.ClbExp -Checked $true
+            Complete-Nano11GuiResult -Gui $gui | Should Be $true
+            $r = $gui.Result
+            @($r.AdvancedDebloatStandard).Count | Should Be $gui.ClbStd.Items.Count
+            foreach ($v in @($r.AdvancedDebloatStandard) + @($r.AdvancedDebloatExperimental)) { ($english -contains $v) | Should Be $true | Out-Null }
+            ($r.AdvancedDebloatStandard -join "`n") | Should Be ((@($gui.ClbStd.Items | ForEach-Object { Get-Nano11ListItemValue $_ })) -join "`n")
+            (Get-Nano11GuiDraftConfig -Gui $gui).AdvancedDebloatExperimental[0] | Should Match '^Physical: '
+            $r.TweakSettings.Count | Should Be $script:AllTweakDefs.Count
+        } finally { $gui.Form.Dispose() }
+        # a profile that already holds the English names pre-checks the right (translated) rows
+        $first = $english[0]
+        $gui2 = Show-Nano11GUI -NoShow -UiLanguage ja -InitialSettings @{ AdvancedDebloatStandard = @($first) }
+        try {
+            $gui2.ClbStd.CheckedItems.Count | Should Be 1
+            (Get-Nano11ListItemValue $gui2.ClbStd.CheckedItems[0]) | Should Be $first
+        } finally { $gui2.Form.Dispose() }
+    }
+
+    It "Advanced Debloat dialog in Japanese returns the English item names" {
+        $english = Get-DebloatItemFromSource
+        Set-Nano11UiLanguage -Language 'ja'
+        $dlg = Show-AdvancedDebloatDialog -NoShow
+        try {
+            $dlg.Text | Should Be (Get-Nano11UiString 'Dlg.Debloat.Title' -Language 'ja')
+            Set-Nano11Checked -Target $dlg.Tag.Std -Checked $true
+            Set-Nano11Checked -Target $dlg.Tag.Exp -Checked $true
+            $std = Get-Nano11CheckedItems -List $dlg.Tag.Std
+            $exp = Get-Nano11CheckedItems -List $dlg.Tag.Exp
+            $std.Count | Should Be 32
+            foreach ($v in @($std) + @($exp)) { ($english -contains $v) | Should Be $true | Out-Null }
+            $dlg.Tag.Std.Items[0].ToString() | Should Not Be $std[0]
+        } finally {
+            $dlg.Dispose()
+            Set-Nano11UiLanguage -Language 'en'
+        }
+    }
+
+    It "switching the language keeps what was typed, checked and selected (and saves the choice)" {
+        $env:NANO11_UI_LANGUAGE = 'en'
+        $gui = Show-Nano11GUI -NoShow -UiLanguage en -InitialSettings @{ SourceDrive = 'E:\'; TweakSettings = [ordered]@{} }
+        try {
+            $gui.Work.Text = 'D:\work space'
+            $gui.Index.Text = '3'
+            $gui.Drivers.Text = 'D:\drv'
+            $gui.UserName.Text = 'Taro'
+            $gui.ComputerName.Text = 'PC-1'
+            $gui.DryRun.Checked = $true
+            $gui.VHDX.Checked = $true
+            $gui.RadSWM.Checked = $true
+            $gui.TweakCheckboxes['DisableUAC'].Checked = $true
+            $gui.ComponentCheckboxes['RemoveStore'].Checked = $true
+            $gui.ClbStd.SetItemChecked(2, $true)
+            $gui.ClbExp.SetItemChecked(4, $true)
+            $gui.MigRoot.Text = 'D:\mig'
+            $gui.CustomPaths.Text = "C:\a`r`nC:\b"
+            $gui.MigExcludeSecrets.Checked = $false
+            $gui.MigConflict.SelectedIndex = 2
+            $gui.MigFolders.SetItemChecked(3, $true)
+            Initialize-Nano11GuiMigrationRules -List $gui.MigRulesList
+            $gui.MigTab.Tag.Loaded = $true
+            $gui.MigRulesList.SetItemChecked(1, $true)
+            $gui.MigRulesList.SetItemChecked(3, $true)
+            $ruleIds = @(Get-Nano11GuiMigrationRuleIds -Gui $gui)
+            $ruleIds.Count | Should Be 2
+            $stdValue = Get-Nano11ListItemValue $gui.ClbStd.Items[2]
+            $gui.Tabs.SelectedIndex = 4
+            $presetIndex = $gui.Preset.SelectedIndex
+            $before = Get-Nano11GuiDraftConfig -Gui $gui
+
+            Switch-Nano11GuiLanguage -Gui $gui -Language ja
+            $script:Nano11UiLanguage | Should Be 'ja'
+            (Get-Content -LiteralPath (Get-Nano11GuiSettingsPath) -Raw | ConvertFrom-Json).UiLanguage | Should Be 'ja'
+            $gui.Form.Tag | Should Be $gui
+            $gui.Form.Text | Should Be (Get-Nano11UiString 'Main.WindowTitle' -Language 'ja')
+            $gui.Tabs.TabPages[0].Text | Should Be (Get-Nano11UiString 'Tab.Media' -Language 'ja')
+            $gui.Language.SelectedIndex | Should Be 1
+
+            $gui.Work.Text | Should Be 'D:\work space'
+            $gui.Index.Text | Should Be '3'
+            $gui.Drivers.Text | Should Be 'D:\drv'
+            $gui.UserName.Text | Should Be 'Taro'
+            $gui.ComputerName.Text | Should Be 'PC-1'
+            $gui.Source.Text | Should Be 'E:\'
+            $gui.DryRun.Checked | Should Be $true
+            $gui.VHDX.Checked | Should Be $true
+            $gui.RadSWM.Checked | Should Be $true
+            $gui.Tabs.SelectedIndex | Should Be 4
+            $gui.Preset.SelectedIndex | Should Be $presetIndex
+            $gui.TweakCheckboxes['DisableUAC'].Checked | Should Be $true
+            $gui.ComponentCheckboxes['RemoveStore'].Checked | Should Be $true
+            $after = Get-Nano11GuiDraftConfig -Gui $gui
+            foreach ($k in $before.TweakSettings.Keys) { $after.TweakSettings[$k] | Should Be $before.TweakSettings[$k] | Out-Null }
+            foreach ($k in $gui.ComponentCheckboxes.Keys) { $after[$k] | Should Be $before[$k] | Out-Null }
+            (@($after.AdvancedDebloatStandard) -join '|') | Should Be $stdValue
+            @($after.AdvancedDebloatExperimental).Count | Should Be 1
+            $gui.MigRoot.Text | Should Be 'D:\mig'
+            $gui.CustomPaths.Text | Should Be "C:\a`r`nC:\b"
+            $gui.MigExcludeSecrets.Checked | Should Be $false
+            $gui.MigConflict.SelectedIndex | Should Be 2
+            $gui.MigFolders.GetItemChecked(3) | Should Be $true
+            (@(Get-Nano11GuiMigrationRuleIds -Gui $gui) -join ',') | Should Be ($ruleIds -join ',')
+            $gui.TweakCheckboxes.Count | Should Be $script:AllTweakDefs.Count
+            # the rebuilt window is live: toggling a tweak still switches the preset to Custom and updates the estimate
+            $gui.Preset.SelectedIndex = 0
+            $gui.TweakCheckboxes['DisableUAC'].Checked = $false
+            $gui.Preset.SelectedIndex | Should Be ($gui.Preset.Items.Count - 1)
+
+            Switch-Nano11GuiLanguage -Gui $gui -Language en
+            $script:Nano11UiLanguage | Should Be 'en'
+            $gui.Form.Text | Should Be 'nano11 Builder v2.1 - Next-Gen Windows 11 Modular Optimizer & Reducer'
+            $gui.Work.Text | Should Be 'D:\work space'
+            $gui.ComponentCheckboxes['RemoveStore'].Checked | Should Be $true
+            (@((Get-Nano11GuiDraftConfig -Gui $gui).AdvancedDebloatStandard) -join '|') | Should Be $stdValue
+        } finally {
+            $gui.Form.Dispose()
+            Set-Nano11UiLanguage -Language 'en'
+        }
+    }
+
+    It "switching to the language already shown, or to an unknown one, changes nothing" {
+        $gui = Show-Nano11GUI -NoShow -UiLanguage en
+        try {
+            $form = $gui.Form
+            $firstTab = $gui.Tabs
+            Switch-Nano11GuiLanguage -Gui $gui -Language en
+            Switch-Nano11GuiLanguage -Gui $gui -Language xx
+            [object]::ReferenceEquals($gui.Tabs, $firstTab) | Should Be $true
+            $form.Text | Should Be 'nano11 Builder v2.1 - Next-Gen Windows 11 Modular Optimizer & Reducer'
+        } finally { $gui.Form.Dispose() }
+    }
+
+    It "migration wizard: opens in either language and keeps its state when the language changes" {
+        . (Join-Path $script:RepoRoot "tools\migrator\Nano11Migration.ps1")
+        $toolPath = Join-Path $script:RepoRoot "tools\migrator\Nano11-Migrator.ps1"
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($toolPath, [ref]$null, [ref]$null)
+        foreach ($fn in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false)) { . ([scriptblock]::Create($fn.Extent.Text)) }
+        $script:MigratorToolPath = $toolPath
+        $script:RulesPath = Join-Path $script:RepoRoot "tools\migrator\migration-rules.psd1"
+        $script:UserRulesPath = $null
+        $script:DefaultPackagePath = Get-Nano11DefaultMigrationBackupPath -Base Documents
+        $ja = Read-UiTable 'ja'
+        $en = Read-UiTable 'en'
+        $form = Show-Nano11MigratorDialog -NoShow -UiLanguage ja -PackagePath 'D:\bk'
+        try {
+            $form.Text | Should Be $ja['Migrator.Title']
+            $form.Tag.Tabs.TabPages[0].Text | Should Be $ja['Migrator.Tab.Backup']
+            $form.Tag.Tabs.TabPages[1].Text | Should Be $ja['Migrator.Tab.Restore']
+            $form.Tag.BackupRoot.Text | Should Be 'D:\bk'
+            $form.Tag.GameRules.Items.Count | Should BeGreaterThan 0
+            $form.Tag.GameRules.SetItemChecked(1, $true)
+            $form.Tag.AppRules.SetItemChecked(0, $true)
+            [void]$form.Tag.Folders.Items.Add('D:\custom', $true)
+            $form.Tag.Policy.SelectedIndex = 3
+            $form.Tag.RestoreRoot.Text = 'E:\restore'
+            $form.Tag.ExcludeSecrets.Checked = $false
+            $form.Tag.Log.Text = 'a log line'
+            $form.Tag.Tabs.SelectedIndex = 1
+            $rules = @($form.Tag.GameRules.CheckedItems) + @($form.Tag.AppRules.CheckedItems)
+            $sel = Get-MigSelection -Form $form
+
+            Switch-MigratorLanguage -Form $form -Language en
+            $script:Nano11UiLanguage | Should Be 'en'
+            $form.Text | Should Be $en['Migrator.Title']
+            $form.Tag.Tabs.TabPages[0].Text | Should Be 'Export / Backup'
+            $form.Tag.BackupRoot.Text | Should Be 'D:\bk'
+            $form.Tag.RestoreRoot.Text | Should Be 'E:\restore'
+            $form.Tag.Policy.SelectedIndex | Should Be 3
+            $form.Tag.ExcludeSecrets.Checked | Should Be $false
+            $form.Tag.Log.Text | Should Be 'a log line'
+            $form.Tag.Tabs.SelectedIndex | Should Be 1
+            $form.Tag.Folders.Items.Contains('D:\custom') | Should Be $true
+            $after = Get-MigSelection -Form $form
+            $after.RuleIds | Should Be $sel.RuleIds
+            $after.UserFolders -join ',' | Should Be ($sel.UserFolders -join ',')
+            $after.CustomPaths -join ',' | Should Be ($sel.CustomPaths -join ',')
+            @($rules).Count | Should Be 2
+            $form.Tag.Language.SelectedIndex | Should Be 0
+        } finally {
+            $form.Dispose()
+            Set-Nano11UiLanguage -Language 'en'
+        }
+    }
+
+    It "cleanup: restore the environment" {
+        $env:LOCALAPPDATA = $script:LangSavedLocalAppData
+        $env:NANO11_UI_LANGUAGE = 'en'
+        Set-Nano11UiLanguage -Language 'en'
+        if (Test-Path -LiteralPath $script:LangTemp) { Remove-Item -LiteralPath $script:LangTemp -Recurse -Force -ErrorAction SilentlyContinue }
+        [System.Windows.Forms.Application]::Exit()
+        [System.GC]::Collect()
+        [System.GC]::WaitForPendingFinalizers()
+        $env:LOCALAPPDATA | Should Be $script:LangSavedLocalAppData
     }
 }
