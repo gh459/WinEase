@@ -820,6 +820,11 @@ function Show-AdvancedDebloatDialog {
 function Update-Nano11GuiSources {
     param([System.Windows.Forms.ComboBox]$Combo)
     $Combo.Items.Clear()
+    foreach ($srcItem in (Get-Nano11GuiSourceCandidates)) { [void]$Combo.Items.Add($srcItem) }
+}
+
+# Detected Windows 11 media drives and ISO files (shared by the WinForms and WinUI 3 windows)
+function Get-Nano11GuiSourceCandidates {
     $detectedSources = @()
     foreach ($psd in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
         if (-not $psd.Root) { continue }
@@ -843,7 +848,7 @@ function Update-Nano11GuiSources {
             foreach ($iso in $foundIsos) { $detectedSources += $iso.FullName }
         }
     }
-    foreach ($srcItem in $detectedSources) { [void]$Combo.Items.Add($srcItem) }
+    return ,$detectedSources
 }
 
 function Update-Nano11GuiEstimate {
@@ -1000,9 +1005,15 @@ function Get-Nano11GuiMigrationRoot {
 # Checked personal folders -> @{ Category = real path } (only folders that exist)
 function Get-Nano11GuiMigrationFolderMap {
     param([hashtable]$Gui)
+    if (-not $Gui.MigFolders) { return @{} }
+    return (Get-Nano11MigrationFolderMapFromNames -Names @($Gui.MigFolders.CheckedItems | ForEach-Object { "$_" }))
+}
+
+# Personal folder names (Documents, Desktop, ...) -> @{ Category = real path } (only folders that exist)
+function Get-Nano11MigrationFolderMapFromNames {
+    param([string[]]$Names = @())
     $map = @{}
-    if (-not $Gui.MigFolders) { return $map }
-    foreach ($name in $Gui.MigFolders.CheckedItems) {
+    foreach ($name in $Names) {
         $path = switch ("$name") {
             'Documents' { [Environment]::GetFolderPath('MyDocuments') }
             'Desktop'   { [Environment]::GetFolderPath('Desktop') }
@@ -1134,6 +1145,26 @@ function Test-Nano11GuiBackupIntegrity {
     return [PSCustomObject]@{ Checked = $checked; Problems = $problems }
 }
 
+# Source text typed or picked in the window -> the -SourceDrive value (a drive letter like E: or an ISO path)
+function Resolve-Nano11GuiSource {
+    param([Parameter(Mandatory = $true)][string]$Text)
+    if ($Text -match '^([A-Za-z]:)') {
+        $candLetter = $matches[1]
+        # A plain string: Join-Path throws for a drive letter that does not exist
+        if (Test-Path -LiteralPath "$candLetter\sources\install.wim") { return $candLetter }
+        if ($Text.EndsWith(".iso", [System.StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $Text)) { return $Text }
+        return $candLetter
+    }
+    return $Text
+}
+
+# Workspace folder used when the box is left empty
+function Get-Nano11GuiDefaultWorkDir {
+    $docsDir = [Environment]::GetFolderPath('MyDocuments')
+    if (-not $docsDir) { $docsDir = Join-Path $env:USERPROFILE "Documents" }
+    return (Join-Path -Path $docsDir -ChildPath "nano11_workspace")
+}
+
 function Complete-Nano11GuiResult {
     param([hashtable]$Gui)
     $srcText = $Gui.Source.Text.Trim()
@@ -1142,28 +1173,10 @@ function Complete-Nano11GuiResult {
         return $false
     }
 
-    if ($srcText -match '^([A-Za-z]:)') {
-        $candLetter = $matches[1]
-        $wimCheck = Join-Path -Path "$candLetter\sources" -ChildPath "install.wim"
-        if (Test-Path -LiteralPath $wimCheck) {
-            $resolvedSource = $candLetter
-        } elseif ($srcText.EndsWith(".iso", [System.StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $srcText)) {
-            $resolvedSource = $srcText
-        } else {
-            $resolvedSource = $candLetter
-        }
-    } elseif ($srcText.EndsWith(".iso", [System.StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $srcText)) {
-        $resolvedSource = $srcText
-    } else {
-        $resolvedSource = $srcText
-    }
+    $resolvedSource = Resolve-Nano11GuiSource -Text $srcText
 
     $wDir = $Gui.Work.Text.Trim()
-    if (-not $wDir) {
-        $docsDir = [Environment]::GetFolderPath('MyDocuments')
-        if (-not $docsDir) { $docsDir = Join-Path $env:USERPROFILE "Documents" }
-        $wDir = Join-Path -Path $docsDir -ChildPath "nano11_workspace"
-    }
+    if (-not $wDir) { $wDir = Get-Nano11GuiDefaultWorkDir }
 
     $guiUserName = $Gui.UserName.Text.Trim()
     $guiComputerName = $Gui.ComputerName.Text.Trim()
@@ -1383,6 +1396,75 @@ function New-Nano11ServicesTab {
     [void](Add-Nano11SelectButtons -Parent $page.Bar -Target $svcCheckboxes -X 15 -Y 7)
 }
 
+# Advanced Debloat items of Tab 7 (and of the WinUI 3 window). The English text is the value phases\09 matches.
+$script:Nano11DebloatStandardItems = @(
+    "Remove WinRE (reagentc /disable + file delete) [500-700MB]",
+    "Remove PatchCache (dir delete) [200-500MB]",
+    "Remove Delivery Optimization cache (dir delete) [100-500MB]",
+    "Remove non-Japanese language packs (DISM) [200-500MB]",
+    "Remove non-essential fonts (file delete) [50-100MB]",
+    "WinSxS cleanup (/StartComponentCleanup /ResetBase) [1-3GB]",
+    "Remove pagefile.sys (pagefile disable) [4-16GB]",
+    "Remove hiberfil.sys (powercfg /h off) [4-16GB]",
+    "Remove swapfile.sys (pagefile disable) [256MB-1GB]",
+    "Remove Provisioned AppX (list-based) [100-300MB]",
+    "Remove Windows Media Player (component) [50-100MB]",
+    "Remove Remote Desktop host (service + binary) [30-50MB]",
+    "Remove Bluetooth stack (service + binary) [20-40MB]",
+    "Remove Print Spooler (service + binary) [20-30MB]",
+    "Remove touch/pen/ink components [20-30MB]",
+    "Remove accessibility tools [15-25MB]",
+    "Remove help files [10-20MB]",
+    "Remove non-Japanese IME [5-15MB]",
+    "Remove event logs [10-50MB]",
+    "Remove crash dumps [varies]",
+    "Remove Windows Store cache [varies]",
+    "Remove Provisioning packages [5-10MB]",
+    "Remove Windows Sandbox [10-20MB]",
+    "Remove WSL / VM Platform [20-40MB]",
+    "Remove .NET Framework 3.5 [100MB]",
+    "Remove Windows PowerShell ISE [5MB]",
+    "Remove Steps Recorder [2MB]",
+    "Remove Telnet/TFTP client [1MB]",
+    "Remove SNMP service [2MB]",
+    "Remove Windows Identity Foundation [10MB]",
+    "Remove Fax service [5MB]",
+    "Remove XPS Viewer [5MB]"
+)
+
+$script:Nano11DebloatExperimentalItems = @(
+    "Physical: Edge / WebView2 (complete removal) [~200MB]",
+    "Physical: Defender (complete removal) [~50MB]",
+    "Physical: Cortana / Search (complete removal) [~100MB]",
+    "Physical: OneDrive (complete removal) [~50MB]",
+    "Physical: Telemetry/DiagTrack (complete removal) [~30MB]",
+    "Physical: Hyper-V / Virtualization stack [~200-400MB]",
+    "Physical: IIS (Web server) [~50-100MB]",
+    "Physical: Windows Firewall (complete removal) [~20-40MB]",
+    "Physical: Bluetooth stack (complete removal) [~20-40MB]",
+    "Physical: Print Spooler (complete removal) [~20-30MB]",
+    "Physical: Touch/Pen/Ink (complete removal) [~20-30MB]",
+    "Physical: Accessibility tools (OOBE-safe: retained, IFEO-blocked) [0MB]",
+    "Physical: Windows Media Player (complete removal) [~50-100MB]",
+    "Physical: Remote Desktop host (OOBE-safe: Terminal Server keys retained) [~0MB]",
+    "Physical: BitLocker (complete removal) [~30-50MB]",
+    "Physical: Windows Sandbox (complete removal) [~10-20MB]",
+    "Physical: WSL / VM Platform (complete removal) [~20-40MB]",
+    "Physical: Help files (complete removal) [~10-20MB]",
+    "Physical: Crash dumps (complete removal) [varies]",
+    "Physical: Provisioning packages (complete removal) [~5-10MB]",
+    "Physical: Delivery Optimization (complete removal) [varies]",
+    "Physical: Windows Search index (complete removal) [varies]",
+    "Physical: Windows.old (complete removal) [varies]",
+    "Physical: Temp files (complete removal) [varies]",
+    "Physical: Installer cache PatchCache (complete removal) [varies]",
+    "Physical: pagefile.sys (disable + delete) [4-16GB]",
+    "Physical: hiberfil.sys (disable + delete) [4-16GB]",
+    "Physical: swapfile.sys (disable + delete) [256MB-1GB]",
+    "Physical: Memory.dmp (complete removal) [varies]",
+    "Physical: Minidump (complete removal) [varies]"
+)
+
 # Tab 7: Advanced Debloat lists
 function New-Nano11DebloatTab {
     param(
@@ -1394,74 +1476,8 @@ function New-Nano11DebloatTab {
     # =========================================================================
     # TAB 7: Advanced Debloat (Physical Deletion)
     # =========================================================================
-    # Populate standard and experimental debloat lists
-    $stdItems = @(
-        "Remove WinRE (reagentc /disable + file delete) [500-700MB]",
-        "Remove PatchCache (dir delete) [200-500MB]",
-        "Remove Delivery Optimization cache (dir delete) [100-500MB]",
-        "Remove non-Japanese language packs (DISM) [200-500MB]",
-        "Remove non-essential fonts (file delete) [50-100MB]",
-        "WinSxS cleanup (/StartComponentCleanup /ResetBase) [1-3GB]",
-        "Remove pagefile.sys (pagefile disable) [4-16GB]",
-        "Remove hiberfil.sys (powercfg /h off) [4-16GB]",
-        "Remove swapfile.sys (pagefile disable) [256MB-1GB]",
-        "Remove Provisioned AppX (list-based) [100-300MB]",
-        "Remove Windows Media Player (component) [50-100MB]",
-        "Remove Remote Desktop host (service + binary) [30-50MB]",
-        "Remove Bluetooth stack (service + binary) [20-40MB]",
-        "Remove Print Spooler (service + binary) [20-30MB]",
-        "Remove touch/pen/ink components [20-30MB]",
-        "Remove accessibility tools [15-25MB]",
-        "Remove help files [10-20MB]",
-        "Remove non-Japanese IME [5-15MB]",
-        "Remove event logs [10-50MB]",
-        "Remove crash dumps [varies]",
-        "Remove Windows Store cache [varies]",
-        "Remove Provisioning packages [5-10MB]",
-        "Remove Windows Sandbox [10-20MB]",
-        "Remove WSL / VM Platform [20-40MB]",
-        "Remove .NET Framework 3.5 [100MB]",
-        "Remove Windows PowerShell ISE [5MB]",
-        "Remove Steps Recorder [2MB]",
-        "Remove Telnet/TFTP client [1MB]",
-        "Remove SNMP service [2MB]",
-        "Remove Windows Identity Foundation [10MB]",
-        "Remove Fax service [5MB]",
-        "Remove XPS Viewer [5MB]"
-    )
-
-    $expItems = @(
-        "Physical: Edge / WebView2 (complete removal) [~200MB]",
-        "Physical: Defender (complete removal) [~50MB]",
-        "Physical: Cortana / Search (complete removal) [~100MB]",
-        "Physical: OneDrive (complete removal) [~50MB]",
-        "Physical: Telemetry/DiagTrack (complete removal) [~30MB]",
-        "Physical: Hyper-V / Virtualization stack [~200-400MB]",
-        "Physical: IIS (Web server) [~50-100MB]",
-        "Physical: Windows Firewall (complete removal) [~20-40MB]",
-        "Physical: Bluetooth stack (complete removal) [~20-40MB]",
-        "Physical: Print Spooler (complete removal) [~20-30MB]",
-        "Physical: Touch/Pen/Ink (complete removal) [~20-30MB]",
-        "Physical: Accessibility tools (OOBE-safe: retained, IFEO-blocked) [0MB]",
-        "Physical: Windows Media Player (complete removal) [~50-100MB]",
-        "Physical: Remote Desktop host (OOBE-safe: Terminal Server keys retained) [~0MB]",
-        "Physical: BitLocker (complete removal) [~30-50MB]",
-        "Physical: Windows Sandbox (complete removal) [~10-20MB]",
-        "Physical: WSL / VM Platform (complete removal) [~20-40MB]",
-        "Physical: Help files (complete removal) [~10-20MB]",
-        "Physical: Crash dumps (complete removal) [varies]",
-        "Physical: Provisioning packages (complete removal) [~5-10MB]",
-        "Physical: Delivery Optimization (complete removal) [varies]",
-        "Physical: Windows Search index (complete removal) [varies]",
-        "Physical: Windows.old (complete removal) [varies]",
-        "Physical: Temp files (complete removal) [varies]",
-        "Physical: Installer cache PatchCache (complete removal) [varies]",
-        "Physical: pagefile.sys (disable + delete) [4-16GB]",
-        "Physical: hiberfil.sys (disable + delete) [4-16GB]",
-        "Physical: swapfile.sys (disable + delete) [256MB-1GB]",
-        "Physical: Memory.dmp (complete removal) [varies]",
-        "Physical: Minidump (complete removal) [varies]"
-    )
+    $stdItems = $script:Nano11DebloatStandardItems
+    $expItems = $script:Nano11DebloatExperimentalItems
 
     $preStd = @()
     if ($InitialSettings.AdvancedDebloatStandard) { $preStd = @($InitialSettings.AdvancedDebloatStandard) }
@@ -2072,3 +2088,6 @@ function Show-Nano11GUI {
     }
     return @{ Success = $false }
 }
+
+# The WinUI 3 window host (Show-Nano11WinUiGUI) shares the helpers above
+. (Join-Path -Path $PSScriptRoot -ChildPath 'Nano11WinUiHost.ps1')

@@ -18,6 +18,18 @@ if not exist "%BUILDER%" (
     exit /b 1
 )
 
+:: Build the WinUI 3 window once (needs the .NET 8 SDK). Without it the builder shows the classic window.
+if not exist "%~dp0gui\winui\bin\Nano11Gui.exe" (
+    where dotnet >nul 2>&1
+    if not errorlevel 1 (
+        echo [nano11] Building the WinUI 3 window ^(first launch only^)...
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0gui\winui\build.ps1"
+        if errorlevel 1 echo [nano11] WinUI 3 build failed; the classic window will be used.
+    ) else (
+        echo [nano11] .NET 8 SDK not found; using the classic window. Install it and run gui\winui\build.ps1 for the WinUI 3 window.
+    )
+)
+
 :: Check for admin privileges (net session)
 net session >nul 2>&1
 if %errorLevel% equ 0 goto :RUN

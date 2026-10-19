@@ -211,7 +211,16 @@ The resulting minimal OS is **not serviceable via cumulative updates** when WinS
 
 #### **Option A: Graphical User Interface (GUI - Recommended)**
 Simply double-click **`nano11-GUI.bat`** (or run `.\nano11builder.ps1 -GUI` as Administrator).  
-The modern dark-mode GUI allows you to:
+
+The settings window is a **WinUI 3** app (`gui/winui`, Windows App SDK, follows the Windows light/dark theme with Mica). It is built once with the .NET 8 SDK; `nano11-GUI.bat` does this automatically on first launch when `dotnet` is installed, or run it yourself:
+
+```powershell
+.\gui\winui\build.ps1            # publishes gui\winui\bin\Nano11Gui.exe (self-contained, x64 or arm64)
+```
+
+When `Nano11Gui.exe` is not built, or with `-ClassicGui`, the builder shows the classic WinForms window (`gui/Nano11Gui.ps1`) with the same features. The WinUI window runs as a separate process and talks to the builder over its standard input/output (one JSON message per line, see `gui/Nano11WinUiHost.ps1`), so presets, the dependency check, Preset Diff and the migration engine still run in PowerShell.
+
+The GUI allows you to:
 - Select an auto-detected installation media drive or browse directly to an official Windows 11 `.iso` file.
 - Pick a one-click built-in profile preset (**Extreme Slim & Gaming**, **Balanced Pro**, **FAT32 USB Split-WIM**, **Portable Gaming PC**, **VM & Developer**, or **Audio & DAW Production**).
 - Toggle any of the debloat, localization, hardware injection, and modular performance options. Every tab has **Select All / Clear All** buttons, including both lists on the **Advanced Debloat** tab (Select All on the destructive Experimental list asks for confirmation).
@@ -285,6 +294,7 @@ You can run the builder completely unattended with built-in presets and modular 
 | :--- | :--- |
 | `-GUI` (alias: `-UI`) | Launches the dark-themed Graphical User Interface frontend |
 | `-UiLanguage <en\|ja>` | Display language of the GUI windows (display only). Default: the language saved by the GUI, else the OS display language |
+| `-ClassicGui` | With `-GUI`: show the classic WinForms window even when the WinUI 3 window (`gui/winui/bin/Nano11Gui.exe`) is built |
 | `-Profile <extreme\|balanced\|fat32\|handheld\|vm\|audio>` (alias: `-Preset`) | Applies an in-memory configuration preset (Built-in: zero external JSON dependency) |
 | `-UseVHDX` (alias: `-FastVHDX`) | Dynamically mounts an expandable 30 GB VHDX volume as the DISM scratch directory, eliminating host fragmentation and accelerating build times |
 | `-DryRun` (supports `-WhatIf`) | Resolves and verifies configuration, options, and paths without modifying disks or servicing images |
@@ -457,7 +467,9 @@ nano11-main/
 │   ├── Nano11SelfTest.ps1     # Self-test suite (loaded only for -TestSelf)
 │   └── Nano11Extensions.ps1   # User extensibility engine (user tweaks, presets, custom scripts, config diff, recovery readiness)
 ├── gui/
-│   └── Nano11Gui.ps1          # WinForms GUI, one function per tab (loaded only for -GUI / menu [7]); the migrator window reuses its parts
+│   ├── Nano11Gui.ps1          # Classic WinForms GUI, one function per tab (loaded only for -GUI / menu [7]); the migrator window reuses its parts
+│   ├── Nano11WinUiHost.ps1    # Starts the WinUI 3 window and answers its requests (JSON lines over stdin/stdout)
+│   └── winui/                 # WinUI 3 window (C#, Windows App SDK); build.ps1 publishes it to winui/bin
 ├── phases/                    # 18 build phases (dot-sourced by orchestrator)
 │   └── 01-environment.ps1 ... 18-iso.ps1   # 09 has two files: 09-physical-debloat.ps1 and 09-winsxs.ps1
 ├── config/

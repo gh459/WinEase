@@ -1905,10 +1905,20 @@ Describe "GUI display language (English / Japanese)" {
         }
         return $keys
     }
+    # Literal keys of the WinUI 3 window: _s.Get("Key" / _s.Format("Key" in gui\winui\Nano11Gui\*.cs (and the preset labels)
+    function Get-UiKeyUsedWinUi {
+        $keys = @()
+        foreach ($f in Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot 'gui\winui\Nano11Gui') -Filter '*.cs') {
+            $src = [System.IO.File]::ReadAllText($f.FullName)
+            $keys += @([regex]::Matches($src, '_s\.(?:Get|Format)\("([^"{}]+)"') | ForEach-Object { $_.Groups[1].Value })
+            $keys += @([regex]::Matches($src, '"(Media\.Preset\.[A-Za-z0-9]+)"') | ForEach-Object { $_.Groups[1].Value })
+        }
+        return $keys
+    }
     # English Advanced Debloat item names written in the GUI source (both the tab and the dialog)
     function Get-DebloatItemFromSource {
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiPath, [ref]$null, [ref]$null)
-        $assigns = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in '$stdItems', '$expItems' }, $true)
+        $assigns = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in '$stdItems', '$expItems', '$script:Nano11DebloatStandardItems', '$script:Nano11DebloatExperimentalItems' }, $true)
         $items = @()
         foreach ($a in $assigns) { $items += @($a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value }) }
         return @($items | Select-Object -Unique)
@@ -1929,7 +1939,8 @@ Describe "GUI display language (English / Japanese)" {
 
     It "every string key used by the GUI and the migrator exists in the English table, and no English key is unused" {
         $en = Read-UiTable 'en'
-        $used = @(Get-UiKeyUsed $script:GuiPath) + @(Get-UiKeyUsed (Join-Path $script:RepoRoot "tools\migrator\Nano11-Migrator.ps1"))
+        $used = @(Get-UiKeyUsed $script:GuiPath) + @(Get-UiKeyUsed (Join-Path $script:RepoRoot "tools\migrator\Nano11-Migrator.ps1")) +
+            @(Get-UiKeyUsed (Join-Path $script:RepoRoot "gui\Nano11WinUiHost.ps1")) + @(Get-UiKeyUsedWinUi)
         $used.Count | Should BeGreaterThan 100
         $missing = @($used | Where-Object { $_ -notmatch $script:LangOnlyPrefixes -and -not $en.ContainsKey($_) } | Select-Object -Unique)
         ($missing -join ',') | Should Be ''
@@ -2316,5 +2327,92 @@ Describe "GUI display language (English / Japanese)" {
         [System.GC]::Collect()
         [System.GC]::WaitForPendingFinalizers()
         $env:LOCALAPPDATA | Should Be $script:LangSavedLocalAppData
+    }
+}
+
+Describe "WinUI 3 window host (gui\Nano11WinUiHost.ps1)" {
+    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+    $script:AllTweakDefs = [ordered]@{}
+    foreach ($td in $settingsDef.Tweaks) { $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description } }
+    $script:ComponentDefs = [ordered]@{}
+    foreach ($cd in $settingsDef.Components) { $script:ComponentDefs[$cd.Key] = $cd }
+    $script:BuiltInPresets = [ordered]@{ wtest = @{ PayloadFormat = 'ESD'; RemoveDefender = $false; TweakSettings = @{ DisableUAC = $true } } }
+    function Get-Nano11Preset { param([string]$Name) if ($Name -eq 'extreme') { $script:BuiltInPresets['wtest'] } else { $null } }
+    . $script:GuiPath
+    $script:WinUiHostPath = Join-Path -Path $script:RepoRoot -ChildPath "gui\Nano11WinUiHost.ps1"
+
+    It "gui\Nano11WinUiHost.ps1 parses with zero parser errors and is loaded with gui\Nano11Gui.ps1" {
+        $errs = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile($script:WinUiHostPath, [ref]$null, [ref]$errs)
+        @($errs).Count | Should Be 0
+        (Get-Command Show-Nano11WinUiGUI -ErrorAction SilentlyContinue) | Should Not BeNullOrEmpty
+    }
+
+    It "the init message carries every definition and survives the JSON round trip" {
+        $init = New-Nano11WinUiInitMessage -Language 'en' -InitialSettings @{
+            SourceDrive = 'E:\'; UserName = 'Tester'; ExportESDMode = $true; RemoveDefender = $false
+            TweakSettings = [ordered]@{ DisableUAC = $true }; AdvancedDebloatStandard = @('x')
+        }
+        $back = $init | ConvertTo-Json -Depth 12 -Compress | ConvertFrom-Json
+        $back.Op | Should Be 'init'
+        @($back.Tweaks).Count | Should Be $script:AllTweakDefs.Count
+        @($back.Components).Count | Should Be @($script:ComponentDefs.Values | Where-Object { $_.Gui }).Count
+        @($back.DebloatStandard).Count | Should BeGreaterThan 20
+        @($back.DebloatExperimental).Count | Should BeGreaterThan 20
+        $back.Initial.SourceDrive | Should Be 'E:\'
+        $back.Initial.UserName | Should Be 'Tester'
+        $back.Initial.ExportESDMode | Should Be $true
+        $back.Initial.Components.RemoveDefender | Should Be $false
+        $back.Initial.TweakSettings.DisableUAC | Should Be $true
+        @($back.Initial.AdvancedDebloatStandard) -join ',' | Should Be 'x'
+        @($back.PresetNames) -join ',' | Should Be 'wtest'
+        # only 'extreme' resolves in this test: the preset carries every tweak, its payload and its components
+        $p = @($back.Presets)[0]
+        $p.Key | Should Be 'extreme'
+        $p.PayloadFormat | Should Be 'ESD'
+        $p.Components.RemoveDefender | Should Be $false
+        $p.Tweaks.DisableUAC | Should Be $true
+        @($p.Tweaks.PSObject.Properties).Count | Should Be $script:AllTweakDefs.Count
+    }
+
+    It "a window result becomes the Show-Nano11GUI result hashtable" {
+        $json = '{"Success":true,"SourceDrive":"Z:\\nothing\\here","WorkDir":"","UserName":" Tester ","ComputerName":"","Index":"3","InjectDrivers":"",' +
+            '"PresetKey":"balanced","BasePresetKey":"balanced","DryRun":true,"UseVHDX":false,"ExportESDMode":false,"SplitWIMMode":true,' +
+            '"Components":{"RemoveDefender":true},"TweakSettings":{"DisableUAC":true,"DisableVBS":false},' +
+            '"AdvancedDebloatStandard":["Remove help files [10-20MB]"],"AdvancedDebloatExperimental":[],"PhysicalDebloatConsent":true}'
+        $r = ConvertFrom-Nano11WinUiResult -Result ($json | ConvertFrom-Json)
+        $r.Success | Should Be $true
+        $r.SourceDrive | Should Be 'Z:'
+        $r.WorkDir | Should Be (Get-Nano11GuiDefaultWorkDir)
+        $r.UserName | Should Be 'Tester'
+        $r.ComputerName | Should Be '*'
+        $r.Index | Should Be '3'
+        $r.PresetKey | Should Be 'balanced'
+        $r.DryRun | Should Be $true
+        $r.SplitWIMMode | Should Be $true
+        $r.RemoveDefender | Should Be $true
+        $r.TweakSettings['DisableUAC'] | Should Be $true
+        $r.TweakSettings['DisableVBS'] | Should Be $false
+        @($r.AdvancedDebloatStandard) -join ',' | Should Be 'Remove help files [10-20MB]'
+        @($r.AdvancedDebloatExperimental).Count | Should Be 0
+        $r.PhysicalDebloatConsent | Should Be $true
+        (ConvertFrom-Nano11WinUiResult -Result ('{"Success":false}' | ConvertFrom-Json)).Success | Should Be $false
+    }
+
+    It "requests: JSON configs reach the build functions as hashtables, unknown requests throw" {
+        $cfg = ConvertTo-Nano11Hashtable ('{"RemoveDefender":true,"TweakSettings":{"DisableUAC":true},"AdvancedDebloatStandard":["a","b"]}' | ConvertFrom-Json)
+        ($cfg -is [hashtable]) | Should Be $true
+        ($cfg.TweakSettings -is [hashtable]) | Should Be $true
+        @($cfg.AdvancedDebloatStandard).Count | Should Be 2
+        (Invoke-Nano11WinUiRequest -Op 'sources' -Arguments $null).Contains('Data') | Should Be $true
+        { Invoke-Nano11WinUiRequest -Op 'no-such-request' -Arguments $null } | Should Throw
+    }
+
+    It "the builder prefers the WinUI 3 window, keeps -ClassicGui and falls back to WinForms" {
+        $builder = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'nano11builder.ps1'))
+        $builder | Should Match '\[switch\]\$ClassicGui'
+        $builder | Should Match 'Find-Nano11WinUiExe'
+        $builder | Should Match 'Show-Nano11WinUiGUI'
+        $builder | Should Match 'falling back to the classic window'
     }
 }

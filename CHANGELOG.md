@@ -11,6 +11,15 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
 `docs/dev/SESSION_BRIEFS.md`.
 
 ### Added
+- WinUI 3 settings window (`gui/winui`, C# / Windows App SDK 2.5, unpackaged and
+  self-contained): navigation pane with the same nine pages, settings cards, Mica, system
+  light/dark theme, English / Japanese from the same `config/ui-strings` tables.
+  `nano11builder.ps1 -GUI` uses it when `gui/winui/bin/Nano11Gui.exe` is built
+  (`gui/winui/build.ps1`, run automatically by `nano11-GUI.bat` when `dotnet` is present)
+  and falls back to the WinForms window otherwise or with the new `-ClassicGui` switch.
+  `gui/Nano11WinUiHost.ps1` serves the window's requests (sources, dependency check, Preset
+  Diff, recovery readiness, migration engine, language) inside the builder process, one JSON
+  message per line over stdin/stdout. The window asks for the physical debloat consent itself.
 - `config/tweaks.psd1`: single source of truth for every tweak and component setting
   (key, GUI tab, default, description, legacy aliases, CLI switch, backing variable).
   `AllTweakDefs`, the GUI "Services & Apps" tab, profile apply/export and the plain CLI

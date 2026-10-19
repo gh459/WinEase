@@ -31,6 +31,8 @@ param(
     # Display language of the GUI windows (display only; default: the saved choice, else the OS language)
     [ValidateSet("en", "ja")]
     [string]$UiLanguage,
+    # Use the classic WinForms window even when the WinUI 3 window (gui\winui) is built
+    [switch]$ClassicGui,
     [alias("Preset")]
     [string]$Profile,
     [alias("ExportConfig")]
@@ -1436,8 +1438,21 @@ function Invoke-Nano11GuiSession {
     }
     $guiLanguageArgs = @{}
     if ($UiLanguage) { $guiLanguageArgs["UiLanguage"] = $UiLanguage }
-    $guiResult = Show-Nano11GUI -InitialSettings $initialSettings @guiLanguageArgs
+    # WinUI 3 window when gui\winui is built (and -ClassicGui is not set), else the WinForms window
+    $guiResult = $null
+    $winUiExe = if ($ClassicGui) { $null } else { Find-Nano11WinUiExe }
+    if ($winUiExe) {
+        try {
+            $guiResult = Show-Nano11WinUiGUI -InitialSettings $initialSettings -ExePath $winUiExe @guiLanguageArgs
+        } catch {
+            Write-Warning "WinUI 3 window failed ($($_.Exception.Message)); falling back to the classic window."
+            $winUiExe = $null
+        }
+    }
+    if (-not $winUiExe) { $guiResult = Show-Nano11GUI -InitialSettings $initialSettings @guiLanguageArgs }
     if (-not ($guiResult -and $guiResult.Success)) { return $false }
+    # The WinUI 3 window asks for the physical debloat consent itself
+    if ($guiResult.PhysicalDebloatConsent) { $script:allowPhysicalDebloat = $true }
 
     if ($guiResult.BasePresetKey) {
         Apply-ProfileSettings -ProfileName $guiResult.BasePresetKey | Out-Null
