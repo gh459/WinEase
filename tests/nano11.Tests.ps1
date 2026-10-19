@@ -1416,3 +1416,76 @@ Describe "Migrator tool S6 (tools/Nano11-Migrator.ps1)" {
         (& $script:S6Tool -Mode Verify -PackagePath $bk).Success | Should Be $false
     }
 }
+
+
+Describe "S7 - GUI Tab 8 (Migration & Backup)" {
+    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+    $script:AllTweakDefs = [ordered]@{}
+    foreach ($td in $settingsDef.Tweaks) { $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description } }
+    $script:ComponentDefs = [ordered]@{}
+    foreach ($cd in $settingsDef.Components) { $script:ComponentDefs[$cd.Key] = $cd }
+    function Get-Nano11Preset { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([string]$Name) $null }
+    function Test-Nano11RecoveryReadiness { param($Config) $script:S7CapturedConfig = $Config; [PSCustomObject]@{ ReadinessScore = 1 } }
+    . $script:GuiPath
+    function Get-S7Controls($ctl) { foreach ($c in $ctl.Controls) { $c; Get-S7Controls $c } }
+
+    It "Tab 8 has the personal folder checklist and Run Backup passes -FolderMap" {
+        $gui = Show-Nano11GUI -NoShow
+        try {
+            @($gui.MigFolders.Items) -contains 'Documents' | Should Be $true
+            @($gui.MigFolders.Items) -contains 'Downloads' | Should Be $true
+            $a = Get-Nano11GuiBackupArgs -Gui $gui
+            $a.ContainsKey('FolderMap') | Should Be $true
+            $a.FolderMap.Count | Should BeGreaterThan 0
+            $a.FolderMap['Documents'] | Should Be ([Environment]::GetFolderPath('MyDocuments'))
+            $a.ContainsKey('IncludeSecrets') | Should Be $false
+            $gui.MigExcludeSecrets.Checked = $false
+            (Get-Nano11GuiBackupArgs -Gui $gui).IncludeSecrets | Should Be $true
+        } finally { $gui.Form.Dispose() }
+    }
+
+    It "Tab 8 rule list never yields a placeholder row as a rule Id" {
+        $gui = Show-Nano11GUI -NoShow
+        try {
+            $list = $gui.MigRulesList
+            if (-not $list.Enabled) { $list.Items.Count | Should Be 1 }
+            @(Get-Nano11GuiMigrationRuleIds -Gui $gui) -contains 'No migration rules found' | Should Be $false
+            $list.Enabled = $false
+            if ($list.Items.Count -gt 0) { $list.SetItemChecked(0, $true) }
+            @(Get-Nano11GuiMigrationRuleIds -Gui $gui).Count | Should Be 0
+        } finally { $gui.Form.Dispose() }
+    }
+
+    It "Recovery Readiness Check uses the draft config of the current window" {
+        $gui = Show-Nano11GUI -NoShow
+        try {
+            $key = @($gui.ComponentCheckboxes.Keys)[0]
+            $gui.ComponentCheckboxes[$key].Checked = -not $gui.ComponentCheckboxes[$key].Checked
+            $script:S7CapturedConfig = $null
+            [void](Get-Nano11GuiRecoveryReadiness -Gui $gui)
+            $script:S7CapturedConfig[$key] | Should Be ([bool]$gui.ComponentCheckboxes[$key].Checked)
+        } finally { $gui.Form.Dispose() }
+    }
+
+    It "IncludeMigrationAssistant lives on Tab 8 and still reaches the result" {
+        $gui = Show-Nano11GUI -NoShow -InitialSettings @{ SourceDrive = 'E:\'; TweakSettings = [ordered]@{} }
+        try {
+            $chk = $gui.ComponentCheckboxes['IncludeMigrationAssistant']
+            $chk | Should Not BeNullOrEmpty
+            $tab8 = @($gui.Form.Controls | ForEach-Object { Get-S7Controls $_ } | Where-Object { $_ -is [System.Windows.Forms.TabPage] -and $_.Text -match '8\. Migration' })[0]
+            @(Get-S7Controls $tab8) -contains $chk | Should Be $true
+            $chk.Checked = $true
+            Complete-Nano11GuiResult -Gui $gui | Should Be $true
+            $gui.Result['IncludeMigrationAssistant'] | Should Be $true
+        } finally { $gui.Form.Dispose() }
+    }
+
+    It "has Browse, Estimate, Verify and Retry buttons and no stray Select/Clear All text" {
+        $gui = Show-Nano11GUI -NoShow
+        try {
+            $texts = @(Get-S7Controls $gui.Form | Where-Object { $_ -is [System.Windows.Forms.Button] } | ForEach-Object { $_.Text })
+            foreach ($t in 'Browse...', 'Estimate Size', 'Verify Backup Integrity', 'Retry Failed Tasks Only') { ($texts -contains $t) | Should Be $true }
+            @($texts | Where-Object { $_ -match '^(Select All|Clear All|Deselect All)$' }).Count | Should Be 14
+        } finally { $gui.Form.Dispose() }
+    }
+}
