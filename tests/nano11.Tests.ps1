@@ -1115,3 +1115,49 @@ Describe "PC Migration & Backup Engine (lib/Nano11Migration.ps1)" {
         Test-Nano11SecretPath -FilePath 'normal.txt' -SecretPatterns $patterns | Should Be $false
     }
 }
+
+Describe "S1 - user extensions survive -PresetsOnly re-import" {
+    It "keeps UserTweakDefs and UserCustomScripts after a -PresetsOnly call" {
+        . (Join-Path $script:RepoRoot 'lib\Nano11Extensions.ps1')
+        $dir = Join-Path $env:TEMP ("s1ext_" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        $cfg = Join-Path $dir 'user-tweaks.psd1'
+        $lines = @(
+            '@{',
+            '    UserTweaks = @(',
+            '        @{ Key = ''S1TestSwitch''; Category = ''Test''; Description = ''S1 test''; Default = $false }',
+            '    )',
+            '    UserPresets = @{',
+            '        S1Preset = @{ S1TestSwitch = $true }',
+            '    }',
+            '    CustomScripts = @(',
+            '        @{ Id = ''S1Script''; Stage = ''PreBuild''; Path = ''x.ps1'' }',
+            '    )',
+            '}'
+        )
+        Set-Content -LiteralPath $cfg -Value $lines -Encoding UTF8
+        $script:AllTweakDefs = [ordered]@{}
+        $script:BuiltInPresets = [ordered]@{}
+        $r1 = Import-Nano11UserExtensions -ConfigPath $cfg
+        $r1.UserTweakCount | Should Be 1
+        $r1.CustomScriptCount | Should Be 1
+        $r2 = Import-Nano11UserExtensions -ConfigPath $cfg -PresetsOnly
+        @($script:UserTweakDefs.Keys).Count | Should Be 1
+        @($script:UserCustomScripts).Count | Should Be 1
+        $r2.UserTweakCount | Should Be 1
+        $r2.CustomScriptCount | Should Be 1
+        $script:BuiltInPresets.Contains('S1Preset') | Should Be $true
+        Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    It "dot-sources Nano11Extensions.ps1 and Nano11Migration.ps1 once each in the builder" {
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$null, [ref]$null)
+        $cmds = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.InvocationOperator -eq 'Dot' }, $true)
+        $text = @($cmds | ForEach-Object { $_.Extent.Text })
+        foreach ($name in 'Nano11Extensions.ps1', 'Nano11Migration.ps1') {
+            $assigns = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Right.Extent.Text -like "*$name*" }, $true))
+            $assigns.Count | Should Be 1
+            $var = $assigns[0].Left.VariablePath.UserPath
+            @($text | Where-Object { $_ -eq ". `$$var" }).Count | Should Be 1
+        }
+    }
+}
