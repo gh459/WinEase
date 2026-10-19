@@ -586,6 +586,143 @@ function Get-Nano11GuiDraftConfig {
     return $cfg
 }
 
+# --- Tab 8 (Migration & Backup) helpers ---------------------------------------------------------
+
+# Backup destination typed in Tab 8 (a default outside the personal folders when empty)
+function Get-Nano11GuiMigrationRoot {
+    param([hashtable]$Gui)
+    $root = ''
+    if ($Gui.MigRoot) { $root = $Gui.MigRoot.Text.Trim() }
+    if (-not $root) { $root = Join-Path $env:USERPROFILE 'nano11_migration_backup' }
+    return $root
+}
+
+# Checked personal folders -> @{ Category = real path } (only folders that exist)
+function Get-Nano11GuiMigrationFolderMap {
+    param([hashtable]$Gui)
+    $map = @{}
+    if (-not $Gui.MigFolders) { return $map }
+    foreach ($name in $Gui.MigFolders.CheckedItems) {
+        $path = switch ("$name") {
+            'Documents' { [Environment]::GetFolderPath('MyDocuments') }
+            'Desktop'   { [Environment]::GetFolderPath('Desktop') }
+            'Pictures'  { [Environment]::GetFolderPath('MyPictures') }
+            'Videos'    { [Environment]::GetFolderPath('MyVideos') }
+            'Downloads' { Join-Path $env:USERPROFILE 'Downloads' }
+            default     { '' }
+        }
+        if ($path -and (Test-Path -LiteralPath $path)) { $map["$name"] = $path }
+    }
+    return $map
+}
+
+# Ids of the checked migration rules. The list holds display rows only; the Ids live in its Tag.
+function Get-Nano11GuiMigrationRuleIds {
+    param([hashtable]$Gui)
+    $ids = @()
+    $list = $Gui.MigRulesList
+    if (-not $list -or -not $list.Enabled) { return $ids }
+    $known = @($list.Tag)
+    foreach ($i in $list.CheckedIndices) {
+        if ($i -lt $known.Count -and $known[$i]) { $ids += [string]$known[$i] }
+    }
+    return $ids
+}
+
+# Parameters for Start-Nano11MigrationBackup built from the current Tab 8 state
+function Get-Nano11GuiBackupArgs {
+    param([hashtable]$Gui)
+    $a = @{
+        BackupRoot = (Get-Nano11GuiMigrationRoot -Gui $Gui)
+        RuleIds    = @(Get-Nano11GuiMigrationRuleIds -Gui $Gui)
+        FolderMap  = (Get-Nano11GuiMigrationFolderMap -Gui $Gui)
+    }
+    if ($Gui.MigExcludeSecrets -and -not $Gui.MigExcludeSecrets.Checked) { $a['IncludeSecrets'] = $true }
+    return $a
+}
+
+function Get-Nano11GuiConflictPolicy {
+    param([hashtable]$Gui)
+    if ($Gui.MigConflict -and $Gui.MigConflict.SelectedItem) { return [string]$Gui.MigConflict.SelectedItem }
+    return 'BackupExisting'
+}
+
+# Readiness check against the settings currently shown in the window (not the start-up settings)
+function Get-Nano11GuiRecoveryReadiness {
+    param([hashtable]$Gui)
+    $draft = Get-Nano11GuiDraftConfig -Gui $Gui
+    return Test-Nano11RecoveryReadiness -Config $draft
+}
+
+# Runs lib\Nano11Migration.ps1 code in a background job while the window keeps repainting.
+# -Script is the text of a script block that takes one parameter (the hashtable in -Arguments).
+# Errors written to the job's error stream are returned even when the job itself completed.
+function Invoke-Nano11GuiMigrationJob {
+    param([string]$RepoRoot, [string]$Script, [hashtable]$Arguments = @{})
+    $job = Start-Job -ScriptBlock {
+        param($repoRoot, $inner, $jobArgs)
+        Set-Location -LiteralPath $repoRoot
+        . (Join-Path $repoRoot 'lib\Nano11Migration.ps1')
+        & ([scriptblock]::Create($inner)) $jobArgs
+    } -ArgumentList $RepoRoot, $Script, $Arguments
+    while ($job.State -eq 'Running') {
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 100
+    }
+    $result = $null
+    $jobError = $null
+    $errors = @()
+    if ($job.State -eq 'Failed') {
+        $jobError = $job.ChildJobs[0].JobStateInfo.Reason.Message
+    } else {
+        foreach ($e in $job.ChildJobs[0].Error) { $errors += "$e" }
+        $result = Receive-Job -Job $job -ErrorAction SilentlyContinue
+        if ($result -is [array]) { $result = $result[-1] }
+    }
+    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+    return [PSCustomObject]@{ Result = $result; Error = $jobError; Errors = $errors }
+}
+
+# Job outcome -> message box (errors from the error stream are appended to a successful message)
+function Show-Nano11GuiJobOutcome {
+    param($Outcome, [string]$Title, [string]$SuccessMessage)
+    $icon = [System.Windows.Forms.MessageBoxIcon]::Information
+    if ($Outcome.Error) {
+        $msg = "Error: $($Outcome.Error)"
+        $icon = [System.Windows.Forms.MessageBoxIcon]::Error
+    } else {
+        $msg = $SuccessMessage
+        if (@($Outcome.Errors).Count -gt 0) {
+            $msg += "`n`nErrors reported:`n" + (@($Outcome.Errors) -join "`n")
+            $icon = [System.Windows.Forms.MessageBoxIcon]::Warning
+        }
+    }
+    [void][System.Windows.Forms.MessageBox]::Show($msg, $Title, [System.Windows.Forms.MessageBoxButtons]::OK, $icon)
+}
+
+# Checks every file recorded in migration-manifest.json: present and (when recorded) matching SHA-256
+function Test-Nano11GuiBackupIntegrity {
+    param([hashtable]$a)
+    $root = $a.BackupRoot
+    $manifestPath = Join-Path -Path $root -ChildPath 'migration-manifest.json'
+    if (-not (Test-Path -LiteralPath $manifestPath)) { throw "No migration-manifest.json in $root" }
+    $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $checked = 0
+    $problems = @()
+    foreach ($e in @($m.Entries)) {
+        $src = Join-Path -Path $root -ChildPath $e.RelativePath
+        if ($e.Category) { $src = Join-Path -Path (Join-Path -Path $root -ChildPath $e.Category) -ChildPath $e.RelativePath }
+        if (-not (Test-Path -LiteralPath $src)) { $alt = Join-Path -Path $root -ChildPath $e.RelativePath; if (Test-Path -LiteralPath $alt) { $src = $alt } }
+        $checked++
+        if (-not (Test-Path -LiteralPath $src)) { $problems += "Missing: $($e.RelativePath)"; continue }
+        if ($e.Sha256) {
+            $h = (Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash
+            if ($h -ne $e.Sha256) { $problems += "Hash mismatch: $($e.RelativePath)" }
+        }
+    }
+    return [PSCustomObject]@{ Checked = $checked; Problems = $problems }
+}
+
 function Complete-Nano11GuiResult {
     param([hashtable]$Gui)
     $srcText = $Gui.Source.Text.Trim()
@@ -915,7 +1052,7 @@ function Show-Nano11GUI {
     $page = New-Nano11ToggleTab -Text " 6. Services & Apps " -TabControl $tabControl
 
     # Components with a Gui entry in config\tweaks.psd1, in their Gui.Order
-    $svcDefs = @($script:ComponentDefs.Values | Where-Object { $_.Gui } | Sort-Object { [int]$_.Gui.Order } | ForEach-Object {
+    $svcDefs = @($script:ComponentDefs.Values | Where-Object { $_.Gui -and $_.Gui.Tab -ne 'Migration' } | Sort-Object { [int]$_.Gui.Order } | ForEach-Object {
         @{ Key = $_.Key; Text = $_.Gui.Text; Desc = $_.Gui.Description; Def = [bool]$_.Gui.Default }
     })
     $svcCheckboxes = [System.Collections.Generic.List[System.Windows.Forms.CheckBox]]::new()
@@ -1033,41 +1170,79 @@ function Show-Nano11GUI {
     $tabMigration = New-Nano11TabPage -Text " 8. Migration & Backup " -TabControl $tabControl
     $flowMig = New-Nano11FlowPanel -Parent $tabMigration
 
-    # Top: Backup Root path
-    $grpTop = New-Nano11GroupBox -Text " Backup Settings " -Width 840 -Height 70 -Parent $flowMig
-    [void](New-Nano11Label -Text "Backup Root:" -X 15 -Y 22 -Width 90 -Height 20 -Parent $grpTop)
-    $txtMigRoot = New-Nano11TextBox -X 110 -Y 20 -Width 420 -Height 24 -Text (Join-Path $env:USERPROFILE "Documents\nano11_migration_backup") -Parent $grpTop
-    $gui.MigRoot = $txtMigRoot
-    $lblMigStatus = New-Nano11Label -Text "Select migration rules on the left, then click Backup or Restore." -X 540 -Y 22 -Width 290 -Height 20 -Parent $grpTop
-    $gui.MigStatus = $lblMigStatus
+    # Top card: Post-Install Migration Assistant (a component switch from config\tweaks.psd1, Gui.Tab = 'Migration')
+    $grpAssist = New-Nano11GroupBox -Text " Post-Install Migration Assistant " -Width 840 -Height 60 -Parent $flowMig
+    $asDef = $script:ComponentDefs['IncludeMigrationAssistant']
+    if ($asDef -and $asDef.Gui) {
+        $asInit = [bool]$asDef.Gui.Default
+        if ($InitialSettings.ContainsKey('IncludeMigrationAssistant')) { $asInit = [bool]$InitialSettings['IncludeMigrationAssistant'] }
+        $chkAssist = New-Nano11ToggleCheckBox -Parent $grpAssist -Key 'IncludeMigrationAssistant' -Text "IncludeMigrationAssistant - $($asDef.Gui.Text)" -ToolTip $toolTip -ToolTipText $asDef.Gui.Description -Checked $asInit
+        $chkAssist.Location = New-Object System.Drawing.Point(15, 24)
+        $chkAssist.Size = New-Object System.Drawing.Size(800, 28)
+        $gui.ComponentCheckboxes['IncludeMigrationAssistant'] = $chkAssist
+    }
 
-    # Left: Migration rules list
-    $grpRules = New-Nano11GroupBox -Text " Migration Rules " -Width 410 -Height 300 -Parent $flowMig
-    $clbMig = New-Object System.Windows.Forms.CheckedListBox
-    $clbMig.Location = New-Object System.Drawing.Point(10, 20)
-    $clbMig.Size = New-Object System.Drawing.Size(390, 270)
-    $clbMig.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
-    $clbMig.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
-    $clbMig.CheckOnClick = $true
-    $migRules = @()
+    # Backup settings: destination, credential handling, conflict policy
+    $grpTop = New-Nano11GroupBox -Text " Backup Settings " -Width 840 -Height 110 -Parent $flowMig
+    [void](New-Nano11Label -Text "Backup Root:" -X 15 -Y 22 -Width 90 -Height 20 -Parent $grpTop)
+    $txtMigRoot = New-Nano11TextBox -X 110 -Y 20 -Width 420 -Height 24 -Text (Join-Path $env:USERPROFILE "nano11_migration_backup") -Parent $grpTop
+    $gui.MigRoot = $txtMigRoot
+    [void](New-Nano11Button -Text "Browse..." -X 540 -Y 19 -Width 90 -Height 26 -Parent $grpTop -OnClick {
+        $g = $this.FindForm().Tag
+        $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+        try {
+            $dlg.Description = "Select the migration backup destination"
+            if ($g.MigRoot.Text -and (Test-Path -LiteralPath $g.MigRoot.Text)) { $dlg.SelectedPath = $g.MigRoot.Text }
+            if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $g.MigRoot.Text = $dlg.SelectedPath }
+        } finally { $dlg.Dispose() }
+    })
+    $lblMigStatus = New-Nano11Label -Text "Select folders and rules, then click Backup or Restore." -X 640 -Y 22 -Width 190 -Height 40 -Parent $grpTop
+    $gui.MigStatus = $lblMigStatus
+    $gui.MigExcludeSecrets = New-Nano11CheckBox -Text "Exclude credentials/tokens (Recommended)" -X 15 -Y 52 -Width 320 -Height 24 -Checked $true -Parent $grpTop
+    [void](New-Nano11Label -Text "If a file already exists on restore:" -X 15 -Y 80 -Width 220 -Height 20 -Parent $grpTop)
+    $cmbConflict = New-Object System.Windows.Forms.ComboBox
+    $cmbConflict.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $cmbConflict.Location = New-Object System.Drawing.Point(240, 78)
+    $cmbConflict.Size = New-Object System.Drawing.Size(200, 24)
+    [void]$cmbConflict.Items.AddRange(@('BackupExisting', 'Skip', 'OverwriteIfNewer', 'Overwrite'))
+    $cmbConflict.SelectedIndex = 0
+    $grpTop.Controls.Add($cmbConflict)
+    $gui.MigConflict = $cmbConflict
+
+    # Left: personal data folders + migration rules
+    $grpRules = New-Nano11GroupBox -Text " Personal Folders & Migration Rules " -Width 410 -Height 420 -Parent $flowMig
+    $folderNames = @('Documents', 'Desktop', 'Pictures', 'Videos', 'Downloads')
+    $gui.MigFolders = New-Nano11CheckedList -Items $folderNames -Selected @('Documents', 'Desktop', 'Pictures') -X 10 -Y 20 -Width 390 -Height 100 -Parent $grpRules
+    [void](New-Nano11Label -Text "Migration rules (games / app settings):" -X 10 -Y 126 -Width 390 -Height 18 -Parent $grpRules)
+    $clbMig = New-Nano11CheckedList -Items @() -X 10 -Y 146 -Width 390 -Height 264 -Parent $grpRules
+    $migRuleRows = @()
+    $migRuleIds = @()
     try {
         $migRulesData = Get-Nano11MigrationRules
-        foreach ($r in ($migRulesData.GameRules + $migRulesData.AppConfigRules)) {
-            $migRules += "$($r.Id) - $($r.Name)"
+        foreach ($r in (@($migRulesData.GameRules) + @($migRulesData.AppConfigRules))) {
+            if (-not $r -or -not $r.Id) { continue }
+            $migRuleRows += "$($r.Id) - $($r.Name)"
+            $migRuleIds += [string]$r.Id
         }
     } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-    if ($migRules.Count -eq 0) { $migRules = @("No migration rules found") }
-    foreach ($item in $migRules) { [void]$clbMig.Items.Add($item) }
-    $grpRules.Controls.Add($clbMig)
+    if ($migRuleRows.Count -eq 0) {
+        # Placeholder row only: the list is disabled so it can never be checked or passed as a rule Id
+        [void]$clbMig.Items.Add("No migration rules found")
+        $clbMig.Enabled = $false
+    } else {
+        foreach ($row in $migRuleRows) { [void]$clbMig.Items.Add($row) }
+    }
+    $clbMig.Tag = $migRuleIds
     $gui.MigRulesList = $clbMig
 
     # Right: Action buttons
-    $grpActions = New-Nano11GroupBox -Text " Actions " -Width 410 -Height 300 -Parent $flowMig
-    $btnY = 25
-    $btnStep = 40
+    $grpActions = New-Nano11GroupBox -Text " Actions " -Width 410 -Height 420 -Parent $flowMig
+    $btnY = 22
+    $btnStep = 38
     [void](New-Nano11Button -Text "Recovery Readiness Check" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
+        $g = $this.FindForm().Tag
         try {
-            $rr = Test-Nano11RecoveryReadiness -Config $InitialSettings
+            $rr = Get-Nano11GuiRecoveryReadiness -Gui $g
             $msg = "Readiness Score: $($rr.ReadinessScore)`nSecondary Drives: $($rr.SecondaryDrives -join ', ')`nSystem Restore: $($rr.SystemRestoreEnabled)`nWinRE on target: $($rr.WinReEnabledOnTarget)`n`n$($rr.Recommendations -join "`n")"
             [void][System.Windows.Forms.MessageBox]::Show($msg, "Recovery Readiness", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
         } catch {
@@ -1077,28 +1252,36 @@ function Show-Nano11GUI {
     $btnY += $btnStep
     [void](New-Nano11Button -Text "Export App Inventory" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
         $btn = $this
-        $btn.Enabled = $false
-        $frm = $btn.FindForm()
-        $frm.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-        [System.Windows.Forms.Application]::DoEvents()
+        $f = $btn.FindForm()
+        $dlg = New-Object System.Windows.Forms.SaveFileDialog
         try {
-            $outPath = Join-Path $env:USERPROFILE "Documents\apps-inventory.json"
-            Export-Nano11AppInventory -OutputPath $outPath
-            [void][System.Windows.Forms.MessageBox]::Show("App inventory exported to:`n$outPath", "Export Apps", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
-        } catch {
-            [void][System.Windows.Forms.MessageBox]::Show("Error: $($_.Exception.Message)", "Export Apps", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+            $dlg.Title = "Export App Inventory"
+            $dlg.Filter = "JSON (*.json)|*.json|All files (*.*)|*.*"
+            $dlg.FileName = "apps-inventory.json"
+            $dlg.InitialDirectory = [Environment]::GetFolderPath('MyDocuments')
+            if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+            $outPath = $dlg.FileName
+        } finally { $dlg.Dispose() }
+        $btn.Enabled = $false
+        $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        try {
+            $o = Invoke-Nano11GuiMigrationJob -RepoRoot $script:Nano11GuiRepoRoot -Script 'param($a) Export-Nano11AppInventory -OutputPath $a.OutputPath' -Arguments @{ OutputPath = $outPath }
+            Show-Nano11GuiJobOutcome -Outcome $o -Title "Export Apps" -SuccessMessage "App inventory exported to:`n$outPath"
         } finally {
             $btn.Enabled = $true
-            $frm.Cursor = [System.Windows.Forms.Cursors]::Default
+            $f.Cursor = [System.Windows.Forms.Cursors]::Default
         }
     })
     $btnY += $btnStep
     [void](New-Nano11Button -Text "Open Migration Wizard" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
+        $g = $this.FindForm().Tag
         $repoRoot = $script:Nano11GuiRepoRoot
         $migratorPath = Join-Path $repoRoot "tools\Nano11-Migrator.ps1"
         if (Test-Path -LiteralPath $migratorPath) {
             try {
-                Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$migratorPath`" -GUI" -WindowStyle Normal
+                $root = Get-Nano11GuiMigrationRoot -Gui $g
+                # -BackupRoot exists in every Nano11-Migrator.ps1 version (it is a -PackagePath alias after S6)
+                Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$migratorPath`" -GUI -BackupRoot `"$root`"" -WindowStyle Normal
             } catch {
                 [void][System.Windows.Forms.MessageBox]::Show("Error: $($_.Exception.Message)", "Migration Wizard", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
             }
@@ -1117,89 +1300,88 @@ function Show-Nano11GUI {
         }
     })
     $btnY += $btnStep
-    [void](New-Nano11Button -Text "Run Backup" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
+    [void](New-Nano11Button -Text "Estimate Size" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
         $btn = $this
-        $btn.Enabled = $false
         $f = $btn.FindForm()
-        $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-        [System.Windows.Forms.Application]::DoEvents()
         $g = $f.Tag
-        $root = $g.MigRoot.Text.Trim()
-        if (-not $root) { $root = Join-Path $env:USERPROFILE "Documents\nano11_migration_backup" }
-        $selectedRules = @()
-        foreach ($item in $g.MigRulesList.CheckedItems) {
-            $selectedRules += ($item -split ' - ')[0].Trim()
+        $btn.Enabled = $false
+        $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        try {
+            $map = Get-Nano11GuiMigrationFolderMap -Gui $g
+            $ea = @{ UserFolderPaths = @($map.Values); SelectedRuleIds = @(Get-Nano11GuiMigrationRuleIds -Gui $g); DestinationPath = (Get-Nano11GuiMigrationRoot -Gui $g) }
+            $o = Invoke-Nano11GuiMigrationJob -RepoRoot $script:Nano11GuiRepoRoot -Arguments $ea -Script 'param($a) Get-Nano11MigrationSizeEstimate -UserFolderPaths $a.UserFolderPaths -SelectedRuleIds $a.SelectedRuleIds -DestinationPath $a.DestinationPath'
+            $est = $o.Result
+            $msg = if ($est) { "Files: $($est.TotalFiles)`nSize: $($est.TotalMB) MB`nFree on $($est.DestinationDrive): $($est.DestinationFreeMB) MB`nEnough space: $($est.HasEnoughSpace)" } else { "No estimate returned." }
+            Show-Nano11GuiJobOutcome -Outcome $o -Title "Estimate Size" -SuccessMessage $msg
+        } finally {
+            $btn.Enabled = $true
+            $f.Cursor = [System.Windows.Forms.Cursors]::Default
         }
-        $repoRoot = $script:Nano11GuiRepoRoot
-        # Run backup on a background job to keep the UI responsive
-        $job = Start-Job -ScriptBlock {
-            param($repoRoot, $root, $selectedRules)
-            Set-Location $repoRoot
-            . (Join-Path $repoRoot 'lib\Nano11Migration.ps1')
-            Start-Nano11MigrationBackup -BackupRoot $root -RuleIds $selectedRules
-        } -ArgumentList $repoRoot, $root, $selectedRules
-        while ($job.State -eq 'Running') {
-            [System.Windows.Forms.Application]::DoEvents()
-            Start-Sleep -Milliseconds 100
-        }
-        $result = $null
-        $jobError = $null
-        if ($job.State -eq 'Failed') {
-            $jobError = ($job.ChildJobs[0].JobStateInfo.Reason.Message)
-        } else {
-            $result = Receive-Job -Job $job
-        }
-        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
-        if ($jobError) {
-            [void][System.Windows.Forms.MessageBox]::Show("Error: $jobError", "Backup", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-        } elseif ($result) {
-            $msg = "Backup completed.`nManifest: $($result.BackupRoot)\migration-manifest.json"
-            [void][System.Windows.Forms.MessageBox]::Show($msg, "Backup", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
-            if ($g.MigStatus) { $g.MigStatus.Text = "Backup completed." }
-        }
-        $btn.Enabled = $true
-        $f.Cursor = [System.Windows.Forms.Cursors]::Default
     })
     $btnY += $btnStep
-    [void](New-Nano11Button -Text "Run Restore" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
+    [void](New-Nano11Button -Text "Run Backup" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
         $btn = $this
-        $btn.Enabled = $false
         $f = $btn.FindForm()
+        $g = $f.Tag
+        $btn.Enabled = $false
         $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
         [System.Windows.Forms.Application]::DoEvents()
-        $g = $f.Tag
-        $root = $g.MigRoot.Text.Trim()
-        if (-not $root) { $root = Join-Path $env:USERPROFILE "Documents\nano11_migration_backup" }
-        $repoRoot = $script:Nano11GuiRepoRoot
-        # Run restore on a background job to keep the UI responsive
-        $job = Start-Job -ScriptBlock {
-            param($repoRoot, $root)
-            Set-Location $repoRoot
-            . (Join-Path $repoRoot 'lib\Nano11Migration.ps1')
-            Start-Nano11MigrationRestore -BackupRoot $root -ConflictPolicy BackupExisting
-        } -ArgumentList $repoRoot, $root
-        while ($job.State -eq 'Running') {
-            [System.Windows.Forms.Application]::DoEvents()
-            Start-Sleep -Milliseconds 100
+        try {
+            $backupArgs = Get-Nano11GuiBackupArgs -Gui $g
+            $o = Invoke-Nano11GuiMigrationJob -RepoRoot $script:Nano11GuiRepoRoot -Arguments $backupArgs -Script 'param($a) Start-Nano11MigrationBackup @a'
+            Show-Nano11GuiJobOutcome -Outcome $o -Title "Backup" -SuccessMessage "Backup completed.`nManifest: $($backupArgs.BackupRoot)\migration-manifest.json"
+            if ($g.MigStatus -and -not $o.Error) { $g.MigStatus.Text = "Backup completed." }
+        } finally {
+            $btn.Enabled = $true
+            $f.Cursor = [System.Windows.Forms.Cursors]::Default
         }
-        $result = $null
-        $jobError = $null
-        if ($job.State -eq 'Failed') {
-            $jobError = ($job.ChildJobs[0].JobStateInfo.Reason.Message)
-        } else {
-            $result = Receive-Job -Job $job
-        }
-        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
-        if ($jobError) {
-            [void][System.Windows.Forms.MessageBox]::Show("Error: $jobError", "Restore", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-        } elseif ($result) {
-            $msg = "Restore completed.`n" + ($result.Results | ForEach-Object { "$($_.TaskId): $($_.Status)" } | Out-String)
-            [void][System.Windows.Forms.MessageBox]::Show($msg, "Restore", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
-            if ($g.MigStatus) { $g.MigStatus.Text = "Restore completed." }
-        }
-        $btn.Enabled = $true
-        $f.Cursor = [System.Windows.Forms.Cursors]::Default
     })
+    $btnY += $btnStep
+    [void](New-Nano11Button -Text "Verify Backup Integrity" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
+        $btn = $this
+        $f = $btn.FindForm()
+        $g = $f.Tag
+        $btn.Enabled = $false
+        $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        try {
+            $script = (Get-Command Test-Nano11GuiBackupIntegrity).ScriptBlock.ToString()
+            $o = Invoke-Nano11GuiMigrationJob -RepoRoot $script:Nano11GuiRepoRoot -Arguments @{ BackupRoot = (Get-Nano11GuiMigrationRoot -Gui $g) } -Script $script
+            $vr = $o.Result
+            if ($vr -and @($vr.Problems).Count -gt 0) {
+                $o.Errors = @($o.Errors) + @($vr.Problems)
+                $msg = "Checked $($vr.Checked) file(s): $(@($vr.Problems).Count) problem(s)."
+            } elseif ($vr) { $msg = "Checked $($vr.Checked) file(s): all present and matching." } else { $msg = "No result." }
+            Show-Nano11GuiJobOutcome -Outcome $o -Title "Verify Backup" -SuccessMessage $msg
+        } finally {
+            $btn.Enabled = $true
+            $f.Cursor = [System.Windows.Forms.Cursors]::Default
+        }
+    })
+    $btnY += $btnStep
+    foreach ($rs in @(@("Run Restore", $false), @("Retry Failed Tasks Only", $true))) {
+        [void](New-Nano11Button -Text $rs[0] -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -Tag $rs[1] -OnClick {
+            $btn = $this
+            $retry = [bool]$btn.Tag
+            $f = $btn.FindForm()
+            $g = $f.Tag
+            $btn.Enabled = $false
+            $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+            [System.Windows.Forms.Application]::DoEvents()
+            try {
+                $ra = @{ BackupRoot = (Get-Nano11GuiMigrationRoot -Gui $g); ConflictPolicy = (Get-Nano11GuiConflictPolicy -Gui $g) }
+                if ($retry) { $ra['RetryFailedOnly'] = $true }
+                $o = Invoke-Nano11GuiMigrationJob -RepoRoot $script:Nano11GuiRepoRoot -Arguments $ra -Script 'param($a) Start-Nano11MigrationRestore @a'
+                $msg = "Restore completed."
+                if ($o.Result -and $o.Result.Results) { $msg += "`n" + ($o.Result.Results | ForEach-Object { "$($_.TaskId): $($_.Status)" } | Out-String) }
+                Show-Nano11GuiJobOutcome -Outcome $o -Title "Restore" -SuccessMessage $msg
+                if ($g.MigStatus -and -not $o.Error) { $g.MigStatus.Text = "Restore completed." }
+            } finally {
+                $btn.Enabled = $true
+                $f.Cursor = [System.Windows.Forms.Cursors]::Default
+            }
+        })
+        $btnY += $btnStep
+    }
 
     # Custom paths backup/restore section
     $grpCustom = New-Nano11GroupBox -Text " Custom File/Folder Backup (arbitrary paths) " -Width 840 -Height 140 -Parent $flowMig
@@ -1223,7 +1405,7 @@ function Show-Nano11GUI {
         $g = $f.Tag
         try {
             $root = $g.MigRoot.Text.Trim()
-            if (-not $root) { $root = Join-Path $env:USERPROFILE "Documents\nano11_migration_backup" }
+            if (-not $root) { $root = Join-Path $env:USERPROFILE "nano11_migration_backup" }
             $paths = @($g.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
             if ($paths.Count -eq 0) { throw "No paths specified." }
             $result = Backup-Nano11CustomPaths -Paths $paths -BackupRoot $root
@@ -1246,8 +1428,8 @@ function Show-Nano11GUI {
         $g = $f.Tag
         try {
             $root = $g.MigRoot.Text.Trim()
-            if (-not $root) { $root = Join-Path $env:USERPROFILE "Documents\nano11_migration_backup" }
-            $result = Restore-Nano11CustomPaths -BackupRoot $root -ConflictPolicy BackupExisting
+            if (-not $root) { $root = Join-Path $env:USERPROFILE "nano11_migration_backup" }
+            $result = Restore-Nano11CustomPaths -BackupRoot $root -ConflictPolicy (Get-Nano11GuiConflictPolicy -Gui $g)
             $msg = "Custom paths restore completed.`nRestored: $($result.RestoredFiles) files.`nFailed: $($result.FailedFiles.Count)"
             [void][System.Windows.Forms.MessageBox]::Show($msg, "Restore Custom Paths", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
             if ($g.MigStatus) { $g.MigStatus.Text = "Custom restore: $($result.RestoredFiles) files." }
@@ -1258,10 +1440,6 @@ function Show-Nano11GUI {
             $f.Cursor = [System.Windows.Forms.Cursors]::Default
         }
     })
-
-    # =========================================================================
-    # Synchronization & Presets Handling
-    # =========================================================================
 
     # =========================================================================
     # Synchronization & Presets Handling
