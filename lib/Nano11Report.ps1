@@ -317,7 +317,7 @@ function Export-Nano11HtmlReport {
             [void]$sb.AppendLine('    </tbody></table>')
         }
         if ($depResult.Unknowns -and $depResult.Unknowns.Count -gt 0) {
-            [void]$sb.AppendLine('    <h3 style="color: var(--badge-warn); margin: 8px 0;">Unknown (不明)</h3>')
+            [void]$sb.AppendLine('    <h3 style="color: var(--badge-warn); margin: 8px 0;">Unknown (&#19981;&#26126;)</h3>')
             [void]$sb.AppendLine('    <table><tbody>')
             foreach ($u in $depResult.Unknowns) {
                 [void]$sb.AppendLine("      <tr><td>$([System.Security.SecurityElement]::Escape("$($u.Source)"))</td><td>$([System.Security.SecurityElement]::Escape("$($u.Summary)")) - $([System.Security.SecurityElement]::Escape("$($u.Reason)"))</td></tr>")

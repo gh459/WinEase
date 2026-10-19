@@ -1610,14 +1610,14 @@ if ($isAutomated) {
     Write-Host "         nano11 Configuration Profile Selector" -ForegroundColor Cyan
     Write-Host "=========================================================" -ForegroundColor Cyan
     Write-Host "Choose a profile or proceed to customization:" -ForegroundColor Gray
-    Write-Host "  [1] ⚡ Extreme Slim & Gaming (Default: Max debloat, Atlas/ReviOS, Store removed)" -ForegroundColor Green
-    Write-Host "  [2] 🛡️ Balanced Pro (Safe: Windows Update & Defender kept, high stability)" -ForegroundColor Yellow
-    Write-Host "  [3] 💾 FAT32 USB Split-WIM (3.8GB SWM Chunks for UEFI)" -ForegroundColor Yellow
-    Write-Host "  [4] 🎮 Handheld Gaming (ROG Ally, Steam Deck, Legion Go)" -ForegroundColor Green
-    Write-Host "  [5] 💻 VM & Developer Workstation (WSL2, Hyper-V, WinUpdate)" -ForegroundColor Cyan
-    Write-Host "  [6] 🎵 Audio & DAW Production (Minimal Latency, VST Protected)" -ForegroundColor Magenta
-    Write-Host "  [7] 🖥️ Launch GUI (Graphical User Interface)" -ForegroundColor Blue
-    Write-Host "  [8] 🔧 Custom (Step-by-step 15 configuration prompts)" -ForegroundColor Magenta
+    Write-Host "  [1] Extreme Slim & Gaming (Default: Max debloat, Atlas/ReviOS, Store removed)" -ForegroundColor Green
+    Write-Host "  [2] Balanced Pro (Safe: Windows Update & Defender kept, high stability)" -ForegroundColor Yellow
+    Write-Host "  [3] FAT32 USB Split-WIM (3.8GB SWM Chunks for UEFI)" -ForegroundColor Yellow
+    Write-Host "  [4] Handheld Gaming (ROG Ally, Steam Deck, Legion Go)" -ForegroundColor Green
+    Write-Host "  [5] VM & Developer Workstation (WSL2, Hyper-V, WinUpdate)" -ForegroundColor Cyan
+    Write-Host "  [6] Audio & DAW Production (Minimal Latency, VST Protected)" -ForegroundColor Magenta
+    Write-Host "  [7] Launch GUI (Graphical User Interface)" -ForegroundColor Blue
+    Write-Host "  [8] Custom (Step-by-step 15 configuration prompts)" -ForegroundColor Magenta
     $pChoice = Read-Host "Select Profile [1-8] (Default: 1 - Extreme Slim & Gaming)"
     if ($pChoice) { $pChoice = $pChoice.Trim().ToLower() } else { $pChoice = "1" }
 
@@ -1626,32 +1626,32 @@ if ($isAutomated) {
         $skipIndividualPrompts = $true
         $selectedProfile = "extreme"
         Apply-ProfileSettings -ProfileName 'extreme' | Out-Null
-        Write-Host "Applied Profile: ⚡ Extreme Slim & Gaming" -ForegroundColor Green
+        Write-Host "Applied Profile: Extreme Slim & Gaming" -ForegroundColor Green
     } elseif ($pChoice -in @('2', 'balanced', 'safe', 'pro')) {
         $skipIndividualPrompts = $true
         $selectedProfile = "balanced"
         Apply-ProfileSettings -ProfileName 'balanced' | Out-Null
-        Write-Host "Applied Profile: 🛡️ Balanced Pro (Windows Update & Defender kept)" -ForegroundColor Yellow
+        Write-Host "Applied Profile: Balanced Pro (Windows Update & Defender kept)" -ForegroundColor Yellow
     } elseif ($pChoice -in @('4', 'handheld', 'ally', 'deck', 'legion')) {
         $skipIndividualPrompts = $true
         $selectedProfile = "handheld"
         Apply-ProfileSettings -ProfileName 'handheld' | Out-Null
-        Write-Host "Applied Profile: 🎮 Handheld Gaming" -ForegroundColor Green
+        Write-Host "Applied Profile: Handheld Gaming" -ForegroundColor Green
     } elseif ($pChoice -in @('5', 'vm', 'dev', 'developer')) {
         $skipIndividualPrompts = $true
         $selectedProfile = "vm"
         Apply-ProfileSettings -ProfileName 'vm' | Out-Null
-        Write-Host "Applied Profile: 💻 VM & Developer Workstation" -ForegroundColor Cyan
+        Write-Host "Applied Profile: VM & Developer Workstation" -ForegroundColor Cyan
     } elseif ($pChoice -in @('6', 'audio', 'daw', 'dtm')) {
         $skipIndividualPrompts = $true
         $selectedProfile = "audio"
         Apply-ProfileSettings -ProfileName 'audio' | Out-Null
-        Write-Host "Applied Profile: 🎵 Audio & DAW Production" -ForegroundColor Magenta
+        Write-Host "Applied Profile: Audio & DAW Production" -ForegroundColor Magenta
     } elseif ($pChoice -in @('3', 'fat32', 'split', 'splitwim')) {
         $skipIndividualPrompts = $true
         $selectedProfile = "fat32"
         Apply-ProfileSettings -ProfileName 'fat32' | Out-Null
-        Write-Host "Applied Profile: 💾 FAT32 USB Split-WIM" -ForegroundColor Yellow
+        Write-Host "Applied Profile: FAT32 USB Split-WIM" -ForegroundColor Yellow
     } elseif ($pChoice -in @('7', 'gui', 'ui')) {
         . $script:Nano11GuiPath
         $skipIndividualPrompts = $true
@@ -1662,7 +1662,7 @@ if ($isAutomated) {
         }
     } else {
         $selectedProfile = "custom"
-        Write-Host "Entering 🔧 Custom step-by-step configuration..." -ForegroundColor Magenta
+        Write-Host "Entering Custom step-by-step configuration..." -ForegroundColor Magenta
     }
 
     if (-not $skipIndividualPrompts) {
