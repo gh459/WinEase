@@ -561,6 +561,91 @@ function Set-Nano11GuiPreset {
     Update-Nano11GuiEstimate -Gui $Gui
 }
 
+# Label of the "current window" entry in the Preset Diff dialog
+$script:Nano11GuiCurrentSettingsLabel = '(Current window settings)'
+
+# Diff text between two sources: a preset name or the current window settings
+function Get-Nano11GuiPresetDiffText {
+    param([hashtable]$Gui, [string]$From, [string]$To)
+    $resolved = @()
+    foreach ($name in @($From, $To)) {
+        if ($name -eq $script:Nano11GuiCurrentSettingsLabel) { $resolved += , (Get-Nano11GuiDraftConfig -Gui $Gui) } else { $resolved += , $name }
+    }
+    $diff = Compare-Nano11Config -ReferenceConfig $resolved[0] -DifferenceConfig $resolved[1]
+    return (Format-Nano11ConfigDiff -DiffResult $diff)
+}
+
+# Read-only, scrollable text dialog (MessageBox truncates long results)
+function Show-Nano11GuiTextDialog {
+    param([string]$Title, [string]$Text, [System.Windows.Forms.IWin32Window]$Owner)
+    $dlg = New-Object System.Windows.Forms.Form
+    try {
+        $dlg.Text = $Title
+        $dlg.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
+        $dlg.ClientSize = New-Object System.Drawing.Size(720, 520)
+        $dlg.BackColor = [System.Drawing.Color]::FromArgb(24, 26, 32)
+        $txt = New-Object System.Windows.Forms.TextBox
+        $txt.Multiline = $true
+        $txt.ReadOnly = $true
+        $txt.ScrollBars = [System.Windows.Forms.ScrollBars]::Both
+        $txt.WordWrap = $false
+        $txt.Font = New-Object System.Drawing.Font('Consolas', 9)
+        $txt.Dock = [System.Windows.Forms.DockStyle]::Fill
+        $txt.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
+        $txt.ForeColor = [System.Drawing.Color]::White
+        $txt.Text = ($Text -replace "(?<!`r)`n", "`r`n")
+        $dlg.Controls.Add($txt)
+        [void]$txt.Select(0, 0)
+        if ($Owner) { [void]$dlg.ShowDialog($Owner) } else { [void]$dlg.ShowDialog() }
+    } finally { $dlg.Dispose() }
+}
+
+# "Preset Diff" picker: choose a base (presets or current window) and a target, then show the diff
+function Show-Nano11GuiPresetDiff {
+    param([hashtable]$Gui)
+    $names = @($script:Nano11GuiCurrentSettingsLabel)
+    if ($script:BuiltInPresets) { $names += @($script:BuiltInPresets.Keys) }
+    $dlg = New-Object System.Windows.Forms.Form
+    try {
+        $dlg.Text = "Preset Diff"
+        $dlg.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
+        $dlg.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+        $dlg.MaximizeBox = $false
+        $dlg.MinimizeBox = $false
+        $dlg.ClientSize = New-Object System.Drawing.Size(400, 160)
+        $dlg.BackColor = [System.Drawing.Color]::FromArgb(24, 26, 32)
+        $dlg.ForeColor = [System.Drawing.Color]::White
+        $combos = @{}
+        $rows = @(@('From', 'Compare from:', 20, 0), @('To', 'Compare to:', 55, [Math]::Min(1, $names.Count - 1)))
+        foreach ($r in $rows) {
+            [void](New-Nano11Label -Text $r[1] -X 15 -Y ($r[2] + 3) -Width 100 -Height 20 -Parent $dlg)
+            $cmb = New-Object System.Windows.Forms.ComboBox
+            $cmb.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+            $cmb.Location = New-Object System.Drawing.Point(120, $r[2])
+            $cmb.Size = New-Object System.Drawing.Size(260, 24)
+            [void]$cmb.Items.AddRange($names)
+            $cmb.SelectedIndex = $r[3]
+            $dlg.Controls.Add($cmb)
+            $combos[$r[0]] = $cmb
+        }
+        $dlg.Tag = @{ Gui = $Gui; From = $combos['From']; To = $combos['To'] }
+        [void](New-Nano11Button -Text "Compare" -X 120 -Y 105 -Width 120 -Height 32 -Parent $dlg -OnClick {
+            $f = $this.FindForm()
+            $t = $f.Tag
+            try {
+                $txt = Get-Nano11GuiPresetDiffText -Gui $t.Gui -From ([string]$t.From.SelectedItem) -To ([string]$t.To.SelectedItem)
+                Show-Nano11GuiTextDialog -Title "Preset Diff: $($t.From.SelectedItem) -> $($t.To.SelectedItem)" -Text $txt -Owner $f
+            } catch {
+                [void][System.Windows.Forms.MessageBox]::Show("Error: $($_.Exception.Message)", "Preset Diff", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+            }
+        })
+        $btnClose = New-Nano11Button -Text "Close" -X 260 -Y 105 -Width 120 -Height 32 -Parent $dlg
+        $btnClose.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $dlg.CancelButton = $btnClose
+        [void]$dlg.ShowDialog()
+    } finally { $dlg.Dispose() }
+}
+
 # Validate the form and fill $Gui.Result; returns $false (after a message) if input is invalid
 function Get-Nano11GuiDraftConfig {
     param([hashtable]$Gui)
@@ -873,7 +958,15 @@ function Show-Nano11GUI {
     $gui.Estimate = New-Nano11Label -Text "Estimated ISO: ~5.5 GB (LZX baseline)" -X 20 -Y 38 -Width 380 -Height 20 `
         -ForeColor ([System.Drawing.Color]::FromArgb(148, 163, 184)) -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel
 
-    [void](New-Nano11Button -Text "Check Dependencies" -X 340 -Y 15 -Width 170 -Height 40 -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel -OnClick {
+    [void](New-Nano11Button -Text "Preset Diff" -X 250 -Y 15 -Width 110 -Height 40 -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel -OnClick {
+        $g = $this.FindForm().Tag
+        try {
+            Show-Nano11GuiPresetDiff -Gui $g
+        } catch {
+            [void][System.Windows.Forms.MessageBox]::Show("Preset Diff failed: $($_.Exception.Message)", "nano11 - Preset Diff", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        }
+    })
+    [void](New-Nano11Button -Text "Check Dependencies" -X 370 -Y 15 -Width 150 -Height 40 -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel -OnClick {
         $f = $this.FindForm()
         $g = $f.Tag
         try {
@@ -886,7 +979,7 @@ function Show-Nano11GUI {
             [void][System.Windows.Forms.MessageBox]::Show("Dependency check failed: $($_.Exception.Message)", "nano11 - Dependency Check", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
         }
     })
-    [void](New-Nano11Button -Text "Start nano11 Build" -X 540 -Y 15 -Width 200 -Height 40 -BackColor ([System.Drawing.Color]::FromArgb(0, 120, 215)) `
+    [void](New-Nano11Button -Text "Start nano11 Build" -X 530 -Y 15 -Width 210 -Height 40 -BackColor ([System.Drawing.Color]::FromArgb(0, 120, 215)) `
         -Font (New-Object System.Drawing.Font($uiFontName, 10, [System.Drawing.FontStyle]::Bold)) -Parent $bottomPanel -OnClick {
         $f = $this.FindForm()
         $g = $f.Tag
@@ -1290,16 +1383,6 @@ function Show-Nano11GUI {
         }
     })
     $btnY += $btnStep
-    [void](New-Nano11Button -Text "Compare Presets (balanced vs extreme)" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
-        try {
-            $diff = Compare-Nano11Config -ReferenceConfig 'balanced' -DifferenceConfig 'extreme'
-            $txt = Format-Nano11ConfigDiff -DiffResult $diff
-            [void][System.Windows.Forms.MessageBox]::Show($txt, "Preset Diff", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
-        } catch {
-            [void][System.Windows.Forms.MessageBox]::Show("Error: $($_.Exception.Message)", "Preset Diff", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-        }
-    })
-    $btnY += $btnStep
     [void](New-Nano11Button -Text "Estimate Size" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
         $btn = $this
         $f = $btn.FindForm()
@@ -1441,6 +1524,50 @@ function Show-Nano11GUI {
         }
     })
 
+    # User Extensions & Custom Scripts card: what config\user-tweaks.psd1 loaded (set by the builder)
+    $grpExt = New-Nano11GroupBox -Text " User Extensions & Custom Scripts " -Width 840 -Height 110 -Parent $flowMig
+    $extRes = $script:UserExtensionsResult
+    $extErrors = @()
+    if ($extRes -and $extRes.Errors) { $extErrors = @($extRes.Errors | Where-Object { $_ }) }
+    if ($extRes) {
+        $extText = "User tweaks: $($extRes.UserTweakCount)    User presets: $($extRes.UserPresetCount)    Custom scripts: $($extRes.CustomScriptCount)"
+    } else {
+        $extText = "User extensions have not been loaded."
+    }
+    [void](New-Nano11Label -Text $extText -X 15 -Y 24 -Width 600 -Height 20 -Parent $grpExt)
+    $gui.ExtensionsLabel = New-Nano11Label -Text $(if ($extErrors.Count -gt 0) { "Load errors: " + ($extErrors -join '; ') } else { "No load errors." }) `
+        -X 15 -Y 48 -Width 600 -Height 52 -ForeColor $(if ($extErrors.Count -gt 0) { [System.Drawing.Color]::FromArgb(255, 140, 100) } else { [System.Drawing.Color]::FromArgb(148, 163, 184) }) -Parent $grpExt
+    [void](New-Nano11Button -Text "Open Extensibility Guide" -X 630 -Y 24 -Width 190 -Height 32 -Parent $grpExt -OnClick {
+        $guide = Join-Path $script:Nano11GuiRepoRoot "docs\EXTENSIBILITY_GUIDE.md"
+        try {
+            if (-not (Test-Path -LiteralPath $guide)) { throw "Guide not found: $guide" }
+            Start-Process -FilePath $guide
+        } catch {
+            [void][System.Windows.Forms.MessageBox]::Show("Error: $($_.Exception.Message)", "Extensibility Guide", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        }
+    })
+    # =========================================================================
+    # TAB 9: user-defined switches whose Category has no tab above (System / Gaming / UserCustom ...)
+    # =========================================================================
+    $builtinTabCategories = @('Security', 'Privacy', 'Performance', 'UI')
+    $pageUser = New-Nano11ToggleTab -Text " 9. User Tweaks " -TabControl $tabControl -Caption "User-defined switches (config\user-tweaks.psd1)"
+    $userTweakCount = 0
+    foreach ($tk in $script:AllTweakDefs.Keys) {
+        $def = $script:AllTweakDefs[$tk]
+        if ($builtinTabCategories -contains $def.Category) { continue }
+        $initVal = [bool]$def.Default
+        if ($InitialSettings.TweakSettings -and $InitialSettings.TweakSettings.Contains($tk)) {
+            $initVal = [bool]$InitialSettings.TweakSettings[$tk]
+        } elseif ($InitialSettings.ContainsKey($tk)) {
+            $initVal = [bool]$InitialSettings[$tk]
+        }
+        $chk = New-Nano11ToggleCheckBox -Parent $pageUser.Flow -Key $tk -Text "$tk [$($def.Category)] - $($def.Description)" -ToolTip $toolTip -ToolTipText $def.Description -Checked $initVal
+        $gui.TweakCheckboxes[$tk] = $chk
+        $userTweakCount++
+    }
+    if ($userTweakCount -eq 0) {
+        [void](New-Nano11Label -Text "No user-defined switches with a category outside Security / Privacy / Performance / UI." -X 0 -Y 0 -AutoSize -Parent $pageUser.Flow)
+    }
     # =========================================================================
     # Synchronization & Presets Handling
     # =========================================================================
