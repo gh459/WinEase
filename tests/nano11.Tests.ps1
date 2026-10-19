@@ -1781,3 +1781,32 @@ Describe "S10 - GUI and migrator cleanup (shared parts)" {
         } finally { $frm.Dispose() }
     }
 }
+
+
+Describe "Builder cleanup S11" {
+    BeforeAll {
+        $script:S11Root = $script:RepoRoot
+    }
+    It "BOM-less .ps1/.psd1 files are ASCII only" {
+        $bad = @()
+        foreach ($f in (Get-ChildItem -LiteralPath $script:S11Root -Recurse -File | Where-Object { $_.Extension -in '.ps1', '.psd1' -and $_.FullName -notmatch '[\/](\.git|\.claude|logs)[\/]' })) {
+            $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+            $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+            if (-not $hasBom -and (@($bytes | Where-Object { $_ -gt 127 }).Count -gt 0)) { $bad += $f.Name }
+        }
+        ($bad -join ',') | Should Be ''
+    }
+    It "parallel WindowsApps cleanup checks containment and reports failed folders" {
+        $src = [System.IO.File]::ReadAllText((Join-Path $script:S11Root "phases\05-appx.ps1"))
+        $src -match 'Test-Nano11PathWithin -Path \$fp -Root \$scratchDir' | Should Be $true
+        $src -match 'Parallel cleanup failed for folder' | Should Be $true
+    }
+    It "self-test is split into per-check functions and still runs 21 checks" {
+        $src = [System.IO.File]::ReadAllText((Join-Path $script:S11Root "lib\Nano11SelfTest.ps1"))
+        @([regex]::Matches($src, '(?m)^function Test-Nano11SelfCheck\d\d')).Count | Should Be 21
+    }
+    It "no -isAnyBound repetition remains in the builder beyond the component-switch loop" {
+        $src = [System.IO.File]::ReadAllText((Join-Path $script:S11Root "nano11builder.ps1"))
+        @([regex]::Matches($src, '& \$isAnyBound')).Count | Should Be 1
+    }
+}

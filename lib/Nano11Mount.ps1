@@ -3,6 +3,7 @@
 
 function Get-Nano11MountedImages {
     [CmdletBinding()]
+    [OutputType([object[]])]
     param()
     $records = @()
     $querySuccess = $false
@@ -270,6 +271,7 @@ function Unmount-DismOfflineHives {
 
 function Invoke-Nano11MountpointCleanup {
     [CmdletBinding()]
+    [OutputType([bool])]
     param()
     try {
         $mounted = @(Get-Nano11MountedImages)

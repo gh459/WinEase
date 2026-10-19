@@ -6,6 +6,7 @@
 # 1. Expand-Nano11MigrationPath
 function Expand-Nano11MigrationPath {
     [CmdletBinding()]
+    [OutputType([string])]
     param(
         [Parameter(Mandatory = $true)]
         [string]$RawPath
@@ -89,6 +90,7 @@ function Get-Nano11MigrationRules {
 # 3. Test-Nano11SecretPath
 function Test-Nano11SecretPath {
     [CmdletBinding()]
+    [OutputType([bool])]
     param(
         [Parameter(Mandatory = $true)]
         [string]$FilePath,

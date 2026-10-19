@@ -1046,6 +1046,7 @@ function Remove-Nano11TreeRobust {
 # ==============================================================================
 function Write-Nano11TextFileAtomic {
     [CmdletBinding()]
+    [OutputType([bool])]
     param(
         [Parameter(Mandatory=$true)]
         [string]$Path,
@@ -1513,6 +1514,7 @@ function Get-Nano11MetricStatistics {
 
 function Compare-Nano11BenchmarkSeries {
     [CmdletBinding()]
+    [OutputType([hashtable])]
     param(
         [Parameter(Mandatory = $true)]
         [PSCustomObject[]]$BaselineRuns,
@@ -1623,6 +1625,7 @@ function Import-Nano11DependencyCatalog {
 
 function Test-Nano11Dependencies {
     [CmdletBinding()]
+    [OutputType([hashtable])]
     param(
         [hashtable]$Config
     )
