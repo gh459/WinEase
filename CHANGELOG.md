@@ -48,13 +48,12 @@ nano11 scheme; entries below are local-fork additions on top of upstream 2.1.
   GUI/profiles were ignored (RadicalRAM always resolved to off).
 - 15 Advanced Debloat "Standard" items only logged `[SKIP] No standard handler`; they now
   have handlers, or were removed from the GUI when no safe implementation exists.
-
 - GUI toggle initialization called `ContainsKey` on `[ordered]@{}`
   (`System.Collections.Specialized.OrderedDictionary`), which Windows PowerShell 5.1 does not
   implement: every launch logged 122 method-not-found errors and per-tweak values saved in
   profiles were not applied (the `elseif` fallback to top-level keys was used instead). The GUI
   loader now uses `Contains`, as does Phase 10's `Test-TweakEnabled` alias lookup - the same
-  pattern there would have evaluated every toggle as disabled in a real build.
+  pattern there would have fallen back to defaults for every toggle in a real build.
 
 ### Known issues
 - `nano11builder.ps1` is saved as UTF-8 without BOM but contains emoji in the console
