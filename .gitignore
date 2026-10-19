@@ -16,3 +16,6 @@ nano11_workspace/
 
 # Rust build artifacts (nano11-physical-debloat); build with: cargo build --release
 tools/nano11-physical-debloat/target/
+
+# Regenerated on every build (template: templates/report.html)
+nano11_report.html

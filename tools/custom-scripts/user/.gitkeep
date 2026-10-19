@@ -1,2 +1,0 @@
-# Place non-elevated user scripts (.ps1, .reg, .cmd, .bat) in this directory.
-# They will be executed under the logged-on user account via UserOnce.ps1.
