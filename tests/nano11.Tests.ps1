@@ -1810,3 +1810,24 @@ Describe "Builder cleanup S11" {
         @([regex]::Matches($src, '& \$isAnyBound')).Count | Should Be 1
     }
 }
+
+Describe "Documentation S12" {
+    It "repo file paths in backticks in README, CHANGELOG and the extensibility guide exist" {
+        $files = @(Get-ChildItem -LiteralPath $script:RepoRoot -Recurse -File | Where-Object { $_.FullName -notmatch '[\/](\.git|\.claude|logs)[\/]' } | ForEach-Object { $_.FullName.Substring($script:RepoRoot.Length).TrimStart('\') })
+        $topDirs = 'config|lib|phases|gui|tools|docs|scripts|templates|profiles|tests|\.github'
+        $missing = @()
+        foreach ($doc in @('README.md', 'CHANGELOG.md', 'docs\EXTENSIBILITY_GUIDE.md')) {
+            $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot $doc))
+            foreach ($m in [regex]::Matches($text, '`([^`\r\n]+)`')) {
+                $p = ($m.Groups[1].Value -replace '/', '\').TrimEnd('\')
+                if ($p -notmatch '^[A-Za-z0-9_.\-]+$') { continue }
+                # a repo path starts at a top-level folder; a bare Nano11*.ps1 / NN-name.ps1 name is searched for anywhere
+                $isRepoPath = ($p -match "^($topDirs)(\|$)") -or ($p -match '^(Nano11[A-Za-z]*|\d\d-[a-z-]+)\.ps1$') -or ($p -match '^(nano11builder|nano11helpers)\.ps1$')
+                if (-not $isRepoPath) { continue }
+                $found = @($files | Where-Object { $_ -eq $p -or $_.StartsWith($p + '\') -or $_.EndsWith('\' + $p) }).Count -gt 0
+                if (-not $found) { $missing += "${doc}: $p" }
+            }
+        }
+        ($missing | Select-Object -Unique) -join "`n" | Should Be ''
+    }
+}
