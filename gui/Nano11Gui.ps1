@@ -88,20 +88,110 @@ function New-Nano11Label {
     return $lbl
 }
 
+# Single-line TextBox; -Multiline / -ReadOnly / -ScrollBars / -WordWrap make a log or editor box,
+# -Fill docks it instead of placing it
 function New-Nano11TextBox {
     param(
         [int]$X, [int]$Y, [int]$Width, [int]$Height = 24,
         [string]$Text,
+        [System.Drawing.Color]$ForeColor = [System.Drawing.Color]::White,
+        [System.Drawing.Font]$Font,
+        [switch]$Multiline,
+        [switch]$ReadOnly,
+        [System.Windows.Forms.ScrollBars]$ScrollBars,
+        [bool]$WordWrap,
+        [switch]$Fill,
         [object]$Parent
     )
     $txt = New-Object System.Windows.Forms.TextBox
-    $txt.Location = New-Object System.Drawing.Point($X, $Y)
-    $txt.Size = New-Object System.Drawing.Size($Width, $Height)
+    if ($Fill) {
+        $txt.Dock = [System.Windows.Forms.DockStyle]::Fill
+    } else {
+        $txt.Location = New-Object System.Drawing.Point($X, $Y)
+        $txt.Size = New-Object System.Drawing.Size($Width, $Height)
+    }
     $txt.BackColor = $script:Nano11GuiColors.Input
-    $txt.ForeColor = [System.Drawing.Color]::White
+    $txt.ForeColor = $ForeColor
+    if ($Font) { $txt.Font = $Font }
+    if ($Multiline) { $txt.Multiline = $true }
+    if ($ReadOnly) { $txt.ReadOnly = $true }
+    if ($PSBoundParameters.ContainsKey('ScrollBars')) { $txt.ScrollBars = $ScrollBars }
+    if ($PSBoundParameters.ContainsKey('WordWrap')) { $txt.WordWrap = $WordWrap }
     if ($Text) { $txt.Text = $Text }
     if ($Parent) { $Parent.Controls.Add($txt) }
     return $txt
+}
+
+# ComboBox filled with -Items; -DropList makes it select-only. Colours are applied only when given.
+function New-Nano11ComboBox {
+    param(
+        [string[]]$Items = @(),
+        [int]$SelectedIndex = -1,
+        [switch]$DropList,
+        [int]$X, [int]$Y, [int]$Width, [int]$Height = 24,
+        [object]$BackColor,
+        [object]$ForeColor,
+        [object]$Parent
+    )
+    $cmb = New-Object System.Windows.Forms.ComboBox
+    if ($DropList) { $cmb.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList }
+    $cmb.Location = New-Object System.Drawing.Point($X, $Y)
+    $cmb.Size = New-Object System.Drawing.Size($Width, $Height)
+    if ($null -ne $BackColor) { $cmb.BackColor = $BackColor }
+    if ($null -ne $ForeColor) { $cmb.ForeColor = $ForeColor }
+    if ($Items.Count -gt 0) { [void]$cmb.Items.AddRange($Items) }
+    if ($SelectedIndex -ge 0) { $cmb.SelectedIndex = $SelectedIndex }
+    if ($Parent) { $Parent.Controls.Add($cmb) }
+    return $cmb
+}
+
+# Top-level window or dialog. -ClientSize sizes the inside instead of the outer frame.
+function New-Nano11Form {
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [int]$Width, [int]$Height,
+        [switch]$ClientSize,
+        [System.Drawing.Color]$BackColor = $script:Nano11GuiColors.Dialog,
+        [object]$ForeColor,
+        [System.Drawing.Font]$Font,
+        [System.Windows.Forms.FormStartPosition]$StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent,
+        [switch]$FixedDialog,
+        [switch]$NoMaximize,
+        [switch]$NoMinimize,
+        [switch]$NoAutoScale
+    )
+    $frm = New-Object System.Windows.Forms.Form
+    $frm.Text = $Text
+    if ($NoAutoScale) { $frm.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None }
+    if ($Font) { $frm.Font = $Font }
+    if ($ClientSize) { $frm.ClientSize = New-Object System.Drawing.Size($Width, $Height) } else { $frm.Size = New-Object System.Drawing.Size($Width, $Height) }
+    $frm.StartPosition = $StartPosition
+    if ($FixedDialog) { $frm.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog }
+    if ($NoMaximize) { $frm.MaximizeBox = $false }
+    if ($NoMinimize) { $frm.MinimizeBox = $false }
+    $frm.BackColor = $BackColor
+    if ($null -ne $ForeColor) { $frm.ForeColor = $ForeColor }
+    return $frm
+}
+
+# TabControl, docked (-Fill) or placed
+function New-Nano11TabControl {
+    param(
+        [switch]$Fill,
+        [int]$X, [int]$Y, [int]$Width, [int]$Height,
+        [System.Drawing.Font]$Font,
+        [object]$Parent
+    )
+    $tc = New-Object System.Windows.Forms.TabControl
+    if ($Fill) {
+        $tc.Dock = [System.Windows.Forms.DockStyle]::Fill
+    } else {
+        $tc.Location = New-Object System.Drawing.Point($X, $Y)
+        $tc.Size = New-Object System.Drawing.Size($Width, $Height)
+    }
+    if ($Font) { $tc.Font = $Font }
+    if ($Parent) { $Parent.Controls.Add($tc) }
+    return $tc
 }
 
 # CheckBox, or RadioButton with -Radio
@@ -439,19 +529,9 @@ function Show-AdvancedDebloatDialog {
     $dlgFore = $script:Nano11GuiColors.Text
     $listFont = New-Object System.Drawing.Font($UiFontName, 9)
 
-    $dlg = New-Object System.Windows.Forms.Form
-    $dlg.Text = "Advanced Debloat Options (Standard + Experimental)"
-    $dlg.Size = New-Object System.Drawing.Size(700, 620)
-    $dlg.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
-    $dlg.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
-    $dlg.MaximizeBox = $false
-    $dlg.MinimizeBox = $false
-    $dlg.BackColor = $dlgBack
+    $dlg = New-Nano11Form -Text "Advanced Debloat Options (Standard + Experimental)" -Width 700 -Height 620 -FixedDialog -NoMaximize -NoMinimize -BackColor $dlgBack
 
-    $tabControl = New-Object System.Windows.Forms.TabControl
-    $tabControl.Location = New-Object System.Drawing.Point(10, 10)
-    $tabControl.Size = New-Object System.Drawing.Size(665, 480)
-    $dlg.Controls.Add($tabControl)
+    $tabControl = New-Nano11TabControl -X 10 -Y 10 -Width 665 -Height 480 -Parent $dlg
 
     # Standard tab
     $tabStd = New-Nano11TabPage -Text "Standard (Safe - DISM/PS)" -TabControl $tabControl -BackColor $dlgBack
@@ -620,23 +700,9 @@ function Get-Nano11GuiPresetDiffText {
 # Read-only, scrollable text dialog (MessageBox truncates long results)
 function Show-Nano11GuiTextDialog {
     param([string]$Title, [string]$Text, [System.Windows.Forms.IWin32Window]$Owner)
-    $dlg = New-Object System.Windows.Forms.Form
+    $dlg = New-Nano11Form -Text $Title -Width 720 -Height 520 -ClientSize
     try {
-        $dlg.Text = $Title
-        $dlg.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
-        $dlg.ClientSize = New-Object System.Drawing.Size(720, 520)
-        $dlg.BackColor = $script:Nano11GuiColors.Dialog
-        $txt = New-Object System.Windows.Forms.TextBox
-        $txt.Multiline = $true
-        $txt.ReadOnly = $true
-        $txt.ScrollBars = [System.Windows.Forms.ScrollBars]::Both
-        $txt.WordWrap = $false
-        $txt.Font = New-Object System.Drawing.Font('Consolas', 9)
-        $txt.Dock = [System.Windows.Forms.DockStyle]::Fill
-        $txt.BackColor = $script:Nano11GuiColors.Input
-        $txt.ForeColor = [System.Drawing.Color]::White
-        $txt.Text = ($Text -replace "(?<!`r)`n", "`r`n")
-        $dlg.Controls.Add($txt)
+        $txt = New-Nano11TextBox -Fill -Multiline -ReadOnly -ScrollBars Both -WordWrap $false -Font (New-Object System.Drawing.Font('Consolas', 9)) -Text ($Text -replace "(?<!`r)`n", "`r`n") -Parent $dlg
         [void]$txt.Select(0, 0)
         if ($Owner) { [void]$dlg.ShowDialog($Owner) } else { [void]$dlg.ShowDialog() }
     } finally { $dlg.Dispose() }
@@ -647,27 +713,13 @@ function Show-Nano11GuiPresetDiff {
     param([hashtable]$Gui)
     $names = @($script:Nano11GuiCurrentSettingsLabel)
     if ($script:BuiltInPresets) { $names += @($script:BuiltInPresets.Keys) }
-    $dlg = New-Object System.Windows.Forms.Form
+    $dlg = New-Nano11Form -Text "Preset Diff" -Width 400 -Height 160 -ClientSize -FixedDialog -NoMaximize -NoMinimize -ForeColor ([System.Drawing.Color]::White)
     try {
-        $dlg.Text = "Preset Diff"
-        $dlg.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
-        $dlg.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
-        $dlg.MaximizeBox = $false
-        $dlg.MinimizeBox = $false
-        $dlg.ClientSize = New-Object System.Drawing.Size(400, 160)
-        $dlg.BackColor = $script:Nano11GuiColors.Dialog
-        $dlg.ForeColor = [System.Drawing.Color]::White
         $combos = @{}
         $rows = @(@('From', 'Compare from:', 20, 0), @('To', 'Compare to:', 55, [Math]::Min(1, $names.Count - 1)))
         foreach ($r in $rows) {
             [void](New-Nano11Label -Text $r[1] -X 15 -Y ($r[2] + 3) -Width 100 -Height 20 -Parent $dlg)
-            $cmb = New-Object System.Windows.Forms.ComboBox
-            $cmb.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-            $cmb.Location = New-Object System.Drawing.Point(120, $r[2])
-            $cmb.Size = New-Object System.Drawing.Size(260, 24)
-            [void]$cmb.Items.AddRange($names)
-            $cmb.SelectedIndex = $r[3]
-            $dlg.Controls.Add($cmb)
+            $cmb = New-Nano11ComboBox -Items $names -SelectedIndex $r[3] -DropList -X 120 -Y $r[2] -Width 260 -Parent $dlg
             $combos[$r[0]] = $cmb
         }
         $dlg.Tag = @{ Gui = $Gui; From = $combos['From']; To = $combos['To'] }
@@ -977,16 +1029,9 @@ function Show-Nano11GUI {
         } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
 
-    $form = New-Object System.Windows.Forms.Form
-    $form.Text = "nano11 Builder v2.1 - Next-Gen Windows 11 Modular Optimizer & Reducer"
-    $form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
-    $form.Font = New-Object System.Drawing.Font($uiFontName, 9)
-    $form.ClientSize = New-Object System.Drawing.Size(880, 820)
-    $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
-    $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
-    $form.MaximizeBox = $false
-    $form.BackColor = $script:Nano11GuiColors.Window
-    $form.ForeColor = $script:Nano11GuiColors.Text
+    $form = New-Nano11Form -Text "nano11 Builder v2.1 - Next-Gen Windows 11 Modular Optimizer & Reducer" -Width 880 -Height 820 -ClientSize `
+        -NoAutoScale -Font (New-Object System.Drawing.Font($uiFontName, 9)) -StartPosition CenterScreen -FixedDialog -NoMaximize `
+        -BackColor $script:Nano11GuiColors.Window -ForeColor $script:Nano11GuiColors.Text
 
     try {
         $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
@@ -1070,10 +1115,7 @@ function Show-Nano11GUI {
     $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
 
     # Main Tab Control
-    $tabControl = New-Object System.Windows.Forms.TabControl
-    $tabControl.Dock = [System.Windows.Forms.DockStyle]::Fill
-    $tabControl.Font = New-Object System.Drawing.Font($uiFontName, 9)
-    $form.Controls.Add($tabControl)
+    $tabControl = New-Nano11TabControl -Fill -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $form
     $tabControl.BringToFront()
 
     # =========================================================================
@@ -1084,12 +1126,7 @@ function Show-Nano11GUI {
     $grpMedia = New-Nano11GroupBox -Text " Source Media & Paths " -X 15 -Y 10 -Width 835 -Height 185 -Parent $tabMedia
 
     [void](New-Nano11Label -Text "Source Drive / ISO:" -X 15 -Y 28 -Width 130 -Height 20 -Parent $grpMedia)
-    $cmbSource = New-Object System.Windows.Forms.ComboBox
-    $cmbSource.Location = New-Object System.Drawing.Point(150, 25)
-    $cmbSource.Size = New-Object System.Drawing.Size(370, 24)
-    $cmbSource.BackColor = $script:Nano11GuiColors.Input
-    $cmbSource.ForeColor = [System.Drawing.Color]::White
-    $grpMedia.Controls.Add($cmbSource)
+    $cmbSource = New-Nano11ComboBox -X 150 -Y 25 -Width 370 -BackColor $script:Nano11GuiColors.Input -ForeColor ([System.Drawing.Color]::White) -Parent $grpMedia
     $gui.Source = $cmbSource
 
     Update-Nano11GuiSources -Combo $cmbSource
@@ -1146,13 +1183,7 @@ function Show-Nano11GUI {
     # Preset Group
     $grpPreset = New-Nano11GroupBox -Text " Configuration Profile Preset " -X 15 -Y 205 -Width 835 -Height 75 -Parent $tabMedia
 
-    $cmbPreset = New-Object System.Windows.Forms.ComboBox
-    $cmbPreset.Location = New-Object System.Drawing.Point(15, 28)
-    $cmbPreset.Size = New-Object System.Drawing.Size(805, 24)
-    $cmbPreset.BackColor = $script:Nano11GuiColors.Input
-    $cmbPreset.ForeColor = [System.Drawing.Color]::White
-    $cmbPreset.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    $cmbPreset.Items.AddRange(@(
+    $cmbPreset = New-Nano11ComboBox -DropList -X 15 -Y 28 -Width 805 -BackColor $script:Nano11GuiColors.Input -ForeColor ([System.Drawing.Color]::White) -Parent $grpPreset -Items @(
         "Extreme Slim & Gaming (Max debloat, minimal memory, ultra-low latency)",
         "Balanced Pro (Safe daily debloat: Windows Update & Defender preserved)",
         "FAT32 USB Split-WIM (UEFI compatible 3.8GB chunks)",
@@ -1160,8 +1191,7 @@ function Show-Nano11GUI {
         "VM & Developer Workstation (WSL2, Hyper-V, WinUpdate enabled)",
         "Audio & DAW Production (Low Latency, MMCSS Priority, VST Protected)",
         "Custom Configuration (Manual Tweak Switches)"
-    ))
-    $grpPreset.Controls.Add($cmbPreset)
+    )
     $gui.Preset = $cmbPreset
 
     # Payload Format Group
@@ -1358,13 +1388,7 @@ function Show-Nano11GUI {
     $gui.MigStatus = $lblMigStatus
     $gui.MigExcludeSecrets = New-Nano11CheckBox -Text "Exclude credentials/tokens (Recommended)" -X 15 -Y 52 -Width 320 -Height 24 -Checked $true -Parent $grpTop
     [void](New-Nano11Label -Text "If a file already exists on restore:" -X 15 -Y 80 -Width 220 -Height 20 -Parent $grpTop)
-    $cmbConflict = New-Object System.Windows.Forms.ComboBox
-    $cmbConflict.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    $cmbConflict.Location = New-Object System.Drawing.Point(240, 78)
-    $cmbConflict.Size = New-Object System.Drawing.Size(200, 24)
-    [void]$cmbConflict.Items.AddRange(@('BackupExisting', 'Skip', 'OverwriteIfNewer', 'Overwrite'))
-    $cmbConflict.SelectedIndex = 0
-    $grpTop.Controls.Add($cmbConflict)
+    $cmbConflict = New-Nano11ComboBox -Items @('BackupExisting', 'Skip', 'OverwriteIfNewer', 'Overwrite') -SelectedIndex 0 -DropList -X 240 -Y 78 -Width 200 -Parent $grpTop
     $gui.MigConflict = $cmbConflict
 
     # Left: personal data folders + migration rules
@@ -1525,14 +1549,7 @@ function Show-Nano11GUI {
     # Custom paths backup/restore section
     $grpCustom = New-Nano11GroupBox -Text " Custom File/Folder Backup (arbitrary paths) " -Width 840 -Height 140 -Parent $flowMig
     [void](New-Nano11Label -Text "Paths (one per line):" -X 15 -Y 20 -Width 140 -Height 20 -Parent $grpCustom)
-    $txtCustomPaths = New-Object System.Windows.Forms.TextBox
-    $txtCustomPaths.Location = New-Object System.Drawing.Point(15, 42)
-    $txtCustomPaths.Size = New-Object System.Drawing.Size(560, 60)
-    $txtCustomPaths.Multiline = $true
-    $txtCustomPaths.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
-    $txtCustomPaths.BackColor = $script:Nano11GuiColors.Input
-    $txtCustomPaths.ForeColor = $script:Nano11GuiColors.Text
-    $grpCustom.Controls.Add($txtCustomPaths)
+    $txtCustomPaths = New-Nano11TextBox -X 15 -Y 42 -Width 560 -Height 60 -Multiline -ScrollBars Vertical -ForeColor $script:Nano11GuiColors.Text -Parent $grpCustom
     $gui.CustomPaths = $txtCustomPaths
 
     [void](New-Nano11Button -Text "Backup Custom Paths" -X 590 -Y 42 -Width 160 -Height 32 -Parent $grpCustom -OnClick {
