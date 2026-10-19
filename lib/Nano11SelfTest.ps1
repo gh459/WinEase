@@ -3,7 +3,7 @@
 
 # Self-test check: AST Syntax Check
 function Test-Nano11SelfCheck01AstSyntax {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param([string]$BuilderPath)
     $astPass = $false
     $astMsg = ""
     if (Test-Path -LiteralPath $BuilderPath) {
@@ -25,7 +25,7 @@ function Test-Nano11SelfCheck01AstSyntax {
 
 # Self-test check: Registry Safety Validation (zSYSTEM\CurrentControlSet check)
 function Test-Nano11SelfCheck02RegistrySafety {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param([string]$BuilderPath)
     $regSafePass = $true
     $regMsg = "Safe: No illegal offline CurrentControlSet keys created"
     if (Test-Path -LiteralPath $BuilderPath) {
@@ -47,7 +47,7 @@ function Test-Nano11SelfCheck02RegistrySafety {
 
 # Self-test check: autounattend.xml XML Schema & Duplicate Component Check
 function Test-Nano11SelfCheck03UnattendSchema {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param([string]$UnattendPath)
     $xmlPass = $false
     $xmlMsg = ""
     if (Test-Path -LiteralPath $UnattendPath) {
@@ -86,7 +86,7 @@ function Test-Nano11SelfCheck03UnattendSchema {
 
 # Self-test check: Built-in Profile Presets & Modular Tweak Integrity
 function Test-Nano11SelfCheck04ProfilePresets {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param()
     $profPass = $false
     $profMsg = ""
     $expectedPresetKeys = @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')
@@ -125,7 +125,7 @@ function Test-Nano11SelfCheck04ProfilePresets {
 
 # Self-test check: Tools Folder & Binary Integrity Check
 function Test-Nano11SelfCheck05ToolingAssets {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param([string]$ScriptRoot)
     $oscdPath = Join-Path $ScriptRoot "oscdimg.exe"
     $oscdValid = Test-OscdimgIntegrity -OscdimgPath $oscdPath
     $toolsDir = Join-Path -Path $ScriptRoot -ChildPath "tools"
@@ -148,7 +148,7 @@ function Test-Nano11SelfCheck05ToolingAssets {
 
 # Self-test check: Batch Script Dynamic Target Resolution Check
 function Test-Nano11SelfCheck06BatchTargets {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param([string]$ScriptRoot)
     $batPass = $false
     $batMsg = ""
     $batFiles = Get-ChildItem -Path $ScriptRoot -Filter "*.bat" -File -ErrorAction SilentlyContinue
@@ -177,7 +177,7 @@ function Test-Nano11SelfCheck06BatchTargets {
 
 # Self-test check: autounattend Singularity & Embedded Scripts Integrity
 function Test-Nano11SelfCheck07UnattendSingularity {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param([string]$ScriptRoot)
     $unattendSingularPass = $false
     $unattendSingularMsg = ""
     $allUnattends = Get-ChildItem -Path $ScriptRoot -Filter "*unattend*.xml" -File -ErrorAction SilentlyContinue
@@ -206,7 +206,7 @@ function Test-Nano11SelfCheck07UnattendSingularity {
 
 # Self-test check: AppX Pattern Matching & Syntax Verification
 function Test-Nano11SelfCheck08AppxPatterns {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param()
     $appxTestPass = $false
     $appxTestMsg = ""
     $samplePackages = @(
@@ -239,7 +239,7 @@ function Test-Nano11SelfCheck08AppxPatterns {
 
 # Self-test check: DISM Offline Hives Detection & Safety Isolation Check
 function Test-Nano11SelfCheck09HiveIsolation {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param()
     $hiveTestPass = $false
     $hiveTestMsg = ""
     try {
@@ -313,7 +313,7 @@ function Test-Nano11SelfCheck09HiveIsolation {
 
 # Self-test check: Dynamic Mount Path Generation & Uniqueness (install, boot, verify)
 function Test-Nano11SelfCheck10MountPathGeneration {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param()
     $mountGenPass = $false
     $mountGenMsg = ""
     $origRoot = $script:MountAllocationRoot
@@ -361,7 +361,7 @@ function Test-Nano11SelfCheck10MountPathGeneration {
 
 # Self-test check: Mount Conflict Error Classification & Retry Limit Logic
 function Test-Nano11SelfCheck11MountConflict {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param()
     $conflictTestPass = $false
     $conflictTestMsg = ""
     try {
@@ -398,7 +398,7 @@ function Test-Nano11SelfCheck11MountConflict {
 
 # Self-test check: Mount Safety Isolation & Reparse/VHDX Protection
 function Test-Nano11SelfCheck12MountSafety {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param()
     $safetyGuardPass = $false
     $safetyGuardMsg = ""
     try {
@@ -436,7 +436,7 @@ function Test-Nano11SelfCheck12MountSafety {
 
 # Self-test check: Font & Asian IME Preservation Filter Logic (Phase 6, 8, 9)
 function Test-Nano11SelfCheck13FontImePreservation {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param()
     $imeFontPass = $false
     $imeFontMsg = ""
     try {
@@ -508,7 +508,7 @@ function Test-Nano11SelfCheck13FontImePreservation {
 
 # Self-test check: Workspace Preservation & Mount Cleanup Guard
 function Test-Nano11SelfCheck14WorkspacePreservation {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param()
     $preserveTestPass = $false
     $preserveTestMsg = ""
     try {
@@ -538,7 +538,7 @@ function Test-Nano11SelfCheck14WorkspacePreservation {
 
 # Self-test check: WinSxS & AppX Safety Protection Guards (Hardlinks, 24H2 LCU, System Whitelist)
 function Test-Nano11SelfCheck15WinSxsAppxGuards {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param()
     $safetyExtPass = $false
     $safetyExtMsg = ""
     try {
@@ -594,7 +594,7 @@ function Test-Nano11SelfCheck15WinSxsAppxGuards {
 
 # Self-test check: WIM Self-Healing & Stream Diagnostics Suite
 function Test-Nano11SelfCheck16WimSelfHealing {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param()
     $wimRepairPass = $false
     $wimRepairMsg = ""
     try {
@@ -626,7 +626,7 @@ function Test-Nano11SelfCheck16WimSelfHealing {
 
 # Self-test check: Atomic File I/O Resilience (Write-Nano11TextFileAtomic)
 function Test-Nano11SelfCheck17AtomicFileIO {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param()
     $atomicPass = $false
     $atomicMsg = ""
     try {
@@ -659,7 +659,7 @@ function Test-Nano11SelfCheck17AtomicFileIO {
 
 # Self-test check: Configuration Conflict Matrix & Auto-Resolution (Test-Nano11ConfigConflicts)
 function Test-Nano11SelfCheck18ConfigConflicts {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param()
     $conflictMatrixPass = $false
     $conflictMatrixMsg = ""
     try {
@@ -692,7 +692,7 @@ function Test-Nano11SelfCheck18ConfigConflicts {
 
 # Self-test check: Build Resume Integrity Verification (Test-Nano11ResumeIntegrity)
 function Test-Nano11SelfCheck19ResumeIntegrity {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param()
     $resumeIntegrityPass = $false
     $resumeIntegrityMsg = ""
     try {
@@ -742,7 +742,7 @@ function Test-Nano11SelfCheck19ResumeIntegrity {
 
 # Self-test check: Granular Tweak Coverage & Schema Alignment
 function Test-Nano11SelfCheck20TweakCoverage {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param([string]$ScriptRoot)
     $tweakCoveragePass = $false
     $tweakCoverageMsg = ""
     try {
@@ -776,7 +776,7 @@ function Test-Nano11SelfCheck20TweakCoverage {
 
 # Self-test check: Extension catalog files parse cleanly
 function Test-Nano11SelfCheck21ExtensionCatalogs {
-    param([string]$ScriptRoot, [string]$BuilderPath, [string]$UnattendPath)
+    param([string]$ScriptRoot)
     $catalogPass = $true
     $catalogMsg = ""
     $catalogFiles = @('config\dependencies.psd1','config\user\user-tweaks.psd1','tools\migrator\migration-rules.psd1','config\user\user-migration-rules.psd1')
@@ -815,27 +815,27 @@ function Invoke-Nano11SelfTest {
 
     $results = @()
 
-    $results += Test-Nano11SelfCheck01AstSyntax -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck02RegistrySafety -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck03UnattendSchema -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck04ProfilePresets -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck05ToolingAssets -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck06BatchTargets -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck07UnattendSingularity -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck08AppxPatterns -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck09HiveIsolation -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck10MountPathGeneration -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck11MountConflict -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck12MountSafety -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck13FontImePreservation -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck14WorkspacePreservation -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck15WinSxsAppxGuards -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck16WimSelfHealing -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck17AtomicFileIO -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck18ConfigConflicts -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck19ResumeIntegrity -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck20TweakCoverage -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
-    $results += Test-Nano11SelfCheck21ExtensionCatalogs -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck01AstSyntax -BuilderPath $BuilderPath | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck02RegistrySafety -BuilderPath $BuilderPath | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck03UnattendSchema -UnattendPath $UnattendPath | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck04ProfilePresets  | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck05ToolingAssets -ScriptRoot $ScriptRoot | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck06BatchTargets -ScriptRoot $ScriptRoot | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck07UnattendSingularity -ScriptRoot $ScriptRoot | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck08AppxPatterns  | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck09HiveIsolation  | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck10MountPathGeneration  | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck11MountConflict  | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck12MountSafety  | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck13FontImePreservation  | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck14WorkspacePreservation  | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck15WinSxsAppxGuards  | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck16WimSelfHealing  | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck17AtomicFileIO  | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck18ConfigConflicts  | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck19ResumeIntegrity  | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck20TweakCoverage -ScriptRoot $ScriptRoot | Select-Object -Last 1
+    $results += Test-Nano11SelfCheck21ExtensionCatalogs -ScriptRoot $ScriptRoot | Select-Object -Last 1
 
     # Display Results
     Write-Host ""
