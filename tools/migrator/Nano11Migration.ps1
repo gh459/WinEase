@@ -1,5 +1,5 @@
 ﻿# Nano11Migration.ps1 - PC migration / backup / restore engine for nano11
-# Dot-sourced by tools/Nano11-Migrator.ps1 (and the GUI migration tab) and by the test suite.
+# Dot-sourced by tools/migrator/Nano11-Migrator.ps1 (and the GUI migration tab) and by the test suite.
 # nano11builder.ps1 does NOT load this file. Depends on Test-Nano11PathWithin from
 # nano11helpers.ps1, so the caller must dot-source nano11helpers.ps1 first.
 
@@ -22,9 +22,20 @@ function Get-Nano11MigrationRules {
         [string]$BuiltInPath,
         [string]$UserPath
     )
-    $scriptDir = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { (Get-Location).Path }
-    if ([string]::IsNullOrWhiteSpace($BuiltInPath)) { $BuiltInPath = Join-Path -Path $scriptDir -ChildPath 'config\migration-rules.psd1' }
-    if ([string]::IsNullOrWhiteSpace($UserPath)) { $UserPath = Join-Path -Path $scriptDir -ChildPath 'config\user-migration-rules.psd1' }
+    # Repo layout: tools\migrator\ (this file + migration-rules.psd1) and <root>\config\user\user-migration-rules.psd1.
+    # ISO bundle: everything sits in this one folder.
+    $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+    if ([string]::IsNullOrWhiteSpace($BuiltInPath)) { $BuiltInPath = Join-Path -Path $scriptDir -ChildPath 'migration-rules.psd1' }
+    if ([string]::IsNullOrWhiteSpace($UserPath)) {
+        $repoRoot = Split-Path -Parent (Split-Path -Parent $scriptDir)
+        $helpersPath = if ($repoRoot) { Join-Path -Path $repoRoot -ChildPath 'nano11helpers.ps1' } else { $null }
+        if (-not (Get-Command -Name Resolve-Nano11UserConfigPath -ErrorAction SilentlyContinue) -and $helpersPath -and (Test-Path -LiteralPath $helpersPath)) { . $helpersPath }
+        if ((Get-Command -Name Resolve-Nano11UserConfigPath -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'config'))) {
+            $UserPath = Resolve-Nano11UserConfigPath -RepoRoot $repoRoot -Name 'user-migration-rules.psd1'
+        } else {
+            $UserPath = Join-Path -Path $scriptDir -ChildPath 'user-migration-rules.psd1'
+        }
+    }
 
     $gameRules = @()
     $appRules = @()

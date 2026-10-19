@@ -1922,3 +1922,24 @@ function Format-Nano11DependencyReport {
     return $sb.ToString().TrimEnd()
 }
 
+# Path of a user-editable config file. The new home is config\user\<Name>; a file left in the old config\<Name>
+# is still used when the new one is absent, with a one-time warning per file.
+function Resolve-Nano11UserConfigPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$RepoRoot,
+        [Parameter(Mandatory=$true)][string]$Name
+    )
+    $newPath = Join-Path -Path (Join-Path -Path $RepoRoot -ChildPath 'config\user') -ChildPath $Name
+    if (Test-Path -LiteralPath $newPath) { return $newPath }
+    $oldPath = Join-Path -Path (Join-Path -Path $RepoRoot -ChildPath 'config') -ChildPath $Name
+    if (Test-Path -LiteralPath $oldPath) {
+        if ($null -eq $script:Nano11LegacyConfigWarned) { $script:Nano11LegacyConfigWarned = @{} }
+        if (-not $script:Nano11LegacyConfigWarned.ContainsKey($Name)) {
+            $script:Nano11LegacyConfigWarned[$Name] = $true
+            Write-Warning "Using '$oldPath' from the old location. Move it to '$newPath'."
+        }
+        return $oldPath
+    }
+    return $newPath
+}

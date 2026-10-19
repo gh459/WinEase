@@ -701,6 +701,30 @@ function Get-Nano11GuiMigrationFolderMap {
     return $map
 }
 
+# Loads the migration engine (tools\migrator) on first use and fills the rule list. Called once from Tab 8.
+function Initialize-Nano11GuiMigrationRules {
+    param($List)
+    $migRuleRows = @()
+    $migRuleIds = @()
+    try {
+        . (Join-Path $script:Nano11GuiRepoRoot 'tools\migrator\Nano11Migration.ps1')
+        $migRulesData = Get-Nano11MigrationRules
+        foreach ($r in (@($migRulesData.GameRules) + @($migRulesData.AppConfigRules))) {
+            if (-not $r -or -not $r.Id) { continue }
+            $migRuleRows += "$($r.Id) - $($r.Name)"
+            $migRuleIds += [string]$r.Id
+        }
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    if ($migRuleRows.Count -eq 0) {
+        # Placeholder row only: the list is disabled so it can never be checked or passed as a rule Id
+        [void]$List.Items.Add("No migration rules found")
+        $List.Enabled = $false
+    } else {
+        foreach ($row in $migRuleRows) { [void]$List.Items.Add($row) }
+    }
+    $List.Tag = $migRuleIds
+}
+
 # Ids of the checked migration rules. The list holds display rows only; the Ids live in its Tag.
 function Get-Nano11GuiMigrationRuleIds {
     param([hashtable]$Gui)
@@ -739,7 +763,7 @@ function Get-Nano11GuiRecoveryReadiness {
     return Test-Nano11RecoveryReadiness -Config $draft
 }
 
-# Runs lib\Nano11Migration.ps1 code in a background job while the window keeps repainting.
+# Runs tools\migrator\Nano11Migration.ps1 code in a background job while the window keeps repainting.
 # -Script is the text of a script block that takes one parameter (the hashtable in -Arguments).
 # Errors written to the job's error stream are returned even when the job itself completed.
 function Invoke-Nano11GuiMigrationJob {
@@ -747,7 +771,7 @@ function Invoke-Nano11GuiMigrationJob {
     $job = Start-Job -ScriptBlock {
         param($repoRoot, $inner, $jobArgs)
         Set-Location -LiteralPath $repoRoot
-        . (Join-Path $repoRoot 'lib\Nano11Migration.ps1')
+        . (Join-Path $repoRoot 'tools\migrator\Nano11Migration.ps1')
         & ([scriptblock]::Create($inner)) $jobArgs
     } -ArgumentList $RepoRoot, $Script, $Arguments
     while ($job.State -eq 'Running') {
@@ -1308,24 +1332,15 @@ function Show-Nano11GUI {
     $gui.MigFolders = New-Nano11CheckedList -Items $folderNames -Selected @('Documents', 'Desktop', 'Pictures') -X 10 -Y 20 -Width 390 -Height 100 -Parent $grpRules
     [void](New-Nano11Label -Text "Migration rules (games / app settings):" -X 10 -Y 126 -Width 390 -Height 18 -Parent $grpRules)
     $clbMig = New-Nano11CheckedList -Items @() -X 10 -Y 146 -Width 390 -Height 264 -Parent $grpRules
-    $migRuleRows = @()
-    $migRuleIds = @()
-    try {
-        $migRulesData = Get-Nano11MigrationRules
-        foreach ($r in (@($migRulesData.GameRules) + @($migRulesData.AppConfigRules))) {
-            if (-not $r -or -not $r.Id) { continue }
-            $migRuleRows += "$($r.Id) - $($r.Name)"
-            $migRuleIds += [string]$r.Id
-        }
-    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-    if ($migRuleRows.Count -eq 0) {
-        # Placeholder row only: the list is disabled so it can never be checked or passed as a rule Id
-        [void]$clbMig.Items.Add("No migration rules found")
-        $clbMig.Enabled = $false
-    } else {
-        foreach ($row in $migRuleRows) { [void]$clbMig.Items.Add($row) }
-    }
-    $clbMig.Tag = $migRuleIds
+    # Rules are filled in the first time this tab is opened (the migration engine is not loaded before that)
+    $clbMig.Tag = @()
+    $tabMigration.Tag = @{ Loaded = $false; List = $clbMig }
+    $tabMigration.Add_Enter({
+        $st = $this.Tag
+        if ($st.Loaded) { return }
+        $st.Loaded = $true
+        Initialize-Nano11GuiMigrationRules -List $st.List
+    })
     $gui.MigRulesList = $clbMig
 
     # Right: Action buttons
@@ -1369,7 +1384,7 @@ function Show-Nano11GUI {
     [void](New-Nano11Button -Text "Open Migration Wizard" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
         $g = $this.FindForm().Tag
         $repoRoot = $script:Nano11GuiRepoRoot
-        $migratorPath = Join-Path $repoRoot "tools\Nano11-Migrator.ps1"
+        $migratorPath = Join-Path $repoRoot "tools\migrator\Nano11-Migrator.ps1"
         if (Test-Path -LiteralPath $migratorPath) {
             try {
                 $root = Get-Nano11GuiMigrationRoot -Gui $g
@@ -1524,7 +1539,7 @@ function Show-Nano11GUI {
         }
     })
 
-    # User Extensions & Custom Scripts card: what config\user-tweaks.psd1 loaded (set by the builder)
+    # User Extensions & Custom Scripts card: what config\user\user-tweaks.psd1 loaded (set by the builder)
     $grpExt = New-Nano11GroupBox -Text " User Extensions & Custom Scripts " -Width 840 -Height 110 -Parent $flowMig
     $extRes = $script:UserExtensionsResult
     $extErrors = @()
@@ -1550,7 +1565,7 @@ function Show-Nano11GUI {
     # TAB 9: user-defined switches whose Category has no tab above (System / Gaming / UserCustom ...)
     # =========================================================================
     $builtinTabCategories = @('Security', 'Privacy', 'Performance', 'UI')
-    $pageUser = New-Nano11ToggleTab -Text " 9. User Tweaks " -TabControl $tabControl -Caption "User-defined switches (config\user-tweaks.psd1)"
+    $pageUser = New-Nano11ToggleTab -Text " 9. User Tweaks " -TabControl $tabControl -Caption "User-defined switches (config\user\user-tweaks.psd1)"
     $userTweakCount = 0
     foreach ($tk in $script:AllTweakDefs.Keys) {
         $def = $script:AllTweakDefs[$tk]

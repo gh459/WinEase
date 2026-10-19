@@ -1062,25 +1062,26 @@ exit 0
     $buildInfoJson | Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "nano11-build-info.json") -Encoding utf8
 }
 
-# Bundle Custom Post-Install Scripts if provided in tools\custom-scripts
+# Bundle Custom Post-Install Scripts if provided in tools\custom-scripts (FirstLogon\ and the older top-level files
+# run at first logon; UserOnce\ and the older user\ folder run as the user)
 $customScriptsDir = Join-Path -Path $scriptDir -ChildPath "tools\custom-scripts"
 if (Test-Path -LiteralPath $customScriptsDir) {
     $targetCustomDir = Join-Path -Path $scratchDir -ChildPath "Windows\Setup\Scripts\Custom"
     New-Item -Path $targetCustomDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
     $customManifest = [ordered]@{}
-    Get-ChildItem -Path $customScriptsDir -File | Where-Object { $_.Name -ne "README.md" } | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination $targetCustomDir -Force -ErrorAction SilentlyContinue
-        $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
-        $customManifest[$_.Name] = $hash
+    foreach ($f in @(Get-Nano11CustomScriptFiles -RepoRoot $scriptDir -Stage 'FirstLogon' -IncludeLegacy)) {
+        Copy-Item -LiteralPath $f.FullName -Destination $targetCustomDir -Force -ErrorAction SilentlyContinue
+        $hash = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash
+        $customManifest[$f.Name] = $hash
     }
-    $userScriptsDir = Join-Path -Path $customScriptsDir -ChildPath "user"
-    if (Test-Path -LiteralPath $userScriptsDir) {
+    $userFiles = @(Get-Nano11CustomScriptFiles -RepoRoot $scriptDir -Stage 'UserOnce' -IncludeLegacy)
+    if ($userFiles.Count -gt 0) {
         $targetUserDir = Join-Path -Path $scratchDir -ChildPath "Windows\Setup\Scripts\UserCustom"
         New-Item -Path $targetUserDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-        Get-ChildItem -Path $userScriptsDir -File | Where-Object { $_.Name -ne "README.md" } | ForEach-Object {
-            Copy-Item -LiteralPath $_.FullName -Destination $targetUserDir -Force -ErrorAction SilentlyContinue
-            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
-            $customManifest["user/$($_.Name)"] = $hash
+        foreach ($f in $userFiles) {
+            Copy-Item -LiteralPath $f.FullName -Destination $targetUserDir -Force -ErrorAction SilentlyContinue
+            $hash = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash
+            $customManifest["user/$($f.Name)"] = $hash
         }
     }
     if ($customManifest.Count -gt 0) {
@@ -1645,10 +1646,10 @@ try {
 if ($includeMigrationAssistant -eq $true) {
     try {
         $migrationFiles = @(
-            'tools\Nano11-Migrator.ps1',
-            'lib\Nano11Migration.ps1',
-            'config\migration-rules.psd1',
-            'config\user-migration-rules.psd1'
+            'tools\migrator\Nano11-Migrator.ps1',
+            'tools\migrator\Nano11Migration.ps1',
+            'tools\migrator\migration-rules.psd1',
+            'config\user\user-migration-rules.psd1'
         )
         $migrationDestDir = Join-Path -Path $scratchDir -ChildPath 'Windows\Setup\Scripts\Migration'
         $migrationDesktopDir = Join-Path -Path $scratchDir -ChildPath 'Users\Public\Desktop'
@@ -1666,6 +1667,7 @@ if ($includeMigrationAssistant -eq $true) {
             New-Item -ItemType Directory -Path $migrationDesktopDir -Force | Out-Null
             foreach ($mf in $migrationFiles) {
                 $mfSrc = Join-Path -Path $scriptDir -ChildPath $mf
+                if ((Split-Path -Path $mf -Leaf) -eq 'user-migration-rules.psd1') { $mfSrc = Resolve-Nano11UserConfigPath -RepoRoot $scriptDir -Name 'user-migration-rules.psd1' }
                 if (Test-Path -LiteralPath $mfSrc) {
                     Copy-Item -LiteralPath $mfSrc -Destination (Join-Path -Path $migrationDestDir -ChildPath (Split-Path -Path $mf -Leaf)) -Force
                 } else {

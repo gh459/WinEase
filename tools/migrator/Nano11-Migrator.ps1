@@ -54,26 +54,26 @@ $script:MigratorToolPath = $MyInvocation.MyCommand.Path
 $script:MigratorDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 $script:DefaultPackagePath = Join-Path -Path ([Environment]::GetFolderPath('MyDocuments')) -ChildPath 'nano11_migration_backup'
 
-# Repository layout: <root>\tools + <root>\lib + <root>\config. ISO bundle: everything in this folder.
+# Repository layout: <root>\tools\migrator (this script, engine, rules) + <root>\config\user (user rules) + <root>\nano11helpers.ps1.
+# ISO bundle: everything in this folder.
 function Find-Nano11MigratorFile {
     param([string[]]$Candidates)
     foreach ($c in $Candidates) { if (Test-Path -LiteralPath $c) { return $c } }
     return $null
 }
-$script:MigratorParent = Split-Path -Parent $script:MigratorDir
+$script:MigratorParent = Split-Path -Parent (Split-Path -Parent $script:MigratorDir)
 $script:HelpersPath = Find-Nano11MigratorFile @(
     (Join-Path $script:MigratorParent 'nano11helpers.ps1'), (Join-Path $script:MigratorDir 'nano11helpers.ps1'))
-$script:LibPath = Find-Nano11MigratorFile @(
-    (Join-Path $script:MigratorParent 'lib\Nano11Migration.ps1'), (Join-Path $script:MigratorDir 'Nano11Migration.ps1'),
-    (Join-Path $script:MigratorDir 'lib\Nano11Migration.ps1'))
-$script:RulesPath = Find-Nano11MigratorFile @(
-    (Join-Path $script:MigratorParent 'config\migration-rules.psd1'), (Join-Path $script:MigratorDir 'config\migration-rules.psd1'),
-    (Join-Path $script:MigratorDir 'migration-rules.psd1'))
-$script:UserRulesPath = Find-Nano11MigratorFile @(
-    (Join-Path $script:MigratorParent 'config\user-migration-rules.psd1'), (Join-Path $script:MigratorDir 'config\user-migration-rules.psd1'),
-    (Join-Path $script:MigratorDir 'user-migration-rules.psd1'))
-if (-not $script:LibPath) { throw "Nano11Migration.ps1 not found next to or above '$script:MigratorDir'." }
+$script:LibPath = Find-Nano11MigratorFile @((Join-Path $script:MigratorDir 'Nano11Migration.ps1'))
+$script:RulesPath = Find-Nano11MigratorFile @((Join-Path $script:MigratorDir 'migration-rules.psd1'))
+$script:UserRulesPath = Find-Nano11MigratorFile @((Join-Path $script:MigratorDir 'user-migration-rules.psd1'))
+if (-not $script:LibPath) { throw "Nano11Migration.ps1 not found next to '$script:MigratorDir'." }
 if ($script:HelpersPath) { . $script:HelpersPath }
+# Repo checkout: user rules live in config\user (an old config\ copy still works, with a warning)
+if (-not $script:UserRulesPath -and (Get-Command -Name Resolve-Nano11UserConfigPath -ErrorAction SilentlyContinue)) {
+    $ur = Resolve-Nano11UserConfigPath -RepoRoot $script:MigratorParent -Name 'user-migration-rules.psd1'
+    if (Test-Path -LiteralPath $ur) { $script:UserRulesPath = $ur }
+}
 . $script:LibPath
 
 function Get-MigratorRules {

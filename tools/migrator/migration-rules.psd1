@@ -58,7 +58,7 @@
     )
 
     # 4.6 Custom path rules (user-defined arbitrary file/folder backup)
-    # Users can add their own paths here or in config/user-migration-rules.psd1
+    # Users can add their own paths here or in config/user/user-migration-rules.psd1
     CustomPathRules = @(
         # Example: back up a custom folder preserving directory structure
         # @{

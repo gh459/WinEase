@@ -37,11 +37,11 @@
     }
 
     # Custom scripts (optional). Each runs at the specified stage.
-    # Alternatively, drop scripts into scripts/custom/<Stage>/*.ps1 for auto-detection.
+    # Alternatively, drop scripts into tools/custom-scripts/<Stage>/*.ps1 for auto-detection.
     CustomScripts = @(
         # @{
         #     Id          = 'SamplePreBuildCheck'
-        #     Path        = 'scripts\custom\PreBuild\01-sample-check.ps1'
+        #     Path        = 'tools\custom-scripts\PreBuild\01-sample-check.ps1'
         #     Stage       = 'PreBuild'     # 'PreBuild' | 'OfflineImage' | 'FirstLogon' | 'UserOnce'
         #     Order       = 100
         #     Condition   = ''             # empty = always; or a Tweak key name

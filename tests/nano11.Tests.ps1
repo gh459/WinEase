@@ -1000,7 +1000,7 @@ if (-not (Get-Command -Name Import-Nano11UserExtensions -ErrorAction SilentlyCon
     . (Join-Path -Path $script:RepoRoot -ChildPath "lib\Nano11Extensions.ps1")
 }
 if (-not (Get-Command -Name Test-Nano11RecoveryReadiness -ErrorAction SilentlyContinue)) {
-    . (Join-Path -Path $script:RepoRoot -ChildPath "lib\Nano11Migration.ps1")
+    . (Join-Path -Path $script:RepoRoot -ChildPath "tools\migrator\Nano11Migration.ps1")
 }
 
 Describe "User Extensibility Engine (lib/Nano11Extensions.ps1)" {
@@ -1009,7 +1009,7 @@ Describe "User Extensibility Engine (lib/Nano11Extensions.ps1)" {
         $r.Loaded | Should Be $false
     }
     It "Import-Nano11UserExtensions loads valid user-tweaks.psd1" {
-        $r = Import-Nano11UserExtensions -ConfigPath (Join-Path $script:RepoRoot "config\user-tweaks.psd1")
+        $r = Import-Nano11UserExtensions -ConfigPath (Join-Path $script:RepoRoot "config\user\user-tweaks.psd1")
         $r.Loaded | Should Be $true
         $r.Errors.Count | Should Be 0
     }
@@ -1041,10 +1041,10 @@ Describe "User Extensibility Engine (lib/Nano11Extensions.ps1)" {
 
 # --- PC Migration & Backup Engine tests (M3) ---
 if (-not (Get-Command -Name Get-Nano11MigrationRules -ErrorAction SilentlyContinue)) {
-    . (Join-Path -Path $script:RepoRoot -ChildPath "lib\Nano11Migration.ps1")
+    . (Join-Path -Path $script:RepoRoot -ChildPath "tools\migrator\Nano11Migration.ps1")
 }
 
-Describe "PC Migration & Backup Engine (lib/Nano11Migration.ps1)" {
+Describe "PC Migration & Backup Engine (tools/migrator/Nano11Migration.ps1)" {
     It "Get-Nano11MigrationRules loads standard rules" {
         $rules = Get-Nano11MigrationRules
         $rules.GameRules.Count | Should BeGreaterThan 0
@@ -1149,11 +1149,11 @@ Describe "S1 - user extensions survive -PresetsOnly re-import" {
         $script:BuiltInPresets.Contains('S1Preset') | Should Be $true
         Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
     }
-    It "dot-sources Nano11Extensions.ps1 and Nano11Migration.ps1 once each in the builder" {
+    It "dot-sources Nano11Extensions.ps1 once in the builder (the migration engine is not part of the ISO build)" {
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$null, [ref]$null)
         $cmds = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.InvocationOperator -eq 'Dot' }, $true)
         $text = @($cmds | ForEach-Object { $_.Extent.Text })
-        foreach ($name in 'Nano11Extensions.ps1', 'Nano11Migration.ps1') {
+        foreach ($name in 'Nano11Extensions.ps1') {
             $assigns = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Right.Extent.Text -like "*$name*" }, $true))
             $assigns.Count | Should Be 1
             $var = $assigns[0].Left.VariablePath.UserPath
@@ -1237,13 +1237,13 @@ Describe "nano11 dependency checker S2 additions" {
 
 
 # --- S3: migration engine (task-based restore, report, BackupRoot guard) ---
-Describe "Migration engine S3 (lib/Nano11Migration.ps1)" {
+Describe "Migration engine S3 (tools/migrator/Nano11Migration.ps1)" {
     BeforeAll {
         if (-not (Get-Command -Name Test-Nano11PathWithin -ErrorAction SilentlyContinue)) {
             . (Join-Path -Path $script:RepoRoot -ChildPath "nano11helpers.ps1")
         }
         if (-not (Get-Command -Name Start-Nano11MigrationRestore -ErrorAction SilentlyContinue)) {
-            . (Join-Path -Path $script:RepoRoot -ChildPath "lib\Nano11Migration.ps1")
+            . (Join-Path -Path $script:RepoRoot -ChildPath "tools\migrator\Nano11Migration.ps1")
         }
     }
 
@@ -1348,7 +1348,7 @@ Describe "S4 builder hooks (ComparePreset / PreBuild / OfflineImage)" {
     }
     It "phases/11-unattend.ps1 calls the OfflineImage stage exactly once, before FirstLogon" {
         ([regex]::Matches($s4Unattend, "-Stage 'OfflineImage'")).Count | Should Be 1
-        $s4Unattend.IndexOf("-Stage 'OfflineImage'") | Should BeLessThan $s4Unattend.IndexOf("-Stage 'FirstLogon'")
+        $s4Unattend.IndexOf("-Stage 'OfflineImage'") | Should BeLessThan $s4Unattend.IndexOf("Invoke-Nano11CustomScriptsStage -Stage 'FirstLogon'")
     }
     It "builder runs the PreBuild stage and the recovery readiness check" {
         $s4Text.Contains("-Stage 'PreBuild'") | Should Be $true
@@ -1362,9 +1362,9 @@ Describe "S4 builder hooks (ComparePreset / PreBuild / OfflineImage)" {
 }
 
 
-Describe "Migrator tool S6 (tools/Nano11-Migrator.ps1)" {
+Describe "Migrator tool S6 (tools/migrator/Nano11-Migrator.ps1)" {
     BeforeAll {
-        $script:S6Tool = Join-Path -Path $script:RepoRoot -ChildPath "tools\Nano11-Migrator.ps1"
+        $script:S6Tool = Join-Path -Path $script:RepoRoot -ChildPath "tools\migrator\Nano11-Migrator.ps1"
         $script:S6Ast = [System.Management.Automation.Language.Parser]::ParseFile($script:S6Tool, [ref]$null, [ref]$null)
         $script:S6Params = $script:S6Ast.ParamBlock.Parameters
     }
@@ -1502,7 +1502,7 @@ Describe "S5: Migration Assistant bundling" {
     }
 
     It "the phase targets the four files and the launcher" {
-        foreach ($f in 'tools\Nano11-Migrator.ps1', 'lib\Nano11Migration.ps1', 'config\migration-rules.psd1', 'config\user-migration-rules.psd1', 'Launch-MigrationAssistant.cmd', 'Windows\Setup\Scripts\Migration', 'Users\Public\Desktop') {
+        foreach ($f in 'tools\migrator\Nano11-Migrator.ps1', 'tools\migrator\Nano11Migration.ps1', 'tools\migrator\migration-rules.psd1', 'config\user\user-migration-rules.psd1', 'Launch-MigrationAssistant.cmd', 'Windows\Setup\Scripts\Migration', 'Users\Public\Desktop') {
             $s5Text.Contains($f) | Should Be $true
         }
     }
@@ -1593,5 +1593,78 @@ Describe "S8 - GUI user extensions tab and Preset Diff" {
             @($all | Where-Object { $_ -is [System.Windows.Forms.Button] -and $_.Text -eq 'Open Extensibility Guide' }).Count | Should Be 1
             Test-Path -LiteralPath (Join-Path $script:RepoRoot 'docs\EXTENSIBILITY_GUIDE.md') | Should Be $true
         } finally { $gui.Form.Dispose() }
+    }
+}
+
+Describe "Folder structure S9" {
+    BeforeAll {
+        $script:S9Root = $script:RepoRoot
+        . (Join-Path -Path $script:S9Root -ChildPath "nano11helpers.ps1")
+        . (Join-Path -Path $script:S9Root -ChildPath "lib\Nano11Extensions.ps1")
+    }
+    It "migrator files live under tools/migrator and the old paths are gone" {
+        foreach ($f in 'Nano11Migration.ps1', 'Nano11-Migrator.ps1', 'migration-rules.psd1') {
+            Test-Path -LiteralPath (Join-Path $script:S9Root "tools\migrator\$f") | Should Be $true
+        }
+        Test-Path -LiteralPath (Join-Path $script:S9Root "lib\Nano11Migration.ps1") | Should Be $false
+        Test-Path -LiteralPath (Join-Path $script:S9Root "tools\Nano11-Migrator.ps1") | Should Be $false
+        Test-Path -LiteralPath (Join-Path $script:S9Root "config\migration-rules.psd1") | Should Be $false
+    }
+    It "user config files live under config/user" {
+        Test-Path -LiteralPath (Join-Path $script:S9Root "config\user\user-tweaks.psd1") | Should Be $true
+        Test-Path -LiteralPath (Join-Path $script:S9Root "config\user\user-migration-rules.psd1") | Should Be $true
+        Test-Path -LiteralPath (Join-Path $script:S9Root "config\user-tweaks.psd1") | Should Be $false
+    }
+    It "the builder does not load the migration engine" {
+        $text = [System.IO.File]::ReadAllText($script:BuilderPath)
+        $text.Contains('Nano11Migration.ps1') | Should Be $false
+    }
+    It "the GUI loads the migration engine from tools/migrator, and only inside a function" {
+        $gui = Join-Path $script:S9Root "gui\Nano11Gui.ps1"
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($gui, [ref]$null, [ref]$null)
+        $hits = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.InvocationOperator -eq 'Dot' -and $n.Extent.Text -like '*Nano11Migration.ps1*' }, $true))
+        $hits.Count | Should Be 2
+        foreach ($h in $hits) {
+            $h.Extent.Text.Contains('tools\migrator\Nano11Migration.ps1') | Should Be $true
+            $fn = $h.Parent
+            while ($fn -and $fn -isnot [System.Management.Automation.Language.FunctionDefinitionAst] -and $fn -isnot [System.Management.Automation.Language.ScriptBlockExpressionAst]) { $fn = $fn.Parent }
+            ($null -ne $fn) | Should Be $true
+        }
+    }
+    It "Resolve-Nano11UserConfigPath prefers config/user, falls back to config with one warning" {
+        $root = Join-Path $TestDrive 'repo'
+        New-Item -ItemType Directory -Path (Join-Path $root 'config') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $root 'config\user-tweaks.psd1') -Value '@{}'
+        $script:Nano11LegacyConfigWarned = $null
+        $first = Resolve-Nano11UserConfigPath -RepoRoot $root -Name 'user-tweaks.psd1' -WarningVariable w1 -WarningAction SilentlyContinue
+        [void](Resolve-Nano11UserConfigPath -RepoRoot $root -Name 'user-tweaks.psd1' -WarningVariable w2 -WarningAction SilentlyContinue)
+        $first | Should Be (Join-Path $root 'config\user-tweaks.psd1')
+        @($w1).Count | Should Be 1
+        @($w2).Count | Should Be 0
+        New-Item -ItemType Directory -Path (Join-Path $root 'config\user') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $root 'config\user\user-tweaks.psd1') -Value '@{}'
+        Resolve-Nano11UserConfigPath -RepoRoot $root -Name 'user-tweaks.psd1' | Should Be (Join-Path $root 'config\user\user-tweaks.psd1')
+    }
+    It "Get-Nano11CustomScriptFiles maps stage folders and the older layout" {
+        $root = Join-Path $TestDrive 'cs'
+        $base = Join-Path $root 'tools\custom-scripts'
+        foreach ($d in 'FirstLogon', 'UserOnce', 'user', 'PreBuild') { New-Item -ItemType Directory -Path (Join-Path $base $d) -Force | Out-Null }
+        foreach ($f in 'a.ps1', 'README.md', 'FirstLogon\b.ps1', 'FirstLogon\.gitkeep', 'user\c.ps1', 'UserOnce\d.ps1', 'PreBuild\e.ps1') { Set-Content -LiteralPath (Join-Path $base $f) -Value 'x' }
+        $names = { param($st, $legacy) @(Get-Nano11CustomScriptFiles -RepoRoot $root -Stage $st -IncludeLegacy:$legacy | ForEach-Object { $_.Name } | Sort-Object) -join ',' }
+        (& $names 'FirstLogon' $false) | Should Be 'b.ps1'
+        (& $names 'FirstLogon' $true) | Should Be 'a.ps1,b.ps1'
+        (& $names 'UserOnce' $true) | Should Be 'c.ps1,d.ps1'
+        (& $names 'PreBuild' $false) | Should Be 'e.ps1'
+        (& $names 'OfflineImage' $true) | Should Be ''
+    }
+    It "scripts/custom is not used and every stage folder under tools/custom-scripts has a .gitkeep" {
+        Test-Path -LiteralPath (Join-Path $script:S9Root "scripts\custom") | Should Be $false
+        foreach ($st in 'PreBuild', 'OfflineImage', 'FirstLogon', 'UserOnce') {
+            Test-Path -LiteralPath (Join-Path $script:S9Root "tools\custom-scripts\$st\.gitkeep") | Should Be $true
+        }
+    }
+    It "nano11_report.html is ignored by git and templates/report.html remains" {
+        ([System.IO.File]::ReadAllText((Join-Path $script:S9Root ".gitignore")) -split "`r?`n") -contains 'nano11_report.html' | Should Be $true
+        Test-Path -LiteralPath (Join-Path $script:S9Root "templates\report.html") | Should Be $true
     }
 }

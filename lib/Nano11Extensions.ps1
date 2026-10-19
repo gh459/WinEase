@@ -19,8 +19,8 @@ function Import-Nano11UserExtensions {
     $errors = @()
 
     if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
-        $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
-        $ConfigPath = Join-Path -Path $scriptDir -ChildPath 'config\user-tweaks.psd1'
+        $scriptDir = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { (Get-Location).Path }
+        $ConfigPath = Resolve-Nano11UserConfigPath -RepoRoot $scriptDir -Name 'user-tweaks.psd1'
     }
 
     if (-not (Test-Path -LiteralPath $ConfigPath)) {
@@ -215,6 +215,30 @@ function Get-Nano11CustomScriptMetadata {
     return $meta
 }
 
+# Custom script locator shared by the stage runner and the ISO bundler. Layout: tools\custom-scripts\<Stage>\
+# (PreBuild / OfflineImage / FirstLogon / UserOnce). With -IncludeLegacy, files directly in tools\custom-scripts
+# count as FirstLogon and tools\custom-scripts\user as UserOnce (the older layout).
+function Get-Nano11CustomScriptFiles {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$RepoRoot,
+        [Parameter(Mandatory=$true)][ValidateSet('PreBuild','OfflineImage','FirstLogon','UserOnce')][string]$Stage,
+        [switch]$IncludeLegacy
+    )
+    $base = Join-Path -Path $RepoRoot -ChildPath 'tools\custom-scripts'
+    $dirs = @(Join-Path -Path $base -ChildPath $Stage)
+    if ($IncludeLegacy) {
+        if ($Stage -eq 'FirstLogon') { $dirs += $base }
+        elseif ($Stage -eq 'UserOnce') { $dirs += (Join-Path -Path $base -ChildPath 'user') }
+    }
+    $found = @()
+    foreach ($d in $dirs) {
+        if (-not (Test-Path -LiteralPath $d)) { continue }
+        $found += @(Get-ChildItem -LiteralPath $d -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ne 'README.md' -and $_.Name -ne '.gitkeep' })
+    }
+    return $found
+}
 # 4. Invoke-Nano11CustomScriptsStage
 function Invoke-Nano11CustomScriptsStage {
     [CmdletBinding()]
@@ -238,17 +262,13 @@ function Invoke-Nano11CustomScriptsStage {
         }
     }
 
-    # Auto-detect scripts in scripts/custom/<Stage>/
+    # Auto-detect scripts in tools/custom-scripts/<Stage>/
     $scriptDir = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { (Get-Location).Path }
-    $autoDir = Join-Path -Path $scriptDir -ChildPath "scripts\custom\$Stage"
-    if (Test-Path -LiteralPath $autoDir) {
-        Get-ChildItem -LiteralPath $autoDir -Filter '*.ps1' -File -ErrorAction SilentlyContinue | ForEach-Object {
-            $meta = Get-Nano11CustomScriptMetadata -ScriptPath $_.FullName
-            if (-not $meta.Stage) { $meta.Stage = $Stage }
-            if ($meta.Stage -eq $Stage) { $candidates += $meta }
-        }
+    foreach ($f in @(Get-Nano11CustomScriptFiles -RepoRoot $scriptDir -Stage $Stage | Where-Object { $_.Extension -eq '.ps1' })) {
+        $meta = Get-Nano11CustomScriptMetadata -ScriptPath $f.FullName
+        if (-not $meta.Stage) { $meta.Stage = $Stage }
+        if ($meta.Stage -eq $Stage) { $candidates += $meta }
     }
-
     # Sort by Order then filename
     $sorted = $candidates | Sort-Object -Property @{ Expression = { if ($_.Order) { [int]$_.Order } else { 100 } } }, @{ Expression = { [string]$_.Path } }
 

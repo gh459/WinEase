@@ -740,7 +740,7 @@ function Invoke-Nano11SelfTest {
     # 21. Extension catalog files parse cleanly
     $catalogPass = $true
     $catalogMsg = ""
-    $catalogFiles = @('config\dependencies.psd1','config\user-tweaks.psd1','config\migration-rules.psd1','config\user-migration-rules.psd1')
+    $catalogFiles = @('config\dependencies.psd1','config\user\user-tweaks.psd1','tools\migrator\migration-rules.psd1','config\user\user-migration-rules.psd1')
     foreach ($cf in $catalogFiles) {
         $cp = Join-Path -Path $ScriptRoot -ChildPath $cf
         if (Test-Path -LiteralPath $cp) {

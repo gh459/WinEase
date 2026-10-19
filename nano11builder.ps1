@@ -281,11 +281,9 @@ if (Test-Path -LiteralPath $helperModuleEarly) {
 } else {
     throw "Required helper module not found: $helperModuleEarly"
 }
-# M2/M3: dot-source extension and migration modules early (functions needed before AllTweakDefs init)
+# M2: dot-source the extension module early (functions needed before AllTweakDefs init); the PC migration engine lives in tools\migrator and is not part of the ISO build
 $extModuleEarly = Join-Path -Path $scriptDirEarly -ChildPath "lib\Nano11Extensions.ps1"
 if (Test-Path -LiteralPath $extModuleEarly) { . $extModuleEarly }
-$migModuleEarly = Join-Path -Path $scriptDirEarly -ChildPath "lib\Nano11Migration.ps1"
-if (Test-Path -LiteralPath $migModuleEarly) { . $migModuleEarly }
 
 # Normalize -TweakGroupOverrides to a hashtable of [bool]
 if ($null -ne $TweakGroupOverrides -and $TweakGroupOverrides -isnot [System.Collections.IDictionary]) {

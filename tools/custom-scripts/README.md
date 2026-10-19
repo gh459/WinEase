@@ -7,16 +7,19 @@ Place custom automation scripts in this folder and they will be executed during 
 To ensure minimum necessary privileges (Principle of Least Privilege), scripts are segregated into two distinct contexts:
 
 ### 1. Elevated Administrator Context (`tools/custom-scripts/`)
-- **Location**: Put scripts directly into `tools/custom-scripts/`.
+- **Location**: Put scripts into `tools/custom-scripts/FirstLogon/` (scripts placed directly in `tools/custom-scripts/` are still treated as FirstLogon).
 - **Timing**: Executed sequentially at first logon via `FirstLogon.ps1` with **Full Administrator Privileges**.
 - **Use for**: System-level drivers, Windows services, scheduled tasks, firewall rules, machine-wide software installation.
 - **Log**: `C:\ProgramData\nano11\Logs\custom-scripts.log`.
 
-### 2. Standard User Context (`tools/custom-scripts/user/`)
-- **Location**: Put scripts inside the subfolder `tools/custom-scripts/user/`.
+### 2. Standard User Context (`tools/custom-scripts/UserOnce/`)
+- **Location**: Put scripts inside `tools/custom-scripts/UserOnce/` (the older `tools/custom-scripts/user/` folder is still treated as UserOnce).
 - **Timing**: Executed after the user profile is initialized via `UserOnce.ps1` with **Standard Non-Elevated User Rights**.
 - **Use for**: Per-user configurations, desktop shortcuts, taskbar pins, user environment variables, user registry keys (`HKCU`).
 - **Log**: `%TEMP%\UserOnce-custom.log`.
+
+### 3. Build-time stages
+- `tools/custom-scripts/PreBuild/` and `tools/custom-scripts/OfflineImage/` hold `.ps1` scripts that run on the build machine before the build / against the mounted image.
 
 ---
 

@@ -417,8 +417,8 @@ This working copy carries the following changes on top of the upstream fork:
 - **Toggle-state loading fixed**: GUI initialization called `ContainsKey` on `[ordered]@{}` (not implemented in Windows PowerShell 5.1), which logged 122 method-not-found errors per launch and left the per-tweak values saved in profiles unapplied; the GUI loader and Phase 10's `Test-TweakEnabled` now use `Contains`.
 - **Build verification (2026-10-19)**: a full GUI-driven run completed the pipeline with "Build succeeded and safety checks passed" and produced `nano11.iso` (7,888,314,368 bytes).
 - **Dependency & impact checker (M1)**: `config/dependencies.psd1` catalog (174 entries) with Conflicts/Impacts/Unknowns detection. GUI "Check Dependencies" button, `-StrictDependencyCheck` CLI switch, HTML report section.
-- **User extensibility engine (M2)**: `config/user-tweaks.psd1` + `lib/Nano11Extensions.ps1` (6 functions). User tweaks/presets/custom scripts integrated into GUI, CLI, profiles. GUI Tab 8 "Migration & Backup".
-- **PC migration & backup engine (M3)**: `config/migration-rules.psd1` (15 game + 16 app rules) + `lib/Nano11Migration.ps1` (13 functions). Custom file/folder backup preserving directory structure. `tools/Nano11-Migrator.ps1` standalone CLI/GUI wizard.
+- **User extensibility engine (M2)**: `config/user/user-tweaks.psd1` + `lib/Nano11Extensions.ps1` (6 functions). User tweaks/presets/custom scripts integrated into GUI, CLI, profiles. GUI Tab 8 "Migration & Backup".
+- **PC migration & backup engine (M3)**: `tools/migrator/migration-rules.psd1` (15 game + 16 app rules) + `tools/migrator/Nano11Migration.ps1` (13 functions). Custom file/folder backup preserving directory structure. `tools/migrator/Nano11-Migrator.ps1` standalone CLI/GUI wizard.
 - **Extensibility guide (M4)**: `docs/EXTENSIBILITY_GUIDE.md`.
 
 ---
@@ -437,7 +437,6 @@ nano11-main/
 │   ├── Nano11Resume.ps1       # Resume-ISO mode and phase checkpoints
 │   └── Nano11SelfTest.ps1     # Self-test suite (loaded only for -TestSelf)
 │   ├── Nano11Extensions.ps1   # User extensibility engine (user tweaks, presets, custom scripts, config diff, recovery readiness)
-│   └── Nano11Migration.ps1    # PC migration & backup engine (backup, restore, app inventory, migration rules)
 ├── gui/
 │   └── Nano11Gui.ps1          # WinForms GUI (loaded only for -GUI / menu [7])
 ├── autounattend.xml           # Unattended setup template (scripts injected at build time)
@@ -462,18 +461,20 @@ docs/                      # Documentation
 ├── config/
 │   ├── tweaks.psd1            # Single source of truth for every tweak/component setting and CLI switch pair
 │   ├── dependencies.psd1      # Dependency & feature-impact catalog (conflicts, impacts, unknowns)
-│   ├── user-tweaks.psd1       # User-defined tweaks, presets and custom scripts (optional)
-│   ├── migration-rules.psd1   # Standard PC migration rules (game saves, app configs, custom paths)
-│   ├── user-migration-rules.psd1  # User-defined migration rules (optional)
+│   ├── user/                  # User-edited files (all optional)
+│   │   ├── user-tweaks.psd1      # User-defined tweaks, presets and custom scripts
+│   │   └── user-migration-rules.psd1  # User-defined migration rules
 │   └── nano11.config.schema.json  # JSON Schema for profile validation
 ├── profiles/                  # Saved build profiles (JSON, incl. per-tweak TweakSettings)
 ├── tools/                     # Optional tooling
-│   ├── custom-scripts/        # User post-install scripts (executed at first logon)
-│   │   └── user/              # Scripts run in the standard user context
+│   ├── custom-scripts/        # User scripts by stage: PreBuild/ OfflineImage/ FirstLogon/ UserOnce/
 │   ├── nano11-physical-debloat/   # Rust tool for Advanced Debloat physical deletion
 │   ├── Measure-Nano11GuestBaseline.ps1  # In-guest footprint / idle load / boot-time measurement
 │   ├── Compare-Nano11Benchmarks.ps1     # Multi-run benchmark statistical comparison
-│   └── Nano11-Migrator.ps1    # Standalone PC migration & backup tool (CLI + GUI wizard)
+│   └── migrator/             # PC migration tool, separate from the ISO build (phase 11 bundles it into the ISO)
+│       ├── Nano11-Migrator.ps1    # Standalone PC migration & backup tool (CLI + GUI wizard)
+│       ├── Nano11Migration.ps1    # Migration engine (backup, restore, app inventory, rules)
+│       └── migration-rules.psd1   # Standard PC migration rules (game saves, app configs, custom paths)
 ├── tests/                     # Pester test suite
 │   └── nano11.Tests.ps1
 ├── .github/                   # CI/CD workflows
