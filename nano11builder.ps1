@@ -1208,16 +1208,6 @@ if (Test-Path -LiteralPath $helperModule) {
 } else {
     throw "Required helper module not found: $helperModule"
 }
-# Dot-source user extensibility module (M2)
-$extModule = Join-Path -Path $scriptDir -ChildPath "lib\Nano11Extensions.ps1"
-if (Test-Path -LiteralPath $extModule) {
-    . $extModule
-}
-# Dot-source migration module (M3)
-$migModule = Join-Path -Path $scriptDir -ChildPath "lib\Nano11Migration.ps1"
-if (Test-Path -LiteralPath $migModule) {
-    . $migModule
-}
 $logDir = Join-Path -Path $scriptDir -ChildPath "logs"
 $timestampStr = (Get-Date -Format "yyyyMMdd_HHmmss")
 $transcriptPath = $null
