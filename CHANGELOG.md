@@ -73,7 +73,7 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
   OfflineImage, FirstLogon, UserOnce; each folder has a `.gitkeep`). PreBuild and
   OfflineImage scripts get a `$Nano11Context`; FirstLogon and UserOnce scripts are copied
   into the image and checked against a SHA-256 manifest at first logon.
-- `docs/EXTENSIBILITY_GUIDE.md`: Japanese guide with a quick start (user tweak, user
+- `docs/EXTENSIBILITY_GUIDE.md` (English) and `docs/EXTENSIBILITY_GUIDE.ja.md` (Japanese): guide with a quick start (user tweak, user
   migration rule) and a reference (file roles, the four custom-script stages,
   `$Nano11Context`, offline hives, `OnError`, safe verification).
 - `PSScriptAnalyzerSettings.psd1` plus a Pester test that requires zero Error/Warning

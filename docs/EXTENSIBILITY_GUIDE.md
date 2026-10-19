@@ -1,25 +1,27 @@
-# nano11 拡張ガイド
+English: this file / 日本語版: [EXTENSIBILITY_GUIDE.ja.md](EXTENSIBILITY_GUIDE.ja.md)
 
-nano11 本体のコードを書き換えずに、自分用の設定・スクリプト・バックアップ対象を足すためのガイドです。
+# nano11 Extensibility Guide
 
-- **第1部 初心者向けクイックスタート** … ファイルに数行足すだけでできること
-- **第2部 リファレンス** … フォルダ構成、カスタムスクリプトの仕組み、エラー時の扱い、安全な動作確認
+How to add your own settings, scripts and backup targets without editing nano11's code.
 
-ユーザーが編集するファイルは `config/user/` に、カスタムスクリプトは `tools/custom-scripts/<Stage>/` にまとまっています。
-どれも省略可能です。無ければ nano11 は拡張なしで普通に動きます。
+- **Part 1: Beginner quick start** - things you can do by adding a few lines to a file
+- **Part 2: Reference** - folder layout, custom scripts, error handling, safe verification
+
+The files you edit live in `config/user/`; custom scripts live in `tools/custom-scripts/<Stage>/`.
+All of them are optional. Without them nano11 runs normally.
 
 ---
 
-# 第1部 初心者向けクイックスタート
+# Part 1: Beginner quick start
 
-## ① 自分用のレジストリ設定とチェックボックスを GUI に増やす
+## 1. Add your own registry setting and a GUI checkbox
 
-例として「Shift キーを5回押したときのスティッキーキーの確認画面を出さない」設定を足します。
+Example: turn off the Sticky Keys confirmation shown when Shift is pressed five times.
 
-### 手順
+### Steps
 
-1. `config/user/user-tweaks.psd1` をメモ帳などで開きます。
-2. `UserTweaks = @( ... )` の中に、次の4行ぶんのかたまりを書き足します(先頭の `#` を消すだけでも構いません)。
+1. Open `config/user/user-tweaks.psd1` in a text editor.
+2. Add an entry inside `UserTweaks = @( ... )` (or just remove the leading `#` of the sample):
 
    ```powershell
    UserTweaks = @(
@@ -36,50 +38,50 @@ nano11 本体のコードを書き換えずに、自分用の設定・スクリ�
    )
    ```
 
-3. 保存して、`nano11-GUI.bat` で GUI を起動します。
-4. `Category = 'UI'` なので **5. UI & Shell** タブの一番下にチェックボックスが増えています。
-   `Security` / `Privacy` / `Performance` 以外のカテゴリ(`System`、`Gaming`、`UserCustom` など)にした場合は **9. User Tweaks** タブに出ます。
-5. チェックを入れてビルドすると、フェーズ10(レジストリ)でその設定がイメージに書き込まれます。
-   コマンドラインから使うときは `-TweakSettings @{ User_DisableStickyKeysPrompt = $true }` のようにハッシュテーブルで指定できます。
+3. Save, then start the GUI with `nano11-GUI.bat`.
+4. Because `Category = 'UI'`, the checkbox appears at the bottom of tab **5. UI & Shell**.
+   Categories other than `Security` / `Privacy` / `Performance` / `UI` (for example `System`, `Gaming`, `UserCustom`) appear on tab **9. User Tweaks**.
+5. Tick it and build; Phase 10 (registry) writes the value into the image.
+   On the command line use a hashtable: `-TweakSettings @{ User_DisableStickyKeysPrompt = $true }`.
 
-### 各項目の意味
+### Fields
 
-| 項目 | 意味 |
+| Field | Meaning |
 | :--- | :--- |
-| `Key` | 設定の名前。他と重複しないよう `User_` で始めるのを推奨。`config/tweaks.psd1` にあるキーと同じ名前は読み込み時に警告されて無視されます |
-| `Category` | GUI のどのタブに出すか。上記の通り |
-| `Default` | 初期状態でチェックを入れるか(`$true` / `$false`) |
-| `Description` | チェックボックスの説明文 |
-| `Impact` | 依存関係チェックでの扱い。`'Safe'` は影響なし。省略すると「不明(Unknown)」として警告対象になります |
-| `Actions` | 有効にしたときに実行する処理の一覧(下の表) |
+| `Key` | Name of the setting. Start it with `User_`. A key that already exists in `config/tweaks.psd1` is skipped with a warning |
+| `Category` | Which GUI tab shows it (see above) |
+| `Default` | Whether it is ticked initially |
+| `Description` | Checkbox text |
+| `Impact` | How the dependency check treats it. `'Safe'` = no impact. If omitted it counts as Unknown and is warned about |
+| `Actions` | What runs when the tweak is enabled (see below) |
 
-### レジストリ設定の書き方
+### Registry actions
 
-`Hive` にはオフラインイメージのレジストリを読み込んだ先の名前を書きます。`Path` はその下のキーで、`HKLM\` などは付けません。
+`Hive` is the name the offline image's registry is loaded under. `Path` is the key below it, without `HKLM\`.
 
-| `Hive` | 対応する場所 |
+| `Hive` | Corresponds to |
 | :--- | :--- |
-| `zNTUSER` | 既定ユーザーの設定(新しく作られるユーザーに引き継がれる。`HKCU` 相当) |
-| `zSOFTWARE` | `HKLM\SOFTWARE` 相当 |
-| `zSYSTEM` | `HKLM\SYSTEM` 相当 |
+| `zNTUSER` | Default user profile (inherited by newly created users, like `HKCU`) |
+| `zSOFTWARE` | `HKLM\SOFTWARE` |
+| `zSYSTEM` | `HKLM\SYSTEM` |
 
-`Kind` は `String` / `ExpandString` / `Binary` / `DWord` / `MultiString` / `QWord` のどれか(省略すると `String`)です。
-サービスの起動方法を変えたいときは `@{ Type = 'Service'; Name = 'サービス名'; Value = 'Disabled' }`(`Disabled` / `Manual` / `Automatic`)も使えます。
+`Kind` is one of `String` / `ExpandString` / `Binary` / `DWord` / `MultiString` / `QWord` (default `String`).
+To change a service start type use `@{ Type = 'Service'; Name = 'ServiceName'; Value = 'Disabled' }` (`Disabled` / `Manual` / `Automatic`).
 
-### うまくいかないとき
+### If it does not work
 
-- ビルド開始時の警告(`[UserExtensions] ...`)に、キー重複や必須項目(`Key` / `Category` / `Description`)の不足が出ます。
-- 先に `-DryRun` で確認できます(第2部 ④ を参照)。実際のイメージには何も書き込まれません。
+- Warnings at build start (`[UserExtensions] ...`) report duplicate keys and missing required fields (`Key` / `Category` / `Description`).
+- Check first with `-DryRun` (Part 2, section 4); nothing is written to a real image.
 
-## ② 標準で対応していないゲームのセーブフォルダを移行対象に足す
+## 2. Add a game-save folder the migrator does not know
 
-PC 移行ツール(`tools/migrator/Nano11-Migrator.ps1`)は、標準で約30種類のゲームとアプリの設定に対応しています(`tools/migrator/migration-rules.psd1`)。
-載っていないゲームは自分で足せます。
+The PC migration tool (`tools/migrator/Nano11-Migrator.ps1`) supports about 30 games and apps out of the box (`tools/migrator/migration-rules.psd1`).
+You can add your own.
 
-### 手順
+### Steps
 
-1. `config/user/user-migration-rules.psd1` を開きます。
-2. `GameRules = @( ... )` の中に、先頭の `#` を外して書き換えます。
+1. Open `config/user/user-migration-rules.psd1`.
+2. Uncomment and edit a rule inside `GameRules = @( ... )`:
 
    ```powershell
    GameRules = @(
@@ -97,170 +99,169 @@ PC 移行ツール(`tools/migrator/Nano11-Migrator.ps1`)は、標準で約30種�
    )
    ```
 
-3. 保存したら、ルールが認識されているか確認します。
+3. Check that the rule is recognized:
 
    ```powershell
    .\tools\migrator\Nano11-Migrator.ps1 -Mode ListRules
    ```
 
-4. まず容量の見積もりと、書き込みなしの試し実行をします(`D:\backup` は例です)。
+4. Estimate the size and try a backup without writing anything (`D:\backup` is an example):
 
    ```powershell
    .\tools\migrator\Nano11-Migrator.ps1 -Mode Estimate -PackagePath D:\backup -RuleIds MyCustomGame
    .\tools\migrator\Nano11-Migrator.ps1 -Mode Backup -PackagePath D:\backup -RuleIds MyCustomGame -DryRun
    ```
 
-   問題なければ `-DryRun` を外して実行します。GUI で行うときは、ビルド用 GUI の **8. Migration & Backup** タブか、引数なしで起動した Nano11-Migrator のウィンドウから選べます。
+   If it looks right, run it again without `-DryRun`. You can also use tab **8. Migration & Backup** of the build GUI, or the wizard that opens when you start Nano11-Migrator without arguments.
 
-### 各項目の意味
+### Fields
 
-| 項目 | 意味 |
+| Field | Meaning |
 | :--- | :--- |
-| `Id` | ルールの名前(`-RuleIds` で指定する)。重複させない |
-| `Name` | 画面とレポートに出る名前 |
-| `SourcePaths` | バックアップするフォルダ/ファイル。`%USERPROFILE%` や `%APPDATA%` などの環境変数が使える |
-| `ExcludePatterns` | 除外するファイル名のパターン |
-| `ProcessNames` | そのゲームのプロセス名。起動中はバックアップをスキップして知らせる |
-| `CloudSaveNotice` / `RestoreHint` | レポートに載せる注意書き(クラウドセーブの有無、復元先の補足など) |
+| `Id` | Rule name (used with `-RuleIds`). Must be unique |
+| `Name` | Name shown in the UI and report |
+| `SourcePaths` | Folders/files to back up. Environment variables such as `%USERPROFILE%` and `%APPDATA%` work |
+| `ExcludePatterns` | File name patterns to skip |
+| `ProcessNames` | The game's process names. While running, the backup is skipped and you are told |
+| `CloudSaveNotice` / `RestoreHint` | Notes shown in the report (cloud-save caveats, restore hints) |
 
-ゲーム以外のアプリ設定は `AppConfigRules`、任意のフォルダは `CustomPathRules` に同じ形式で書きます(テンプレートに例があります)。
-パスワードやトークンらしいファイルは、既定では自動的に除外されます。
+App settings go in `AppConfigRules` and arbitrary folders in `CustomPathRules`, in the same format (the template has examples).
+Files that look like passwords or tokens are excluded automatically by default.
 
 ---
 
-# 第2部 リファレンス
+# Part 2: Reference
 
-## ① フォルダ構成と各ファイルの担当
+## 1. Folder layout and file roles
 
 ```text
 nano11-main/
-├── nano11builder.ps1      メイン。引数の定義、設定の組み立て、フェーズの呼び出し
-├── nano11helpers.ps1      共通の小さな関数(パス検証、設定ファイルの場所の解決など)
-├── lib/                   ビルダーが読み込む関数群
-├── phases/                ビルドの各工程(01〜18)
-├── gui/Nano11Gui.ps1      WinForms の GUI
-├── config/                設定ファイル
-├── scripts/               イメージに埋め込むセットアップ用スクリプト
-├── tools/                 補助ツールとカスタムスクリプト
-├── profiles/              保存したプロファイル(JSON)
-├── templates/report.html  レポートの雛形
-└── tests/nano11.Tests.ps1 Pester テスト
+├── nano11builder.ps1      Main script: parameters, configuration, calls the phases
+├── nano11helpers.ps1      Small shared functions (path validation, config file lookup, ...)
+├── lib/                   Function libraries loaded by the builder
+├── phases/                Build steps (01-18)
+├── gui/Nano11Gui.ps1      WinForms GUI
+├── config/                Configuration files
+├── scripts/               Setup scripts embedded into the image
+├── tools/                 Helper tools and custom scripts
+├── profiles/              Saved profiles (JSON)
+├── templates/report.html  Report template
+└── tests/nano11.Tests.ps1 Pester tests
 ```
 
-`nano11builder.ps1` は `phases/*.ps1` と `lib/*.ps1` を**ドットソース**で読み込み、変数をスクリプトスコープで共有します。
-ファイルを足すときも同じ方法で読み込んでください(モジュール化すると変数が見えなくなります)。
+`nano11builder.ps1` **dot-sources** `phases/*.ps1` and `lib/*.ps1` and shares variables in script scope.
+Load any new file the same way (turning it into a module would hide those variables).
 
 ### lib/
 
-| ファイル | 担当 |
+| File | Role |
 | :--- | :--- |
-| `Nano11Mount.ps1` | DISM のマウント確認とクリーンアップ、マウント用フォルダ、オフラインレジストリ |
-| `Nano11FileSystem.ps1` | フォルダの安全確認、所有権と ACL、強制削除、空き容量 |
-| `Nano11Wim.ps1` | WIM の書き出し、フィンガープリント、修復 |
-| `Nano11Report.ps1` | HTML レポート(`nano11_report.html`) |
-| `Nano11Resume.ps1` | `-ResumeIsoOnly` と工程ごとのチェックポイント |
-| `Nano11SelfTest.ps1` | `-TestSelf` の自己診断(`-TestSelf` のときだけ読み込む) |
-| `Nano11Extensions.ps1` | 拡張エンジン(ユーザー設定の読み込みと実行、カスタムスクリプト、設定比較、復旧準備チェック) |
+| `Nano11Mount.ps1` | DISM mount discovery/cleanup, mount directories, offline registry |
+| `Nano11FileSystem.ps1` | Directory safety checks, ownership and ACLs, robust deletion, free space |
+| `Nano11Wim.ps1` | WIM export, fingerprinting, repair |
+| `Nano11Report.ps1` | HTML report (`nano11_report.html`) |
+| `Nano11Resume.ps1` | `-ResumeIsoOnly` and per-phase checkpoints |
+| `Nano11SelfTest.ps1` | `-TestSelf` diagnostics (loaded only for `-TestSelf`) |
+| `Nano11Extensions.ps1` | Extension engine (user settings, custom scripts, config diff, recovery readiness) |
 
 ### phases/
 
-| フェーズ | 内容 |
+| Phase | Content |
 | :--- | :--- |
-| `01-environment.ps1` | 実行環境の確認 |
-| `02-source-media.ps1` | 元メディア(ISO / ドライブ)の準備 |
-| `03-staging.ps1` | 作業フォルダの準備 |
-| `04-mount-baseline.ps1` | イメージのマウントと削減前の記録 |
-| `05-appx.ps1` | AppX の削除 |
-| `06-fod.ps1` | 機能(FOD)の削除 |
-| `07-nativeimages.ps1` | .NET ネイティブイメージの整理 |
-| `08-filesystem.ps1` | ファイルとフォルダの削除 |
-| `09-physical-debloat.ps1` | 高度な削減(物理削除)。同意ゲートとマウント先の検証があり、`-AllowPhysicalDebloat` が必要 |
-| `09-winsxs.ps1` | WinSxS の整理 |
-| `10-registry.ps1` | オフラインレジストリの読み込みと各種設定(ユーザー設定の `Registry` もここ) |
-| `11-unattend.ps1` | 応答ファイルとセットアップ用スクリプトの埋め込み、カスタムスクリプトの配置、レジストリの書き戻し |
-| `12-unmount-commit.ps1` | アンマウントと保存 |
-| `13-export.ps1` | install.wim / .esd の書き出し |
-| `14-bootwim.ps1` | boot.wim の調整 |
-| `15-verify.ps1` | 検証 |
-| `16-iso-cleanup.ps1` | ISO 側の整理 |
-| `17-oscdimg.ps1` | `oscdimg.exe` の準備 |
-| `18-iso.ps1` | ISO の作成 |
+| `01-environment.ps1` | Environment checks |
+| `02-source-media.ps1` | Source media (ISO / drive) |
+| `03-staging.ps1` | Working folder setup |
+| `04-mount-baseline.ps1` | Mount the image, record the baseline |
+| `05-appx.ps1` | AppX removal |
+| `06-fod.ps1` | Features on Demand removal |
+| `07-nativeimages.ps1` | .NET native image cleanup |
+| `08-filesystem.ps1` | File and folder removal |
+| `09-physical-debloat.ps1` | Advanced debloat (physical deletion). Has a consent gate and mount-path validation; requires `-AllowPhysicalDebloat` |
+| `09-winsxs.ps1` | WinSxS cleanup |
+| `10-registry.ps1` | Load the offline registry and apply settings (user `Registry` actions run here too) |
+| `11-unattend.ps1` | Embed answer file and setup scripts, stage custom scripts, unload the registry |
+| `12-unmount-commit.ps1` | Unmount and commit |
+| `13-export.ps1` | Export install.wim / .esd |
+| `14-bootwim.ps1` | boot.wim adjustments |
+| `15-verify.ps1` | Verification |
+| `16-iso-cleanup.ps1` | ISO-side cleanup |
+| `17-oscdimg.ps1` | Prepare `oscdimg.exe` |
+| `18-iso.ps1` | ISO creation |
 
 ### config/
 
-| ファイル | 担当 |
+| File | Role |
 | :--- | :--- |
-| `tweaks.psd1` | すべての設定スイッチとコンポーネントの**唯一の定義元**。GUI、プロファイル、CLI はここから作られる |
-| `dependencies.psd1` | 設定の依存関係・影響のカタログ(競合、影響、不明の判定に使う) |
-| `nano11.config.schema.json` | プロファイルの JSON スキーマ |
-| `user/user-tweaks.psd1` | ユーザー独自の設定、プリセット、カスタムスクリプト |
-| `user/user-migration-rules.psd1` | ユーザー独自の移行ルール |
+| `tweaks.psd1` | The **single source of truth** for every switch and component. The GUI, profiles and CLI are generated from it |
+| `dependencies.psd1` | Dependency/impact catalog (used to detect Conflicts, Impacts, Unknowns) |
+| `nano11.config.schema.json` | JSON schema for profiles |
+| `user/user-tweaks.psd1` | Your tweaks, presets and custom scripts |
+| `user/user-migration-rules.psd1` | Your migration rules |
 
-`config/` 直下にあった古い `user-*.psd1` も、新しい場所に無ければ警告つきで読み込まれます。`config/user/` へ移してください。
+An old `user-*.psd1` directly under `config/` is still read, with a warning, when the new location has no file. Move it to `config/user/`.
 
-### gui/ と tools/
+### gui/ and tools/
 
-| ファイル | 担当 |
+| File | Role |
 | :--- | :--- |
-| `gui/Nano11Gui.ps1` | GUI 本体。タブごとの関数に分かれ、ボタンやテキストボックスなどの共通部品も持つ |
-| `tools/migrator/Nano11-Migrator.ps1` | PC 移行・バックアップツール(CLI と GUI ウィザード) |
-| `tools/migrator/Nano11Migration.ps1` | 移行エンジン(バックアップ、復元、アプリ一覧、レポート) |
-| `tools/migrator/migration-rules.psd1` | 標準の移行ルール |
-| `tools/custom-scripts/<Stage>/` | カスタムスクリプトの置き場(次項) |
-| `tools/nano11-physical-debloat/` | 物理削除用の Rust ツール |
-| `tools/Measure-Nano11GuestBaseline.ps1` / `tools/Compare-Nano11Benchmarks.ps1` | インストール後の計測と比較 |
+| `gui/Nano11Gui.ps1` | The GUI, split into one function per tab, plus shared control parts |
+| `tools/migrator/Nano11-Migrator.ps1` | PC migration/backup tool (CLI and GUI wizard) |
+| `tools/migrator/Nano11Migration.ps1` | Migration engine (backup, restore, app inventory, report) |
+| `tools/migrator/migration-rules.psd1` | Standard migration rules |
+| `tools/custom-scripts/<Stage>/` | Custom script folders (next section) |
+| `tools/nano11-physical-debloat/` | Rust tool for physical deletion |
+| `tools/Measure-Nano11GuestBaseline.ps1` / `tools/Compare-Nano11Benchmarks.ps1` | Post-install measurement and comparison |
 
-GUI の **8. Migration & Backup** タブは、最初に開いたときに `tools/migrator/Nano11Migration.ps1` を読み込みます(ビルダー本体は移行エンジンを読み込みません)。
-`-IncludeMigrationAssistant` を付けると、移行ツールとルールが ISO の `Windows\Setup\Scripts\Migration` に同梱されます(個人データは含みません)。
+GUI tab **8. Migration & Backup** loads `tools/migrator/Nano11Migration.ps1` the first time it is opened (the builder itself does not load the migration engine).
+With `-IncludeMigrationAssistant` the migrator and its rules are bundled into the ISO under `Windows\Setup\Scripts\Migration` (no personal data included).
 
-## ② カスタムスクリプトの4ステージ
+## 2. The four custom-script stages
 
-`tools/custom-scripts/<Stage>/` に `.ps1` を置くと、ステージごとに自動で見つかります。`config/user/user-tweaks.psd1` の `CustomScripts` に書いて登録することもできます。
+Put `.ps1` files in `tools/custom-scripts/<Stage>/` and they are found automatically. You can also register them in `CustomScripts` in `config/user/user-tweaks.psd1`.
 
-| ステージ | いつ・どこで動くか | 権限 |
+| Stage | When / where | Privileges |
 | :--- | :--- | :--- |
-| `PreBuild` | ビルド開始直後(依存関係チェックの後、元メディアの確認の前)。ビルドするPC上 | ビルド実行ユーザー |
-| `OfflineImage` | フェーズ11の終わり。ビルドするPC上で、マウント中のイメージに対して | ビルド実行ユーザー |
-| `FirstLogon` | インストール後の初回ログオン時 | 管理者 |
-| `UserOnce` | ユーザープロファイルが初期化された後 | 標準ユーザー |
+| `PreBuild` | Right at build start (after the dependency check, before source media checks), on the build PC | User running the build |
+| `OfflineImage` | End of Phase 11, on the build PC, against the mounted image | User running the build |
+| `FirstLogon` | At first logon after installation | Administrator |
+| `UserOnce` | After the user profile is initialized | Standard user |
 
-`PreBuild` と `OfflineImage` は、ビルダーがスクリプトを `-Nano11Context` 付きで直接呼び出します。
-`FirstLogon` と `UserOnce` はビルド時には実行されず、イメージの `Windows\Setup\Scripts\Custom\...` にコピーされてインストール後に動きます(ログは `C:\ProgramData\nano11\Logs\custom-scripts.log`、`UserOnce` は `%TEMP%\UserOnce-custom.log`)。
-`FirstLogon` / `UserOnce` には `.bat` / `.cmd` / `.reg` も置けます(詳しくは `tools/custom-scripts/README.md`)。
+For `PreBuild` and `OfflineImage` the builder calls the script directly with `-Nano11Context`.
+`FirstLogon` and `UserOnce` scripts are not run at build time; they are copied into the image under `Windows\Setup\Scripts\Custom\...` and run after installation (log: `C:\ProgramData\nano11\Logs\custom-scripts.log`; `UserOnce`: `%TEMP%\UserOnce-custom.log`).
+`FirstLogon` / `UserOnce` also accept `.bat` / `.cmd` / `.reg` (see `tools/custom-scripts/README.md`).
 
-### スクリプトのひな形
+### Script template
 
 ```powershell
 # @Nano11-Id: MyScript
 # @Nano11-Stage: PreBuild
 # @Nano11-Order: 100
 # @Nano11-OnError: Warn
-# @Nano11-Description: 説明
+# @Nano11-Description: What it does
 param($Nano11Context)
 Write-Host "ScratchDir: $($Nano11Context.ScratchDir)"
 ```
 
-先頭30行のコメントに `# @Nano11-Id` / `Stage` / `Order` / `Condition` / `OnError` / `Description` を書けます。
-`Order` の小さい順、同じ値ならファイル名順に実行します。`Condition` に設定キー名を書くと、その設定が有効なときだけ実行します。
+Metadata comments in the first 30 lines: `# @Nano11-Id` / `Stage` / `Order` / `Condition` / `OnError` / `Description`.
+Scripts run by ascending `Order`, then by file name. Set `Condition` to a setting key to run only when it is enabled.
 
-### 渡される `$Nano11Context`
+### `$Nano11Context`
 
-`PreBuild` / `OfflineImage` のスクリプトに、ハッシュテーブルで渡されます。
+A hashtable passed to `PreBuild` / `OfflineImage` scripts.
 
-| ステージ | 中身 |
+| Stage | Contents |
 | :--- | :--- |
-| `PreBuild` | `Config`(現在の設定)、`ScriptRoot`(リポジトリのフォルダ) |
-| `OfflineImage` | `ScratchDir`(マウントしたイメージのルート)、`Nano11Dir`、`Config` |
+| `PreBuild` | `Config` (current configuration), `ScriptRoot` (repository folder) |
+| `OfflineImage` | `ScratchDir` (root of the mounted image), `Nano11Dir`, `Config` |
 
-`FirstLogon` / `UserOnce` のスクリプトには渡されません(インストール後の PC 上で普通に実行されます)。
+`FirstLogon` / `UserOnce` scripts get no context; they simply run on the installed PC.
 
-### オフラインのレジストリ(`HKLM:\zSOFTWARE` / `zNTUSER` / `zSYSTEM`)
+### Offline registry (`HKLM:\zSOFTWARE` / `zNTUSER` / `zSYSTEM`)
 
-ビルダーはフェーズ10でイメージのレジストリを `HKLM\zSYSTEM`、`HKLM\zSOFTWARE`、`HKLM\zDEFAULT`、`HKLM\zCOMPONENTS`、`HKLM\zNTUSER`(既定ユーザーの `ntuser.dat`)として読み込み、フェーズ11の途中で**すべてアンロード**します。
-そのため:
+In Phase 10 the builder loads the image's registry as `HKLM\zSYSTEM`, `HKLM\zSOFTWARE`, `HKLM\zDEFAULT`, `HKLM\zCOMPONENTS` and `HKLM\zNTUSER` (the default user's `ntuser.dat`), and **unloads all of them** partway through Phase 11. Therefore:
 
-- ユーザー設定の `Registry` アクション(第1部 ①)は、読み込み中に実行されるので `Hive = 'zNTUSER'` などをそのまま使えます。
-- **`OfflineImage` ステージのスクリプトが動く時点では、これらはもう読み込まれていません。** レジストリを触りたいときは、スクリプト自身で読み込んで、終わったら必ず外してください。
+- User-tweak `Registry` actions (Part 1, section 1) run while the hives are loaded, so `Hive = 'zNTUSER'` etc. work as is.
+- **When an `OfflineImage` script runs, these hives are no longer loaded.** To touch the registry, load the hive yourself and always unload it afterwards:
 
   ```powershell
   param($Nano11Context)
@@ -274,71 +275,70 @@ Write-Host "ScratchDir: $($Nano11Context.ScratchDir)"
   }
   ```
 
-  ビルダーが使う `zSOFTWARE` などの名前とは別の名前(上の `zMyNtuser`)を使うと、衝突しません。
+  Use a name other than the builder's `zSOFTWARE` etc. (above: `zMyNtuser`) to avoid collisions.
 
-## ③ エラー時の扱いとセキュリティ上の注意
+## 3. Error handling and security notes
 
 ### `OnError`
 
-`CustomScripts` の項目か `# @Nano11-OnError:` で指定します。省略時は `Warn` です。
+Set it in a `CustomScripts` entry or with `# @Nano11-OnError:`. Default `Warn`.
 
-| 値 | 動作 |
+| Value | Behavior |
 | :--- | :--- |
-| `Stop` | そのスクリプトの例外を呼び出し元へ再スローし、以降のスクリプトを実行しない。ただし呼び出し元(`PreBuild` はビルダー本体、`OfflineImage` はフェーズ11)で捕捉されるため、**ビルド全体は止まらない**(`PreBuild` は警告を表示、`OfflineImage` は `-Verbose` にだけ記録) |
-| `Warn` | 警告を出して次のスクリプトへ進む |
-| `Ignore` | 何も言わずに次へ進む(`-Verbose` で理由を確認できる) |
+| `Stop` | Rethrows the script's exception to the caller and skips the remaining scripts. The caller catches it (builder for `PreBuild`, Phase 11 for `OfflineImage`), so the **build as a whole does not stop** (`PreBuild` prints a warning; `OfflineImage` records it only under `-Verbose`) |
+| `Warn` | Prints a warning and continues with the next script |
+| `Ignore` | Continues silently (reason visible with `-Verbose`) |
 
-`PreBuild` / `OfflineImage` のスクリプトで例外が出たときにだけ働きます。`FirstLogon` / `UserOnce` はインストール後に動くため、ビルドは止まりません。
-`Warn` / `Ignore` では失敗しても残りのスクリプトを続けて実行します。`FirstLogon` では失敗した終了コードと理由がログに残ります。
+It only applies to exceptions in `PreBuild` / `OfflineImage` scripts. `FirstLogon` / `UserOnce` run after installation and never stop the build.
+With `Warn` / `Ignore`, remaining scripts still run. For `FirstLogon`, failures (exit code, reason) are written to the log.
 
-### セキュリティ上の注意
+### Security notes
 
-- **カスタムスクリプトは、ビルド時はビルド実行ユーザー(管理者)の権限、`FirstLogon` では管理者権限で動きます。** 自分で中身を確認したものだけを置いてください。
-- ビルド時に `custom-scripts-manifest.json` へ各スクリプトの SHA-256 を記録し、初回ログオン時に照合します。記録にないスクリプトや、書き換えられたスクリプトは `[SECURITY REFUSAL]` として実行されません。
-- ログに出るパスワード、トークン、API キー、プロダクトキーは `[REDACTED]` に置き換えられます。ただし、スクリプトにそれらを直接書くのは避けてください。
-- バックアップには個人データが含まれます。認証情報らしいファイルは既定で除外されます(`-IncludeSecrets` を付けたときだけ含める)。バックアップ先は安全な場所にしてください。
-- `Impact` を省略したユーザー設定は「不明」として扱われ、`-StrictDependencyCheck` ではビルドが止まります。
+- **Custom scripts run with the build user's (administrator) privileges at build time, and with administrator privileges for `FirstLogon`.** Only place scripts whose contents you have reviewed.
+- At build time the SHA-256 of each script is recorded in `custom-scripts-manifest.json` and checked at first logon. A script not in the manifest, or modified afterwards, is refused with `[SECURITY REFUSAL]`.
+- Passwords, tokens, API keys and product keys in the logs are replaced with `[REDACTED]`. Still, do not write them into scripts.
+- Backups contain personal data. Credential-like files are excluded by default (included only with `-IncludeSecrets`). Store backups somewhere safe.
+- A user tweak without `Impact` counts as Unknown, and `-StrictDependencyCheck` stops the build for it.
 
-### 現在できないこと
+### Current limitation
 
-ユーザー設定の `AppxRemove` / `FeatureDisable` / `CapabilityRemove` は書式としては受け付けますが、現在のコードは実行内容を `-Verbose` のログに出すだけで、実際の削除は行いません。
-実際に動くのは `Registry` と `Service` です。AppX や機能を削除したいときは、`OfflineImage` ステージのカスタムスクリプトで DISM を呼び出してください。
+User-tweak `AppxRemove` / `FeatureDisable` / `CapabilityRemove` are accepted in the schema, but the current code only writes what it would do to the `-Verbose` log and removes nothing.
+Only `Registry` and `Service` actually take effect. To remove AppX packages or features, call DISM from an `OfflineImage` custom script.
 
-## ④ 安全な動作確認の手順
+## 4. Safe verification
 
-実際のビルド(数十分かかり、管理者権限とディスク容量が必要)の前に、次の順で確認します。
+Before a real build (tens of minutes, needs administrator rights and disk space), check in this order:
 
-1. **構文と自己診断**: ディスクに何も書き込まず、ISO も不要です。
+1. **Syntax and self-test** - writes nothing to disk, needs no ISO:
 
    ```powershell
    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\nano11builder.ps1 -TestSelf
    ```
 
-2. **DryRun**: 設定、パス、カスタムスクリプトの検出を解決して表示だけします。ディスクやイメージには変更を加えません。`PreBuild` / `OfflineImage` のスクリプトは実行されません。
+2. **DryRun** - resolves and prints configuration, paths and detected custom scripts without touching disks or images. `PreBuild` / `OfflineImage` scripts are not executed:
 
    ```powershell
    .\nano11builder.ps1 -NonInteractive -Profile balanced -DryRun
    ```
 
-3. **依存関係の厳格チェック**: 競合や不明があればビルドを止めます。
+3. **Strict dependency check** - stops on any Conflict or Unknown:
 
    ```powershell
    .\nano11builder.ps1 -NonInteractive -Profile balanced -DryRun -StrictDependencyCheck
    ```
 
-4. **プリセットとの差分確認**: 現在の設定が別のプリセット(名前か JSON のパス)とどう違うかを表示して、そのまま終了します。ビルドはしません。
+4. **Compare with a preset** - prints how the current configuration differs from a preset (name or JSON path) and exits without building:
 
    ```powershell
    .\nano11builder.ps1 -Profile balanced -ComparePreset extreme
    ```
 
-5. **Pester テスト**: リポジトリのルールを守っているか(構文、PSScriptAnalyzer の警告 0 件、GUI の配線など)を確認します。
+5. **Pester tests** - checks the repository rules (syntax, zero PSScriptAnalyzer warnings, GUI wiring, ...):
 
    ```powershell
    Invoke-Pester -Script .\tests\nano11.Tests.ps1
    ```
 
-6. **移行ツール**: `-Mode Estimate`(容量の見積もり)と `-DryRun`(書き込みなしの試し実行)を先に実行します。
+6. **Migrator** - run `-Mode Estimate` (size estimate) and `-DryRun` (no writes) first.
 
-スクリプトを自作したときは、`.ps1` / `.psd1` を BOM なしの UTF-8 で保存する場合は ASCII 文字だけにしてください(日本語を入れると Windows PowerShell 5.1 で文字化けします。テストでも検出されます)。
-この `.md` のような文書は対象外です。
+If you write your own `.ps1` / `.psd1` without a BOM, keep it ASCII-only (non-ASCII text is garbled by Windows PowerShell 5.1; the tests detect this). Documents like this `.md` are exempt.

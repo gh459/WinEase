@@ -244,7 +244,7 @@ The modern dark-mode GUI allows you to:
 .\tools\migrator\Nano11-Migrator.ps1 -Mode Verify   -PackagePath D:\backup
 .\tools\migrator\Nano11-Migrator.ps1 -Mode Restore  -PackagePath D:\backup -RetryFailedOnly
 ```
-Modes: `ExportApps`, `Backup`, `Restore`, `Verify`, `Estimate` (plus the older `ListRules` and `RecoveryCheck`). Credential and token files are excluded unless `-IncludeSecrets` is given. Standard rules live in `tools/migrator/migration-rules.psd1`; add your own game saves and app settings in `config/user/user-migration-rules.psd1` (see [docs/EXTENSIBILITY_GUIDE.md](docs/EXTENSIBILITY_GUIDE.md)).
+Modes: `ExportApps`, `Backup`, `Restore`, `Verify`, `Estimate` (plus the older `ListRules` and `RecoveryCheck`). Credential and token files are excluded unless `-IncludeSecrets` is given. Standard rules live in `tools/migrator/migration-rules.psd1`; add your own game saves and app settings in `config/user/user-migration-rules.psd1` (see [docs/EXTENSIBILITY_GUIDE.md](docs/EXTENSIBILITY_GUIDE.md) (English) / [docs/EXTENSIBILITY_GUIDE.ja.md](docs/EXTENSIBILITY_GUIDE.ja.md) (Japanese)).
 
 ### **3. Non-Interactive / CLI Automation**
 You can run the builder completely unattended with built-in presets and modular optimization flags:
@@ -436,7 +436,7 @@ This working copy carries the following changes on top of the upstream fork:
 - **Dependency & impact checker (M1)**: `config/dependencies.psd1` catalog (174 entries) with Conflicts/Impacts/Unknowns detection. GUI "Check Dependencies" button, `-StrictDependencyCheck` CLI switch, HTML report section.
 - **User extensibility engine (M2)**: `config/user/user-tweaks.psd1` + `lib/Nano11Extensions.ps1` (6 functions). User tweaks/presets/custom scripts integrated into GUI, CLI, profiles. GUI Tab 8 "Migration & Backup".
 - **PC migration & backup engine (M3)**: `tools/migrator/migration-rules.psd1` (15 game + 16 app rules) + `tools/migrator/Nano11Migration.ps1` (13 functions). Custom file/folder backup preserving directory structure. `tools/migrator/Nano11-Migrator.ps1` standalone CLI/GUI wizard.
-- **Extensibility guide (M4)**: `docs/EXTENSIBILITY_GUIDE.md`.
+- **Extensibility guide (M4)**: `docs/EXTENSIBILITY_GUIDE.md` (English) and `docs/EXTENSIBILITY_GUIDE.ja.md` (Japanese).
 
 ---
 
@@ -484,7 +484,8 @@ nano11-main/
 │   └── report.html            # HTML report template (reference)
 ├── profiles/                  # Saved build profiles (JSON, incl. per-tweak TweakSettings)
 ├── docs/
-│   ├── EXTENSIBILITY_GUIDE.md # Extensibility guide (Japanese): quick start + reference
+│   ├── EXTENSIBILITY_GUIDE.md    # Extensibility guide (English): quick start + reference
+│   ├── EXTENSIBILITY_GUIDE.ja.md # Same guide in Japanese
 │   └── dev/SESSION_BRIEFS.md  # Work briefs used for the S1-S12 fix sessions
 ├── tests/
 │   └── nano11.Tests.ps1       # Pester test suite

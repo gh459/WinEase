@@ -1816,7 +1816,7 @@ Describe "Documentation S12" {
         $files = @(Get-ChildItem -LiteralPath $script:RepoRoot -Recurse -File | Where-Object { $_.FullName -notmatch '[\/](\.git|\.claude|logs)[\/]' } | ForEach-Object { $_.FullName.Substring($script:RepoRoot.Length).TrimStart('\') })
         $topDirs = 'config|lib|phases|gui|tools|docs|scripts|templates|profiles|tests|\.github'
         $missing = @()
-        foreach ($doc in @('README.md', 'CHANGELOG.md', 'docs\EXTENSIBILITY_GUIDE.md')) {
+        foreach ($doc in @('README.md', 'CHANGELOG.md', 'docs\EXTENSIBILITY_GUIDE.md', 'docs\EXTENSIBILITY_GUIDE.ja.md')) {
             $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot $doc))
             foreach ($m in [regex]::Matches($text, '`([^`\r\n]+)`')) {
                 $p = ($m.Groups[1].Value -replace '/', '\').TrimEnd('\')
