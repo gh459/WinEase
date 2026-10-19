@@ -737,6 +737,21 @@ function Invoke-Nano11SelfTest {
     }
     $results += [PSCustomObject]@{ Test = "20. Granular Tweak Schema Alignment"; Passed = $tweakCoveragePass; Details = $tweakCoverageMsg }
 
+    # 21. Extension catalog files parse cleanly
+    $catalogPass = $true
+    $catalogMsg = ""
+    $catalogFiles = @('config\dependencies.psd1','config\user-tweaks.psd1','config\migration-rules.psd1','config\user-migration-rules.psd1')
+    foreach ($cf in $catalogFiles) {
+        $cp = Join-Path -Path $ScriptRoot -ChildPath $cf
+        if (Test-Path -LiteralPath $cp) {
+            try { Import-PowerShellDataFile -LiteralPath $cp | Out-Null } catch { $catalogPass = $false; $catalogMsg = "$cf parse error: $($_.Exception.Message)"; break }
+        } else {
+            $catalogPass = $false; $catalogMsg = "Missing: $cf"; break
+        }
+    }
+    if ($catalogPass) { $catalogMsg = "All 4 extension catalogs parse cleanly" }
+    $results += [PSCustomObject]@{ Test = "21. Extension Catalog Parse"; Passed = $catalogPass; Details = $catalogMsg }
+
     # Display Results
     Write-Host ""
     $allPassed = $true

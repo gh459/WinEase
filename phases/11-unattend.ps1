@@ -1578,3 +1578,61 @@ $parseSizeHelper = {
 $script:WinSxsBeforeMB = & $parseSizeHelper $script:WinsxsBeforeRaw
 $script:WinSxsAfterMB  = & $parseSizeHelper $script:WinsxsAfterRaw
 $script:WinSxsSavedMB  = if ($script:WinSxsBeforeMB -gt 0 -and $script:WinSxsAfterMB -gt 0) { [math]::Max(0, [math]::Round($script:WinSxsBeforeMB - $script:WinSxsAfterMB, 1)) } else { 0 }
+
+# M2: User extension actions (SetupScripts)
+if (Get-Command -Name Invoke-Nano11UserExtensionActions -ErrorAction SilentlyContinue) {
+    try { Invoke-Nano11UserExtensionActions -PhaseType SetupScripts -ScratchDir $scratchDir -DryRun:$DryRun -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+}
+# M2: Custom scripts (FirstLogon & UserOnce stages -> copy to offline image)
+$customFirstLogonDir = Join-Path -Path $scratchDir -ChildPath 'Windows\Setup\Scripts\Custom\FirstLogon'
+$customUserOnceDir = Join-Path -Path $scratchDir -ChildPath 'Windows\Setup\Scripts\Custom\UserOnce'
+Write-Verbose "Custom dirs: $customFirstLogonDir, $customUserOnceDir"
+if (Get-Command -Name Invoke-Nano11CustomScriptsStage -ErrorAction SilentlyContinue) {
+    try {
+        Invoke-Nano11CustomScriptsStage -Stage 'FirstLogon' -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null
+        Invoke-Nano11CustomScriptsStage -Stage 'UserOnce' -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+}
+
+# M2: Register custom FirstLogon scripts in autounattend.xml FirstLogonCommands
+try {
+    $customScripts = @()
+    if (Test-Path -LiteralPath $customFirstLogonDir) {
+        $customScripts = @(Get-ChildItem -LiteralPath $customFirstLogonDir -Filter '*.ps1' -File -ErrorAction SilentlyContinue)
+    }
+    if ($customScripts.Count -gt 0 -and -not $DryRun) {
+        $firstLogonPass = $xmlDoc.SelectSingleNode("//u:settings[@pass='oobeSystem']", $nsMgr)
+        if ($firstLogonPass) {
+            $shellComp = $firstLogonPass.SelectSingleNode("u:component[@name='Microsoft-Windows-Shell-Setup']", $nsMgr)
+            if ($shellComp) {
+                $flc = $shellComp.SelectSingleNode("u:FirstLogonCommands", $nsMgr)
+                if (-not $flc) {
+                    $flc = $xmlDoc.CreateElement("FirstLogonCommands", $xmlDoc.DocumentElement.NamespaceURI)
+                    [void]$shellComp.AppendChild($flc)
+                }
+                # Determine next order number
+                $existingOrders = @($flc.SelectNodes("u:SynchronousCommand/u:Order", $nsMgr) | ForEach-Object { [int]$_.InnerText })
+                $nextOrder = if ($existingOrders.Count -gt 0) { ($existingOrders | Measure-Object -Maximum).Maximum + 1 } else { 1 }
+                foreach ($cs in $customScripts) {
+                    $relPath = "C:\Windows\Setup\Scripts\Custom\FirstLogon\$($cs.Name)"
+                    $cmd = $xmlDoc.CreateElement("SynchronousCommand", $xmlDoc.DocumentElement.NamespaceURI)
+                    $cmd.SetAttribute("wcm:action", "add", "http://schemas.microsoft.com/WMIConfig/2002/State")
+                    $orderNode = $xmlDoc.CreateElement("Order", $xmlDoc.DocumentElement.NamespaceURI)
+                    $orderNode.InnerText = "$nextOrder"
+                    [void]$cmd.AppendChild($orderNode)
+                    $descNode = $xmlDoc.CreateElement("Description", $xmlDoc.DocumentElement.NamespaceURI)
+                    $descNode.InnerText = "Custom FirstLogon script: $($cs.Name)"
+                    [void]$cmd.AppendChild($descNode)
+                    $pathNode = $xmlDoc.CreateElement("Path", $xmlDoc.DocumentElement.NamespaceURI)
+                    $pathNode.InnerText = "powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File `"$relPath`""
+                    [void]$cmd.AppendChild($pathNode)
+                    [void]$flc.AppendChild($cmd)
+                    $nextOrder++
+                }
+                Write-Host "  Registered $($customScripts.Count) custom FirstLogon script(s) in autounattend.xml" -ForegroundColor Green
+            }
+        }
+    }
+} catch {
+    Write-Verbose "Ignored: $($_.Exception.Message)"
+}

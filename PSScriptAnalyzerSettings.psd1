@@ -22,6 +22,10 @@
         # nano11builder.ps1 is saved as UTF-8 without BOM and contains emoji in console strings.
         # Adding a BOM changes how Windows PowerShell 5.1 decodes those strings, i.e. it would
         # change the console output, so the encoding is left as is.
-        'PSUseBOMForUnicodeEncodedFile'
+        'PSUseBOMForUnicodeEncodedFile',
+
+        # GUI uses Start-Job with $using: scope (or -ArgumentList) for background backup/restore.
+        # The rule's static analysis cannot follow $using: in nested event-handler scopes.
+        'PSUseUsingScopeModifierInNewRunspaces'
     )
 }

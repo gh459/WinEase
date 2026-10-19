@@ -562,6 +562,30 @@ function Set-Nano11GuiPreset {
 }
 
 # Validate the form and fill $Gui.Result; returns $false (after a message) if input is invalid
+function Get-Nano11GuiDraftConfig {
+    param([hashtable]$Gui)
+    $cfg = @{}
+    if ($Gui.ComponentCheckboxes) {
+        foreach ($k in $Gui.ComponentCheckboxes.Keys) {
+            $cfg[$k] = [bool]$Gui.ComponentCheckboxes[$k].Checked
+        }
+    }
+    $resolvedTweaks = [ordered]@{}
+    if ($Gui.TweakCheckboxes) {
+        foreach ($k in $Gui.TweakCheckboxes.Keys) {
+            $resolvedTweaks[$k] = [bool]$Gui.TweakCheckboxes[$k].Checked
+        }
+    }
+    $cfg['TweakSettings'] = $resolvedTweaks
+    $stdSelected = @()
+    if ($Gui.ClbStd) { foreach ($item in $Gui.ClbStd.CheckedItems) { $stdSelected += "$item" } }
+    $expSelected = @()
+    if ($Gui.ClbExp) { foreach ($item in $Gui.ClbExp.CheckedItems) { $expSelected += "$item" } }
+    $cfg['AdvancedDebloatStandard'] = $stdSelected
+    $cfg['AdvancedDebloatExperimental'] = $expSelected
+    return $cfg
+}
+
 function Complete-Nano11GuiResult {
     param([hashtable]$Gui)
     $srcText = $Gui.Source.Text.Trim()
@@ -641,6 +665,7 @@ function Complete-Nano11GuiResult {
     foreach ($item in $Gui.ClbExp.CheckedItems) { $expSelected += "$item" }
     $formResult.AdvancedDebloatStandard     = $stdSelected
     $formResult.AdvancedDebloatExperimental = $expSelected
+
     return $true
 }
 
@@ -711,10 +736,37 @@ function Show-Nano11GUI {
     $gui.Estimate = New-Nano11Label -Text "Estimated ISO: ~5.5 GB (LZX baseline)" -X 20 -Y 38 -Width 380 -Height 20 `
         -ForeColor ([System.Drawing.Color]::FromArgb(148, 163, 184)) -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel
 
+    [void](New-Nano11Button -Text "Check Dependencies" -X 340 -Y 15 -Width 170 -Height 40 -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel -OnClick {
+        $f = $this.FindForm()
+        $g = $f.Tag
+        try {
+            $cfg = Get-Nano11GuiDraftConfig -Gui $g
+            $res = Test-Nano11Dependencies -Config $cfg
+            $txt = Format-Nano11DependencyReport -Result $res
+            if (-not $txt) { $txt = "No conflicts, unknowns or impacts detected." }
+            [void][System.Windows.Forms.MessageBox]::Show($txt, "nano11 - Dependency Check", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+        } catch {
+            [void][System.Windows.Forms.MessageBox]::Show("Dependency check failed: $($_.Exception.Message)", "nano11 - Dependency Check", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        }
+    })
     [void](New-Nano11Button -Text "Start nano11 Build" -X 540 -Y 15 -Width 200 -Height 40 -BackColor ([System.Drawing.Color]::FromArgb(0, 120, 215)) `
         -Font (New-Object System.Drawing.Font($uiFontName, 10, [System.Drawing.FontStyle]::Bold)) -Parent $bottomPanel -OnClick {
         $f = $this.FindForm()
-        if (Complete-Nano11GuiResult -Gui $f.Tag) {
+        $g = $f.Tag
+        # Dependency / feature-impact pre-check before starting the build
+        try {
+            $depCfg = Get-Nano11GuiDraftConfig -Gui $g
+            $depResult = Test-Nano11Dependencies -Config $depCfg
+            if ($depResult.HasIssues) {
+                $depText = Format-Nano11DependencyReport -Result $depResult
+                $msg = "Dependency / feature-impact issues detected:`n`n$depText`n`nContinue with build anyway?"
+                $answer = [System.Windows.Forms.MessageBox]::Show($msg, "nano11 - Dependency Check", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Warning)
+                if ($answer -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+            }
+        } catch {
+            Write-Verbose "Dependency check skipped: $($_.Exception.Message)"
+        }
+        if (Complete-Nano11GuiResult -Gui $g) {
             $f.DialogResult = [System.Windows.Forms.DialogResult]::OK
             $f.Close()
         }
@@ -974,6 +1026,242 @@ function Show-Nano11GUI {
         $pair[1].BringToFront()
         [void](Add-Nano11SelectButtons -Parent $barList -Target $pair[1] -X 5 -Y 4 -Step 100 -ConfirmSelect $pair[2])
     }
+
+    # =========================================================================
+    # Tab 8: Migration & Backup
+    # =========================================================================
+    $tabMigration = New-Nano11TabPage -Text " 8. Migration & Backup " -TabControl $tabControl
+    $flowMig = New-Nano11FlowPanel -Parent $tabMigration
+
+    # Top: Backup Root path
+    $grpTop = New-Nano11GroupBox -Text " Backup Settings " -Width 840 -Height 70 -Parent $flowMig
+    [void](New-Nano11Label -Text "Backup Root:" -X 15 -Y 22 -Width 90 -Height 20 -Parent $grpTop)
+    $txtMigRoot = New-Nano11TextBox -X 110 -Y 20 -Width 420 -Height 24 -Text (Join-Path $env:USERPROFILE "Documents\nano11_migration_backup") -Parent $grpTop
+    $gui.MigRoot = $txtMigRoot
+    $lblMigStatus = New-Nano11Label -Text "Select migration rules on the left, then click Backup or Restore." -X 540 -Y 22 -Width 290 -Height 20 -Parent $grpTop
+    $gui.MigStatus = $lblMigStatus
+
+    # Left: Migration rules list
+    $grpRules = New-Nano11GroupBox -Text " Migration Rules " -Width 410 -Height 300 -Parent $flowMig
+    $clbMig = New-Object System.Windows.Forms.CheckedListBox
+    $clbMig.Location = New-Object System.Drawing.Point(10, 20)
+    $clbMig.Size = New-Object System.Drawing.Size(390, 270)
+    $clbMig.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
+    $clbMig.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $clbMig.CheckOnClick = $true
+    $migRules = @()
+    try {
+        $migRulesData = Get-Nano11MigrationRules
+        foreach ($r in ($migRulesData.GameRules + $migRulesData.AppConfigRules)) {
+            $migRules += "$($r.Id) - $($r.Name)"
+        }
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    if ($migRules.Count -eq 0) { $migRules = @("No migration rules found") }
+    foreach ($item in $migRules) { [void]$clbMig.Items.Add($item) }
+    $grpRules.Controls.Add($clbMig)
+    $gui.MigRulesList = $clbMig
+
+    # Right: Action buttons
+    $grpActions = New-Nano11GroupBox -Text " Actions " -Width 410 -Height 300 -Parent $flowMig
+    $btnY = 25
+    $btnStep = 40
+    [void](New-Nano11Button -Text "Recovery Readiness Check" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
+        try {
+            $rr = Test-Nano11RecoveryReadiness -Config $InitialSettings
+            $msg = "Readiness Score: $($rr.ReadinessScore)`nSecondary Drives: $($rr.SecondaryDrives -join ', ')`nSystem Restore: $($rr.SystemRestoreEnabled)`nWinRE on target: $($rr.WinReEnabledOnTarget)`n`n$($rr.Recommendations -join "`n")"
+            [void][System.Windows.Forms.MessageBox]::Show($msg, "Recovery Readiness", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+        } catch {
+            [void][System.Windows.Forms.MessageBox]::Show("Error: $($_.Exception.Message)", "Recovery Readiness", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        }
+    })
+    $btnY += $btnStep
+    [void](New-Nano11Button -Text "Export App Inventory" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
+        $btn = $this
+        $btn.Enabled = $false
+        $frm = $btn.FindForm()
+        $frm.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        [System.Windows.Forms.Application]::DoEvents()
+        try {
+            $outPath = Join-Path $env:USERPROFILE "Documents\apps-inventory.json"
+            Export-Nano11AppInventory -OutputPath $outPath
+            [void][System.Windows.Forms.MessageBox]::Show("App inventory exported to:`n$outPath", "Export Apps", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+        } catch {
+            [void][System.Windows.Forms.MessageBox]::Show("Error: $($_.Exception.Message)", "Export Apps", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        } finally {
+            $btn.Enabled = $true
+            $frm.Cursor = [System.Windows.Forms.Cursors]::Default
+        }
+    })
+    $btnY += $btnStep
+    [void](New-Nano11Button -Text "Open Migration Wizard" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
+        $repoRoot = $script:Nano11GuiRepoRoot
+        $migratorPath = Join-Path $repoRoot "tools\Nano11-Migrator.ps1"
+        if (Test-Path -LiteralPath $migratorPath) {
+            try {
+                Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$migratorPath`" -GUI" -WindowStyle Normal
+            } catch {
+                [void][System.Windows.Forms.MessageBox]::Show("Error: $($_.Exception.Message)", "Migration Wizard", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+            }
+        } else {
+            [void][System.Windows.Forms.MessageBox]::Show("Nano11-Migrator.ps1 not found.", "Migration Wizard", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+        }
+    })
+    $btnY += $btnStep
+    [void](New-Nano11Button -Text "Compare Presets (balanced vs extreme)" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
+        try {
+            $diff = Compare-Nano11Config -ReferenceConfig 'balanced' -DifferenceConfig 'extreme'
+            $txt = Format-Nano11ConfigDiff -DiffResult $diff
+            [void][System.Windows.Forms.MessageBox]::Show($txt, "Preset Diff", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+        } catch {
+            [void][System.Windows.Forms.MessageBox]::Show("Error: $($_.Exception.Message)", "Preset Diff", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        }
+    })
+    $btnY += $btnStep
+    [void](New-Nano11Button -Text "Run Backup" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
+        $btn = $this
+        $btn.Enabled = $false
+        $f = $btn.FindForm()
+        $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        [System.Windows.Forms.Application]::DoEvents()
+        $g = $f.Tag
+        $root = $g.MigRoot.Text.Trim()
+        if (-not $root) { $root = Join-Path $env:USERPROFILE "Documents\nano11_migration_backup" }
+        $selectedRules = @()
+        foreach ($item in $g.MigRulesList.CheckedItems) {
+            $selectedRules += ($item -split ' - ')[0].Trim()
+        }
+        $repoRoot = $script:Nano11GuiRepoRoot
+        # Run backup on a background job to keep the UI responsive
+        $job = Start-Job -ScriptBlock {
+            param($repoRoot, $root, $selectedRules)
+            Set-Location $repoRoot
+            . (Join-Path $repoRoot 'lib\Nano11Migration.ps1')
+            Start-Nano11MigrationBackup -BackupRoot $root -RuleIds $selectedRules
+        } -ArgumentList $repoRoot, $root, $selectedRules
+        while ($job.State -eq 'Running') {
+            [System.Windows.Forms.Application]::DoEvents()
+            Start-Sleep -Milliseconds 100
+        }
+        $result = $null
+        $jobError = $null
+        if ($job.State -eq 'Failed') {
+            $jobError = ($job.ChildJobs[0].JobStateInfo.Reason.Message)
+        } else {
+            $result = Receive-Job -Job $job
+        }
+        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        if ($jobError) {
+            [void][System.Windows.Forms.MessageBox]::Show("Error: $jobError", "Backup", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        } elseif ($result) {
+            $msg = "Backup completed.`nManifest: $($result.BackupRoot)\migration-manifest.json"
+            [void][System.Windows.Forms.MessageBox]::Show($msg, "Backup", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+            if ($g.MigStatus) { $g.MigStatus.Text = "Backup completed." }
+        }
+        $btn.Enabled = $true
+        $f.Cursor = [System.Windows.Forms.Cursors]::Default
+    })
+    $btnY += $btnStep
+    [void](New-Nano11Button -Text "Run Restore" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
+        $btn = $this
+        $btn.Enabled = $false
+        $f = $btn.FindForm()
+        $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        [System.Windows.Forms.Application]::DoEvents()
+        $g = $f.Tag
+        $root = $g.MigRoot.Text.Trim()
+        if (-not $root) { $root = Join-Path $env:USERPROFILE "Documents\nano11_migration_backup" }
+        $repoRoot = $script:Nano11GuiRepoRoot
+        # Run restore on a background job to keep the UI responsive
+        $job = Start-Job -ScriptBlock {
+            param($repoRoot, $root)
+            Set-Location $repoRoot
+            . (Join-Path $repoRoot 'lib\Nano11Migration.ps1')
+            Start-Nano11MigrationRestore -BackupRoot $root -ConflictPolicy BackupExisting
+        } -ArgumentList $repoRoot, $root
+        while ($job.State -eq 'Running') {
+            [System.Windows.Forms.Application]::DoEvents()
+            Start-Sleep -Milliseconds 100
+        }
+        $result = $null
+        $jobError = $null
+        if ($job.State -eq 'Failed') {
+            $jobError = ($job.ChildJobs[0].JobStateInfo.Reason.Message)
+        } else {
+            $result = Receive-Job -Job $job
+        }
+        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        if ($jobError) {
+            [void][System.Windows.Forms.MessageBox]::Show("Error: $jobError", "Restore", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        } elseif ($result) {
+            $msg = "Restore completed.`n" + ($result.Results | ForEach-Object { "$($_.TaskId): $($_.Status)" } | Out-String)
+            [void][System.Windows.Forms.MessageBox]::Show($msg, "Restore", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+            if ($g.MigStatus) { $g.MigStatus.Text = "Restore completed." }
+        }
+        $btn.Enabled = $true
+        $f.Cursor = [System.Windows.Forms.Cursors]::Default
+    })
+
+    # Custom paths backup/restore section
+    $grpCustom = New-Nano11GroupBox -Text " Custom File/Folder Backup (arbitrary paths) " -Width 840 -Height 140 -Parent $flowMig
+    [void](New-Nano11Label -Text "Paths (one per line):" -X 15 -Y 20 -Width 140 -Height 20 -Parent $grpCustom)
+    $txtCustomPaths = New-Object System.Windows.Forms.TextBox
+    $txtCustomPaths.Location = New-Object System.Drawing.Point(15, 42)
+    $txtCustomPaths.Size = New-Object System.Drawing.Size(560, 60)
+    $txtCustomPaths.Multiline = $true
+    $txtCustomPaths.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+    $txtCustomPaths.BackColor = [System.Drawing.Color]::FromArgb(35, 38, 46)
+    $txtCustomPaths.ForeColor = [System.Drawing.Color]::FromArgb(235, 238, 245)
+    $grpCustom.Controls.Add($txtCustomPaths)
+    $gui.CustomPaths = $txtCustomPaths
+
+    [void](New-Nano11Button -Text "Backup Custom Paths" -X 590 -Y 42 -Width 160 -Height 32 -Parent $grpCustom -OnClick {
+        $btn = $this
+        $btn.Enabled = $false
+        $f = $btn.FindForm()
+        $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        [System.Windows.Forms.Application]::DoEvents()
+        $g = $f.Tag
+        try {
+            $root = $g.MigRoot.Text.Trim()
+            if (-not $root) { $root = Join-Path $env:USERPROFILE "Documents\nano11_migration_backup" }
+            $paths = @($g.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            if ($paths.Count -eq 0) { throw "No paths specified." }
+            $result = Backup-Nano11CustomPaths -Paths $paths -BackupRoot $root
+            $msg = "Custom paths backup completed.`nCopied: $($result.CopiedFiles) files.`nFailed: $($result.FailedFiles.Count)"
+            [void][System.Windows.Forms.MessageBox]::Show($msg, "Backup Custom Paths", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+            if ($g.MigStatus) { $g.MigStatus.Text = "Custom backup: $($result.CopiedFiles) files." }
+        } catch {
+            [void][System.Windows.Forms.MessageBox]::Show("Error: $($_.Exception.Message)", "Backup Custom Paths", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        } finally {
+            $btn.Enabled = $true
+            $f.Cursor = [System.Windows.Forms.Cursors]::Default
+        }
+    })
+    [void](New-Nano11Button -Text "Restore Custom Paths" -X 590 -Y 82 -Width 160 -Height 32 -Parent $grpCustom -OnClick {
+        $btn = $this
+        $btn.Enabled = $false
+        $f = $btn.FindForm()
+        $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        [System.Windows.Forms.Application]::DoEvents()
+        $g = $f.Tag
+        try {
+            $root = $g.MigRoot.Text.Trim()
+            if (-not $root) { $root = Join-Path $env:USERPROFILE "Documents\nano11_migration_backup" }
+            $result = Restore-Nano11CustomPaths -BackupRoot $root -ConflictPolicy BackupExisting
+            $msg = "Custom paths restore completed.`nRestored: $($result.RestoredFiles) files.`nFailed: $($result.FailedFiles.Count)"
+            [void][System.Windows.Forms.MessageBox]::Show($msg, "Restore Custom Paths", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+            if ($g.MigStatus) { $g.MigStatus.Text = "Custom restore: $($result.RestoredFiles) files." }
+        } catch {
+            [void][System.Windows.Forms.MessageBox]::Show("Error: $($_.Exception.Message)", "Restore Custom Paths", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        } finally {
+            $btn.Enabled = $true
+            $f.Cursor = [System.Windows.Forms.Cursors]::Default
+        }
+    })
+
+    # =========================================================================
+    # Synchronization & Presets Handling
+    # =========================================================================
 
     # =========================================================================
     # Synchronization & Presets Handling

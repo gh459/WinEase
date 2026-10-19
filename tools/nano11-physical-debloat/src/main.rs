@@ -4,17 +4,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, GetLastError, HANDLE, LUID,
+    CloseHandle, GetLastError, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, HANDLE, LUID,
 };
 use windows::Win32::Security::{
-    AdjustTokenPrivileges, LookupPrivilegeValueW,
-    SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
+    AdjustTokenPrivileges, LookupPrivilegeValueW, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES,
+    TOKEN_PRIVILEGES, TOKEN_QUERY,
 };
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, DeleteFileW, RemoveDirectoryW, SetFileAttributesW,
-    FILE_ATTRIBUTE_NORMAL, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    OPEN_EXISTING,
+    CreateFileW, DeleteFileW, RemoveDirectoryW, SetFileAttributesW, FILE_ATTRIBUTE_NORMAL,
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -82,7 +81,13 @@ struct DebloatResult {
 fn enable_privilege(priv_name: &str) -> bool {
     unsafe {
         let mut token: HANDLE = HANDLE::default();
-        if OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token).is_err() {
+        if OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+            &mut token,
+        )
+        .is_err()
+        {
             return false;
         }
         let mut luid = LUID::default();
@@ -161,7 +166,10 @@ pub fn validate_mount_path(mount: &str) -> Result<PathBuf, String> {
     }
     let p = Path::new(trimmed);
     if is_reparse_point(p) {
-        return Err(format!("mount_path is a reparse point (junction/symlink): {}", trimmed));
+        return Err(format!(
+            "mount_path is a reparse point (junction/symlink): {}",
+            trimmed
+        ));
     }
     let md = fs::symlink_metadata(p)
         .map_err(|e| format!("mount_path is not accessible ({}): {}", trimmed, e))?;
@@ -171,21 +179,31 @@ pub fn validate_mount_path(mount: &str) -> Result<PathBuf, String> {
     let canon = fs::canonicalize(p)
         .map_err(|e| format!("mount_path canonicalization failed ({}): {}", trimmed, e))?;
     if canon.parent().is_none() {
-        return Err(format!("mount_path resolves to a drive/volume root: {}", canon.display()));
+        return Err(format!(
+            "mount_path resolves to a drive/volume root: {}",
+            canon.display()
+        ));
     }
     let canon = strip_verbatim_prefix(canon);
 
     // Reject drive root or too-shallow directory
     if canon.components().count() <= 2 {
-        return Err(format!("mount_path is too shallow or a drive root: {}", canon.display()));
+        return Err(format!(
+            "mount_path is too shallow or a drive root: {}",
+            canon.display()
+        ));
     }
 
     // Host OS protection: NEVER permit the host's active SystemRoot (e.g. C:\Windows) or SystemDrive
     if let Ok(sys_root) = std::env::var("SystemRoot") {
         if let Ok(canon_sys) = fs::canonicalize(Path::new(&sys_root)) {
             let canon_sys = strip_verbatim_prefix(canon_sys);
-            if canon == canon_sys || canon.starts_with(&canon_sys) || canon_sys.starts_with(&canon) {
-                return Err(format!("Refusing host SystemRoot as mount_path: {}", canon.display()));
+            if canon == canon_sys || canon.starts_with(&canon_sys) || canon_sys.starts_with(&canon)
+            {
+                return Err(format!(
+                    "Refusing host SystemRoot as mount_path: {}",
+                    canon.display()
+                ));
             }
         }
     }
@@ -194,12 +212,19 @@ pub fn validate_mount_path(mount: &str) -> Result<PathBuf, String> {
         if let Ok(canon_drive) = fs::canonicalize(Path::new(&drive_root)) {
             let canon_drive = strip_verbatim_prefix(canon_drive);
             if canon == canon_drive {
-                return Err(format!("Refusing host SystemDrive as mount_path: {}", canon.display()));
+                return Err(format!(
+                    "Refusing host SystemDrive as mount_path: {}",
+                    canon.display()
+                ));
             }
         }
     }
 
-    let sys_hive = canon.join("Windows").join("System32").join("config").join("SYSTEM");
+    let sys_hive = canon
+        .join("Windows")
+        .join("System32")
+        .join("config")
+        .join("SYSTEM");
     let ntoskrnl = canon.join("Windows").join("System32").join("ntoskrnl.exe");
     if !sys_hive.is_file() || !ntoskrnl.is_file() {
         return Err(format!(
@@ -213,16 +238,25 @@ pub fn validate_mount_path(mount: &str) -> Result<PathBuf, String> {
 
 /// Validate that a relative target path stays strictly inside the mounted image root.
 pub fn validate_target_path(mount: &Path, rel_path: &str) -> Result<PathBuf, String> {
-    let trimmed = rel_path.trim().trim_start_matches('\\').trim_start_matches('/');
+    let trimmed = rel_path
+        .trim()
+        .trim_start_matches('\\')
+        .trim_start_matches('/');
     if trimmed.is_empty() {
         return Err("Relative target path cannot be empty".to_string());
     }
     if trimmed.contains("..") {
-        return Err(format!("Relative path contains traversal '..': {}", trimmed));
+        return Err(format!(
+            "Relative path contains traversal '..': {}",
+            trimmed
+        ));
     }
     let full = mount.join(trimmed);
     if !full.starts_with(mount) {
-        return Err(format!("Target path escapes mount directory: {}", full.display()));
+        return Err(format!(
+            "Target path escapes mount directory: {}",
+            full.display()
+        ));
     }
     Ok(full)
 }
@@ -275,11 +309,24 @@ fn delete_file(path: &str, dry_run: bool) -> Result<bool, String> {
         );
         match handle {
             Ok(h) => {
-                use windows::Win32::Storage::FileSystem::{FILE_DISPOSITION_INFO, SetFileInformationByHandle, FileDispositionInfo};
-                let info = FILE_DISPOSITION_INFO { DeleteFile: true.into() };
-                let result = SetFileInformationByHandle(h, FileDispositionInfo, &info as *const _ as *const _, std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32);
+                use windows::Win32::Storage::FileSystem::{
+                    FileDispositionInfo, SetFileInformationByHandle, FILE_DISPOSITION_INFO,
+                };
+                let info = FILE_DISPOSITION_INFO {
+                    DeleteFile: true.into(),
+                };
+                let result = SetFileInformationByHandle(
+                    h,
+                    FileDispositionInfo,
+                    &info as *const _ as *const _,
+                    std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
+                );
                 let _ = CloseHandle(h);
-                if result.is_ok() { Ok(true) } else { Err("SetFileInformationByHandle failed".to_string()) }
+                if result.is_ok() {
+                    Ok(true)
+                } else {
+                    Err("SetFileInformationByHandle failed".to_string())
+                }
             }
             Err(e) => {
                 let code = e.code();
@@ -300,7 +347,10 @@ fn delete_file(path: &str, dry_run: bool) -> Result<bool, String> {
 fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
     let p = Path::new(path);
     if is_reparse_point(p) {
-        println!("  [SKIP] Reparse point (junction/symlink) is never deleted: {}", path);
+        println!(
+            "  [SKIP] Reparse point (junction/symlink) is never deleted: {}",
+            path
+        );
         return Ok(false);
     }
     if !p.exists() {
@@ -308,7 +358,10 @@ fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
         return Ok(false);
     }
     if p.is_file() {
-        println!("  [INFO] Target is a file, not a directory; deleting as file: {}", path);
+        println!(
+            "  [INFO] Target is a file, not a directory; deleting as file: {}",
+            path
+        );
         return delete_file(path, dry_run);
     }
     if dry_run {
@@ -321,7 +374,10 @@ fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
             for entry in rd.flatten() {
                 let ep = entry.path();
                 if is_reparse_point(&ep) {
-                    println!("  [SKIP] Reparse point (junction/symlink) not traversed: {}", ep.to_string_lossy());
+                    println!(
+                        "  [SKIP] Reparse point (junction/symlink) not traversed: {}",
+                        ep.to_string_lossy()
+                    );
                     continue;
                 }
                 if ep.is_dir() {
@@ -336,14 +392,18 @@ fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
         if entry.is_dir() {
             let s = entry.to_string_lossy();
             let wide = to_wide(&s);
-            unsafe { let _ = RemoveDirectoryW(PCWSTR(wide.as_ptr())); }
+            unsafe {
+                let _ = RemoveDirectoryW(PCWSTR(wide.as_ptr()));
+            }
         } else {
             let _ = delete_file(&entry.to_string_lossy(), false);
         }
     }
     let s = p.to_string_lossy();
     let wide = to_wide(&s);
-    unsafe { let _ = RemoveDirectoryW(PCWSTR(wide.as_ptr())); }
+    unsafe {
+        let _ = RemoveDirectoryW(PCWSTR(wide.as_ptr()));
+    }
     if p.exists() {
         Err(format!(
             "not fully removed (locked, access denied, or contains preserved reparse points): {}",
@@ -431,8 +491,13 @@ struct DeletionTarget {
 
 fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
     let mut targets = Vec::new();
-    
-    if config.experimental.get("physical_edge").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_edge")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Edge/WebView2",
             files: vec![],
@@ -442,148 +507,195 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             ],
         });
     }
-    
-    if config.experimental.get("physical_defender").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_defender")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Defender",
             files: vec![],
-            dirs: vec![
-                "ProgramData\\Microsoft\\Windows Defender",
-            ],
+            dirs: vec!["ProgramData\\Microsoft\\Windows Defender"],
         });
     }
-    
-    if config.experimental.get("physical_crash_dumps").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_crash_dumps")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Crash Dumps",
             files: vec![],
-            dirs: vec![
-                "Windows\\Minidump",
-            ],
+            dirs: vec!["Windows\\Minidump"],
         });
     }
-    
-    if config.experimental.get("physical_help").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_help")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Help Files",
             files: vec![],
-            dirs: vec![
-                "Windows\\Help",
-            ],
+            dirs: vec!["Windows\\Help"],
         });
     }
-    
-    if config.experimental.get("physical_temp_files").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_temp_files")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Temp Files",
             files: vec![],
-            dirs: vec![
-                "Windows\\Temp",
-            ],
+            dirs: vec!["Windows\\Temp"],
         });
     }
-    
-    if config.experimental.get("physical_hiberfil").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_hiberfil")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Hiberfil",
-            files: vec![
-                "hiberfil.sys",
-            ],
+            files: vec!["hiberfil.sys"],
             dirs: vec![],
         });
     }
-    
-    if config.experimental.get("physical_pagefile").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_pagefile")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Pagefile",
-            files: vec![
-                "pagefile.sys",
-            ],
+            files: vec!["pagefile.sys"],
             dirs: vec![],
         });
     }
-    
-    if config.experimental.get("physical_swapfile").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_swapfile")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Swapfile",
-            files: vec![
-                "swapfile.sys",
-            ],
+            files: vec!["swapfile.sys"],
             dirs: vec![],
         });
     }
-    
-    if config.experimental.get("physical_patchcache").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_patchcache")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "PatchCache",
             files: vec![],
-            dirs: vec![
-                "Windows\\Installer\\$PatchCache$",
-            ],
+            dirs: vec!["Windows\\Installer\\$PatchCache$"],
         });
     }
-    
-    if config.experimental.get("physical_delivery_optimization").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_delivery_optimization")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Delivery Optimization",
             files: vec![],
-            dirs: vec![
-                "Windows\\SoftwareDistribution\\DeliveryOptimization",
-            ],
+            dirs: vec!["Windows\\SoftwareDistribution\\DeliveryOptimization"],
         });
     }
-    
-    if config.experimental.get("physical_search_index").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_search_index")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Search Index",
             files: vec![],
-            dirs: vec![
-                "ProgramData\\Microsoft\\Search\\Data",
-            ],
+            dirs: vec!["ProgramData\\Microsoft\\Search\\Data"],
         });
     }
-    
-    if config.experimental.get("physical_provisioning").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_provisioning")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Provisioning",
             files: vec![],
-            dirs: vec![
-                "Windows\\Provisioning",
-            ],
+            dirs: vec!["Windows\\Provisioning"],
         });
     }
-    
-    if config.experimental.get("physical_windows_old").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_windows_old")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Windows.old",
             files: vec![],
-            dirs: vec![
-                "Windows.old",
-            ],
+            dirs: vec!["Windows.old"],
         });
     }
-    
-    if config.experimental.get("physical_minidump").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_minidump")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Minidump",
             files: vec![],
-            dirs: vec![
-                "Windows\\Minidump",
-            ],
+            dirs: vec!["Windows\\Minidump"],
         });
     }
-    
-    if config.experimental.get("physical_memory_dmp").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_memory_dmp")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Memory.dmp",
-            files: vec![
-                "Windows\\Memory.dmp",
-            ],
+            files: vec!["Windows\\Memory.dmp"],
             dirs: vec![],
         });
     }
-    
-    if config.experimental.get("physical_cortana").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_cortana")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Cortana/Search",
             files: vec![],
@@ -593,70 +705,104 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             ],
         });
     }
-    
-    if config.experimental.get("physical_onedrive").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_onedrive")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "OneDrive",
-            files: vec![
-                "Windows\\System32\\OneDriveSetup.exe",
-            ],
+            files: vec!["Windows\\System32\\OneDriveSetup.exe"],
             dirs: vec![],
         });
     }
-    
-    if config.experimental.get("physical_telemetry").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_telemetry")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Telemetry",
             files: vec![],
-            dirs: vec![
-                "ProgramData\\Microsoft\\Diagnosis",
-            ],
+            dirs: vec!["ProgramData\\Microsoft\\Diagnosis"],
         });
     }
-    
-    if config.experimental.get("physical_hyperv").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_hyperv")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Hyper-V",
             files: vec![],
             dirs: vec![],
         });
     }
-    
-    if config.experimental.get("physical_iis").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_iis")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "IIS",
             files: vec![],
-            dirs: vec![
-                "Windows\\System32\\inetsrv",
-            ],
+            dirs: vec!["Windows\\System32\\inetsrv"],
         });
     }
-    
-    if config.experimental.get("physical_firewall").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_firewall")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Firewall",
             files: vec![],
             dirs: vec![],
         });
     }
-    
-    if config.experimental.get("physical_bluetooth").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_bluetooth")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Bluetooth",
             files: vec![],
             dirs: vec![],
         });
     }
-    
-    if config.experimental.get("physical_spooler").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_spooler")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Spooler",
             files: vec![],
             dirs: vec![],
         });
     }
-    
-    if config.experimental.get("physical_touch_pen").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_touch_pen")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Touch/Pen",
             files: vec![
@@ -666,41 +812,59 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             dirs: vec![],
         });
     }
-    
-    if config.experimental.get("physical_media_player").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_media_player")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Media Player",
             files: vec![],
-            dirs: vec![
-                "Program Files\\Windows Media Player",
-            ],
+            dirs: vec!["Program Files\\Windows Media Player"],
         });
     }
-    
-    if config.experimental.get("physical_bitlocker").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_bitlocker")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "BitLocker",
             files: vec![],
             dirs: vec![],
         });
     }
-    
-    if config.experimental.get("physical_sandbox").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_sandbox")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "Sandbox",
             files: vec![],
             dirs: vec![],
         });
     }
-    
-    if config.experimental.get("physical_wsl").copied().unwrap_or(false) {
+
+    if config
+        .experimental
+        .get("physical_wsl")
+        .copied()
+        .unwrap_or(false)
+    {
         targets.push(DeletionTarget {
             name: "WSL",
             files: vec![],
             dirs: vec![],
         });
     }
-    
+
     targets
 }
 
@@ -708,13 +872,16 @@ fn chrono_now() -> String {
     use windows::Win32::System::SystemInformation::GetSystemTime;
     unsafe {
         let st = GetSystemTime();
-        format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond)
+        format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+            st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond
+        )
     }
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    
+
     let mut config_path = String::new();
     let mut log_path_override: Option<String> = None;
     let mut dry_run = false;
@@ -722,49 +889,78 @@ fn main() {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--config" => { if i + 1 < args.len() { config_path = args[i+1].clone(); i += 1; } }
-            "--log-path" => { if i + 1 < args.len() { log_path_override = Some(args[i+1].clone()); i += 1; } }
-            "--dry-run" => { dry_run = true; }
-            "--confirm-offline-image" => { confirm_offline_image = true; }
+            "--config" => {
+                if i + 1 < args.len() {
+                    config_path = args[i + 1].clone();
+                    i += 1;
+                }
+            }
+            "--log-path" => {
+                if i + 1 < args.len() {
+                    log_path_override = Some(args[i + 1].clone());
+                    i += 1;
+                }
+            }
+            "--dry-run" => {
+                dry_run = true;
+            }
+            "--confirm-offline-image" => {
+                confirm_offline_image = true;
+            }
             _ => {}
         }
         i += 1;
     }
-    
+
     println!("nano11-physical-debloat v0.3.0 (Hardened)");
     println!("Config: {}", config_path);
-    
+
     let raw_bytes = match fs::read(&config_path) {
         Ok(b) => b,
-        Err(e) => { eprintln!("Failed to read config: {}", e); std::process::exit(1); }
+        Err(e) => {
+            eprintln!("Failed to read config: {}", e);
+            std::process::exit(1);
+        }
     };
     let config_cow = String::from_utf8_lossy(&raw_bytes);
     let config_str = config_cow.trim_start_matches('\u{FEFF}');
     let mut config: DebloatConfig = match serde_json::from_str(config_str) {
         Ok(c) => c,
-        Err(e) => { eprintln!("Failed to parse config: {}", e); std::process::exit(1); }
+        Err(e) => {
+            eprintln!("Failed to parse config: {}", e);
+            std::process::exit(1);
+        }
     };
-    
-    if dry_run { config.dry_run = true; }
-    if confirm_offline_image { config.confirm_offline_image = true; }
-    if let Some(lp) = log_path_override { config.log_path = lp; }
-    
+
+    if dry_run {
+        config.dry_run = true;
+    }
+    if confirm_offline_image {
+        config.confirm_offline_image = true;
+    }
+    if let Some(lp) = log_path_override {
+        config.log_path = lp;
+    }
+
     // Strict verification of experimental keys against allowlist
     for key in config.experimental.keys() {
         if !KNOWN_EXPERIMENTAL_KEYS.contains(&key.as_str()) {
-            eprintln!("[REJECTED] Unknown experimental key not in allowlist: {}", key);
+            eprintln!(
+                "[REJECTED] Unknown experimental key not in allowlist: {}",
+                key
+            );
             std::process::exit(2);
         }
     }
-    
+
     println!("Dry run: {}", config.dry_run);
     println!("Mount path: {}", config.mount_path);
-    
+
     if !config.dry_run && !config.confirm_offline_image {
         eprintln!("[BLOCKED] Real file deletion requires --confirm-offline-image flag or confirm_offline_image: true in config.");
         std::process::exit(4);
     }
-    
+
     let mount_path = match validate_mount_path(&config.mount_path) {
         Ok(p) => p,
         Err(e) => {
@@ -773,27 +969,27 @@ fn main() {
         }
     };
     let mount = mount_path.to_string_lossy().to_string();
-    
+
     if config.dry_run {
         println!("[PRIV] Dry run: privilege escalation skipped");
     } else {
         escalate_privileges();
     }
-    
+
     let targets = get_targets(&config);
     println!("Targets to process: {}", targets.len());
-    
+
     let mut result = DebloatResult {
         success: true,
         dry_run: config.dry_run,
         timestamp: chrono_now(),
         ..Default::default()
     };
-    
+
     for target in &targets {
         println!("\n=== Processing: {} ===", target.name);
         result.targets_processed.push(target.name.to_string());
-        
+
         for f in &target.files {
             match validate_target_path(&mount_path, f) {
                 Ok(target_file_path) => {
@@ -801,24 +997,31 @@ fn main() {
                     match delete_file(&full_path, config.dry_run) {
                         Ok(true) => {
                             result.deleted_files += 1;
-                            if !config.dry_run { println!("  [OK] Deleted file: {}", f); }
+                            if !config.dry_run {
+                                println!("  [OK] Deleted file: {}", f);
+                            }
                         }
                         Ok(false) => { /* skipped */ }
                         Err(e) => {
-                            result.errors.push(format!("[{}] file {}: {}", target.name, f, e));
+                            result
+                                .errors
+                                .push(format!("[{}] file {}: {}", target.name, f, e));
                             result.success = false;
                             println!("  [ERR] {}", e);
                         }
                     }
                 }
                 Err(e) => {
-                    result.errors.push(format!("[{}] Invalid target file path {}: {}", target.name, f, e));
+                    result.errors.push(format!(
+                        "[{}] Invalid target file path {}: {}",
+                        target.name, f, e
+                    ));
                     result.success = false;
                     println!("  [GUARD REJECT] {}", e);
                 }
             }
         }
-        
+
         for d in &target.dirs {
             if has_wildcard(d) {
                 let matches = expand_dir_pattern(&mount, d);
@@ -828,7 +1031,11 @@ fn main() {
                 }
                 for m in &matches {
                     if !m.starts_with(&mount_path) {
-                        result.errors.push(format!("[{}] Wildcard match escaped mount: {}", target.name, m.display()));
+                        result.errors.push(format!(
+                            "[{}] Wildcard match escaped mount: {}",
+                            target.name,
+                            m.display()
+                        ));
                         result.success = false;
                         println!("  [GUARD REJECT] Escaped mount: {}", m.display());
                         continue;
@@ -837,11 +1044,15 @@ fn main() {
                     match delete_directory(&ms, config.dry_run) {
                         Ok(true) => {
                             result.deleted_dirs += 1;
-                            if !config.dry_run { println!("  [OK] Deleted dir: {}", ms); }
+                            if !config.dry_run {
+                                println!("  [OK] Deleted dir: {}", ms);
+                            }
                         }
                         Ok(false) => { /* skipped */ }
                         Err(e) => {
-                            result.errors.push(format!("[{}] dir {}: {}", target.name, ms, e));
+                            result
+                                .errors
+                                .push(format!("[{}] dir {}: {}", target.name, ms, e));
                             result.success = false;
                             println!("  [ERR] {}", e);
                         }
@@ -854,18 +1065,25 @@ fn main() {
                         match delete_directory(&full_path, config.dry_run) {
                             Ok(true) => {
                                 result.deleted_dirs += 1;
-                                if !config.dry_run { println!("  [OK] Deleted dir: {}", d); }
+                                if !config.dry_run {
+                                    println!("  [OK] Deleted dir: {}", d);
+                                }
                             }
                             Ok(false) => { /* skipped */ }
                             Err(e) => {
-                                result.errors.push(format!("[{}] dir {}: {}", target.name, d, e));
+                                result
+                                    .errors
+                                    .push(format!("[{}] dir {}: {}", target.name, d, e));
                                 result.success = false;
                                 println!("  [ERR] {}", e);
                             }
                         }
                     }
                     Err(e) => {
-                        result.errors.push(format!("[{}] Invalid target dir path {}: {}", target.name, d, e));
+                        result.errors.push(format!(
+                            "[{}] Invalid target dir path {}: {}",
+                            target.name, d, e
+                        ));
                         result.success = false;
                         println!("  [GUARD REJECT] {}", e);
                     }
@@ -873,22 +1091,26 @@ fn main() {
             }
         }
     }
-    
+
     if !config.log_path.is_empty() {
         let result_json = serde_json::to_string_pretty(&result).unwrap();
         let _ = fs::write(&config.log_path, result_json);
         println!("\nResult written to: {}", config.log_path);
     }
-    
+
     println!("\n=== Summary ===");
-    let verb = if config.dry_run { "Would delete" } else { "Deleted" };
+    let verb = if config.dry_run {
+        "Would delete"
+    } else {
+        "Deleted"
+    };
     println!("{} files: {}", verb, result.deleted_files);
     println!("{} dirs: {}", verb, result.deleted_dirs);
     println!("Errors: {}", result.errors.len());
     for e in &result.errors {
         println!("  - {}", e);
     }
-    
+
     if !result.success && !result.errors.is_empty() {
         std::process::exit(1);
     }
@@ -919,7 +1141,10 @@ mod tests {
 
     #[test]
     fn test_wildcard_matcher() {
-        assert!(wildcard_match("Microsoft.Cortana*", "Microsoft.Cortana_1.2.3"));
+        assert!(wildcard_match(
+            "Microsoft.Cortana*",
+            "Microsoft.Cortana_1.2.3"
+        ));
         assert!(wildcard_match("*.exe", "cmd.exe"));
         assert!(!wildcard_match("*.exe", "cmd.dll"));
     }

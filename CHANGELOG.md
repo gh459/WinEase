@@ -21,10 +21,49 @@ nano11 scheme; entries below are local-fork additions on top of upstream 2.1.
 - `tools/Measure-Nano11GuestBaseline.ps1` (in-guest disk / RAM / CPU / boot-time /
   functionality measurement, JSON output) and `tools/Compare-Nano11Benchmarks.ps1`
   (multi-run statistical comparison: mean, median, StdDev, IQR, % improvement).
+- `config/dependencies.psd1`: dependency & feature-impact catalog (174 entries across
+  Components, Tweaks, Advanced Debloat). Surfaces Conflicts, Impacts and Unknowns
+  (fail-safe: unregistered items become Unknown).
+- `lib/Nano11Extensions.ps1`: user extensibility engine (Import-Nano11UserExtensions,
+  Invoke-Nano11UserExtensionActions, Get-Nano11CustomScriptMetadata,
+  Invoke-Nano11CustomScriptsStage, Compare-Nano11Config, Format-Nano11ConfigDiff,
+  Test-Nano11RecoveryReadiness) plus `config/user-tweaks.psd1` template.
+- `lib/Nano11Migration.ps1`: PC migration & backup engine (13 functions) plus
+  `config/migration-rules.psd1` (15 game + 16 app rules) and
+  `config/user-migration-rules.psd1` template.
+- `tools/Nano11-Migrator.ps1`: standalone CLI/GUI migrator (Backup, Restore, ExportApps,
+  ListRules, RecoveryCheck, -CustomPaths, -GUI wizard).
+- `docs/EXTENSIBILITY_GUIDE.md`: extensibility documentation.
+- GUI Tab 8 "Migration & Backup": recovery check, app inventory export, preset diff,
+  backup/restore (rule-based and custom paths), migration wizard launcher.
+- Phase hooks: user extension actions in phases 05/06/10/11; custom script copying
+  (OfflineImage/FirstLogon/UserOnce) and FirstLogonCommands registration.
 - `tools/custom-scripts/user/`: post-install scripts that run in the standard user context.
 - `PSScriptAnalyzerSettings.psd1` plus a Pester test that requires zero Error/Warning
   findings. Pester suite grew to 64 tests (GUI wiring, single-source settings, GUI smoke
   test that clicks every Select All / Clear All button).
+- `config/dependencies.psd1`: dependency & feature-impact catalog (174 entries across
+  Components, Tweaks and Advanced Debloat). Surfaces Conflicts, Impacts and Unknowns
+  (fail-safe: unregistered items become Unknown).
+- `lib/Nano11Extensions.ps1`: user extensibility engine (Import-Nano11UserExtensions,
+  Invoke-Nano11UserExtensionActions, Get-Nano11CustomScriptMetadata,
+  Invoke-Nano11CustomScriptsStage, Compare-Nano11Config, Format-Nano11ConfigDiff,
+  Test-Nano11RecoveryReadiness) plus `config/user-tweaks.psd1` template.
+- `lib/Nano11Migration.ps1`: PC migration & backup engine (Expand-Nano11MigrationPath,
+  Get-Nano11MigrationRules, Test-Nano11SecretPath, Export-Nano11AppInventory,
+  Restore-Nano11Apps, Get-Nano11MigrationSizeEstimate, Backup-Nano11UserData,
+  Restore-Nano11UserData, Invoke-Nano11MigrationRulesBackup,
+  Invoke-Nano11MigrationRulesRestore, Start-Nano11MigrationBackup,
+  Start-Nano11MigrationRestore, Export-Nano11MigrationReport,
+  Backup-Nano11CustomPaths, Restore-Nano11CustomPaths) plus
+  `config/migration-rules.psd1` and `config/user-migration-rules.psd1`.
+- `tools/Nano11-Migrator.ps1`: standalone CLI/GUI migrator (Backup, Restore, ExportApps,
+  ListRules, RecoveryCheck, -CustomPaths, -GUI wizard).
+- `docs/EXTENSIBILITY_GUIDE.md`: extensibility documentation.
+- GUI Tab 8 "Migration & Backup": recovery check, app inventory export, preset diff,
+  backup/restore (rule-based and custom paths), migration wizard launcher.
+- Phase hooks: user extension actions in phases 05/06/10/11; custom script copying
+  (OfflineImage/FirstLogon/UserOnce) and FirstLogonCommands registration.
 
 ### Changed
 - AppX leftover folder cleanup no longer runs recursive `takeown /R` / `icacls /T`; it

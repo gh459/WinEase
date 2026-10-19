@@ -149,6 +149,7 @@
         @{ Key = 'UserName'; Variable = 'UserName'; Type = 'String' }
         @{ Key = 'AdvancedDebloatStandard'; Variable = ''; Type = 'Special' }
         @{ Key = 'AdvancedDebloatExperimental'; Variable = ''; Type = 'Special' }
+        @{ Key = 'IncludeMigrationAssistant'; Variable = 'includeMigrationAssistant'; Type = 'Bool'; Default = $false; CliSwitch = $true; Gui = @{ Order = 21; Text = 'Include Migration Assistant (PC-to-PC transfer tools)'; Description = 'Bundle the Nano11-Migrator tool into the image for post-install PC migration'; Default = $false } }
     )
 
     # CLI switch pairs nano11builder.ps1 applies in this order. For each entry the first

@@ -44,6 +44,7 @@ param(
     [switch]$DryRun,
     [switch]$Validate,
     [switch]$SkipEiCfg,
+    [switch]$StrictDependencyCheck,
     [switch]$NoPostInstallAssets,
     # E1: Explicit opt-in gate for destructive physical debloat (Phase 9.5, 09-physical-debloat.ps1).
     # Advanced Debloat selections arriving from a profile or GUI are NOT sufficient by themselves.
@@ -62,6 +63,7 @@ param(
     [string]$InjectDrivers,
     [switch]$KeepBasicApps,
     [switch]$KeepSearchIndex,
+    [switch]$IncludeMigrationAssistant,
 
     # 1. Windows Defender
     [switch]$KeepDefender,
@@ -278,6 +280,11 @@ if (Test-Path -LiteralPath $helperModuleEarly) {
 } else {
     throw "Required helper module not found: $helperModuleEarly"
 }
+# M2/M3: dot-source extension and migration modules early (functions needed before AllTweakDefs init)
+$extModuleEarly = Join-Path -Path $scriptDirEarly -ChildPath "lib\Nano11Extensions.ps1"
+if (Test-Path -LiteralPath $extModuleEarly) { . $extModuleEarly }
+$migModuleEarly = Join-Path -Path $scriptDirEarly -ChildPath "lib\Nano11Migration.ps1"
+if (Test-Path -LiteralPath $migModuleEarly) { . $migModuleEarly }
 
 # Normalize -TweakGroupOverrides to a hashtable of [bool]
 if ($null -ne $TweakGroupOverrides -and $TweakGroupOverrides -isnot [System.Collections.IDictionary]) {
@@ -491,6 +498,14 @@ foreach ($td in $script:Nano11SettingsDef.Tweaks) {
     $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description }
     foreach ($alias in @($td.Aliases)) { if ($alias) { $script:TweakKeyAliases[$alias] = $td.Key } }
     if ($td.Variable) { $script:TweakVariableMap[$td.Key] = $td.Variable }
+}
+
+# M2: Import user-defined tweaks/presets/custom scripts (in-place, preserves single-assignment contract)
+try {
+    $script:UserExtensionsResult = Import-Nano11UserExtensions
+} catch {
+    Write-Warning "User extensions import failed: $($_.Exception.Message)"
+    $script:UserExtensionsResult = [PSCustomObject]@{ Loaded = $false; UserTweakCount = 0; UserPresetCount = 0; CustomScriptCount = 0; Errors = @($_.Exception.Message) }
 }
 
 # Component settings (Key -> Variable / Type / Default / Gui), in profile key order
@@ -982,6 +997,15 @@ $script:BuiltInPresets = [ordered]@{
     }
 }
 
+# M2: Load user presets now that BuiltInPresets is defined
+try {
+    if (Get-Command -Name Import-Nano11UserExtensions -ErrorAction SilentlyContinue) {
+        Import-Nano11UserExtensions -PresetsOnly | Out-Null
+    }
+} catch {
+    Write-Verbose "Ignored: $($_.Exception.Message)"
+}
+
 function Get-Nano11Preset {
     param([string]$Name)
     if (-not $Name) { return $script:BuiltInPresets['extreme'] }
@@ -1183,6 +1207,16 @@ if (Test-Path -LiteralPath $helperModule) {
     . $helperModule
 } else {
     throw "Required helper module not found: $helperModule"
+}
+# Dot-source user extensibility module (M2)
+$extModule = Join-Path -Path $scriptDir -ChildPath "lib\Nano11Extensions.ps1"
+if (Test-Path -LiteralPath $extModule) {
+    . $extModule
+}
+# Dot-source migration module (M3)
+$migModule = Join-Path -Path $scriptDir -ChildPath "lib\Nano11Migration.ps1"
+if (Test-Path -LiteralPath $migModule) {
+    . $migModule
 }
 $logDir = Join-Path -Path $scriptDir -ChildPath "logs"
 $timestampStr = (Get-Date -Format "yyyyMMdd_HHmmss")
@@ -1921,6 +1955,31 @@ try {
         }
     }
 } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+
+# Dependency & feature-impact pre-flight check
+try {
+    $depCfg = Get-Nano11CurrentConfig -ProfileName $(if ($selectedProfile) { $selectedProfile } else { "Current Configuration" })
+    $depResult = Test-Nano11Dependencies -Config $depCfg
+    Write-Host ""
+    Write-Host "Dependency & feature-impact analysis:" -ForegroundColor Cyan
+    $depText = Format-Nano11DependencyReport -Result $depResult
+    if ($depText) {
+        foreach ($ln in ($depText -split "`r?`n")) {
+            if ($ln -match '^\[DEPENDENCY CONFLICT\]') { Write-Host $ln -ForegroundColor Red }
+            elseif ($ln -match '^\[DEPENDENCY UNKNOWN') { Write-Host $ln -ForegroundColor Magenta }
+            elseif ($ln -match '^\[FEATURE IMPACT\]') { Write-Host $ln -ForegroundColor Yellow }
+            else { Write-Host $ln }
+        }
+    } else {
+        Write-Host "  (no conflicts, unknowns or impacts detected)" -ForegroundColor Green
+    }
+    if ($StrictDependencyCheck -and ($depResult.Conflicts.Count -gt 0 -or $depResult.Unknowns.Count -gt 0)) {
+        throw "Dependency check failed: $($depResult.Conflicts.Count) conflict(s) and $($depResult.Unknowns.Count) unknown(s) detected. Aborting build (-StrictDependencyCheck)."
+    }
+} catch {
+    if ($_.Exception.Message -match 'Dependency check failed') { throw }
+    Write-Warning "Dependency check skipped: $($_.Exception.Message)"
+}
 
 # Early verification of -SourceDrive
 if ($SourceDrive) {

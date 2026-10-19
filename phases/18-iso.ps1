@@ -289,6 +289,9 @@ try {
     $reportData['WinSxSBeforeMB']       = if ($script:WinSxsBeforeMB) { $script:WinSxsBeforeMB } else { 0 }
     $reportData['WinSxSAfterMB']        = if ($script:WinSxsAfterMB) { $script:WinSxsAfterMB } else { 0 }
     $reportData['PhaseTimings']        = if ($script:PhaseTimings) { $script:PhaseTimings } else { @{} }
+    $depResult = $null
+    try { $depResult = Test-Nano11Dependencies -Config $resolvedConfig } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    $reportData['DependencyResult'] = $depResult
     # G5: persist phase timings for next-run build time estimation.
     # (Phase 18 is still running here; the orchestrator re-persists the complete table
     # via Exit-Phase + Save-Nano11PhaseTimings immediately after this script returns.)

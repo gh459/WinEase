@@ -196,3 +196,12 @@ if ($parallelism -le 1 -or $folderPaths.Count -le 1) {
 Write-Host "Disabling Recall and modern AI optional features..." -ForegroundColor Cyan
 & dism.exe /English "/image:$scratchDir" /Disable-Feature /FeatureName:Recall /Remove > $null 2>&1
 & dism.exe /English "/image:$scratchDir" /Disable-Feature /FeatureName:Windows-Recall-Optional-Package /Remove > $null 2>&1
+
+# M2: User extension actions (Appx)
+if (Get-Command -Name Invoke-Nano11UserExtensionActions -ErrorAction SilentlyContinue) {
+    try { Invoke-Nano11UserExtensionActions -PhaseType Appx -ScratchDir $scratchDir -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+}
+# M2: Custom scripts (OfflineImage stage)
+if (Get-Command -Name Invoke-Nano11CustomScriptsStage -ErrorAction SilentlyContinue) {
+    try { Invoke-Nano11CustomScriptsStage -Stage 'OfflineImage' -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+}

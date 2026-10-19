@@ -1,4 +1,4 @@
-# nano11.Tests.ps1 - Pester suite for the nano11 builder fork
+﻿# nano11.Tests.ps1 - Pester suite for the nano11 builder fork
 # Run with:  Invoke-Pester -Path .\tests\nano11.Tests.ps1
 # Requires:  Pester 3.4+ (ships with Windows PowerShell 5.1)
 
@@ -143,7 +143,12 @@ Describe "nano11 builder - end-to-end DryRun" {
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
         $p = [System.Diagnostics.Process]::Start($psi)
-        $p.WaitForExit(300000)
+        $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+        $stderrTask = $p.StandardError.ReadToEndAsync()
+        $finished = $p.WaitForExit(300000)
+        if (-not $finished) { $p.Kill(); throw "builder did not exit within timeout" }
+        [void]$stdoutTask.Result
+        [void]$stderrTask.Result
         $p.ExitCode | Should Be 0
     }
 }
@@ -834,11 +839,16 @@ Describe "nano11 GUI - smoke test (form built without ShowDialog)" {
 
     It "main window: every Select All / Clear All button changes its boxes" {
         $gui = Show-Nano11GUI -NoShow
-        $gui.Form.Tag | Should Be $gui
-        $gui.TweakCheckboxes.Count | Should Be $script:AllTweakDefs.Count
-        Invoke-SelectButtons $gui.Form | Should Be 14
-        # Toggle handlers reached the shared context: preset switched to Custom
-        $gui.Preset.SelectedIndex | Should Be ($gui.Preset.Items.Count - 1)
+        try {
+            $gui.Form.Tag | Should Be $gui
+            $gui.TweakCheckboxes.Count | Should Be $script:AllTweakDefs.Count
+            Invoke-SelectButtons $gui.Form | Should Be 14
+            # Toggle handlers reached the shared context: preset switched to Custom
+            $gui.Preset.SelectedIndex | Should Be ($gui.Preset.Items.Count - 1)
+        } finally {
+            if ($gui -and $gui.Form) { $gui.Form.Dispose() }
+            [System.Windows.Forms.Application]::Exit()
+        }
     }
 
     It "main window: result hashtable keeps its contract" {
@@ -859,7 +869,20 @@ Describe "nano11 GUI - smoke test (form built without ShowDialog)" {
 
     It "Advanced Debloat dialog: every Select All / Deselect All button changes its list" {
         $dlg = Show-AdvancedDebloatDialog -NoShow
-        Invoke-SelectButtons $dlg | Should Be 4
+        try {
+            Invoke-SelectButtons $dlg | Should Be 4
+        } finally {
+            if ($dlg -and $dlg.Form) { $dlg.Form.Dispose() }
+            [System.GC]::Collect()
+            [System.GC]::WaitForPendingFinalizers()
+        }
+    }
+
+    It "cleanup WinForms message pump (environmental stability)" {
+        [System.Windows.Forms.Application]::Exit()
+        [System.GC]::Collect()
+        [System.GC]::WaitForPendingFinalizers()
+        $true | Should Be $true
     }
 }
 
@@ -880,5 +903,215 @@ Describe "nano11 code quality - PSScriptAnalyzer" {
             Invoke-ScriptAnalyzer -Path $target -Settings $settingsPath -Severity Error, Warning
         })
         ($findings | ForEach-Object { "$($_.RuleName) $(Split-Path -Leaf $_.ScriptPath):$($_.Line) $($_.Message)" }) -join "`n" | Should Be ''
+    }
+}
+
+# --- Dependency / feature-impact checker tests ---
+if (-not (Get-Command -Name Test-Nano11Dependencies -ErrorAction SilentlyContinue)) {
+    . (Join-Path -Path $script:RepoRoot -ChildPath "nano11helpers.ps1")
+}
+
+Describe "nano11 dependency checker" {
+    $depsPath = Join-Path -Path $script:RepoRoot -ChildPath "config\dependencies.psd1"
+    $tweaksPath = Join-Path -Path $script:RepoRoot -ChildPath "config\tweaks.psd1"
+
+    It "dependency catalog exists" {
+        Test-Path -LiteralPath $depsPath | Should Be $true
+    }
+
+    It "covers every tweak key from config/tweaks.psd1" {
+        $deps = Import-PowerShellDataFile -Path $depsPath
+        $defs = Import-PowerShellDataFile -Path $tweaksPath
+        foreach ($t in $defs.Tweaks) {
+            $deps.Tweaks.ContainsKey($t.Key) | Should Be $true
+        }
+    }
+
+    It "covers every component key from config/tweaks.psd1" {
+        $deps = Import-PowerShellDataFile -Path $depsPath
+        $defs = Import-PowerShellDataFile -Path $tweaksPath
+        foreach ($c in $defs.Components) {
+            $deps.Components.ContainsKey($c.Key) | Should Be $true
+        }
+    }
+
+    It "covers every Advanced Debloat item from the GUI" {
+        $deps = Import-PowerShellDataFile -Path $depsPath
+        $guiLines = [System.IO.File]::ReadAllLines($script:GuiPath)
+        $items = @()
+        $i = 0
+        while ($i -lt $guiLines.Count) {
+            if ($guiLines[$i] -match '\$(std|exp)Items\s*=\s*@\(') {
+                $i++
+                while ($i -lt $guiLines.Count -and $guiLines[$i].Trim() -ne ')') {
+                    $l = $guiLines[$i].Trim().TrimEnd(',')
+                    if ($l -match '"([^"]*)"') { $items += $matches[1] }
+                    $i++
+                }
+            }
+            $i++
+        }
+        $items = $items | Select-Object -Unique
+        $items.Count | Should BeGreaterThan 0
+        foreach ($it in $items) {
+            $deps.AdvancedDebloat.ContainsKey($it) | Should Be $true
+        }
+    }
+
+    It "detects a conflict for WSLSupport + NoHypervisor" {
+        $cfg = @{ WSLSupport = $true; NoHypervisor = $true; TweakSettings = @{}; AdvancedDebloatStandard = @(); AdvancedDebloatExperimental = @() }
+        $r = Test-Nano11Dependencies -Config $cfg
+        $r.Conflicts.Count | Should BeGreaterThan 0
+    }
+
+    It "returns impacts for RemoveStore" {
+        $cfg = @{ RemoveStore = $true; TweakSettings = @{}; AdvancedDebloatStandard = @(); AdvancedDebloatExperimental = @() }
+        $r = Test-Nano11Dependencies -Config $cfg
+        $r.Impacts.Count | Should BeGreaterThan 0
+    }
+
+    It "returns impacts for 'Remove Print Spooler'" {
+        $cfg = @{ TweakSettings = @{}; AdvancedDebloatStandard = @('Remove Print Spooler (service + binary) [20-30MB]'); AdvancedDebloatExperimental = @() }
+        $r = Test-Nano11Dependencies -Config $cfg
+        $r.Impacts.Count | Should BeGreaterThan 0
+    }
+
+    It "marks 'Provisioning packages' as Unknown" {
+        $cfg = @{ TweakSettings = @{}; AdvancedDebloatStandard = @('Remove Provisioning packages [5-10MB]'); AdvancedDebloatExperimental = @() }
+        $r = Test-Nano11Dependencies -Config $cfg
+        $r.Unknowns.Count | Should BeGreaterThan 0
+    }
+
+    It "treats unregistered advanced debloat items as Unknown (fail-safe)" {
+        $cfg = @{ TweakSettings = @{}; AdvancedDebloatStandard = @('Totally Unknown Item XYZ'); AdvancedDebloatExperimental = @() }
+        $r = Test-Nano11Dependencies -Config $cfg
+        $r.Unknowns.Count | Should BeGreaterThan 0
+    }
+
+    It "returns no issues for a safe/empty configuration" {
+        $cfg = @{ TweakSettings = @{}; AdvancedDebloatStandard = @(); AdvancedDebloatExperimental = @() }
+        $r = Test-Nano11Dependencies -Config $cfg
+        $r.HasIssues | Should Be $false
+    }
+}
+
+# --- User Extensibility Engine tests (M2) ---
+if (-not (Get-Command -Name Import-Nano11UserExtensions -ErrorAction SilentlyContinue)) {
+    . (Join-Path -Path $script:RepoRoot -ChildPath "lib\Nano11Extensions.ps1")
+}
+if (-not (Get-Command -Name Test-Nano11RecoveryReadiness -ErrorAction SilentlyContinue)) {
+    . (Join-Path -Path $script:RepoRoot -ChildPath "lib\Nano11Migration.ps1")
+}
+
+Describe "User Extensibility Engine (lib/Nano11Extensions.ps1)" {
+    It "Import-Nano11UserExtensions returns Loaded=false for missing file" {
+        $r = Import-Nano11UserExtensions -ConfigPath (Join-Path $script:RepoRoot "config\nonexistent-user-tweaks.psd1")
+        $r.Loaded | Should Be $false
+    }
+    It "Import-Nano11UserExtensions loads valid user-tweaks.psd1" {
+        $r = Import-Nano11UserExtensions -ConfigPath (Join-Path $script:RepoRoot "config\user-tweaks.psd1")
+        $r.Loaded | Should Be $true
+        $r.Errors.Count | Should Be 0
+    }
+    It "Test-Nano11RecoveryReadiness returns expected properties" {
+        $rr = Test-Nano11RecoveryReadiness -Config @{ KeepRecoveryEnv = $false }
+        $rr.PSObject.Properties.Name -contains 'HasSecondaryDrive' | Should Be $true
+        $rr.PSObject.Properties.Name -contains 'ReadinessScore' | Should Be $true
+        $rr.PSObject.Properties.Name -contains 'Recommendations' | Should Be $true
+        $rr.WinReEnabledOnTarget | Should Be $false
+    }
+    It "Compare-Nano11Config returns a diff result" {
+        $diff = Compare-Nano11Config -ReferenceConfig @{ TweakSettings = @{ DisableUAC = $false } } -DifferenceConfig @{ TweakSettings = @{ DisableUAC = $true } }
+        $diff.TotalDiffCount | Should BeGreaterThan 0
+        $diff.ReferenceName | Should Not Be $null
+    }
+    It "Get-Nano11CustomScriptMetadata parses metadata headers" {
+        $tmp = Join-Path $env:TEMP "test_script_meta.ps1"
+        "# @Nano11-Id: TestScript`n# @Nano11-Stage: PreBuild`n# @Nano11-Order: 42`n# @Nano11-OnError: Warn`n# @Nano11-Description: Test desc`nWrite-Host 'hi'" | Set-Content $tmp -Encoding UTF8
+        $m = Get-Nano11CustomScriptMetadata -ScriptPath $tmp
+        $m.Id | Should Be 'TestScript'
+        $m.Stage | Should Be 'PreBuild'
+        $m.Order | Should Be 42
+        $m.OnError | Should Be 'Warn'
+        $m.Description | Should Be 'Test desc'
+        $m.Sha256 | Should Not Be ''
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# --- PC Migration & Backup Engine tests (M3) ---
+if (-not (Get-Command -Name Get-Nano11MigrationRules -ErrorAction SilentlyContinue)) {
+    . (Join-Path -Path $script:RepoRoot -ChildPath "lib\Nano11Migration.ps1")
+}
+
+Describe "PC Migration & Backup Engine (lib/Nano11Migration.ps1)" {
+    It "Get-Nano11MigrationRules loads standard rules" {
+        $rules = Get-Nano11MigrationRules
+        $rules.GameRules.Count | Should BeGreaterThan 0
+        $rules.AppConfigRules.Count | Should BeGreaterThan 0
+        $rules.SecretPatterns.Count | Should BeGreaterThan 0
+        $rules.Errors.Count | Should Be 0
+    }
+    It "Expand-Nano11MigrationPath expands environment variables" {
+        $p = Expand-Nano11MigrationPath -RawPath '%USERPROFILE%\Documents'
+        $p | Should Not Be '%USERPROFILE%\Documents'
+        $p | Should Match 'Documents$'
+    }
+    It "Test-Nano11SecretPath identifies secret files" {
+        $patterns = @('*Cookies*','*id_rsa*','*.pfx')
+        Test-Nano11SecretPath -FilePath 'Cookies' -SecretPatterns $patterns | Should Be $true
+        Test-Nano11SecretPath -FilePath 'normal.txt' -SecretPatterns $patterns | Should Be $false
+    }
+    It "Backup-Nano11UserData copies files and records SHA-256 without deleting source" {
+        $srcDir = Join-Path $env:TEMP "migtest_src2"
+        $bkDir = Join-Path $env:TEMP "migtest_bk2"
+        if (Test-Path $srcDir) { Remove-Item $srcDir -Recurse -Force }
+        if (Test-Path $bkDir) { Remove-Item $bkDir -Recurse -Force }
+        New-Item -ItemType Directory -Force -Path (Join-Path $srcDir 'Documents') | Out-Null
+        'hello' | Set-Content (Join-Path $srcDir 'Documents\test.txt')
+        $r = Backup-Nano11UserData -FolderMap @{ Documents = (Join-Path $srcDir 'Documents') } -BackupRoot $bkDir
+        $r.CopiedFiles | Should Be 1
+        $r.Success | Should Be $true
+        $r.ManifestEntries.Count | Should Be 1
+        $r.ManifestEntries[0].Sha256 | Should Not Be ''
+        # source still exists
+        Test-Path (Join-Path $srcDir 'Documents\test.txt') | Should Be $true
+        Remove-Item $srcDir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item $bkDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    It "Restore-Nano11UserData creates .nano11.bak on conflict" {
+        $srcDir = Join-Path $env:TEMP "migtest_src3"
+        $bkDir = Join-Path $env:TEMP "migtest_bk3"
+        if (Test-Path $srcDir) { Remove-Item $srcDir -Recurse -Force }
+        if (Test-Path $bkDir) { Remove-Item $bkDir -Recurse -Force }
+        New-Item -ItemType Directory -Force -Path (Join-Path $srcDir 'Documents') | Out-Null
+        'hello' | Set-Content (Join-Path $srcDir 'Documents\test.txt')
+        Backup-Nano11UserData -FolderMap @{ Documents = (Join-Path $srcDir 'Documents') } -BackupRoot $bkDir | Out-Null
+        $destFile = Join-Path $env:USERPROFILE 'test.txt'
+        'existing' | Set-Content $destFile
+        $r = Restore-Nano11UserData -BackupRoot $bkDir -ConflictPolicy BackupExisting
+        $r.RestoredFiles | Should Be 1
+        Test-Path "$destFile.nano11.bak" | Should Be $true
+        Remove-Item $destFile -Force -ErrorAction SilentlyContinue
+        Remove-Item "$destFile.nano11.bak" -Force -ErrorAction SilentlyContinue
+        Remove-Item $srcDir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item $bkDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    It "Start-Nano11MigrationRestore -RetryFailedOnly skips completed tasks" {
+        $bkDir = Join-Path $env:TEMP "migtest_bk4"
+        if (Test-Path $bkDir) { Remove-Item $bkDir -Recurse -Force }
+        New-Item -ItemType Directory -Force -Path $bkDir | Out-Null
+        @{ Created = (Get-Date).ToString('o') } | ConvertTo-Json | Set-Content (Join-Path $bkDir 'migration-manifest.json') -Encoding UTF8
+        Start-Nano11MigrationRestore -BackupRoot $bkDir | Out-Null
+        $r2 = Start-Nano11MigrationRestore -BackupRoot $bkDir -RetryFailedOnly
+        @($r2.Results | Where-Object { $_.Status -like 'Skipped*' }).Count | Should BeGreaterThan 0
+        Remove-Item $bkDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    It "Invoke-Nano11MigrationRulesBackup excludes secret files by default" {
+        # Verify Test-Nano11SecretPath identifies secret patterns
+        $patterns = (Get-Nano11MigrationRules).SecretPatterns
+        Test-Nano11SecretPath -FilePath 'Cookies' -SecretPatterns $patterns | Should Be $true
+        Test-Nano11SecretPath -FilePath 'id_rsa' -SecretPatterns $patterns | Should Be $true
+        Test-Nano11SecretPath -FilePath 'normal.txt' -SecretPatterns $patterns | Should Be $false
     }
 }

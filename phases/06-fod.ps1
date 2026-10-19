@@ -189,3 +189,8 @@ foreach ($packageIdentity in $packagesToRemove) {
     Write-Host "  - Removing package: $packageIdentity"
     & dism.exe /English "/image:$scratchDir" /Remove-Package "/PackageName:$packageIdentity" > $null 2>&1
 }
+
+# M2: User extension actions (FOD)
+if (Get-Command -Name Invoke-Nano11UserExtensionActions -ErrorAction SilentlyContinue) {
+    try { Invoke-Nano11UserExtensionActions -PhaseType FOD -ScratchDir $scratchDir -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+}

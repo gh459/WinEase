@@ -303,6 +303,42 @@ function Export-Nano11HtmlReport {
         [void]$sb.AppendLine('  </div>')
     }
 
+    $depResult = if ($BuildInfo.ContainsKey('DependencyResult') -and $BuildInfo.DependencyResult) { $BuildInfo.DependencyResult } else { $null }
+    if ($depResult) {
+        [void]$sb.AppendLine('  <div class="section-card">')
+        [void]$sb.AppendLine('    <h2>&#128269; Dependency &amp; Feature Impact Analysis</h2>')
+        if ($depResult.Conflicts -and $depResult.Conflicts.Count -gt 0) {
+            [void]$sb.AppendLine('    <h3 style="color: var(--badge-fail); margin: 8px 0;">Conflicts</h3>')
+            [void]$sb.AppendLine('    <table><tbody>')
+            foreach ($c in $depResult.Conflicts) {
+                $cw = if ($c.ConflictingWith) { " (conflicts with: $([System.Security.SecurityElement]::Escape("$($c.ConflictingWith)"))" } else { '' }
+                [void]$sb.AppendLine("      <tr><td>$([System.Security.SecurityElement]::Escape("$($c.Source)"))</td><td>$([System.Security.SecurityElement]::Escape("$($c.Summary)"))$cw</td></tr>")
+            }
+            [void]$sb.AppendLine('    </tbody></table>')
+        }
+        if ($depResult.Unknowns -and $depResult.Unknowns.Count -gt 0) {
+            [void]$sb.AppendLine('    <h3 style="color: var(--badge-warn); margin: 8px 0;">Unknown (不明)</h3>')
+            [void]$sb.AppendLine('    <table><tbody>')
+            foreach ($u in $depResult.Unknowns) {
+                [void]$sb.AppendLine("      <tr><td>$([System.Security.SecurityElement]::Escape("$($u.Source)"))</td><td>$([System.Security.SecurityElement]::Escape("$($u.Summary)")) - $([System.Security.SecurityElement]::Escape("$($u.Reason)"))</td></tr>")
+            }
+            [void]$sb.AppendLine('    </tbody></table>')
+        }
+        if ($depResult.Impacts -and $depResult.Impacts.Count -gt 0) {
+            [void]$sb.AppendLine('    <h3 style="color: var(--text-secondary); margin: 8px 0;">Feature Impact</h3>')
+            [void]$sb.AppendLine('    <table><tbody>')
+            foreach ($i in $depResult.Impacts) {
+                $af = if ($i.AffectedFeatures) { ($i.AffectedFeatures -join ', ') } else { '' }
+                [void]$sb.AppendLine("      <tr><td>$([System.Security.SecurityElement]::Escape("$($i.Source)"))</td><td>$([System.Security.SecurityElement]::Escape("$($i.Summary)"))<br><span style=`"color: var(--text-secondary); font-size: 12px;`">$([System.Security.SecurityElement]::Escape($af))</span></td></tr>")
+            }
+            [void]$sb.AppendLine('    </tbody></table>')
+        }
+        if ((-not $depResult.Conflicts -or $depResult.Conflicts.Count -eq 0) -and (-not $depResult.Unknowns -or $depResult.Unknowns.Count -eq 0) -and (-not $depResult.Impacts -or $depResult.Impacts.Count -eq 0)) {
+            [void]$sb.AppendLine('    <p style="color: var(--badge-pass);">No conflicts, unknowns or impacts detected.</p>')
+        }
+        [void]$sb.AppendLine('  </div>')
+    }
+
     [void]$sb.AppendLine('  <footer>')
     [void]$sb.AppendLine('    <p>nano11 Project &bull; Open Source Windows 11 Image Reducer &bull; <a href="https://github.com/gh459/nano11" style="color: var(--accent); text-decoration: none;">GitHub: gh459/nano11</a></p>')
     [void]$sb.AppendLine('  </footer>')
