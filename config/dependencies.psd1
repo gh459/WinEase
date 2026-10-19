@@ -11,6 +11,7 @@
 #   AffectedFeatures list of features/apps that stop working
 #   ConflictsWith    list of other setting keys / AdvancedDebloat item strings that
 #                    contradict this one when both are enabled
+# Component-level rules (the design's "ComponentRules") are kept in Components - no separate section.
 @{
     Version = '1.0'
 
@@ -18,7 +19,8 @@
         'RemoveDefender' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Removes Windows Defender AV, Security Center UI and background scanning'; AffectedFeatures = @('Windows Security UI','Real-time protection','Smart App Control','Definition updates (KB2267602)'); ConflictsWith = @() }
         'KeepAsianIME' = @{ TriggerValue = $false; Status = 'Known'; Summary = 'Removes Asian (Japanese/Korean/Chinese) MS-IME input methods'; AffectedFeatures = @('Japanese/Korean/Chinese MS-IME kanji conversion','Handwriting input','Voice input','TTS speech synthesis'); ConflictsWith = @() }
         'KeepExtraFonts' = @{ TriggerValue = $false; Status = 'Known'; Summary = 'Removes extra international and regional fonts'; AffectedFeatures = @('CJK/Thai/Arabic/Hindi font rendering (Japanese and Latin fonts are kept)'); ConflictsWith = @() }
-        'RemoveDrivers' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Removes legacy storage and network drivers'; AffectedFeatures = @('Legacy printer/scanner/MFD/fax/modem/smart-card PnP auto-detection'); ConflictsWith = @() }
+        'RemoveDrivers' = @{ TriggerValue = $true; Status = 'Unknown'; Summary = 'Removes legacy storage and network drivers; safety depends on the target PC peripherals (printers, smart cards, serial/modem devices) and cannot be assured'; AffectedFeatures = @('Legacy printer/scanner/MFD/fax/modem/smart-card PnP auto-detection'); ConflictsWith = @() }
+        'AllowPhysicalDebloat' = @{ TriggerValue = $true; Status = 'Unknown'; Summary = 'Physically deletes WinSxS/System32 files; impact on future updates is unknown'; AffectedFeatures = @('Future cumulative updates (LCU)','SFC / DISM repair'); ConflictsWith = @() }
         'DisableWindowsUpdate' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Disables automatic Windows Update'; AffectedFeatures = @('Windows Update auto-patching','Microsoft Store app install/update (wuauserv)','FOD/language pack additions'); ConflictsWith = @() }
         'KeepBluetooth' = @{ TriggerValue = $false; Status = 'Known'; Summary = 'Removes Bluetooth services and peripheral stack'; AffectedFeatures = @('Bluetooth audio (A2DP/HFP)','Bluetooth mouse/keyboard','Wireless controllers','Phone Link'); ConflictsWith = @('Remove Bluetooth stack (service + binary) [20-40MB]','Physical: Bluetooth stack (complete removal) [~20-40MB]') }
         'WSLSupport' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Enables WSL2 / Virtual Machine Platform'; AffectedFeatures = @('WSL2, WSA, Hyper-V VMs, Windows Sandbox, Docker Desktop, Core Isolation (HVCI)'); ConflictsWith = @('NoHypervisor','Remove WSL / VM Platform [20-40MB]','Physical: WSL / VM Platform (complete removal) [~20-40MB]','Physical: Hyper-V / Virtualization stack [~200-400MB]') }
@@ -108,7 +110,7 @@
         'DisableMemCompression' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Disables in-memory paging compression'; AffectedFeatures = @('Memory compression (more pagefile use on low-RAM systems)'); ConflictsWith = @() }
         'NoKernelPaging' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Locks NT kernel in physical RAM'; AffectedFeatures = @('Kernel paging (less free physical RAM on low-memory systems)'); ConflictsWith = @() }
         'DisableUSBSuspend' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Disables USB selective suspend'; AffectedFeatures = @('USB power suspend (battery life on laptops)'); ConflictsWith = @() }
-        'NoHypervisor' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Sets hypervisorlaunchtype to Off'; AffectedFeatures = @('WSL2','WSA','Hyper-V VMs','Windows Sandbox','Docker Desktop','Core Isolation (HVCI)'); ConflictsWith = @('WSLSupport') }
+        'NoHypervisor' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Sets hypervisorlaunchtype to Off'; AffectedFeatures = @('WSL2','WSA','Hyper-V VMs','Windows Sandbox','Docker Desktop','Core Isolation (HVCI)','VBS'); ConflictsWith = @('WSLSupport') }
         'EnableClassicContextMenu' = @{ TriggerValue = $true; Status = 'Safe'; Summary = 'Restores classic context menus'; AffectedFeatures = @(); ConflictsWith = @() }
         'EnableDarkTheme' = @{ TriggerValue = $true; Status = 'Safe'; Summary = 'Enables system-wide dark theme'; AffectedFeatures = @(); ConflictsWith = @() }
         'ShowFileExtensions' = @{ TriggerValue = $true; Status = 'Safe'; Summary = 'Shows file extensions in Explorer'; AffectedFeatures = @(); ConflictsWith = @() }
