@@ -12,6 +12,15 @@ Add-Type -AssemblyName System.Drawing
 # Repository root (this file lives in <repo>\gui)
 $script:Nano11GuiRepoRoot = Split-Path -Parent $PSScriptRoot
 
+# Default backup folder for the migration tools: <base>\nano11_migration_backup.
+# Base 'Profile' = the user profile (GUI Tab 8), 'Documents' = the Documents folder (Nano11-Migrator).
+$script:Nano11MigrationBackupFolderName = 'nano11_migration_backup'
+function Get-Nano11DefaultMigrationBackupPath {
+    param([ValidateSet('Profile', 'Documents')][string]$Base = 'Profile')
+    $baseDir = if ($Base -eq 'Documents') { [Environment]::GetFolderPath('MyDocuments') } else { $env:USERPROFILE }
+    return (Join-Path -Path $baseDir -ChildPath $script:Nano11MigrationBackupFolderName)
+}
+
 # The one colour table of the GUI (and of tools\migrator\Nano11-Migrator.ps1, which loads this file)
 $script:Nano11GuiColors = @{
     Text       = [System.Drawing.Color]::FromArgb(235, 238, 245)  # default text
@@ -711,7 +720,7 @@ function Get-Nano11GuiMigrationRoot {
     param([hashtable]$Gui)
     $root = ''
     if ($Gui.MigRoot) { $root = $Gui.MigRoot.Text.Trim() }
-    if (-not $root) { $root = Join-Path $env:USERPROFILE 'nano11_migration_backup' }
+    if (-not $root) { $root = Get-Nano11DefaultMigrationBackupPath }
     return $root
 }
 
@@ -1334,7 +1343,7 @@ function Show-Nano11GUI {
     # Backup settings: destination, credential handling, conflict policy
     $grpTop = New-Nano11GroupBox -Text " Backup Settings " -Width 840 -Height 110 -Parent $flowMig
     [void](New-Nano11Label -Text "Backup Root:" -X 15 -Y 22 -Width 90 -Height 20 -Parent $grpTop)
-    $txtMigRoot = New-Nano11TextBox -X 110 -Y 20 -Width 420 -Height 24 -Text (Join-Path $env:USERPROFILE "nano11_migration_backup") -Parent $grpTop
+    $txtMigRoot = New-Nano11TextBox -X 110 -Y 20 -Width 420 -Height 24 -Text (Get-Nano11DefaultMigrationBackupPath) -Parent $grpTop
     $gui.MigRoot = $txtMigRoot
     [void](New-Nano11Button -Text "Browse..." -X 540 -Y 19 -Width 90 -Height 26 -Parent $grpTop -OnClick {
         $g = $this.FindForm().Tag
@@ -1534,8 +1543,7 @@ function Show-Nano11GUI {
         [System.Windows.Forms.Application]::DoEvents()
         $g = $f.Tag
         try {
-            $root = $g.MigRoot.Text.Trim()
-            if (-not $root) { $root = Join-Path $env:USERPROFILE "nano11_migration_backup" }
+            $root = Get-Nano11GuiMigrationRoot -Gui $g
             $paths = @($g.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
             if ($paths.Count -eq 0) { throw "No paths specified." }
             $result = Backup-Nano11CustomPaths -Paths $paths -BackupRoot $root
@@ -1557,8 +1565,7 @@ function Show-Nano11GUI {
         [System.Windows.Forms.Application]::DoEvents()
         $g = $f.Tag
         try {
-            $root = $g.MigRoot.Text.Trim()
-            if (-not $root) { $root = Join-Path $env:USERPROFILE "nano11_migration_backup" }
+            $root = Get-Nano11GuiMigrationRoot -Gui $g
             $result = Restore-Nano11CustomPaths -BackupRoot $root -ConflictPolicy (Get-Nano11GuiConflictPolicy -Gui $g)
             $msg = "Custom paths restore completed.`nRestored: $($result.RestoredFiles) files.`nFailed: $($result.FailedFiles.Count)"
             Show-Nano11GuiMessage -Text $msg -Title "Restore Custom Paths" -Kind Info
