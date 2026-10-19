@@ -1328,3 +1328,58 @@ Describe "Migration engine S3 (lib/Nano11Migration.ps1)" {
         $r.CloudSaveNotices[0].RuleId | Should Be $rule.Id
     }
 }
+
+Describe "Migrator tool S6 (tools/Nano11-Migrator.ps1)" {
+    BeforeAll {
+        $script:S6Tool = Join-Path -Path $script:RepoRoot -ChildPath "tools\Nano11-Migrator.ps1"
+        $script:S6Ast = [System.Management.Automation.Language.Parser]::ParseFile($script:S6Tool, [ref]$null, [ref]$null)
+        $script:S6Params = $script:S6Ast.ParamBlock.Parameters
+    }
+
+    It "Mode accepts every spec mode and the legacy ones" {
+        $modeParam = $script:S6Params | Where-Object { $_.Name.VariablePath.UserPath -eq 'Mode' }
+        $set = ($modeParam.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateSet' }).PositionalArguments | ForEach-Object { $_.Value }
+        foreach ($m in 'ExportApps', 'Backup', 'Restore', 'Verify', 'Estimate', 'ListRules', 'RecoveryCheck') {
+            ($set -contains $m) | Should Be $true
+        }
+    }
+
+    It "BackupRoot is an alias of PackagePath" {
+        $p = $script:S6Params | Where-Object { $_.Name.VariablePath.UserPath -eq 'PackagePath' }
+        $alias = ($p.Attributes | Where-Object { $_.TypeName.Name -eq 'Alias' }).PositionalArguments | ForEach-Object { $_.Value }
+        ($alias -contains 'BackupRoot') | Should Be $true
+    }
+
+    It "defaults to the GUI parameter set and has the spec parameters" {
+        $script:S6Ast.ParamBlock.Attributes.NamedArguments | Where-Object { $_.ArgumentName -eq 'DefaultParameterSetName' } | ForEach-Object { $_.Argument.Value } | Should Be 'GUI'
+        $names = @($script:S6Params | ForEach-Object { $_.Name.VariablePath.UserPath })
+        foreach ($n in 'UserFolders', 'CustomPaths', 'RuleIds', 'ConflictPolicy', 'IncludeSecrets', 'RetryFailedOnly', 'DryRun', 'GUI') {
+            ($names -contains $n) | Should Be $true
+        }
+    }
+
+    It "-Mode Estimate -DryRun finishes without error and reports space" {
+        $src = Join-Path $TestDrive 's6src'
+        New-Item -ItemType Directory -Force -Path $src | Out-Null
+        Set-Content -LiteralPath (Join-Path $src 'a.txt') -Value 'hello'
+        $r = & $script:S6Tool -Mode Estimate -PackagePath (Join-Path $TestDrive 's6pkg') -UserFolders @() -CustomPaths @($src) -DryRun
+        $r.Mode | Should Be 'Estimate'
+        $r.Estimate.TotalFiles | Should Be 1
+    }
+
+    It "-Mode Verify -DryRun does not throw on a missing manifest" {
+        $r = & $script:S6Tool -Mode Verify -PackagePath (Join-Path $TestDrive 's6none') -DryRun
+        $r.Success | Should Be $false
+    }
+
+    It "Verify detects a tampered file" {
+        $src = Join-Path $TestDrive 's6vsrc'
+        $bk = Join-Path $TestDrive 's6vbk'
+        New-Item -ItemType Directory -Force -Path $src | Out-Null
+        Set-Content -LiteralPath (Join-Path $src 'a.txt') -Value 'hello'
+        Backup-Nano11UserData -FolderMap @{ Docs = $src } -BackupRoot $bk | Out-Null
+        (& $script:S6Tool -Mode Verify -PackagePath $bk).Success | Should Be $true
+        Set-Content -LiteralPath (Join-Path $bk 'Docs\a.txt') -Value 'tampered'
+        (& $script:S6Tool -Mode Verify -PackagePath $bk).Success | Should Be $false
+    }
+}
