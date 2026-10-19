@@ -40,6 +40,165 @@ $script:Nano11GuiColors = @{
 }
 
 # =========================================================================
+# Display language (English / Japanese). Display only: values that reach the build
+# (settings, Advanced Debloat item names, ...) never change with the language.
+# The strings live in config\ui-strings\<lang>.json (UTF-8) next to the tweak definitions, not in this
+# ASCII-only file. Missing in the chosen language -> English table -> the key itself.
+# =========================================================================
+$script:Nano11GuiDir = $PSScriptRoot
+$script:Nano11UiLanguage = 'en'
+$script:Nano11UiTables = @{}
+$script:Nano11UiLanguages = @('en', 'ja')
+
+# Folder holding en.json / ja.json: config\ui-strings in the repository, ui-strings next to this file when bundled
+function Get-Nano11UiStringsDir {
+    foreach ($c in @((Join-Path $script:Nano11GuiRepoRoot 'config\ui-strings'), (Join-Path $script:Nano11GuiDir 'ui-strings'))) {
+        if (Test-Path -LiteralPath $c -PathType Container) { return $c }
+    }
+    return $null
+}
+
+# One language table as a hashtable (empty when the file is missing or unreadable); read once, then cached
+function Get-Nano11UiTable {
+    param([Parameter(Mandatory = $true)][string]$Language)
+    if ($script:Nano11UiTables.ContainsKey($Language)) { return $script:Nano11UiTables[$Language] }
+    $table = @{}
+    $dir = Get-Nano11UiStringsDir
+    if ($dir) {
+        $file = Join-Path -Path $dir -ChildPath "$Language.json"
+        try {
+            if (Test-Path -LiteralPath $file) {
+                $json = [System.IO.File]::ReadAllText($file, (New-Object System.Text.UTF8Encoding($false))) | ConvertFrom-Json
+                foreach ($p in $json.PSObject.Properties) { $table[$p.Name] = [string]$p.Value }
+            }
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
+    $script:Nano11UiTables[$Language] = $table
+    return $table
+}
+
+# Display string for -Key in the current (or -Language) language; -Format fills {0}, {1}, ... placeholders.
+# Fallback order: that language -> English -> -Default -> the key.
+function Get-Nano11UiString {
+    param(
+        [Parameter(Mandatory = $true, Position = 0)][string]$Key,
+        [object[]]$Format = @(),
+        [string]$Language,
+        [string]$Default
+    )
+    if (-not $Language) { $Language = $script:Nano11UiLanguage }
+    $text = $null
+    $table = Get-Nano11UiTable -Language $Language
+    if ($table.ContainsKey($Key)) {
+        $text = $table[$Key]
+    } elseif ($Language -ne 'en') {
+        $english = Get-Nano11UiTable -Language 'en'
+        if ($english.ContainsKey($Key)) { $text = $english[$Key] }
+    }
+    if ($null -eq $text) { $text = if ($PSBoundParameters.ContainsKey('Default')) { $Default } else { $Key } }
+    if ($Format.Count -gt 0) {
+        try { $text = $text -f $Format } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
+    return $text
+}
+
+# Where the chosen language is remembered between runs
+function Get-Nano11GuiSettingsPath {
+    if (-not $env:LOCALAPPDATA) { return $null }
+    return (Join-Path -Path $env:LOCALAPPDATA -ChildPath 'nano11\gui-settings.json')
+}
+
+function Get-Nano11GuiSavedLanguage {
+    $path = Get-Nano11GuiSettingsPath
+    try {
+        if ($path -and (Test-Path -LiteralPath $path)) {
+            $saved = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
+            $lang = "$($saved.UiLanguage)".ToLower()
+            if ($script:Nano11UiLanguages -contains $lang) { return $lang }
+        }
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    return $null
+}
+
+# Remember the language (other keys of the file are kept). Failing to save never stops the GUI.
+function Save-Nano11GuiLanguage {
+    param([Parameter(Mandatory = $true)][string]$Language)
+    $path = Get-Nano11GuiSettingsPath
+    if (-not $path) { return }
+    try {
+        $settings = [ordered]@{}
+        if (Test-Path -LiteralPath $path) {
+            try {
+                $old = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
+                foreach ($p in $old.PSObject.Properties) { $settings[$p.Name] = $p.Value }
+            } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        }
+        $settings['UiLanguage'] = $Language
+        $dir = Split-Path -Parent $path
+        if (-not (Test-Path -LiteralPath $dir)) { [void](New-Item -ItemType Directory -Path $dir -Force) }
+        [System.IO.File]::WriteAllText($path, ($settings | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+}
+
+# Language to use: -Requested (the -UiLanguage argument), then $env:NANO11_UI_LANGUAGE, then the saved choice,
+# then the OS display language (ja -> ja, anything else -> en)
+function Resolve-Nano11UiLanguage {
+    param([string]$Requested)
+    foreach ($candidate in @($Requested, $env:NANO11_UI_LANGUAGE)) {
+        $lang = "$candidate".Trim().ToLower()
+        if ($script:Nano11UiLanguages -contains $lang) { return $lang }
+    }
+    $saved = Get-Nano11GuiSavedLanguage
+    if ($saved) { return $saved }
+    try {
+        if ([System.Globalization.CultureInfo]::CurrentUICulture.TwoLetterISOLanguageName -eq 'ja') { return 'ja' }
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    return 'en'
+}
+
+function Set-Nano11UiLanguage {
+    param([Parameter(Mandatory = $true)][ValidateSet('en', 'ja')][string]$Language)
+    $script:Nano11UiLanguage = $Language
+}
+
+# Checkbox / tooltip text of a tweak: the language table, then DescriptionJa of a user tweak (Japanese only),
+# then the Description from config\tweaks.psd1
+function Get-Nano11TweakDescription {
+    param([Parameter(Mandatory = $true)][string]$Key, [Parameter(Mandatory = $true)][hashtable]$Def)
+    $fallback = [string]$Def.Description
+    if ($script:Nano11UiLanguage -eq 'ja' -and $Def.DescriptionJa) { $fallback = [string]$Def.DescriptionJa }
+    return (Get-Nano11UiString -Key "Tweak.$Key.Description" -Default $fallback)
+}
+
+# Display name of a list entry whose real value must not change with the language (Advanced Debloat items)
+if (-not ('Nano11ListItem' -as [type])) {
+    Add-Type -TypeDefinition @'
+public class Nano11ListItem
+{
+    public string Value;
+    public string Display;
+    public Nano11ListItem(string value, string display) { Value = value; Display = display; }
+    public override string ToString() { return Display; }
+}
+'@
+}
+
+# The real (language independent) value of a list entry: a plain string, or the Value of a Nano11ListItem
+function Get-Nano11ListItemValue {
+    param($Item)
+    if ($Item -is [Nano11ListItem]) { return $Item.Value }
+    return "$Item"
+}
+
+# Display text of an Advanced Debloat item. The English item text is the real value (phases\09 matches it);
+# the language table holds its translation under the key 'Debloat:<English text>'.
+function Get-Nano11DebloatItemText {
+    param([Parameter(Mandatory = $true)][string]$Item)
+    return (Get-Nano11UiString -Key "Debloat:$Item" -Default $Item)
+}
+$script:Nano11DebloatDisplayText = { param($item) Get-Nano11DebloatItemText -Item $item }
+
+# =========================================================================
 # Control helpers
 # =========================================================================
 
@@ -232,11 +391,13 @@ function New-Nano11GroupBox {
     return $grp
 }
 
-# CheckedListBox filled with -Items, pre-checking those in -Selected; docked (-Fill) or placed
+# CheckedListBox filled with -Items, pre-checking those in -Selected; docked (-Fill) or placed.
+# Selected items are matched by their real value, whatever -DisplayText shows.
 function New-Nano11CheckedList {
     param(
         [string[]]$Items = @(),
         [object[]]$Selected = @(),
+        [scriptblock]$DisplayText,
         [switch]$Fill,
         [int]$X, [int]$Y, [int]$Width, [int]$Height,
         [System.Drawing.Font]$Font,
@@ -253,7 +414,15 @@ function New-Nano11CheckedList {
     $clb.ForeColor = $script:Nano11GuiColors.Text
     if ($Font) { $clb.Font = $Font }
     $clb.CheckOnClick = $true
-    foreach ($item in $Items) { [void]$clb.Items.Add($item, ($Selected -contains $item)) }
+    # -DisplayText maps an item to the text shown; the entry then keeps the real item as its Value
+    foreach ($item in $Items) {
+        $entry = $item
+        if ($DisplayText) {
+            $shown = [string](& $DisplayText $item)
+            if ($shown -ne $item) { $entry = New-Object Nano11ListItem -ArgumentList $item, $shown }
+        }
+        [void]$clb.Items.Add($entry, ($Selected -contains $item))
+    }
     if ($Parent) { $Parent.Controls.Add($clb) }
     return $clb
 }
@@ -337,7 +506,7 @@ function Set-Nano11Checked {
 function Show-Nano11GuiMessage {
     param(
         [Parameter(Mandatory = $true)][string]$Text,
-        [string]$Title = "nano11",
+        [string]$Title = (Get-Nano11UiString 'Msg.Title.Default'),
         [ValidateSet('Info', 'Warning', 'Error')][string]$Kind = 'Info'
     )
     $icon = switch ($Kind) {
@@ -401,7 +570,7 @@ function Invoke-Nano11GuiBackgroundJob {
 }
 
 function Confirm-Nano11GuiAction {
-    param([string]$Message, [string]$Title = "Confirm")
+    param([string]$Message, [string]$Title = (Get-Nano11UiString 'Msg.Title.Confirm'))
     $ans = [System.Windows.Forms.MessageBox]::Show($Message, $Title,
         [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Warning)
     return ($ans -eq [System.Windows.Forms.DialogResult]::Yes)
@@ -416,8 +585,8 @@ function Add-Nano11SelectButtons {
         [Parameter(Mandatory = $true)][object]$Target,
         [int]$X, [int]$Y,
         [int]$Width = 95, [int]$Height = 26, [int]$Step = 105,
-        [string]$SelectText = "Select All",
-        [string]$ClearText = "Clear All",
+        [string]$SelectText = (Get-Nano11UiString 'Button.SelectAll'),
+        [string]$ClearText = (Get-Nano11UiString 'Button.ClearAll'),
         [System.Drawing.Color]$ForeColor = [System.Drawing.Color]::White,
         [string]$ConfirmSelect
     )
@@ -478,11 +647,11 @@ function Disable-Nano11Mnemonic {
     }
 }
 
-# Collect checked items of a CheckedListBox
+# Collect the real values of the checked items of a CheckedListBox (not the displayed text)
 function Get-Nano11CheckedItems {
     param([System.Windows.Forms.CheckedListBox]$List)
     $sel = @()
-    for ($i = 0; $i -lt $List.Items.Count; $i++) { if ($List.GetItemChecked($i)) { $sel += $List.Items[$i] } }
+    for ($i = 0; $i -lt $List.Items.Count; $i++) { if ($List.GetItemChecked($i)) { $sel += (Get-Nano11ListItemValue $List.Items[$i]) } }
     return ,$sel
 }
 
@@ -581,53 +750,53 @@ function Show-AdvancedDebloatDialog {
     $dlgFore = $script:Nano11GuiColors.Text
     $listFont = New-Object System.Drawing.Font($UiFontName, 9)
 
-    $dlg = New-Nano11Form -Text "Advanced Debloat Options (Standard + Experimental)" -Width 700 -Height 620 -FixedDialog -NoMaximize -NoMinimize -BackColor $dlgBack
+    $dlg = New-Nano11Form -Text (Get-Nano11UiString 'Dlg.Debloat.Title') -Width 700 -Height 620 -FixedDialog -NoMaximize -NoMinimize -BackColor $dlgBack
 
     $tabControl = New-Nano11TabControl -X 10 -Y 10 -Width 665 -Height 480 -Parent $dlg
 
     # Standard tab
-    $tabStd = New-Nano11TabPage -Text "Standard (Safe - DISM/PS)" -TabControl $tabControl -BackColor $dlgBack
+    $tabStd = New-Nano11TabPage -Text (Get-Nano11UiString 'Dlg.Debloat.TabStandard') -TabControl $tabControl -BackColor $dlgBack
     $preStd = @()
     if ($InitialSettings -and $InitialSettings.AdvancedDebloatStandard) { $preStd = @($InitialSettings.AdvancedDebloatStandard) }
-    $clbStd = New-Nano11CheckedList -Items $stdItems -Selected $preStd -X 10 -Y 10 -Width 640 -Height 380 -Font $listFont -Parent $tabStd
-    [void](Add-Nano11SelectButtons -Parent $tabStd -Target $clbStd -X 10 -Y 395 -Width 100 -Height 28 -ClearText "Deselect All" -ForeColor $dlgFore)
+    $clbStd = New-Nano11CheckedList -Items $stdItems -Selected $preStd -DisplayText $script:Nano11DebloatDisplayText -X 10 -Y 10 -Width 640 -Height 380 -Font $listFont -Parent $tabStd
+    [void](Add-Nano11SelectButtons -Parent $tabStd -Target $clbStd -X 10 -Y 395 -Width 100 -Height 28 -ClearText (Get-Nano11UiString 'Button.DeselectAll') -ForeColor $dlgFore)
 
     # Experimental tab
-    $tabExp = New-Nano11TabPage -Text "Experimental (Physical Deletion)" -TabControl $tabControl -BackColor $dlgBack
-    [void](New-Nano11Label -Text "WARNING: Physical deletion permanently breaks Windows Update and sfc." -X 10 -Y 5 -Width 640 -Height 20 `
+    $tabExp = New-Nano11TabPage -Text (Get-Nano11UiString 'Dlg.Debloat.TabExperimental') -TabControl $tabControl -BackColor $dlgBack
+    [void](New-Nano11Label -Text (Get-Nano11UiString 'Dlg.Debloat.Warning') -X 10 -Y 5 -Width 640 -Height 20 `
         -ForeColor $script:Nano11GuiColors.Danger -Font (New-Object System.Drawing.Font($UiFontName, 9, [System.Drawing.FontStyle]::Bold)) -Parent $tabExp)
     $preExp = @()
     if ($InitialSettings -and $InitialSettings.AdvancedDebloatExperimental) { $preExp = @($InitialSettings.AdvancedDebloatExperimental) }
-    $clbExp = New-Nano11CheckedList -Items $expItems -Selected $preExp -X 10 -Y 30 -Width 640 -Height 365 -Font $listFont -Parent $tabExp
-    [void](Add-Nano11SelectButtons -Parent $tabExp -Target $clbExp -X 10 -Y 400 -Width 100 -Height 28 -ClearText "Deselect All" -ForeColor $dlgFore)
+    $clbExp = New-Nano11CheckedList -Items $expItems -Selected $preExp -DisplayText $script:Nano11DebloatDisplayText -X 10 -Y 30 -Width 640 -Height 365 -Font $listFont -Parent $tabExp
+    [void](Add-Nano11SelectButtons -Parent $tabExp -Target $clbExp -X 10 -Y 400 -Width 100 -Height 28 -ClearText (Get-Nano11UiString 'Button.DeselectAll') -ForeColor $dlgFore)
 
     # Both lists travel on the dialog's Tag for the Preview / OK handlers
     $dlg.Tag = @{ Std = $clbStd; Exp = $clbExp }
 
-    [void](New-Nano11Button -Text "Preview" -X 10 -Y 500 -Width 100 -Height 30 -ForeColor $dlgFore -Parent $dlg -OnClick {
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Button.Preview') -X 10 -Y 500 -Width 100 -Height 30 -ForeColor $dlgFore -Parent $dlg -OnClick {
         $t = $this.FindForm().Tag
         $stdSel = Get-Nano11CheckedItems -List $t.Std
         $expSel = Get-Nano11CheckedItems -List $t.Exp
-        $msg = "Selected: Standard=$($stdSel.Count) / Experimental=$($expSel.Count)`n`n"
-        $msg += "Standard ($($stdSel.Count) items)`n"
-        foreach ($s in $stdSel) { $msg += "  - $s`n" }
-        $msg += "`nExperimental ($($expSel.Count) items)`n"
-        foreach ($s in $expSel) { $msg += "  - $s`n" }
+        $msg = (Get-Nano11UiString 'Dlg.Debloat.Preview.Selected' -Format $stdSel.Count, $expSel.Count) + "`n`n"
+        $msg += (Get-Nano11UiString 'Dlg.Debloat.Preview.Standard' -Format $stdSel.Count) + "`n"
+        foreach ($s in $stdSel) { $msg += "  - $(Get-Nano11DebloatItemText -Item $s)`n" }
+        $msg += "`n" + (Get-Nano11UiString 'Dlg.Debloat.Preview.Experimental' -Format $expSel.Count) + "`n"
+        foreach ($s in $expSel) { $msg += "  - $(Get-Nano11DebloatItemText -Item $s)`n" }
         if ($expSel.Count -gt 0) {
-            $msg += "`nExperimental enabled: Windows Update will be broken"
+            $msg += "`n" + (Get-Nano11UiString 'Dlg.Debloat.Preview.ExperimentalWarning')
         }
-        Show-Nano11GuiMessage -Text $msg -Title "Deletion Preview" -Kind Info
+        Show-Nano11GuiMessage -Text $msg -Title (Get-Nano11UiString 'Dlg.Debloat.Preview.Title') -Kind Info
     })
 
     # OK / Cancel
-    [void](New-Nano11Button -Text "OK" -X 480 -Y 500 -Width 90 -Height 30 -BackColor $script:Nano11GuiColors.Primary -Parent $dlg -OnClick {
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Button.OK') -X 480 -Y 500 -Width 90 -Height 30 -BackColor $script:Nano11GuiColors.Primary -Parent $dlg -OnClick {
         $f = $this.FindForm()
         $script:advDebloatStd = Get-Nano11CheckedItems -List $f.Tag.Std
         $script:advDebloatExp = Get-Nano11CheckedItems -List $f.Tag.Exp
         $f.DialogResult = [System.Windows.Forms.DialogResult]::OK
         $f.Close()
     })
-    [void](New-Nano11Button -Text "Cancel" -X 575 -Y 500 -Width 90 -Height 30 -ForeColor $dlgFore -Parent $dlg -OnClick {
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Button.Cancel') -X 575 -Y 500 -Width 90 -Height 30 -ForeColor $dlgFore -Parent $dlg -OnClick {
         $f = $this.FindForm()
         $f.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
         $f.Close()
@@ -693,7 +862,7 @@ function Update-Nano11GuiEstimate {
         if ($componentCheckboxes['RemoveDrivers'] -and $componentCheckboxes['RemoveDrivers'].Checked)       { $mb -= 80 }
         if ($componentCheckboxes['UltraSlimMode'] -and $componentCheckboxes['UltraSlimMode'].Checked)       { $mb -= 200 }
         if ($Gui.RadESD.Checked) { $mb = [math]::Round($mb * 0.82) }
-        $Gui.Estimate.Text = ("Estimated ISO Size: ~{0} GB (LZX baseline)" -f [math]::Round($mb / 1024, 2))
+        $Gui.Estimate.Text = (Get-Nano11UiString 'Main.Estimate' -Format ([math]::Round($mb / 1024, 2)))
     } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
 
@@ -743,7 +912,7 @@ function Get-Nano11GuiPresetDiffText {
     param([hashtable]$Gui, [string]$From, [string]$To)
     $resolved = @()
     foreach ($name in @($From, $To)) {
-        if ($name -eq $script:Nano11GuiCurrentSettingsLabel) { $resolved += , (Get-Nano11GuiDraftConfig -Gui $Gui) } else { $resolved += , $name }
+        if ($name -eq $script:Nano11GuiCurrentSettingsLabel -or $name -eq (Get-Nano11UiString 'Dlg.PresetDiff.CurrentSettings')) { $resolved += , (Get-Nano11GuiDraftConfig -Gui $Gui) } else { $resolved += , $name }
     }
     $diff = Compare-Nano11Config -ReferenceConfig $resolved[0] -DifferenceConfig $resolved[1]
     return (Format-Nano11ConfigDiff -DiffResult $diff)
@@ -763,29 +932,29 @@ function Show-Nano11GuiTextDialog {
 # "Preset Diff" picker: choose a base (presets or current window) and a target, then show the diff
 function Show-Nano11GuiPresetDiff {
     param([hashtable]$Gui)
-    $names = @($script:Nano11GuiCurrentSettingsLabel)
+    $names = @(Get-Nano11UiString 'Dlg.PresetDiff.CurrentSettings')
     if ($script:BuiltInPresets) { $names += @($script:BuiltInPresets.Keys) }
-    $dlg = New-Nano11Form -Text "Preset Diff" -Width 400 -Height 160 -ClientSize -FixedDialog -NoMaximize -NoMinimize -ForeColor ([System.Drawing.Color]::White)
+    $dlg = New-Nano11Form -Text (Get-Nano11UiString 'Dlg.PresetDiff.Title') -Width 400 -Height 160 -ClientSize -FixedDialog -NoMaximize -NoMinimize -ForeColor ([System.Drawing.Color]::White)
     try {
         $combos = @{}
-        $rows = @(@('From', 'Compare from:', 20, 0), @('To', 'Compare to:', 55, [Math]::Min(1, $names.Count - 1)))
+        $rows = @(@('From', (Get-Nano11UiString 'Dlg.PresetDiff.From'), 20, 0), @('To', (Get-Nano11UiString 'Dlg.PresetDiff.To'), 55, [Math]::Min(1, $names.Count - 1)))
         foreach ($r in $rows) {
             [void](New-Nano11Label -Text $r[1] -X 15 -Y ($r[2] + 3) -Width 100 -Height 20 -Parent $dlg)
             $cmb = New-Nano11ComboBox -Items $names -SelectedIndex $r[3] -DropList -X 120 -Y $r[2] -Width 260 -Parent $dlg
             $combos[$r[0]] = $cmb
         }
         $dlg.Tag = @{ Gui = $Gui; From = $combos['From']; To = $combos['To'] }
-        [void](New-Nano11Button -Text "Compare" -X 120 -Y 105 -Width 120 -Height 32 -Parent $dlg -OnClick {
+        [void](New-Nano11Button -Text (Get-Nano11UiString 'Button.Compare') -X 120 -Y 105 -Width 120 -Height 32 -Parent $dlg -OnClick {
             $f = $this.FindForm()
             $t = $f.Tag
             try {
                 $txt = Get-Nano11GuiPresetDiffText -Gui $t.Gui -From ([string]$t.From.SelectedItem) -To ([string]$t.To.SelectedItem)
-                Show-Nano11GuiTextDialog -Title "Preset Diff: $($t.From.SelectedItem) -> $($t.To.SelectedItem)" -Text $txt -Owner $f
+                Show-Nano11GuiTextDialog -Title (Get-Nano11UiString 'Dlg.PresetDiff.ResultTitle' -Format $t.From.SelectedItem, $t.To.SelectedItem) -Text $txt -Owner $f
             } catch {
-                Show-Nano11GuiMessage -Text "Error: $($_.Exception.Message)" -Title "Preset Diff" -Kind Error
+                Show-Nano11GuiMessage -Text (Get-Nano11UiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-Nano11UiString 'Dlg.PresetDiff.Title') -Kind Error
             }
         })
-        $btnClose = New-Nano11Button -Text "Close" -X 260 -Y 105 -Width 120 -Height 32 -Parent $dlg
+        $btnClose = New-Nano11Button -Text (Get-Nano11UiString 'Button.Close') -X 260 -Y 105 -Width 120 -Height 32 -Parent $dlg
         $btnClose.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
         $dlg.CancelButton = $btnClose
         [void]$dlg.ShowDialog()
@@ -809,9 +978,9 @@ function Get-Nano11GuiDraftConfig {
     }
     $cfg['TweakSettings'] = $resolvedTweaks
     $stdSelected = @()
-    if ($Gui.ClbStd) { foreach ($item in $Gui.ClbStd.CheckedItems) { $stdSelected += "$item" } }
+    if ($Gui.ClbStd) { foreach ($item in $Gui.ClbStd.CheckedItems) { $stdSelected += (Get-Nano11ListItemValue $item) } }
     $expSelected = @()
-    if ($Gui.ClbExp) { foreach ($item in $Gui.ClbExp.CheckedItems) { $expSelected += "$item" } }
+    if ($Gui.ClbExp) { foreach ($item in $Gui.ClbExp.CheckedItems) { $expSelected += (Get-Nano11ListItemValue $item) } }
     $cfg['AdvancedDebloatStandard'] = $stdSelected
     $cfg['AdvancedDebloatExperimental'] = $expSelected
     return $cfg
@@ -863,7 +1032,7 @@ function Initialize-Nano11GuiMigrationRules {
     } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     if ($migRuleRows.Count -eq 0) {
         # Placeholder row only: the list is disabled so it can never be checked or passed as a rule Id
-        [void]$List.Items.Add("No migration rules found")
+        [void]$List.Items.Add((Get-Nano11UiString 'Mig.NoRules'))
         $List.Enabled = $false
     } else {
         foreach ($row in $migRuleRows) { [void]$List.Items.Add($row) }
@@ -930,12 +1099,12 @@ function Show-Nano11GuiJobOutcome {
     param($Outcome, [string]$Title, [string]$SuccessMessage)
     $kind = 'Info'
     if ($Outcome.Error) {
-        $msg = "Error: $($Outcome.Error)"
+        $msg = Get-Nano11UiString 'Msg.Error' -Format $Outcome.Error
         $kind = 'Error'
     } else {
         $msg = $SuccessMessage
         if (@($Outcome.Errors).Count -gt 0) {
-            $msg += "`n`nErrors reported:`n" + (@($Outcome.Errors) -join "`n")
+            $msg += "`n`n" + (Get-Nano11UiString 'Msg.ErrorsReported') + "`n" + (@($Outcome.Errors) -join "`n")
             $kind = 'Warning'
         }
     }
@@ -969,7 +1138,7 @@ function Complete-Nano11GuiResult {
     param([hashtable]$Gui)
     $srcText = $Gui.Source.Text.Trim()
     if (-not $srcText) {
-        Show-Nano11GuiMessage -Text "Please specify Windows 11 installation media or ISO image." -Title "Source Required" -Kind Warning
+        Show-Nano11GuiMessage -Text (Get-Nano11UiString 'Msg.SourceRequired.Text') -Title (Get-Nano11UiString 'Msg.SourceRequired.Title') -Kind Warning
         return $false
     }
 
@@ -1000,11 +1169,11 @@ function Complete-Nano11GuiResult {
     $guiComputerName = $Gui.ComputerName.Text.Trim()
     if (-not $guiComputerName) { $guiComputerName = '*' }
     if ($guiUserName -notmatch '^[\p{L}\p{N}_][\p{L}\p{N} ._-]{0,19}$') {
-        Show-Nano11GuiMessage -Text "Username must contain only letters, digits, spaces, '.', '_', or '-' (max 20 chars)." -Title "Invalid Username" -Kind Warning
+        Show-Nano11GuiMessage -Text (Get-Nano11UiString 'Msg.InvalidUserName.Text') -Title (Get-Nano11UiString 'Msg.InvalidUserName.Title') -Kind Warning
         return $false
     }
     if ($guiComputerName -notmatch '^(\*|[A-Za-z0-9][A-Za-z0-9-]{0,14})$') {
-        Show-Nano11GuiMessage -Text "ComputerName must be '*' or up to 15 alphanumeric characters and hyphens." -Title "Invalid ComputerName" -Kind Warning
+        Show-Nano11GuiMessage -Text (Get-Nano11UiString 'Msg.InvalidComputerName.Text') -Title (Get-Nano11UiString 'Msg.InvalidComputerName.Title') -Kind Warning
         return $false
     }
 
@@ -1039,9 +1208,9 @@ function Complete-Nano11GuiResult {
 
     # Advanced Debloat items
     $stdSelected = @()
-    foreach ($item in $Gui.ClbStd.CheckedItems) { $stdSelected += "$item" }
+    foreach ($item in $Gui.ClbStd.CheckedItems) { $stdSelected += (Get-Nano11ListItemValue $item) }
     $expSelected = @()
-    foreach ($item in $Gui.ClbExp.CheckedItems) { $expSelected += "$item" }
+    foreach ($item in $Gui.ClbExp.CheckedItems) { $expSelected += (Get-Nano11ListItemValue $item) }
     $formResult.AdvancedDebloatStandard     = $stdSelected
     $formResult.AdvancedDebloatExperimental = $expSelected
 
@@ -1062,11 +1231,11 @@ function New-Nano11MediaTab {
     # =========================================================================
     # TAB 1: Media & Workspace & Preset
     # =========================================================================
-    $tabMedia = New-Nano11TabPage -Text " 1. Media & Output " -TabControl $tabControl
+    $tabMedia = New-Nano11TabPage -Text (Get-Nano11UiString 'Tab.Media') -TabControl $tabControl
 
-    $grpMedia = New-Nano11GroupBox -Text " Source Media & Paths " -X 15 -Y 10 -Width 835 -Height 185 -Parent $tabMedia
+    $grpMedia = New-Nano11GroupBox -Text (Get-Nano11UiString 'Media.Group.Source') -X 15 -Y 10 -Width 835 -Height 185 -Parent $tabMedia
 
-    [void](New-Nano11Label -Text "Source Drive / ISO:" -X 15 -Y 28 -Width 130 -Height 20 -Parent $grpMedia)
+    [void](New-Nano11Label -Text (Get-Nano11UiString 'Media.Label.Source') -X 15 -Y 28 -Width 130 -Height 20 -Parent $grpMedia)
     $cmbSource = New-Nano11ComboBox -X 150 -Y 25 -Width 370 -BackColor $script:Nano11GuiColors.Input -ForeColor ([System.Drawing.Color]::White) -Parent $grpMedia
     $gui.Source = $cmbSource
 
@@ -1077,21 +1246,21 @@ function New-Nano11MediaTab {
     else { $cmbSource.Text = "E:\" }
 
     # Browse / rescan buttons carry the control they fill on their Tag
-    [void](New-Nano11Button -Text "Browse Drive..." -X 530 -Y 24 -Width 110 -Height 26 -Tag $cmbSource -Parent $grpMedia -OnClick {
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Button.BrowseDrive') -X 530 -Y 24 -Width 110 -Height 26 -Tag $cmbSource -Parent $grpMedia -OnClick {
         $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
-        $fbd.Description = "Select Windows 11 installation media or mounted virtual DVD drive"
+        $fbd.Description = Get-Nano11UiString 'Media.Dialog.BrowseDrive'
         if ($fbd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
             $p = $fbd.SelectedPath
             if ($p -match '^[A-Za-z]:\\?$') { $p = $p.Substring(0, 2) + "\" }
             $this.Tag.Text = $p
         }
     })
-    [void](New-Nano11Button -Text "Browse ISO..." -X 645 -Y 24 -Width 100 -Height 26 -Tag $cmbSource -Parent $grpMedia -OnClick {
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Button.BrowseISO') -X 645 -Y 24 -Width 100 -Height 26 -Tag $cmbSource -Parent $grpMedia -OnClick {
         $ofd = New-Object System.Windows.Forms.OpenFileDialog
-        $ofd.Filter = "Windows 11 ISO (*.iso)|*.iso|All Files (*.*)|*.*"
+        $ofd.Filter = Get-Nano11UiString 'Media.ISOFilter'
         if ($ofd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $this.Tag.Text = $ofd.FileName }
     })
-    [void](New-Nano11Button -Text "Rescan" -X 750 -Y 24 -Width 70 -Height 26 -Tag $cmbSource -Parent $grpMedia -OnClick {
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Button.Rescan') -X 750 -Y 24 -Width 70 -Height 26 -Tag $cmbSource -Parent $grpMedia -OnClick {
         Update-Nano11GuiSources -Combo $this.Tag
     })
 
@@ -1101,50 +1270,50 @@ function New-Nano11MediaTab {
     }
 
     # WorkDir
-    [void](New-Nano11Label -Text "Workspace Dir:" -X 15 -Y 60 -Width 130 -Height 20 -Parent $grpMedia)
+    [void](New-Nano11Label -Text (Get-Nano11UiString 'Media.Label.Workspace') -X 15 -Y 60 -Width 130 -Height 20 -Parent $grpMedia)
     $docsDir = [Environment]::GetFolderPath('MyDocuments')
     if (-not $docsDir) { $docsDir = Join-Path $env:USERPROFILE "Documents" }
     $workText = if ($InitialSettings.WorkDir) { $InitialSettings.WorkDir } else { Join-Path -Path $docsDir -ChildPath "nano11_workspace" }
     $gui.Work = New-Nano11TextBox -X 150 -Y 57 -Width 535 -Text $workText -Parent $grpMedia
-    [void](New-Nano11Button -Text "Browse Folder..." -X 695 -Y 56 -Width 125 -Height 26 -Tag $gui.Work -OnClick $browseFolder -Parent $grpMedia)
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Button.BrowseFolder') -X 695 -Y 56 -Width 125 -Height 26 -Tag $gui.Work -OnClick $browseFolder -Parent $grpMedia)
 
     # Index & Drivers
-    [void](New-Nano11Label -Text "Image Index:" -X 15 -Y 95 -Width 130 -Height 20 -Parent $grpMedia)
+    [void](New-Nano11Label -Text (Get-Nano11UiString 'Media.Label.Index') -X 15 -Y 95 -Width 130 -Height 20 -Parent $grpMedia)
     $gui.Index = New-Nano11TextBox -X 150 -Y 92 -Width 70 -Text $(if ($InitialSettings.Index) { "$($InitialSettings.Index)" }) -Parent $grpMedia
-    [void](New-Nano11Label -Text 'Inject Drivers ($OEM$):' -X 235 -Y 95 -Width 140 -Height 20 -Parent $grpMedia)
+    [void](New-Nano11Label -Text (Get-Nano11UiString 'Media.Label.Drivers') -X 235 -Y 95 -Width 140 -Height 20 -Parent $grpMedia)
     $gui.Drivers = New-Nano11TextBox -X 380 -Y 92 -Width 305 -Text $(if ($InitialSettings.InjectDrivers) { "$($InitialSettings.InjectDrivers)" }) -Parent $grpMedia
-    [void](New-Nano11Button -Text "Browse..." -X 695 -Y 91 -Width 125 -Height 26 -Tag $gui.Drivers -OnClick $browseFolder -Parent $grpMedia)
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Button.Browse') -X 695 -Y 91 -Width 125 -Height 26 -Tag $gui.Drivers -OnClick $browseFolder -Parent $grpMedia)
 
     # User & Computer
-    [void](New-Nano11Label -Text "Local Username:" -X 15 -Y 130 -Width 130 -Height 20 -Parent $grpMedia)
+    [void](New-Nano11Label -Text (Get-Nano11UiString 'Media.Label.UserName') -X 15 -Y 130 -Width 130 -Height 20 -Parent $grpMedia)
     $gui.UserName = New-Nano11TextBox -X 150 -Y 127 -Width 160 -Text $(if ($InitialSettings.UserName) { "$($InitialSettings.UserName)" } else { "User" }) -Parent $grpMedia
-    [void](New-Nano11Label -Text "Computer Name:" -X 330 -Y 130 -Width 120 -Height 20 -Parent $grpMedia)
+    [void](New-Nano11Label -Text (Get-Nano11UiString 'Media.Label.ComputerName') -X 330 -Y 130 -Width 120 -Height 20 -Parent $grpMedia)
     $gui.ComputerName = New-Nano11TextBox -X 450 -Y 127 -Width 160 -Text $(if ($InitialSettings.ComputerName) { "$($InitialSettings.ComputerName)" } else { "*" }) -Parent $grpMedia
 
     # Preset Group
-    $grpPreset = New-Nano11GroupBox -Text " Configuration Profile Preset " -X 15 -Y 205 -Width 835 -Height 75 -Parent $tabMedia
+    $grpPreset = New-Nano11GroupBox -Text (Get-Nano11UiString 'Media.Group.Preset') -X 15 -Y 205 -Width 835 -Height 75 -Parent $tabMedia
 
     $cmbPreset = New-Nano11ComboBox -DropList -X 15 -Y 28 -Width 805 -BackColor $script:Nano11GuiColors.Input -ForeColor ([System.Drawing.Color]::White) -Parent $grpPreset -Items @(
-        "Extreme Slim & Gaming (Max debloat, minimal memory, ultra-low latency)",
-        "Balanced Pro (Safe daily debloat: Windows Update & Defender preserved)",
-        "FAT32 USB Split-WIM (UEFI compatible 3.8GB chunks)",
-        "Handheld Gaming (ROG Ally, Steam Deck, Legion Go)",
-        "VM & Developer Workstation (WSL2, Hyper-V, WinUpdate enabled)",
-        "Audio & DAW Production (Low Latency, MMCSS Priority, VST Protected)",
-        "Custom Configuration (Manual Tweak Switches)"
+        (Get-Nano11UiString 'Media.Preset.Extreme'),
+        (Get-Nano11UiString 'Media.Preset.Balanced'),
+        (Get-Nano11UiString 'Media.Preset.Fat32'),
+        (Get-Nano11UiString 'Media.Preset.Handheld'),
+        (Get-Nano11UiString 'Media.Preset.VM'),
+        (Get-Nano11UiString 'Media.Preset.Audio'),
+        (Get-Nano11UiString 'Media.Preset.Custom')
     )
     $gui.Preset = $cmbPreset
 
     # Payload Format Group
-    $grpPayload = New-Nano11GroupBox -Text " Output Payload Format & Scratch Acceleration " -X 15 -Y 290 -Width 835 -Height 95 -Parent $tabMedia
-    $gui.RadWIM = New-Nano11CheckBox -Radio -Text "install.wim (LZX - Recommended, High Compatibility)" -X 15 -Y 28 -Width 350 -Height 24 -Checked $true -Parent $grpPayload
-    $gui.RadESD = New-Nano11CheckBox -Radio -Text "install.esd (LZMS - Ultra Compression)" -X 380 -Y 28 -Width 250 -Height 24 -Parent $grpPayload
-    $gui.RadSWM = New-Nano11CheckBox -Radio -Text "install.swm (Split-WIM for FAT32 USB)" -X 640 -Y 28 -Width 185 -Height 24 -Parent $grpPayload
+    $grpPayload = New-Nano11GroupBox -Text (Get-Nano11UiString 'Media.Group.Payload') -X 15 -Y 290 -Width 835 -Height 95 -Parent $tabMedia
+    $gui.RadWIM = New-Nano11CheckBox -Radio -Text (Get-Nano11UiString 'Media.Radio.WIM') -X 15 -Y 28 -Width 350 -Height 24 -Checked $true -Parent $grpPayload
+    $gui.RadESD = New-Nano11CheckBox -Radio -Text (Get-Nano11UiString 'Media.Radio.ESD') -X 380 -Y 28 -Width 250 -Height 24 -Parent $grpPayload
+    $gui.RadSWM = New-Nano11CheckBox -Radio -Text (Get-Nano11UiString 'Media.Radio.SWM') -X 640 -Y 28 -Width 185 -Height 24 -Parent $grpPayload
 
     if ($InitialSettings.ExportESDMode) { $gui.RadESD.Checked = $true }
     elseif ($InitialSettings.SplitWIMMode) { $gui.RadSWM.Checked = $true }
 
-    $gui.VHDX = New-Nano11CheckBox -Text "Use Fast VHDX Scratch Disk (Accelerates DISM image servicing file I/O)" -X 15 -Y 60 -Width 550 -Height 24 `
+    $gui.VHDX = New-Nano11CheckBox -Text (Get-Nano11UiString 'Media.Check.VHDX') -X 15 -Y 60 -Width 550 -Height 24 `
         -Checked ([bool]$InitialSettings.UseVHDX) -Parent $grpPayload
 }
 
@@ -1160,13 +1329,13 @@ function New-Nano11TweakTabs {
     # TABS 2-5: tweak toggles from config\tweaks.psd1, one tab per category
     # =========================================================================
     foreach ($cat in @(
-        @(" 2. Security & Bypass ", "Security"),
-        @(" 3. Privacy & AI ", "Privacy"),
-        @(" 4. Performance ", "Performance"),
-        @(" 5. UI & Shell ", "UI")
+        @((Get-Nano11UiString 'Tab.Security'), "Security"),
+        @((Get-Nano11UiString 'Tab.Privacy'), "Privacy"),
+        @((Get-Nano11UiString 'Tab.Performance'), "Performance"),
+        @((Get-Nano11UiString 'Tab.UI'), "UI")
     )) {
         $category = $cat[1]
-        $page = New-Nano11ToggleTab -Text $cat[0] -TabControl $tabControl -Caption "Switches: $category"
+        $page = New-Nano11ToggleTab -Text $cat[0] -TabControl $tabControl -Caption (Get-Nano11UiString 'Tab.TweakCaption' -Format (Get-Nano11UiString "Category.$category" -Default $category))
         $tabCheckboxes = [System.Collections.Generic.List[System.Windows.Forms.CheckBox]]::new()
         foreach ($tk in $script:AllTweakDefs.Keys) {
             $def = $script:AllTweakDefs[$tk]
@@ -1177,7 +1346,8 @@ function New-Nano11TweakTabs {
             } elseif ($InitialSettings.ContainsKey($tk)) {
                 $initVal = [bool]$InitialSettings[$tk]
             }
-            $chk = New-Nano11ToggleCheckBox -Parent $page.Flow -Key $tk -Text "$tk - $($def.Description)" -ToolTip $toolTip -ToolTipText $def.Description -Checked $initVal
+            $desc = Get-Nano11TweakDescription -Key $tk -Def $def
+            $chk = New-Nano11ToggleCheckBox -Parent $page.Flow -Key $tk -Text "$tk - $desc" -ToolTip $toolTip -ToolTipText $desc -Checked $initVal
             $gui.TweakCheckboxes[$tk] = $chk
             $tabCheckboxes.Add($chk)
         }
@@ -1196,11 +1366,11 @@ function New-Nano11ServicesTab {
     # =========================================================================
     # TAB 6: Components & Services
     # =========================================================================
-    $page = New-Nano11ToggleTab -Text " 6. Services & Apps " -TabControl $tabControl
+    $page = New-Nano11ToggleTab -Text (Get-Nano11UiString 'Tab.Services') -TabControl $tabControl
 
     # Components with a Gui entry in config\tweaks.psd1, in their Gui.Order
     $svcDefs = @($script:ComponentDefs.Values | Where-Object { $_.Gui -and $_.Gui.Tab -ne 'Migration' } | Sort-Object { [int]$_.Gui.Order } | ForEach-Object {
-        @{ Key = $_.Key; Text = $_.Gui.Text; Desc = $_.Gui.Description; Def = [bool]$_.Gui.Default }
+        @{ Key = $_.Key; Text = (Get-Nano11UiString -Key "Component.$($_.Key).Text" -Default $_.Gui.Text); Desc = (Get-Nano11UiString -Key "Component.$($_.Key).Description" -Default $_.Gui.Description); Def = [bool]$_.Gui.Default }
     })
     $svcCheckboxes = [System.Collections.Generic.List[System.Windows.Forms.CheckBox]]::new()
     foreach ($sd in $svcDefs) {
@@ -1298,23 +1468,23 @@ function New-Nano11DebloatTab {
     $preExp = @()
     if ($InitialSettings.AdvancedDebloatExperimental) { $preExp = @($InitialSettings.AdvancedDebloatExperimental) }
 
-    $tabDebloat = New-Nano11TabPage -Text " 7. Advanced Debloat " -TabControl $tabControl
+    $tabDebloat = New-Nano11TabPage -Text (Get-Nano11UiString 'Tab.Debloat') -TabControl $tabControl
     $barDeb = New-Nano11ButtonBar -Parent $tabDebloat
-    [void](New-Nano11Label -Text "Notice: Standard uses CBS safe operations. Experimental physically deletes files." -X 15 -Y 11 -Width 650 -Height 20 `
+    [void](New-Nano11Label -Text (Get-Nano11UiString 'Debloat.Notice') -X 15 -Y 11 -Width 650 -Height 20 `
         -ForeColor $script:Nano11GuiColors.Warn -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $barDeb)
     $flowDeb = New-Nano11FlowPanel -Parent $tabDebloat
 
     # Standard Debloat group
-    $grpStdDeb = New-Nano11GroupBox -Text " Standard Debloat (Safe Component Pruning) " -Width 410 -Height 480 -Parent $flowDeb
-    $gui.ClbStd = New-Nano11CheckedList -Items $stdItems -Selected $preStd -Fill -Parent $grpStdDeb
+    $grpStdDeb = New-Nano11GroupBox -Text (Get-Nano11UiString 'Debloat.Group.Standard') -Width 410 -Height 480 -Parent $flowDeb
+    $gui.ClbStd = New-Nano11CheckedList -Items $stdItems -Selected $preStd -DisplayText $script:Nano11DebloatDisplayText -Fill -Parent $grpStdDeb
 
     # Experimental Debloat group
-    $grpExpDeb = New-Nano11GroupBox -Text " Experimental Physical Debloat (Destructive / Breaks WU) " -Width 410 -Height 480 `
+    $grpExpDeb = New-Nano11GroupBox -Text (Get-Nano11UiString 'Debloat.Group.Experimental') -Width 410 -Height 480 `
         -ForeColor $script:Nano11GuiColors.Danger -Parent $flowDeb
-    $gui.ClbExp = New-Nano11CheckedList -Items $expItems -Selected $preExp -Fill -Parent $grpExpDeb
+    $gui.ClbExp = New-Nano11CheckedList -Items $expItems -Selected $preExp -DisplayText $script:Nano11DebloatDisplayText -Fill -Parent $grpExpDeb
 
     # Select All / Clear All bar at the bottom of each debloat group
-    foreach ($pair in @(@($grpStdDeb, $gui.ClbStd, $null), @($grpExpDeb, $gui.ClbExp, "Select ALL experimental physical deletions?`nThis permanently breaks Windows Update and sfc."))) {
+    foreach ($pair in @(@($grpStdDeb, $gui.ClbStd, $null), @($grpExpDeb, $gui.ClbExp, (Get-Nano11UiString 'Debloat.ConfirmSelectExperimental')))) {
         $barList = New-Nano11ButtonBar -Parent $pair[0] -Dock Bottom -Height 34 -BackColor $null
         $pair[1].BringToFront()
         [void](Add-Nano11SelectButtons -Parent $barList -Target $pair[1] -X 5 -Y 4 -Step 100 -ConfirmSelect $pair[2])
@@ -1324,54 +1494,55 @@ function New-Nano11DebloatTab {
 # Tab 8, right column: backup / restore / verify / estimate action buttons
 function New-Nano11MigrationActionsGroup {
     param([object]$Parent)
-    $grpActions = New-Nano11GroupBox -Text " Actions " -Width 410 -Height 420 -Parent $Parent
+    $grpActions = New-Nano11GroupBox -Text (Get-Nano11UiString 'Mig.Group.Actions') -Width 410 -Height 420 -Parent $Parent
     $btnY = 22
     $btnStep = 38
-    [void](New-Nano11Button -Text "Recovery Readiness Check" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Mig.Button.Readiness') -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
         $g = $this.FindForm().Tag
         try {
             $rr = Get-Nano11GuiRecoveryReadiness -Gui $g
-            $msg = "Readiness Score: $($rr.ReadinessScore)`nSecondary Drives: $($rr.SecondaryDrives -join ', ')`nSystem Restore: $($rr.SystemRestoreEnabled)`nWinRE on target: $($rr.WinReEnabledOnTarget)`n`n$($rr.Recommendations -join "`n")"
-            Show-Nano11GuiMessage -Text $msg -Title "Recovery Readiness" -Kind Info
+            $msg = Get-Nano11UiString 'Mig.Readiness.Message' -Format $rr.ReadinessScore, ($rr.SecondaryDrives -join ', '), $rr.SystemRestoreEnabled, $rr.WinReEnabledOnTarget, ($rr.Recommendations -join "`n")
+            Show-Nano11GuiMessage -Text $msg -Title (Get-Nano11UiString 'Mig.Readiness.Title') -Kind Info
         } catch {
-            Show-Nano11GuiMessage -Text "Error: $($_.Exception.Message)" -Title "Recovery Readiness" -Kind Error
+            Show-Nano11GuiMessage -Text (Get-Nano11UiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-Nano11UiString 'Mig.Readiness.Title') -Kind Error
         }
     })
     $btnY += $btnStep
-    [void](New-Nano11Button -Text "Export App Inventory" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Mig.Button.ExportApps') -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
         $btn = $this
         $f = $btn.FindForm()
         $dlg = New-Object System.Windows.Forms.SaveFileDialog
         try {
-            $dlg.Title = "Export App Inventory"
-            $dlg.Filter = "JSON (*.json)|*.json|All files (*.*)|*.*"
+            $dlg.Title = Get-Nano11UiString 'Mig.Button.ExportApps'
+            $dlg.Filter = Get-Nano11UiString 'Mig.Export.Filter'
             $dlg.FileName = "apps-inventory.json"
             $dlg.InitialDirectory = [Environment]::GetFolderPath('MyDocuments')
             if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
             $outPath = $dlg.FileName
         } finally { $dlg.Dispose() }
         $o = Invoke-Nano11GuiMigrationJob -Button $btn -Form $f -RepoRoot $script:Nano11GuiRepoRoot -Script 'param($a) Export-Nano11AppInventory -OutputPath $a.OutputPath' -Arguments @{ OutputPath = $outPath }
-        Show-Nano11GuiJobOutcome -Outcome $o -Title "Export Apps" -SuccessMessage "App inventory exported to:`n$outPath"
+        Show-Nano11GuiJobOutcome -Outcome $o -Title (Get-Nano11UiString 'Mig.Export.Title') -SuccessMessage (Get-Nano11UiString 'Mig.Export.Done' -Format $outPath)
     })
     $btnY += $btnStep
-    [void](New-Nano11Button -Text "Open Migration Wizard" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Mig.Button.Wizard') -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
         $g = $this.FindForm().Tag
         $repoRoot = $script:Nano11GuiRepoRoot
         $migratorPath = Join-Path $repoRoot "tools\migrator\Nano11-Migrator.ps1"
         if (Test-Path -LiteralPath $migratorPath) {
             try {
                 $root = Get-Nano11GuiMigrationRoot -Gui $g
-                # -BackupRoot exists in every Nano11-Migrator.ps1 version (it is a -PackagePath alias after S6)
-                Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$migratorPath`" -GUI -BackupRoot `"$root`"" -WindowStyle Normal
+                # -BackupRoot exists in every Nano11-Migrator.ps1 version (it is a -PackagePath alias after S6);
+                # the wizard opens in the language of this window
+                Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$migratorPath`" -GUI -BackupRoot `"$root`" -UiLanguage $($script:Nano11UiLanguage)" -WindowStyle Normal
             } catch {
-                Show-Nano11GuiMessage -Text "Error: $($_.Exception.Message)" -Title "Migration Wizard" -Kind Error
+                Show-Nano11GuiMessage -Text (Get-Nano11UiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-Nano11UiString 'Mig.Wizard.Title') -Kind Error
             }
         } else {
-            Show-Nano11GuiMessage -Text "Nano11-Migrator.ps1 not found." -Title "Migration Wizard" -Kind Warning
+            Show-Nano11GuiMessage -Text (Get-Nano11UiString 'Mig.Wizard.NotFound') -Title (Get-Nano11UiString 'Mig.Wizard.Title') -Kind Warning
         }
     })
     $btnY += $btnStep
-    [void](New-Nano11Button -Text "Estimate Size" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Mig.Button.Estimate') -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
         $btn = $this
         $f = $btn.FindForm()
         $g = $f.Tag
@@ -1379,21 +1550,21 @@ function New-Nano11MigrationActionsGroup {
         $ea = @{ UserFolderPaths = @($map.Values); SelectedRuleIds = @(Get-Nano11GuiMigrationRuleIds -Gui $g); DestinationPath = (Get-Nano11GuiMigrationRoot -Gui $g) }
         $o = Invoke-Nano11GuiMigrationJob -Button $btn -Form $f -RepoRoot $script:Nano11GuiRepoRoot -Arguments $ea -Script 'param($a) Get-Nano11MigrationSizeEstimate -UserFolderPaths $a.UserFolderPaths -SelectedRuleIds $a.SelectedRuleIds -DestinationPath $a.DestinationPath'
         $est = $o.Result
-        $msg = if ($est) { "Files: $($est.TotalFiles)`nSize: $($est.TotalMB) MB`nFree on $($est.DestinationDrive): $($est.DestinationFreeMB) MB`nEnough space: $($est.HasEnoughSpace)" } else { "No estimate returned." }
-        Show-Nano11GuiJobOutcome -Outcome $o -Title "Estimate Size" -SuccessMessage $msg
+        $msg = if ($est) { Get-Nano11UiString 'Mig.Estimate.Message' -Format $est.TotalFiles, $est.TotalMB, $est.DestinationDrive, $est.DestinationFreeMB, $est.HasEnoughSpace } else { Get-Nano11UiString 'Mig.Estimate.None' }
+        Show-Nano11GuiJobOutcome -Outcome $o -Title (Get-Nano11UiString 'Mig.Button.Estimate') -SuccessMessage $msg
     })
     $btnY += $btnStep
-    [void](New-Nano11Button -Text "Run Backup" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Mig.Button.Backup') -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
         $btn = $this
         $f = $btn.FindForm()
         $g = $f.Tag
         $backupArgs = Get-Nano11GuiBackupArgs -Gui $g
         $o = Invoke-Nano11GuiMigrationJob -Button $btn -Form $f -RepoRoot $script:Nano11GuiRepoRoot -Arguments $backupArgs -Script 'param($a) Start-Nano11MigrationBackup @a'
-        Show-Nano11GuiJobOutcome -Outcome $o -Title "Backup" -SuccessMessage "Backup completed.`nManifest: $($backupArgs.BackupRoot)\migration-manifest.json"
-        if ($g.MigStatus -and -not $o.Error) { $g.MigStatus.Text = "Backup completed." }
+        Show-Nano11GuiJobOutcome -Outcome $o -Title (Get-Nano11UiString 'Mig.Backup.Title') -SuccessMessage (Get-Nano11UiString 'Mig.Backup.Done' -Format $backupArgs.BackupRoot)
+        if ($g.MigStatus -and -not $o.Error) { $g.MigStatus.Text = Get-Nano11UiString 'Mig.Backup.Status' }
     })
     $btnY += $btnStep
-    [void](New-Nano11Button -Text "Verify Backup Integrity" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Mig.Button.Verify') -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
         $btn = $this
         $f = $btn.FindForm()
         $g = $f.Tag
@@ -1402,12 +1573,12 @@ function New-Nano11MigrationActionsGroup {
         $vr = $o.Result
         if ($vr -and @($vr.Problems).Count -gt 0) {
             $o.Errors = @($o.Errors) + @($vr.Problems)
-            $msg = "Checked $($vr.Checked) file(s): $(@($vr.Problems).Count) problem(s)."
-        } elseif ($vr) { $msg = "Checked $($vr.Checked) file(s): all present and matching." } else { $msg = "No result." }
-        Show-Nano11GuiJobOutcome -Outcome $o -Title "Verify Backup" -SuccessMessage $msg
+            $msg = Get-Nano11UiString 'Mig.Verify.Problems' -Format $vr.Checked, @($vr.Problems).Count
+        } elseif ($vr) { $msg = Get-Nano11UiString 'Mig.Verify.Ok' -Format $vr.Checked } else { $msg = Get-Nano11UiString 'Mig.Verify.None' }
+        Show-Nano11GuiJobOutcome -Outcome $o -Title (Get-Nano11UiString 'Mig.Verify.Title') -SuccessMessage $msg
     })
     $btnY += $btnStep
-    foreach ($rs in @(@("Run Restore", $false), @("Retry Failed Tasks Only", $true))) {
+    foreach ($rs in @(@((Get-Nano11UiString 'Mig.Button.Restore'), $false), @((Get-Nano11UiString 'Mig.Button.Retry'), $true))) {
         [void](New-Nano11Button -Text $rs[0] -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -Tag $rs[1] -OnClick {
             $btn = $this
             $retry = [bool]$btn.Tag
@@ -1416,10 +1587,10 @@ function New-Nano11MigrationActionsGroup {
             $ra = @{ BackupRoot = (Get-Nano11GuiMigrationRoot -Gui $g); ConflictPolicy = (Get-Nano11GuiConflictPolicy -Gui $g) }
             if ($retry) { $ra['RetryFailedOnly'] = $true }
             $o = Invoke-Nano11GuiMigrationJob -Button $btn -Form $f -RepoRoot $script:Nano11GuiRepoRoot -Arguments $ra -Script 'param($a) Start-Nano11MigrationRestore @a'
-            $msg = "Restore completed."
+            $msg = Get-Nano11UiString 'Mig.Restore.Done'
             if ($o.Result -and $o.Result.Results) { $msg += "`n" + ($o.Result.Results | ForEach-Object { "$($_.TaskId): $($_.Status)" } | Out-String) }
-            Show-Nano11GuiJobOutcome -Outcome $o -Title "Restore" -SuccessMessage $msg
-            if ($g.MigStatus -and -not $o.Error) { $g.MigStatus.Text = "Restore completed." }
+            Show-Nano11GuiJobOutcome -Outcome $o -Title (Get-Nano11UiString 'Mig.Restore.Title') -SuccessMessage $msg
+            if ($g.MigStatus -and -not $o.Error) { $g.MigStatus.Text = Get-Nano11UiString 'Mig.Restore.Done' }
         })
         $btnY += $btnStep
     }
@@ -1429,12 +1600,12 @@ function New-Nano11MigrationActionsGroup {
 function New-Nano11MigrationCustomPathsGroup {
     param([hashtable]$Gui, [object]$Parent)
     # Custom paths backup/restore section
-    $grpCustom = New-Nano11GroupBox -Text " Custom File/Folder Backup (arbitrary paths) " -Width 840 -Height 140 -Parent $Parent
-    [void](New-Nano11Label -Text "Paths (one per line):" -X 15 -Y 20 -Width 140 -Height 20 -Parent $grpCustom)
+    $grpCustom = New-Nano11GroupBox -Text (Get-Nano11UiString 'Mig.Group.Custom') -Width 840 -Height 140 -Parent $Parent
+    [void](New-Nano11Label -Text (Get-Nano11UiString 'Mig.Label.CustomPaths') -X 15 -Y 20 -Width 140 -Height 20 -Parent $grpCustom)
     $txtCustomPaths = New-Nano11TextBox -X 15 -Y 42 -Width 560 -Height 60 -Multiline -ScrollBars Vertical -ForeColor $script:Nano11GuiColors.Text -Parent $grpCustom
     $gui.CustomPaths = $txtCustomPaths
 
-    [void](New-Nano11Button -Text "Backup Custom Paths" -X 590 -Y 42 -Width 160 -Height 32 -Parent $grpCustom -OnClick {
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Mig.Button.BackupCustom') -X 590 -Y 42 -Width 160 -Height 32 -Parent $grpCustom -OnClick {
         $f = $this.FindForm()
         $g = $f.Tag
         try {
@@ -1442,17 +1613,17 @@ function New-Nano11MigrationCustomPathsGroup {
                 param($gui)
                 $root = Get-Nano11GuiMigrationRoot -Gui $gui
                 $paths = @($gui.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-                if ($paths.Count -eq 0) { throw "No paths specified." }
+                if ($paths.Count -eq 0) { throw (Get-Nano11UiString 'Mig.Custom.NoPaths') }
                 Backup-Nano11CustomPaths -Paths $paths -BackupRoot $root
             }
-            $msg = "Custom paths backup completed.`nCopied: $($result.CopiedFiles) files.`nFailed: $($result.FailedFiles.Count)"
-            Show-Nano11GuiMessage -Text $msg -Title "Backup Custom Paths" -Kind Info
-            if ($g.MigStatus) { $g.MigStatus.Text = "Custom backup: $($result.CopiedFiles) files." }
+            $msg = Get-Nano11UiString 'Mig.Custom.BackupDone' -Format $result.CopiedFiles, $result.FailedFiles.Count
+            Show-Nano11GuiMessage -Text $msg -Title (Get-Nano11UiString 'Mig.Button.BackupCustom') -Kind Info
+            if ($g.MigStatus) { $g.MigStatus.Text = Get-Nano11UiString 'Mig.Custom.BackupStatus' -Format $result.CopiedFiles }
         } catch {
-            Show-Nano11GuiMessage -Text "Error: $($_.Exception.Message)" -Title "Backup Custom Paths" -Kind Error
+            Show-Nano11GuiMessage -Text (Get-Nano11UiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-Nano11UiString 'Mig.Button.BackupCustom') -Kind Error
         }
     })
-    [void](New-Nano11Button -Text "Restore Custom Paths" -X 590 -Y 82 -Width 160 -Height 32 -Parent $grpCustom -OnClick {
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Mig.Button.RestoreCustom') -X 590 -Y 82 -Width 160 -Height 32 -Parent $grpCustom -OnClick {
         $f = $this.FindForm()
         $g = $f.Tag
         try {
@@ -1460,11 +1631,11 @@ function New-Nano11MigrationCustomPathsGroup {
                 param($gui)
                 Restore-Nano11CustomPaths -BackupRoot (Get-Nano11GuiMigrationRoot -Gui $gui) -ConflictPolicy (Get-Nano11GuiConflictPolicy -Gui $gui)
             }
-            $msg = "Custom paths restore completed.`nRestored: $($result.RestoredFiles) files.`nFailed: $($result.FailedFiles.Count)"
-            Show-Nano11GuiMessage -Text $msg -Title "Restore Custom Paths" -Kind Info
-            if ($g.MigStatus) { $g.MigStatus.Text = "Custom restore: $($result.RestoredFiles) files." }
+            $msg = Get-Nano11UiString 'Mig.Custom.RestoreDone' -Format $result.RestoredFiles, $result.FailedFiles.Count
+            Show-Nano11GuiMessage -Text $msg -Title (Get-Nano11UiString 'Mig.Button.RestoreCustom') -Kind Info
+            if ($g.MigStatus) { $g.MigStatus.Text = Get-Nano11UiString 'Mig.Custom.RestoreStatus' -Format $result.RestoredFiles }
         } catch {
-            Show-Nano11GuiMessage -Text "Error: $($_.Exception.Message)" -Title "Restore Custom Paths" -Kind Error
+            Show-Nano11GuiMessage -Text (Get-Nano11UiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-Nano11UiString 'Mig.Button.RestoreCustom') -Kind Error
         }
     })
 }
@@ -1473,25 +1644,25 @@ function New-Nano11MigrationCustomPathsGroup {
 function New-Nano11MigrationExtensionsGroup {
     param([hashtable]$Gui, [object]$Parent)
     # User Extensions & Custom Scripts card: what config\user\user-tweaks.psd1 loaded (set by the builder)
-    $grpExt = New-Nano11GroupBox -Text " User Extensions & Custom Scripts " -Width 840 -Height 110 -Parent $Parent
+    $grpExt = New-Nano11GroupBox -Text (Get-Nano11UiString 'Mig.Group.Extensions') -Width 840 -Height 110 -Parent $Parent
     $extRes = $script:UserExtensionsResult
     $extErrors = @()
     if ($extRes -and $extRes.Errors) { $extErrors = @($extRes.Errors | Where-Object { $_ }) }
     if ($extRes) {
-        $extText = "User tweaks: $($extRes.UserTweakCount)    User presets: $($extRes.UserPresetCount)    Custom scripts: $($extRes.CustomScriptCount)"
+        $extText = Get-Nano11UiString 'Mig.Ext.Counts' -Format $extRes.UserTweakCount, $extRes.UserPresetCount, $extRes.CustomScriptCount
     } else {
-        $extText = "User extensions have not been loaded."
+        $extText = Get-Nano11UiString 'Mig.Ext.NotLoaded'
     }
     [void](New-Nano11Label -Text $extText -X 15 -Y 24 -Width 600 -Height 20 -Parent $grpExt)
-    $gui.ExtensionsLabel = New-Nano11Label -Text $(if ($extErrors.Count -gt 0) { "Load errors: " + ($extErrors -join '; ') } else { "No load errors." }) `
+    $gui.ExtensionsLabel = New-Nano11Label -Text $(if ($extErrors.Count -gt 0) { Get-Nano11UiString 'Mig.Ext.LoadErrors' -Format ($extErrors -join '; ') } else { Get-Nano11UiString 'Mig.Ext.NoErrors' }) `
         -X 15 -Y 48 -Width 600 -Height 52 -ForeColor $(if ($extErrors.Count -gt 0) { $script:Nano11GuiColors.Warn } else { $script:Nano11GuiColors.Muted }) -Parent $grpExt
-    [void](New-Nano11Button -Text "Open Extensibility Guide" -X 630 -Y 24 -Width 190 -Height 32 -Parent $grpExt -OnClick {
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Mig.Button.Guide') -X 630 -Y 24 -Width 190 -Height 32 -Parent $grpExt -OnClick {
         $guide = Join-Path $script:Nano11GuiRepoRoot "docs\EXTENSIBILITY_GUIDE.md"
         try {
-            if (-not (Test-Path -LiteralPath $guide)) { throw "Guide not found: $guide" }
+            if (-not (Test-Path -LiteralPath $guide)) { throw (Get-Nano11UiString 'Mig.Guide.NotFound' -Format $guide) }
             Start-Process -FilePath $guide
         } catch {
-            Show-Nano11GuiMessage -Text "Error: $($_.Exception.Message)" -Title "Extensibility Guide" -Kind Error
+            Show-Nano11GuiMessage -Text (Get-Nano11UiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-Nano11UiString 'Mig.Guide.Title') -Kind Error
         }
     })
 }
@@ -1507,51 +1678,54 @@ function New-Nano11MigrationTab {
     # =========================================================================
     # Tab 8: Migration & Backup
     # =========================================================================
-    $tabMigration = New-Nano11TabPage -Text " 8. Migration & Backup " -TabControl $tabControl
+    $tabMigration = New-Nano11TabPage -Text (Get-Nano11UiString 'Tab.Migration') -TabControl $tabControl
     $flowMig = New-Nano11FlowPanel -Parent $tabMigration
 
     # Top card: Post-Install Migration Assistant (a component switch from config\tweaks.psd1, Gui.Tab = 'Migration')
-    $grpAssist = New-Nano11GroupBox -Text " Post-Install Migration Assistant " -Width 840 -Height 60 -Parent $flowMig
+    $grpAssist = New-Nano11GroupBox -Text (Get-Nano11UiString 'Mig.Group.Assistant') -Width 840 -Height 60 -Parent $flowMig
     $asDef = $script:ComponentDefs['IncludeMigrationAssistant']
     if ($asDef -and $asDef.Gui) {
         $asInit = [bool]$asDef.Gui.Default
+        $asText = Get-Nano11UiString -Key 'Component.IncludeMigrationAssistant.Text' -Default $asDef.Gui.Text
+        $asDesc = Get-Nano11UiString -Key 'Component.IncludeMigrationAssistant.Description' -Default $asDef.Gui.Description
         if ($InitialSettings.ContainsKey('IncludeMigrationAssistant')) { $asInit = [bool]$InitialSettings['IncludeMigrationAssistant'] }
-        $chkAssist = New-Nano11ToggleCheckBox -Parent $grpAssist -Key 'IncludeMigrationAssistant' -Text "IncludeMigrationAssistant - $($asDef.Gui.Text)" -ToolTip $toolTip -ToolTipText $asDef.Gui.Description -Checked $asInit
+        $chkAssist = New-Nano11ToggleCheckBox -Parent $grpAssist -Key 'IncludeMigrationAssistant' -Text "IncludeMigrationAssistant - $asText" -ToolTip $toolTip -ToolTipText $asDesc -Checked $asInit
         $chkAssist.Location = New-Object System.Drawing.Point(15, 24)
         $chkAssist.Size = New-Object System.Drawing.Size(800, 28)
         $gui.ComponentCheckboxes['IncludeMigrationAssistant'] = $chkAssist
     }
 
     # Backup settings: destination, credential handling, conflict policy
-    $grpTop = New-Nano11GroupBox -Text " Backup Settings " -Width 840 -Height 110 -Parent $flowMig
-    [void](New-Nano11Label -Text "Backup Root:" -X 15 -Y 22 -Width 90 -Height 20 -Parent $grpTop)
+    $grpTop = New-Nano11GroupBox -Text (Get-Nano11UiString 'Mig.Group.Backup') -Width 840 -Height 110 -Parent $flowMig
+    [void](New-Nano11Label -Text (Get-Nano11UiString 'Mig.Label.BackupRoot') -X 15 -Y 22 -Width 90 -Height 20 -Parent $grpTop)
     $txtMigRoot = New-Nano11TextBox -X 110 -Y 20 -Width 420 -Height 24 -Text (Get-Nano11DefaultMigrationBackupPath) -Parent $grpTop
     $gui.MigRoot = $txtMigRoot
-    [void](New-Nano11Button -Text "Browse..." -X 540 -Y 19 -Width 90 -Height 26 -Parent $grpTop -OnClick {
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Button.Browse') -X 540 -Y 19 -Width 90 -Height 26 -Parent $grpTop -OnClick {
         $g = $this.FindForm().Tag
         $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
         try {
-            $dlg.Description = "Select the migration backup destination"
+            $dlg.Description = Get-Nano11UiString 'Mig.Dialog.Destination'
             if ($g.MigRoot.Text -and (Test-Path -LiteralPath $g.MigRoot.Text)) { $dlg.SelectedPath = $g.MigRoot.Text }
             if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $g.MigRoot.Text = $dlg.SelectedPath }
         } finally { $dlg.Dispose() }
     })
-    $lblMigStatus = New-Nano11Label -Text "Select folders and rules, then click Backup or Restore." -X 640 -Y 22 -Width 190 -Height 40 -Parent $grpTop
+    $lblMigStatus = New-Nano11Label -Text (Get-Nano11UiString 'Mig.Status.Initial') -X 640 -Y 22 -Width 190 -Height 40 -Parent $grpTop
     $gui.MigStatus = $lblMigStatus
-    $gui.MigExcludeSecrets = New-Nano11CheckBox -Text "Exclude credentials/tokens (Recommended)" -X 15 -Y 52 -Width 320 -Height 24 -Checked $true -Parent $grpTop
-    [void](New-Nano11Label -Text "If a file already exists on restore:" -X 15 -Y 80 -Width 220 -Height 20 -Parent $grpTop)
+    $gui.MigExcludeSecrets = New-Nano11CheckBox -Text (Get-Nano11UiString 'Mig.Check.ExcludeSecrets') -X 15 -Y 52 -Width 320 -Height 24 -Checked $true -Parent $grpTop
+    [void](New-Nano11Label -Text (Get-Nano11UiString 'Mig.Label.ConflictPolicy') -X 15 -Y 80 -Width 220 -Height 20 -Parent $grpTop)
     $cmbConflict = New-Nano11ComboBox -Items @('BackupExisting', 'Skip', 'OverwriteIfNewer', 'Overwrite') -SelectedIndex 0 -DropList -X 240 -Y 78 -Width 200 -Parent $grpTop
     $gui.MigConflict = $cmbConflict
 
     # Left: personal data folders + migration rules
-    $grpRules = New-Nano11GroupBox -Text " Personal Folders & Migration Rules " -Width 410 -Height 420 -Parent $flowMig
+    $grpRules = New-Nano11GroupBox -Text (Get-Nano11UiString 'Mig.Group.Rules') -Width 410 -Height 420 -Parent $flowMig
     $folderNames = @('Documents', 'Desktop', 'Pictures', 'Videos', 'Downloads')
     $gui.MigFolders = New-Nano11CheckedList -Items $folderNames -Selected @('Documents', 'Desktop', 'Pictures') -X 10 -Y 20 -Width 390 -Height 100 -Parent $grpRules
-    [void](New-Nano11Label -Text "Migration rules (games / app settings):" -X 10 -Y 126 -Width 390 -Height 18 -Parent $grpRules)
+    [void](New-Nano11Label -Text (Get-Nano11UiString 'Mig.Label.Rules') -X 10 -Y 126 -Width 390 -Height 18 -Parent $grpRules)
     $clbMig = New-Nano11CheckedList -Items @() -X 10 -Y 146 -Width 390 -Height 264 -Parent $grpRules
     # Rules are filled in the first time this tab is opened (the migration engine is not loaded before that)
     $clbMig.Tag = @()
     $tabMigration.Tag = @{ Loaded = $false; List = $clbMig }
+    $gui.MigTab = $tabMigration
     $tabMigration.Add_Enter({
         $st = $this.Tag
         if ($st.Loaded) { return }
@@ -1577,7 +1751,7 @@ function New-Nano11UserTweaksTab {
     # TAB 9: user-defined switches whose Category has no tab above (System / Gaming / UserCustom ...)
     # =========================================================================
     $builtinTabCategories = @('Security', 'Privacy', 'Performance', 'UI')
-    $pageUser = New-Nano11ToggleTab -Text " 9. User Tweaks " -TabControl $tabControl -Caption "User-defined switches (config\user\user-tweaks.psd1)"
+    $pageUser = New-Nano11ToggleTab -Text (Get-Nano11UiString 'Tab.UserTweaks') -TabControl $tabControl -Caption (Get-Nano11UiString 'UserTweaks.Caption')
     $userTweakCount = 0
     foreach ($tk in $script:AllTweakDefs.Keys) {
         $def = $script:AllTweakDefs[$tk]
@@ -1588,26 +1762,267 @@ function New-Nano11UserTweaksTab {
         } elseif ($InitialSettings.ContainsKey($tk)) {
             $initVal = [bool]$InitialSettings[$tk]
         }
-        $chk = New-Nano11ToggleCheckBox -Parent $pageUser.Flow -Key $tk -Text "$tk [$($def.Category)] - $($def.Description)" -ToolTip $toolTip -ToolTipText $def.Description -Checked $initVal
+        $desc = Get-Nano11TweakDescription -Key $tk -Def $def
+        $chk = New-Nano11ToggleCheckBox -Parent $pageUser.Flow -Key $tk -Text "$tk [$($def.Category)] - $desc" -ToolTip $toolTip -ToolTipText $desc -Checked $initVal
         $gui.TweakCheckboxes[$tk] = $chk
         $userTweakCount++
     }
     if ($userTweakCount -eq 0) {
-        [void](New-Nano11Label -Text "No user-defined switches with a category outside Security / Privacy / Performance / UI." -X 0 -Y 0 -AutoSize -Parent $pageUser.Flow)
+        [void](New-Nano11Label -Text (Get-Nano11UiString 'UserTweaks.None') -X 0 -Y 0 -AutoSize -Parent $pageUser.Flow)
+    }
+}
+
+# =========================================================================
+# Main window content. Everything here is added to $Gui.Form and can be removed and built again, which is how
+# the display language is switched: -InitialSettings carries the state to show (see Switch-Nano11GuiLanguage).
+# =========================================================================
+function Initialize-Nano11GuiContent {
+    param(
+        [hashtable]$Gui,
+        [hashtable]$InitialSettings,
+        [string]$UiFontName
+    )
+    $form = $Gui.Form
+    $form.Text = Get-Nano11UiString 'Main.WindowTitle'
+
+    $toolTip = New-Object System.Windows.Forms.ToolTip
+    $accent = $script:Nano11GuiColors.Accent
+    $headerBack = $script:Nano11GuiColors.Header
+
+    # Header Panel
+    $headerPanel = New-Nano11ButtonBar -Parent $form -Height 65 -BackColor $headerBack
+    [void](New-Nano11Label -Text (Get-Nano11UiString 'Main.Title') -X 16 -Y 10 -AutoSize -ForeColor $accent `
+        -Font (New-Object System.Drawing.Font($UiFontName, 14, [System.Drawing.FontStyle]::Bold)) -Parent $headerPanel)
+    [void](New-Nano11Label -Text (Get-Nano11UiString 'Main.Subtitle') -X 18 -Y 38 -AutoSize `
+        -ForeColor $script:Nano11GuiColors.Subtle -Font (New-Object System.Drawing.Font($UiFontName, 8.5)) -Parent $headerPanel)
+
+    # Display language selector (switching rebuilds the content with the current settings kept)
+    [void](New-Nano11Label -Text (Get-Nano11UiString 'Main.Language') -X 690 -Y 10 -AutoSize -ForeColor $script:Nano11GuiColors.Muted -Parent $headerPanel)
+    $langNames = @($script:Nano11UiLanguages | ForEach-Object { Get-Nano11UiString 'Language.Name' -Language $_ -Default $_ })
+    $cmbLang = New-Nano11ComboBox -Items $langNames -SelectedIndex ([array]::IndexOf($script:Nano11UiLanguages, $script:Nano11UiLanguage)) -DropList `
+        -X 690 -Y 30 -Width 160 -BackColor $script:Nano11GuiColors.Input -ForeColor $script:Nano11GuiColors.Text -Parent $headerPanel
+    $cmbLang.Add_SelectedIndexChanged({
+        $f = $this.FindForm()
+        $lang = $script:Nano11UiLanguages[$this.SelectedIndex]
+        if (-not $lang -or $lang -eq $script:Nano11UiLanguage) { return }
+        $f.Tag.PendingLanguage = $lang
+        # The rebuild disposes this combo, so it runs from a timer once this event has finished
+        $timer = New-Object System.Windows.Forms.Timer
+        $timer.Interval = 10
+        $timer.Tag = $f
+        $timer.Add_Tick({
+            $this.Stop()
+            $owner = $this.Tag
+            $this.Dispose()
+            Switch-Nano11GuiLanguage -Gui $owner.Tag
+        })
+        $timer.Start()
+    })
+    $Gui.Language = $cmbLang
+
+    # Bottom Button & Estimate Panel
+    $bottomPanel = New-Nano11ButtonBar -Parent $form -Dock Bottom -Height 70 -BackColor $headerBack
+    $Gui.DryRun = New-Nano11CheckBox -Text (Get-Nano11UiString 'Main.DryRun') -X 20 -Y 12 -Width 200 -Height 22 -Parent $bottomPanel
+    $Gui.Estimate = New-Nano11Label -Text (Get-Nano11UiString 'Main.Estimate.Initial') -X 20 -Y 38 -Width 380 -Height 20 `
+        -ForeColor $script:Nano11GuiColors.Muted -Font (New-Object System.Drawing.Font($UiFontName, 9)) -Parent $bottomPanel
+
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Button.PresetDiff') -X 250 -Y 15 -Width 110 -Height 40 -Font (New-Object System.Drawing.Font($UiFontName, 9)) -Parent $bottomPanel -OnClick {
+        $g = $this.FindForm().Tag
+        try {
+            Show-Nano11GuiPresetDiff -Gui $g
+        } catch {
+            Show-Nano11GuiMessage -Text (Get-Nano11UiString 'Msg.PresetDiff.Failed' -Format $_.Exception.Message) -Title (Get-Nano11UiString 'Msg.PresetDiff.Title') -Kind Error
+        }
+    })
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Button.CheckDependencies') -X 370 -Y 15 -Width 150 -Height 40 -Font (New-Object System.Drawing.Font($UiFontName, 9)) -Parent $bottomPanel -OnClick {
+        $f = $this.FindForm()
+        $g = $f.Tag
+        try {
+            $cfg = Get-Nano11GuiDraftConfig -Gui $g
+            $res = Test-Nano11Dependencies -Config $cfg
+            $txt = Format-Nano11DependencyReport -Result $res
+            if (-not $txt) { $txt = Get-Nano11UiString 'Msg.Dependency.None' }
+            Show-Nano11GuiMessage -Text $txt -Title (Get-Nano11UiString 'Msg.Dependency.Title') -Kind Info
+        } catch {
+            Show-Nano11GuiMessage -Text (Get-Nano11UiString 'Msg.Dependency.Failed' -Format $_.Exception.Message) -Title (Get-Nano11UiString 'Msg.Dependency.Title') -Kind Error
+        }
+    })
+    [void](New-Nano11Button -Text (Get-Nano11UiString 'Button.StartBuild') -X 530 -Y 15 -Width 210 -Height 40 -BackColor $script:Nano11GuiColors.Primary `
+        -Font (New-Object System.Drawing.Font($UiFontName, 10, [System.Drawing.FontStyle]::Bold)) -Parent $bottomPanel -OnClick {
+        $f = $this.FindForm()
+        $g = $f.Tag
+        # Dependency / feature-impact pre-check before starting the build
+        try {
+            $depCfg = Get-Nano11GuiDraftConfig -Gui $g
+            $depResult = Test-Nano11Dependencies -Config $depCfg
+            if ($depResult.HasIssues) {
+                $depText = Format-Nano11DependencyReport -Result $depResult
+                $msg = Get-Nano11UiString 'Msg.Dependency.Confirm' -Format $depText
+                if (-not (Confirm-Nano11GuiAction -Message $msg -Title (Get-Nano11UiString 'Msg.Dependency.Title'))) { return }
+            }
+        } catch {
+            Write-Verbose "Dependency check skipped: $($_.Exception.Message)"
+        }
+        if (Complete-Nano11GuiResult -Gui $g) {
+            $f.DialogResult = [System.Windows.Forms.DialogResult]::OK
+            $f.Close()
+        }
+    })
+    $btnCancel = New-Nano11Button -Text (Get-Nano11UiString 'Button.Cancel') -X 750 -Y 15 -Width 110 -Height 40 -Font (New-Object System.Drawing.Font($UiFontName, 9.5)) -Parent $bottomPanel
+    $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+
+    # Main Tab Control
+    $tabControl = New-Nano11TabControl -Fill -Font (New-Object System.Drawing.Font($UiFontName, 9)) -Parent $form
+    $tabControl.BringToFront()
+    $Gui.Tabs = $tabControl
+
+    # =========================================================================
+    # Tabs 1-9 (one function each, above)
+    # =========================================================================
+    New-Nano11MediaTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings
+    New-Nano11TweakTabs -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
+    New-Nano11ServicesTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
+    New-Nano11DebloatTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -UiFontName $UiFontName
+    New-Nano11MigrationTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
+    New-Nano11UserTweaksTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
+    $cmbPreset = $Gui.Preset
+
+    # =========================================================================
+    # Synchronization & Presets Handling
+    # =========================================================================
+    $initPresetKeys = @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')
+    $initPresetName = "$($InitialSettings.PresetKey)".Trim().ToLower()
+    $initPresetIdx = [array]::IndexOf($initPresetKeys, $initPresetName)
+    if ($initPresetIdx -lt 0) {
+        $initPresetIdx = if ($initPresetName) { $cmbPreset.Items.Count - 1 } else { 0 }
+    }
+    $cmbPreset.SelectedIndex = $initPresetIdx
+
+    $script:guiBasePresetKey = if ($initPresetIdx -lt $Gui.PresetKeyMap.Count) { $Gui.PresetKeyMap[$initPresetIdx] } else { $null }
+
+    $cmbPreset.Add_SelectedIndexChanged({
+        if (-not $script:updatingPreset -and $this.SelectedIndex -ne ($this.Items.Count - 1)) {
+            Set-Nano11GuiPreset -Gui $this.FindForm().Tag -PresetIndex $this.SelectedIndex
+        }
+    })
+
+    foreach ($r in @($Gui.RadWIM, $Gui.RadESD, $Gui.RadSWM)) {
+        $r.Add_CheckedChanged({ Update-Nano11GuiEstimate -Gui $this.FindForm().Tag })
+    }
+    Update-Nano11GuiEstimate -Gui $Gui
+
+    Disable-Nano11Mnemonic -Control $form
+}
+
+# Everything the user can have entered or chosen in the main window, to put back after the content is rebuilt
+function Get-Nano11GuiState {
+    param([hashtable]$Gui)
+    $settings = Get-Nano11GuiDraftConfig -Gui $Gui
+    $settings['SourceDrive'] = $Gui.Source.Text
+    $settings['WorkDir'] = $Gui.Work.Text
+    $settings['Index'] = $Gui.Index.Text
+    $settings['InjectDrivers'] = $Gui.Drivers.Text
+    $settings['UserName'] = $Gui.UserName.Text
+    $settings['ComputerName'] = $Gui.ComputerName.Text
+    $settings['UseVHDX'] = [bool]$Gui.VHDX.Checked
+    $settings['ExportESDMode'] = [bool]$Gui.RadESD.Checked
+    $settings['SplitWIMMode'] = [bool]$Gui.RadSWM.Checked
+    $migFolders = @()
+    foreach ($name in $Gui.MigFolders.CheckedItems) { $migFolders += "$name" }
+    $migTab = $Gui.MigTab
+    return @{
+        Settings         = $settings
+        PresetIndex      = $Gui.Preset.SelectedIndex
+        BasePresetKey    = $script:guiBasePresetKey
+        TabIndex         = $Gui.Tabs.SelectedIndex
+        DryRun           = [bool]$Gui.DryRun.Checked
+        MigRoot          = $Gui.MigRoot.Text
+        MigFolders       = $migFolders
+        MigExcludeSecret = [bool]$Gui.MigExcludeSecrets.Checked
+        MigConflict      = $Gui.MigConflict.SelectedIndex
+        MigCustomPaths   = $Gui.CustomPaths.Text
+        MigRulesLoaded   = [bool]($migTab -and $migTab.Tag.Loaded)
+        MigRuleIds       = @(Get-Nano11GuiMigrationRuleIds -Gui $Gui)
+    }
+}
+
+# Put a state taken by Get-Nano11GuiState back into freshly built content
+function Restore-Nano11GuiState {
+    param([hashtable]$Gui, [hashtable]$State)
+    $script:updatingPreset = $true
+    $Gui.Preset.SelectedIndex = $State.PresetIndex
+    $script:updatingPreset = $false
+    $script:guiBasePresetKey = $State.BasePresetKey
+    # Text boxes get their exact text back (an emptied box must stay empty, not fall back to its default)
+    $Gui.Source.Text = $State.Settings['SourceDrive']
+    $Gui.Work.Text = $State.Settings['WorkDir']
+    $Gui.Index.Text = $State.Settings['Index']
+    $Gui.Drivers.Text = $State.Settings['InjectDrivers']
+    $Gui.UserName.Text = $State.Settings['UserName']
+    $Gui.ComputerName.Text = $State.Settings['ComputerName']
+    $Gui.DryRun.Checked = $State.DryRun
+    $Gui.MigRoot.Text = $State.MigRoot
+    for ($i = 0; $i -lt $Gui.MigFolders.Items.Count; $i++) {
+        $Gui.MigFolders.SetItemChecked($i, ($State.MigFolders -contains "$($Gui.MigFolders.Items[$i])"))
+    }
+    $Gui.MigExcludeSecrets.Checked = $State.MigExcludeSecret
+    if ($State.MigConflict -ge 0) { $Gui.MigConflict.SelectedIndex = $State.MigConflict }
+    $Gui.CustomPaths.Text = $State.MigCustomPaths
+    if ($State.MigRulesLoaded) {
+        # The rule list is filled lazily; fill it now so the checked rules can be restored
+        $migState = $Gui.MigTab.Tag
+        $migState.Loaded = $true
+        Initialize-Nano11GuiMigrationRules -List $migState.List
+        $known = @($migState.List.Tag)
+        for ($i = 0; $i -lt $known.Count; $i++) {
+            if ($State.MigRuleIds -contains [string]$known[$i]) { $migState.List.SetItemChecked($i, $true) }
+        }
+    }
+    Update-Nano11GuiEstimate -Gui $Gui
+    if ($State.TabIndex -ge 0 -and $State.TabIndex -lt $Gui.Tabs.TabPages.Count) { $Gui.Tabs.SelectedIndex = $State.TabIndex }
+}
+
+# Show the main window in another display language. The window is built again from the current settings, so
+# nothing typed or checked is lost. -Language defaults to $Gui.PendingLanguage (set by the language selector).
+function Switch-Nano11GuiLanguage {
+    param([hashtable]$Gui, [string]$Language)
+    if (-not $Language) { $Language = "$($Gui.PendingLanguage)" }
+    if ($script:Nano11UiLanguages -notcontains $Language -or $Language -eq $script:Nano11UiLanguage) { return }
+    $form = $Gui.Form
+    $state = Get-Nano11GuiState -Gui $Gui
+    Set-Nano11UiLanguage -Language $Language
+    Save-Nano11GuiLanguage -Language $Language
+    $form.SuspendLayout()
+    try {
+        $old = @($form.Controls | ForEach-Object { $_ })
+        $form.Controls.Clear()
+        foreach ($c in $old) { $c.Dispose() }
+        foreach ($k in @($Gui.Keys)) {
+            if (@('Form', 'PresetKeyMap', 'Result', 'UiFontName') -notcontains $k) { $Gui.Remove($k) }
+        }
+        $Gui.TweakCheckboxes = @{}
+        $Gui.ComponentCheckboxes = @{}
+        Initialize-Nano11GuiContent -Gui $Gui -InitialSettings $state.Settings -UiFontName $Gui.UiFontName
+        Restore-Nano11GuiState -Gui $Gui -State $state
+    } finally {
+        $form.ResumeLayout($true)
     }
 }
 
 # =========================================================================
 # Main window. Returns the result hashtable (Success = $false on cancel);
 # -NoShow returns the GUI context (Form, checkbox tables, ...) without showing it, for tests.
+# -UiLanguage en|ja picks the display language (default: the saved choice, else the OS language).
 # =========================================================================
 function Show-Nano11GUI {
     param(
         [hashtable]$InitialSettings = @{},
+        [ValidateSet('en', 'ja')][string]$UiLanguage,
         [switch]$NoShow
     )
 
     [System.Windows.Forms.Application]::EnableVisualStyles()
+    Set-Nano11UiLanguage -Language (Resolve-Nano11UiLanguage -Requested $UiLanguage)
 
     $uiFontName = "Segoe UI"
     foreach ($fName in @("Yu Gothic UI", "Meiryo UI", "Segoe UI")) {
@@ -1617,7 +2032,7 @@ function Show-Nano11GUI {
         } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
 
-    $form = New-Nano11Form -Text "nano11 Builder v2.1 - Next-Gen Windows 11 Modular Optimizer & Reducer" -Width 880 -Height 820 -ClientSize `
+    $form = New-Nano11Form -Text (Get-Nano11UiString 'Main.WindowTitle') -Width 880 -Height 820 -ClientSize `
         -NoAutoScale -Font (New-Object System.Drawing.Font($uiFontName, 9)) -StartPosition CenterScreen -FixedDialog -NoMaximize `
         -BackColor $script:Nano11GuiColors.Window -ForeColor $script:Nano11GuiColors.Text
 
@@ -1636,112 +2051,12 @@ function Show-Nano11GUI {
         ComponentCheckboxes = @{}
         PresetKeyMap        = @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')
         Result              = @{ Success = $false }
+        UiFontName          = $uiFontName
     }
     $form.Tag = $gui
     $script:updatingPreset = $false
 
-    $toolTip = New-Object System.Windows.Forms.ToolTip
-    $accent = $script:Nano11GuiColors.Accent
-    $headerBack = $script:Nano11GuiColors.Header
-
-    # Header Panel
-    $headerPanel = New-Nano11ButtonBar -Parent $form -Height 65 -BackColor $headerBack
-    [void](New-Nano11Label -Text "nano11 Builder v2.1" -X 16 -Y 10 -AutoSize -ForeColor $accent `
-        -Font (New-Object System.Drawing.Font($uiFontName, 14, [System.Drawing.FontStyle]::Bold)) -Parent $headerPanel)
-    [void](New-Nano11Label -Text "Universal, Language-Independent Windows 11 Modular Reducer & Full-Toggle Optimizer" -X 18 -Y 38 -AutoSize `
-        -ForeColor $script:Nano11GuiColors.Subtle -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $headerPanel)
-
-    # Bottom Button & Estimate Panel
-    $bottomPanel = New-Nano11ButtonBar -Parent $form -Dock Bottom -Height 70 -BackColor $headerBack
-    $gui.DryRun = New-Nano11CheckBox -Text "DryRun (Simulation Mode)" -X 20 -Y 12 -Width 200 -Height 22 -Parent $bottomPanel
-    $gui.Estimate = New-Nano11Label -Text "Estimated ISO: ~5.5 GB (LZX baseline)" -X 20 -Y 38 -Width 380 -Height 20 `
-        -ForeColor $script:Nano11GuiColors.Muted -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel
-
-    [void](New-Nano11Button -Text "Preset Diff" -X 250 -Y 15 -Width 110 -Height 40 -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel -OnClick {
-        $g = $this.FindForm().Tag
-        try {
-            Show-Nano11GuiPresetDiff -Gui $g
-        } catch {
-            Show-Nano11GuiMessage -Text "Preset Diff failed: $($_.Exception.Message)" -Title "nano11 - Preset Diff" -Kind Error
-        }
-    })
-    [void](New-Nano11Button -Text "Check Dependencies" -X 370 -Y 15 -Width 150 -Height 40 -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $bottomPanel -OnClick {
-        $f = $this.FindForm()
-        $g = $f.Tag
-        try {
-            $cfg = Get-Nano11GuiDraftConfig -Gui $g
-            $res = Test-Nano11Dependencies -Config $cfg
-            $txt = Format-Nano11DependencyReport -Result $res
-            if (-not $txt) { $txt = "No conflicts, unknowns or impacts detected." }
-            Show-Nano11GuiMessage -Text $txt -Title "nano11 - Dependency Check" -Kind Info
-        } catch {
-            Show-Nano11GuiMessage -Text "Dependency check failed: $($_.Exception.Message)" -Title "nano11 - Dependency Check" -Kind Error
-        }
-    })
-    [void](New-Nano11Button -Text "Start nano11 Build" -X 530 -Y 15 -Width 210 -Height 40 -BackColor $script:Nano11GuiColors.Primary `
-        -Font (New-Object System.Drawing.Font($uiFontName, 10, [System.Drawing.FontStyle]::Bold)) -Parent $bottomPanel -OnClick {
-        $f = $this.FindForm()
-        $g = $f.Tag
-        # Dependency / feature-impact pre-check before starting the build
-        try {
-            $depCfg = Get-Nano11GuiDraftConfig -Gui $g
-            $depResult = Test-Nano11Dependencies -Config $depCfg
-            if ($depResult.HasIssues) {
-                $depText = Format-Nano11DependencyReport -Result $depResult
-                $msg = "Dependency / feature-impact issues detected:`n`n$depText`n`nContinue with build anyway?"
-                if (-not (Confirm-Nano11GuiAction -Message $msg -Title "nano11 - Dependency Check")) { return }
-            }
-        } catch {
-            Write-Verbose "Dependency check skipped: $($_.Exception.Message)"
-        }
-        if (Complete-Nano11GuiResult -Gui $g) {
-            $f.DialogResult = [System.Windows.Forms.DialogResult]::OK
-            $f.Close()
-        }
-    })
-    $btnCancel = New-Nano11Button -Text "Cancel" -X 750 -Y 15 -Width 110 -Height 40 -Font (New-Object System.Drawing.Font($uiFontName, 9.5)) -Parent $bottomPanel
-    $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
-
-    # Main Tab Control
-    $tabControl = New-Nano11TabControl -Fill -Font (New-Object System.Drawing.Font($uiFontName, 9)) -Parent $form
-    $tabControl.BringToFront()
-
-    # =========================================================================
-    # Tabs 1-9 (one function each, above)
-    # =========================================================================
-    New-Nano11MediaTab -Gui $gui -TabControl $tabControl -InitialSettings $InitialSettings
-    New-Nano11TweakTabs -Gui $gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
-    New-Nano11ServicesTab -Gui $gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
-    New-Nano11DebloatTab -Gui $gui -TabControl $tabControl -InitialSettings $InitialSettings -UiFontName $uiFontName
-    New-Nano11MigrationTab -Gui $gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
-    New-Nano11UserTweaksTab -Gui $gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
-    $cmbPreset = $gui.Preset
-
-    # =========================================================================
-    # Synchronization & Presets Handling
-    # =========================================================================
-    $initPresetKeys = @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')
-    $initPresetName = "$($InitialSettings.PresetKey)".Trim().ToLower()
-    $initPresetIdx = [array]::IndexOf($initPresetKeys, $initPresetName)
-    if ($initPresetIdx -lt 0) {
-        $initPresetIdx = if ($initPresetName) { $cmbPreset.Items.Count - 1 } else { 0 }
-    }
-    $cmbPreset.SelectedIndex = $initPresetIdx
-
-    $script:guiBasePresetKey = if ($initPresetIdx -lt $gui.PresetKeyMap.Count) { $gui.PresetKeyMap[$initPresetIdx] } else { $null }
-
-    $cmbPreset.Add_SelectedIndexChanged({
-        if (-not $script:updatingPreset -and $this.SelectedIndex -ne ($this.Items.Count - 1)) {
-            Set-Nano11GuiPreset -Gui $this.FindForm().Tag -PresetIndex $this.SelectedIndex
-        }
-    })
-
-    foreach ($r in @($gui.RadWIM, $gui.RadESD, $gui.RadSWM)) {
-        $r.Add_CheckedChanged({ Update-Nano11GuiEstimate -Gui $this.FindForm().Tag })
-    }
-    Update-Nano11GuiEstimate -Gui $gui
-
-    Disable-Nano11Mnemonic -Control $form
+    Initialize-Nano11GuiContent -Gui $gui -InitialSettings $InitialSettings -UiFontName $uiFontName
 
     if ($NoShow) { return $gui }
 
