@@ -1,4 +1,4 @@
-﻿# nano11.Tests.ps1 - Pester suite for the nano11 builder fork
+# nano11.Tests.ps1 - Pester suite for the nano11 builder fork
 # Run with:  Invoke-Pester -Path .\tests\nano11.Tests.ps1
 # Requires:  Pester 3.4+ (ships with Windows PowerShell 5.1)
 
@@ -1159,5 +1159,78 @@ Describe "S1 - user extensions survive -PresetsOnly re-import" {
             $var = $assigns[0].Left.VariablePath.UserPath
             @($text | Where-Object { $_ -eq ". `$$var" }).Count | Should Be 1
         }
+    }
+}
+
+
+# --- S2: dependency checker additions ---
+Describe "nano11 dependency checker S2 additions" {
+    $emptyLists = @{ TweakSettings = @{}; AdvancedDebloatStandard = @(); AdvancedDebloatExperimental = @() }
+
+    It "reports RemoveDrivers as Unknown" {
+        $cfg = $emptyLists.Clone(); $cfg['RemoveDrivers'] = $true
+        $r = Test-Nano11Dependencies -Config $cfg
+        @($r.Unknowns | Where-Object { $_.Source -eq 'RemoveDrivers' }).Count | Should Be 1
+    }
+
+    It "reports AllowPhysicalDebloat as Unknown" {
+        $cfg = $emptyLists.Clone(); $cfg['AllowPhysicalDebloat'] = $true
+        $r = Test-Nano11Dependencies -Config $cfg
+        @($r.Unknowns | Where-Object { $_.Source -eq 'AllowPhysicalDebloat' }).Count | Should Be 1
+    }
+
+    It "lists VBS among NoHypervisor affected features" {
+        $c = Import-PowerShellDataFile -Path (Join-Path -Path $script:RepoRoot -ChildPath 'config\dependencies.psd1')
+        ($c.Tweaks['NoHypervisor'].AffectedFeatures -contains 'VBS') | Should Be $true
+    }
+
+    It "reports an enabled user tweak without Impact as Unknown, but not when Impact is Safe" {
+        $saved = $script:UserTweakDefs
+        try {
+            $script:UserTweakDefs = [ordered]@{
+                S2NoImpact = @{ Key = 'S2NoImpact' }
+                S2SafeOne  = @{ Key = 'S2SafeOne'; Impact = 'Safe' }
+            }
+            $cfg = @{ TweakSettings = @{ S2NoImpact = $true; S2SafeOne = $true }; AdvancedDebloatStandard = @(); AdvancedDebloatExperimental = @() }
+            $r = Test-Nano11Dependencies -Config $cfg
+            @($r.Unknowns | Where-Object { $_.Source -eq 'S2NoImpact' }).Count | Should Be 1
+            @($r.Unknowns | Where-Object { $_.Source -eq 'S2SafeOne' }).Count | Should Be 0
+            @($r.Impacts | Where-Object { $_.Source -eq 'S2SafeOne' }).Count | Should Be 0
+        } finally {
+            $script:UserTweakDefs = $saved
+        }
+    }
+
+    It "adds a hashtable Impact of a user tweak to Impacts" {
+        $saved = $script:UserTweakDefs
+        try {
+            $script:UserTweakDefs = [ordered]@{
+                S2WithImpact = @{ Key = 'S2WithImpact'; Impact = @{ AffectedFeatures = @('Foo'); Severity = 'Warning'; Reason = 'r' } }
+            }
+            $cfg = @{ TweakSettings = @{ S2WithImpact = $true }; AdvancedDebloatStandard = @(); AdvancedDebloatExperimental = @() }
+            $r = Test-Nano11Dependencies -Config $cfg
+            @($r.Impacts | Where-Object { $_.Source -eq 'S2WithImpact' }).Count | Should Be 1
+            @($r.Unknowns | Where-Object { $_.Source -eq 'S2WithImpact' }).Count | Should Be 0
+        } finally {
+            $script:UserTweakDefs = $saved
+        }
+    }
+
+    It "does not fail when UserTweakDefs is undefined" {
+        $saved = $script:UserTweakDefs
+        try {
+            Remove-Variable -Name UserTweakDefs -Scope Script -ErrorAction SilentlyContinue
+            $r = Test-Nano11Dependencies -Config $emptyLists
+            $r.HasIssues | Should Be $false
+        } finally {
+            $script:UserTweakDefs = $saved
+        }
+    }
+
+    It "still detects RemoveStore + KeepXboxServices and NoHypervisor + WSLSupport conflicts" {
+        $cfg = $emptyLists.Clone(); $cfg['RemoveStore'] = $true; $cfg['KeepXboxServices'] = $true
+        (Test-Nano11Dependencies -Config $cfg).Conflicts.Count | Should BeGreaterThan 0
+        $cfg2 = $emptyLists.Clone(); $cfg2['NoHypervisor'] = $true; $cfg2['WSLSupport'] = $true
+        (Test-Nano11Dependencies -Config $cfg2).Conflicts.Count | Should BeGreaterThan 0
     }
 }

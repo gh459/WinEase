@@ -1803,6 +1803,46 @@ function Test-Nano11Dependencies {
         }
     }
 
+    # User-defined custom tweaks (lib/Nano11Extensions.ps1): enabled ones without explicit Impact are Unknown
+    $userDefs = $null
+    if (Get-Variable -Name UserTweakDefs -Scope Script -ErrorAction SilentlyContinue) { $userDefs = $script:UserTweakDefs }
+    if ($userDefs -and $userDefs.Count -gt 0) {
+        foreach ($ukey in @($userDefs.Keys)) {
+            $uval = $null
+            if ($tweakSettings) {
+                if ($tweakSettings -is [System.Collections.IDictionary]) {
+                    if ($tweakSettings.Contains($ukey)) { $uval = $tweakSettings[$ukey] }
+                } elseif ($tweakSettings.PSObject -and $tweakSettings.PSObject.Properties[$ukey]) {
+                    $uval = $tweakSettings.PSObject.Properties[$ukey].Value
+                }
+            }
+            if ($null -eq $uval -and $Config.ContainsKey($ukey)) { $uval = $Config[$ukey] }
+            if ($null -eq $uval -or $uval -ne $true) { continue }
+
+            $udef = $userDefs[$ukey]
+            $impact = $null
+            if ($udef -is [System.Collections.IDictionary]) {
+                if ($udef.Contains('Impact')) { $impact = $udef['Impact'] }
+            } elseif ($udef -and $udef.PSObject.Properties['Impact']) {
+                $impact = $udef.PSObject.Properties['Impact'].Value
+            }
+
+            if ($impact -is [System.Collections.IDictionary]) {
+                $feat = @()
+                if ($impact.Contains('AffectedFeatures')) { $feat = @($impact['AffectedFeatures']) }
+                $reason = ''
+                if ($impact.Contains('Reason')) { $reason = "$($impact['Reason'])" }
+                $sev = ''
+                if ($impact.Contains('Severity')) { $sev = "$($impact['Severity'])" }
+                $impacts.Add([pscustomobject]@{ Category = 'UserTweak'; Source = $ukey; Summary = $reason; AffectedFeatures = $feat; Severity = $sev })
+            } elseif ($impact -is [string] -and $impact -eq 'Safe') {
+                continue
+            } else {
+                $unknowns.Add([pscustomobject]@{ Category = 'UserTweak'; Source = $ukey; Summary = 'User-defined custom tweak does not declare explicit dependency impact metadata (Dependency: Unknown).'; Reason = 'Impact is undefined or Unknown (fail-safe).' })
+            }
+        }
+    }
+
     # AdvancedDebloat items (present in lists)
     if ($cat -and $cat.AdvancedDebloat) {
         foreach ($listName in @('AdvancedDebloatStandard','AdvancedDebloatExperimental')) {
