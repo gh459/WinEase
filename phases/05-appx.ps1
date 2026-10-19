@@ -167,15 +167,22 @@ if ($parallelism -le 1 -or $folderPaths.Count -le 1) {
     $runspacePool.Open()
     $jobs = [System.Collections.Generic.List[object]]::new()
     foreach ($fp in $folderPaths) {
+        if (-not (Test-Nano11PathWithin -Path $fp -Root $scratchDir)) {
+            Write-Warning "  - Skipping parallel cleanup of '$fp': path is outside the working directory."
+            continue
+        }
         if (-not (Test-Path -LiteralPath $fp)) { continue }
         $ps = [powershell]::Create()
         $ps.RunspacePool = $runspacePool
         [void]$ps.AddScript($folderCleanupScript).AddArgument($fp).AddArgument($scratchDir)
-        $jobs.Add([PSCustomObject]@{ PS = $ps; Handle = $ps.BeginInvoke() })
+        $jobs.Add([PSCustomObject]@{ PS = $ps; Handle = $ps.BeginInvoke(); Path = $fp })
     }
     foreach ($job in $jobs) {
         try {
-            $job.PS.EndInvoke($job.Handle) | Out-Null
+            $workerResult = @($job.PS.EndInvoke($job.Handle))
+            if ($workerResult.Count -eq 0 -or -not $workerResult[-1]) {
+                Write-Warning "  - Parallel cleanup failed for folder '$(Split-Path -Leaf $job.Path)' (retrying sequentially)."
+            }
         } catch {
             Write-Warning "Parallel folder cleanup worker failed: $_ (falling back to sequential)"
         } finally {
