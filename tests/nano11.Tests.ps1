@@ -1328,3 +1328,35 @@ Describe "Migration engine S3 (lib/Nano11Migration.ps1)" {
         $r.CloudSaveNotices[0].RuleId | Should Be $rule.Id
     }
 }
+
+Describe "S4 builder hooks (ComparePreset / PreBuild / OfflineImage)" {
+    BeforeAll { }
+    $s4Root = Split-Path -Parent $PSScriptRoot
+    $s4Builder = Join-Path $s4Root 'nano11builder.ps1'
+    $s4Appx = [System.IO.File]::ReadAllText((Join-Path $s4Root 'phases\05-appx.ps1'))
+    $s4Unattend = [System.IO.File]::ReadAllText((Join-Path $s4Root 'phases\11-unattend.ps1'))
+    $s4Text = [System.IO.File]::ReadAllText($s4Builder)
+
+    It "-ComparePreset is declared in the param block" {
+        $tokens = $null; $errs = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($s4Builder, [ref]$tokens, [ref]$errs)
+        $names = @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+        ($names -contains 'ComparePreset') | Should Be $true
+    }
+    It "phases/05-appx.ps1 no longer calls the OfflineImage stage" {
+        $s4Appx.Contains("-Stage 'OfflineImage'") | Should Be $false
+    }
+    It "phases/11-unattend.ps1 calls the OfflineImage stage exactly once, before FirstLogon" {
+        ([regex]::Matches($s4Unattend, "-Stage 'OfflineImage'")).Count | Should Be 1
+        $s4Unattend.IndexOf("-Stage 'OfflineImage'") | Should BeLessThan $s4Unattend.IndexOf("-Stage 'FirstLogon'")
+    }
+    It "builder runs the PreBuild stage and the recovery readiness check" {
+        $s4Text.Contains("-Stage 'PreBuild'") | Should Be $true
+        $s4Text.Contains('Test-Nano11RecoveryReadiness -Config') | Should Be $true
+    }
+    It "-ComparePreset balanced prints a diff and exits 0 without building" {
+        $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $s4Builder -ComparePreset balanced -DryRun 2>&1 | Out-String
+        $LASTEXITCODE | Should Be 0
+        $out.Contains('Config diff:') | Should Be $true
+    }
+}
