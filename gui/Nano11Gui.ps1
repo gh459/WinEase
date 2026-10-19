@@ -348,6 +348,58 @@ function Show-Nano11GuiMessage {
     [void][System.Windows.Forms.MessageBox]::Show($Text, $Title, [System.Windows.Forms.MessageBoxButtons]::OK, $icon)
 }
 
+# Runs -Action (called with -ArgumentList) while -Button is disabled and -Form shows the wait cursor;
+# both are restored afterwards, also when the action throws. The action sees only its parameters,
+# not the locals of the caller. Returns what the action returns.
+function Invoke-Nano11GuiBusy {
+    param(
+        [Parameter(Mandatory = $true)][scriptblock]$Action,
+        [object[]]$ArgumentList = @(),
+        [object]$Button,
+        [object]$Form
+    )
+    if ($Button) { $Button.Enabled = $false }
+    if ($Form) { $Form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor }
+    [System.Windows.Forms.Application]::DoEvents()
+    try {
+        return (& $Action @ArgumentList)
+    } finally {
+        if ($Button) { $Button.Enabled = $true }
+        if ($Form) { $Form.Cursor = [System.Windows.Forms.Cursors]::Default }
+    }
+}
+
+# Disable the button, show the wait cursor, Start-Job, keep the window repainting (DoEvents) until the job
+# ends, then restore both. -ScriptBlock gets -ArgumentList. Returns @{ Output; Error; Errors }:
+# Output = everything the job emitted, Error = why the job itself failed, Errors = its error stream.
+function Invoke-Nano11GuiBackgroundJob {
+    param(
+        [Parameter(Mandatory = $true)][scriptblock]$ScriptBlock,
+        [object[]]$ArgumentList = @(),
+        [object]$Button,
+        [object]$Form
+    )
+    return (Invoke-Nano11GuiBusy -Button $Button -Form $Form -ArgumentList @($ScriptBlock, $ArgumentList) -Action {
+        param($jobScript, $jobArgs)
+        $job = Start-Job -ScriptBlock $jobScript -ArgumentList $jobArgs
+        while ($job.State -eq 'Running') {
+            [System.Windows.Forms.Application]::DoEvents()
+            Start-Sleep -Milliseconds 100
+        }
+        $output = @()
+        $jobError = $null
+        $errors = @()
+        if ($job.State -eq 'Failed') {
+            $jobError = $job.ChildJobs[0].JobStateInfo.Reason.Message
+        } else {
+            foreach ($e in $job.ChildJobs[0].Error) { $errors += "$e" }
+            $output = @(Receive-Job -Job $job -ErrorAction SilentlyContinue)
+        }
+        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        [PSCustomObject]@{ Output = $output; Error = $jobError; Errors = $errors }
+    })
+}
+
 function Confirm-Nano11GuiAction {
     param([string]$Message, [string]$Title = "Confirm")
     $ans = [System.Windows.Forms.MessageBox]::Show($Message, $Title,
@@ -861,29 +913,16 @@ function Get-Nano11GuiRecoveryReadiness {
 # -Script is the text of a script block that takes one parameter (the hashtable in -Arguments).
 # Errors written to the job's error stream are returned even when the job itself completed.
 function Invoke-Nano11GuiMigrationJob {
-    param([string]$RepoRoot, [string]$Script, [hashtable]$Arguments = @{})
-    $job = Start-Job -ScriptBlock {
+    param([string]$RepoRoot, [string]$Script, [hashtable]$Arguments = @{}, [object]$Button, [object]$Form)
+    $o = Invoke-Nano11GuiBackgroundJob -Button $Button -Form $Form -ArgumentList $RepoRoot, $Script, $Arguments -ScriptBlock {
         param($repoRoot, $inner, $jobArgs)
         Set-Location -LiteralPath $repoRoot
         . (Join-Path $repoRoot 'tools\migrator\Nano11Migration.ps1')
         & ([scriptblock]::Create($inner)) $jobArgs
-    } -ArgumentList $RepoRoot, $Script, $Arguments
-    while ($job.State -eq 'Running') {
-        [System.Windows.Forms.Application]::DoEvents()
-        Start-Sleep -Milliseconds 100
     }
     $result = $null
-    $jobError = $null
-    $errors = @()
-    if ($job.State -eq 'Failed') {
-        $jobError = $job.ChildJobs[0].JobStateInfo.Reason.Message
-    } else {
-        foreach ($e in $job.ChildJobs[0].Error) { $errors += "$e" }
-        $result = Receive-Job -Job $job -ErrorAction SilentlyContinue
-        if ($result -is [array]) { $result = $result[-1] }
-    }
-    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
-    return [PSCustomObject]@{ Result = $result; Error = $jobError; Errors = $errors }
+    if (-not $o.Error -and @($o.Output).Count -gt 0) { $result = @($o.Output)[-1] }
+    return [PSCustomObject]@{ Result = $result; Error = $o.Error; Errors = $o.Errors }
 }
 
 # Job outcome -> message box (errors from the error stream are appended to a successful message)
@@ -1435,15 +1474,8 @@ function Show-Nano11GUI {
             if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
             $outPath = $dlg.FileName
         } finally { $dlg.Dispose() }
-        $btn.Enabled = $false
-        $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-        try {
-            $o = Invoke-Nano11GuiMigrationJob -RepoRoot $script:Nano11GuiRepoRoot -Script 'param($a) Export-Nano11AppInventory -OutputPath $a.OutputPath' -Arguments @{ OutputPath = $outPath }
-            Show-Nano11GuiJobOutcome -Outcome $o -Title "Export Apps" -SuccessMessage "App inventory exported to:`n$outPath"
-        } finally {
-            $btn.Enabled = $true
-            $f.Cursor = [System.Windows.Forms.Cursors]::Default
-        }
+        $o = Invoke-Nano11GuiMigrationJob -Button $btn -Form $f -RepoRoot $script:Nano11GuiRepoRoot -Script 'param($a) Export-Nano11AppInventory -OutputPath $a.OutputPath' -Arguments @{ OutputPath = $outPath }
+        Show-Nano11GuiJobOutcome -Outcome $o -Title "Export Apps" -SuccessMessage "App inventory exported to:`n$outPath"
     })
     $btnY += $btnStep
     [void](New-Nano11Button -Text "Open Migration Wizard" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
@@ -1467,58 +1499,36 @@ function Show-Nano11GUI {
         $btn = $this
         $f = $btn.FindForm()
         $g = $f.Tag
-        $btn.Enabled = $false
-        $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-        try {
-            $map = Get-Nano11GuiMigrationFolderMap -Gui $g
-            $ea = @{ UserFolderPaths = @($map.Values); SelectedRuleIds = @(Get-Nano11GuiMigrationRuleIds -Gui $g); DestinationPath = (Get-Nano11GuiMigrationRoot -Gui $g) }
-            $o = Invoke-Nano11GuiMigrationJob -RepoRoot $script:Nano11GuiRepoRoot -Arguments $ea -Script 'param($a) Get-Nano11MigrationSizeEstimate -UserFolderPaths $a.UserFolderPaths -SelectedRuleIds $a.SelectedRuleIds -DestinationPath $a.DestinationPath'
-            $est = $o.Result
-            $msg = if ($est) { "Files: $($est.TotalFiles)`nSize: $($est.TotalMB) MB`nFree on $($est.DestinationDrive): $($est.DestinationFreeMB) MB`nEnough space: $($est.HasEnoughSpace)" } else { "No estimate returned." }
-            Show-Nano11GuiJobOutcome -Outcome $o -Title "Estimate Size" -SuccessMessage $msg
-        } finally {
-            $btn.Enabled = $true
-            $f.Cursor = [System.Windows.Forms.Cursors]::Default
-        }
+        $map = Get-Nano11GuiMigrationFolderMap -Gui $g
+        $ea = @{ UserFolderPaths = @($map.Values); SelectedRuleIds = @(Get-Nano11GuiMigrationRuleIds -Gui $g); DestinationPath = (Get-Nano11GuiMigrationRoot -Gui $g) }
+        $o = Invoke-Nano11GuiMigrationJob -Button $btn -Form $f -RepoRoot $script:Nano11GuiRepoRoot -Arguments $ea -Script 'param($a) Get-Nano11MigrationSizeEstimate -UserFolderPaths $a.UserFolderPaths -SelectedRuleIds $a.SelectedRuleIds -DestinationPath $a.DestinationPath'
+        $est = $o.Result
+        $msg = if ($est) { "Files: $($est.TotalFiles)`nSize: $($est.TotalMB) MB`nFree on $($est.DestinationDrive): $($est.DestinationFreeMB) MB`nEnough space: $($est.HasEnoughSpace)" } else { "No estimate returned." }
+        Show-Nano11GuiJobOutcome -Outcome $o -Title "Estimate Size" -SuccessMessage $msg
     })
     $btnY += $btnStep
     [void](New-Nano11Button -Text "Run Backup" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
         $btn = $this
         $f = $btn.FindForm()
         $g = $f.Tag
-        $btn.Enabled = $false
-        $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-        [System.Windows.Forms.Application]::DoEvents()
-        try {
-            $backupArgs = Get-Nano11GuiBackupArgs -Gui $g
-            $o = Invoke-Nano11GuiMigrationJob -RepoRoot $script:Nano11GuiRepoRoot -Arguments $backupArgs -Script 'param($a) Start-Nano11MigrationBackup @a'
-            Show-Nano11GuiJobOutcome -Outcome $o -Title "Backup" -SuccessMessage "Backup completed.`nManifest: $($backupArgs.BackupRoot)\migration-manifest.json"
-            if ($g.MigStatus -and -not $o.Error) { $g.MigStatus.Text = "Backup completed." }
-        } finally {
-            $btn.Enabled = $true
-            $f.Cursor = [System.Windows.Forms.Cursors]::Default
-        }
+        $backupArgs = Get-Nano11GuiBackupArgs -Gui $g
+        $o = Invoke-Nano11GuiMigrationJob -Button $btn -Form $f -RepoRoot $script:Nano11GuiRepoRoot -Arguments $backupArgs -Script 'param($a) Start-Nano11MigrationBackup @a'
+        Show-Nano11GuiJobOutcome -Outcome $o -Title "Backup" -SuccessMessage "Backup completed.`nManifest: $($backupArgs.BackupRoot)\migration-manifest.json"
+        if ($g.MigStatus -and -not $o.Error) { $g.MigStatus.Text = "Backup completed." }
     })
     $btnY += $btnStep
     [void](New-Nano11Button -Text "Verify Backup Integrity" -X 15 -Y $btnY -Width 380 -Height 32 -Parent $grpActions -OnClick {
         $btn = $this
         $f = $btn.FindForm()
         $g = $f.Tag
-        $btn.Enabled = $false
-        $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-        try {
-            $script = (Get-Command Test-Nano11GuiBackupIntegrity).ScriptBlock.ToString()
-            $o = Invoke-Nano11GuiMigrationJob -RepoRoot $script:Nano11GuiRepoRoot -Arguments @{ BackupRoot = (Get-Nano11GuiMigrationRoot -Gui $g) } -Script $script
-            $vr = $o.Result
-            if ($vr -and @($vr.Problems).Count -gt 0) {
-                $o.Errors = @($o.Errors) + @($vr.Problems)
-                $msg = "Checked $($vr.Checked) file(s): $(@($vr.Problems).Count) problem(s)."
-            } elseif ($vr) { $msg = "Checked $($vr.Checked) file(s): all present and matching." } else { $msg = "No result." }
-            Show-Nano11GuiJobOutcome -Outcome $o -Title "Verify Backup" -SuccessMessage $msg
-        } finally {
-            $btn.Enabled = $true
-            $f.Cursor = [System.Windows.Forms.Cursors]::Default
-        }
+        $script = (Get-Command Test-Nano11GuiBackupIntegrity).ScriptBlock.ToString()
+        $o = Invoke-Nano11GuiMigrationJob -Button $btn -Form $f -RepoRoot $script:Nano11GuiRepoRoot -Arguments @{ BackupRoot = (Get-Nano11GuiMigrationRoot -Gui $g) } -Script $script
+        $vr = $o.Result
+        if ($vr -and @($vr.Problems).Count -gt 0) {
+            $o.Errors = @($o.Errors) + @($vr.Problems)
+            $msg = "Checked $($vr.Checked) file(s): $(@($vr.Problems).Count) problem(s)."
+        } elseif ($vr) { $msg = "Checked $($vr.Checked) file(s): all present and matching." } else { $msg = "No result." }
+        Show-Nano11GuiJobOutcome -Outcome $o -Title "Verify Backup" -SuccessMessage $msg
     })
     $btnY += $btnStep
     foreach ($rs in @(@("Run Restore", $false), @("Retry Failed Tasks Only", $true))) {
@@ -1527,21 +1537,13 @@ function Show-Nano11GUI {
             $retry = [bool]$btn.Tag
             $f = $btn.FindForm()
             $g = $f.Tag
-            $btn.Enabled = $false
-            $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-            [System.Windows.Forms.Application]::DoEvents()
-            try {
-                $ra = @{ BackupRoot = (Get-Nano11GuiMigrationRoot -Gui $g); ConflictPolicy = (Get-Nano11GuiConflictPolicy -Gui $g) }
-                if ($retry) { $ra['RetryFailedOnly'] = $true }
-                $o = Invoke-Nano11GuiMigrationJob -RepoRoot $script:Nano11GuiRepoRoot -Arguments $ra -Script 'param($a) Start-Nano11MigrationRestore @a'
-                $msg = "Restore completed."
-                if ($o.Result -and $o.Result.Results) { $msg += "`n" + ($o.Result.Results | ForEach-Object { "$($_.TaskId): $($_.Status)" } | Out-String) }
-                Show-Nano11GuiJobOutcome -Outcome $o -Title "Restore" -SuccessMessage $msg
-                if ($g.MigStatus -and -not $o.Error) { $g.MigStatus.Text = "Restore completed." }
-            } finally {
-                $btn.Enabled = $true
-                $f.Cursor = [System.Windows.Forms.Cursors]::Default
-            }
+            $ra = @{ BackupRoot = (Get-Nano11GuiMigrationRoot -Gui $g); ConflictPolicy = (Get-Nano11GuiConflictPolicy -Gui $g) }
+            if ($retry) { $ra['RetryFailedOnly'] = $true }
+            $o = Invoke-Nano11GuiMigrationJob -Button $btn -Form $f -RepoRoot $script:Nano11GuiRepoRoot -Arguments $ra -Script 'param($a) Start-Nano11MigrationRestore @a'
+            $msg = "Restore completed."
+            if ($o.Result -and $o.Result.Results) { $msg += "`n" + ($o.Result.Results | ForEach-Object { "$($_.TaskId): $($_.Status)" } | Out-String) }
+            Show-Nano11GuiJobOutcome -Outcome $o -Title "Restore" -SuccessMessage $msg
+            if ($g.MigStatus -and -not $o.Error) { $g.MigStatus.Text = "Restore completed." }
         })
         $btnY += $btnStep
     }
@@ -1553,45 +1555,36 @@ function Show-Nano11GUI {
     $gui.CustomPaths = $txtCustomPaths
 
     [void](New-Nano11Button -Text "Backup Custom Paths" -X 590 -Y 42 -Width 160 -Height 32 -Parent $grpCustom -OnClick {
-        $btn = $this
-        $btn.Enabled = $false
-        $f = $btn.FindForm()
-        $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-        [System.Windows.Forms.Application]::DoEvents()
+        $f = $this.FindForm()
         $g = $f.Tag
         try {
-            $root = Get-Nano11GuiMigrationRoot -Gui $g
-            $paths = @($g.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-            if ($paths.Count -eq 0) { throw "No paths specified." }
-            $result = Backup-Nano11CustomPaths -Paths $paths -BackupRoot $root
+            $result = Invoke-Nano11GuiBusy -Button $this -Form $f -ArgumentList $g -Action {
+                param($gui)
+                $root = Get-Nano11GuiMigrationRoot -Gui $gui
+                $paths = @($gui.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+                if ($paths.Count -eq 0) { throw "No paths specified." }
+                Backup-Nano11CustomPaths -Paths $paths -BackupRoot $root
+            }
             $msg = "Custom paths backup completed.`nCopied: $($result.CopiedFiles) files.`nFailed: $($result.FailedFiles.Count)"
             Show-Nano11GuiMessage -Text $msg -Title "Backup Custom Paths" -Kind Info
             if ($g.MigStatus) { $g.MigStatus.Text = "Custom backup: $($result.CopiedFiles) files." }
         } catch {
             Show-Nano11GuiMessage -Text "Error: $($_.Exception.Message)" -Title "Backup Custom Paths" -Kind Error
-        } finally {
-            $btn.Enabled = $true
-            $f.Cursor = [System.Windows.Forms.Cursors]::Default
         }
     })
     [void](New-Nano11Button -Text "Restore Custom Paths" -X 590 -Y 82 -Width 160 -Height 32 -Parent $grpCustom -OnClick {
-        $btn = $this
-        $btn.Enabled = $false
-        $f = $btn.FindForm()
-        $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-        [System.Windows.Forms.Application]::DoEvents()
+        $f = $this.FindForm()
         $g = $f.Tag
         try {
-            $root = Get-Nano11GuiMigrationRoot -Gui $g
-            $result = Restore-Nano11CustomPaths -BackupRoot $root -ConflictPolicy (Get-Nano11GuiConflictPolicy -Gui $g)
+            $result = Invoke-Nano11GuiBusy -Button $this -Form $f -ArgumentList $g -Action {
+                param($gui)
+                Restore-Nano11CustomPaths -BackupRoot (Get-Nano11GuiMigrationRoot -Gui $gui) -ConflictPolicy (Get-Nano11GuiConflictPolicy -Gui $gui)
+            }
             $msg = "Custom paths restore completed.`nRestored: $($result.RestoredFiles) files.`nFailed: $($result.FailedFiles.Count)"
             Show-Nano11GuiMessage -Text $msg -Title "Restore Custom Paths" -Kind Info
             if ($g.MigStatus) { $g.MigStatus.Text = "Custom restore: $($result.RestoredFiles) files." }
         } catch {
             Show-Nano11GuiMessage -Text "Error: $($_.Exception.Message)" -Title "Restore Custom Paths" -Kind Error
-        } finally {
-            $btn.Enabled = $true
-            $f.Cursor = [System.Windows.Forms.Cursors]::Default
         }
     })
 
