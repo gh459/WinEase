@@ -218,6 +218,8 @@ The modern dark-mode GUI allows you to:
 - Every switch shown in the GUI is defined in `config/tweaks.psd1` and is guaranteed to reach the build (covered by Pester wiring tests).
 - Choose your payload format (**install.wim**, **install.esd**, or **install.swm** for FAT32 USB).
 - Toggle **High-Speed VHDX Scratch Disk** (`-UseVHDX`) to eliminate host fragmentation.
+- Open **Tab 8 "Migration & Backup"** to check recovery readiness, export an app inventory, estimate and run a backup/restore of personal folders, game saves and app settings, verify a backup (SHA-256), retry only failed restore tasks, diff any preset against the current window ("Preset Diff"), and switch on **Include Migration Assistant (PC-to-PC transfer tools)** (`-IncludeMigrationAssistant`). It also shows how many user extensions were loaded and any load errors. The migration engine is loaded the first time the tab is opened.
+- Open **Tab 9 "User Tweaks"** to see your own switches from `config/user/user-tweaks.psd1` whose category is not Security / Privacy / Performance / UI (those appear on tabs 2-5).
 - Click **Start nano11 Build** to launch the build process!
 
 #### **Option B: Interactive Console**
@@ -232,6 +234,17 @@ The modern dark-mode GUI allows you to:
    ```
 4. Choose a profile preset from the quick selector menu (`[1] Extreme`, `[2] Balanced`, `[3] Handheld Gaming`, `[4] VM Developer`, `[5] Audio DAW`, `[6] FAT32 Split-WIM`, `[7] Launch GUI`, `[8] Custom`), or customize settings step-by-step.
 5. Once `nano11.iso` is generated, follow the [Installation & Setup Guide](#️-installation--setup-guide-zero-click-automated-installation) below.
+
+#### **PC Migration Tool (`tools/migrator`)**
+`tools/migrator/Nano11-Migrator.ps1` backs up and restores personal folders, game saves and app settings between PCs. It is separate from the ISO build. With no `-Mode` it opens a two-tab wizard (Backup / Restore); with `-Mode` it runs on the command line:
+```powershell
+.\tools\migrator\Nano11-Migrator.ps1 -Mode ListRules
+.\tools\migrator\Nano11-Migrator.ps1 -Mode Estimate -PackagePath D:\backup -RuleIds MyCustomGame
+.\tools\migrator\Nano11-Migrator.ps1 -Mode Backup   -PackagePath D:\backup -UserFolders Documents,Desktop -DryRun
+.\tools\migrator\Nano11-Migrator.ps1 -Mode Verify   -PackagePath D:\backup
+.\tools\migrator\Nano11-Migrator.ps1 -Mode Restore  -PackagePath D:\backup -RetryFailedOnly
+```
+Modes: `ExportApps`, `Backup`, `Restore`, `Verify`, `Estimate` (plus the older `ListRules` and `RecoveryCheck`). Credential and token files are excluded unless `-IncludeSecrets` is given. Standard rules live in `tools/migrator/migration-rules.psd1`; add your own game saves and app settings in `config/user/user-migration-rules.psd1` (see [docs/EXTENSIBILITY_GUIDE.md](docs/EXTENSIBILITY_GUIDE.md)).
 
 ### **3. Non-Interactive / CLI Automation**
 You can run the builder completely unattended with built-in presets and modular optimization flags:
@@ -319,6 +332,10 @@ You can run the builder completely unattended with built-in presets and modular 
 | `-FastExport` | Uses `/Compress:fast` during DISM export for accelerated build pipelines |
 | `-UefiOnly` | Configures pure UEFI bootdata without legacy BIOS boot sector fallback |
 | `-AllowPhysicalDebloat` | Explicit opt-in for Advanced Debloat physical deletion (Phase 09). Selections from a profile alone do not authorize deletion; the GUI asks for the same consent |
+| `-ComparePreset <name\|JSON path>` | Prints the difference between the current configuration and a built-in preset or a saved profile JSON, then exits with code 0. No build and no disk work |
+| `-IncludeMigrationAssistant` | Bundles the PC migration tool (`tools/migrator`) and your `config/user/user-migration-rules.psd1` into the ISO (`Windows\Setup\Scripts\Migration`) and adds a public-desktop launcher. No personal data is included. Also available on GUI Tab 8 |
+| `-StrictDependencyCheck` | Aborts the build when the dependency check (`config/dependencies.psd1`) finds any Conflict or Unknown. Without it they are reported as warnings only |
+| `-TweakSettings <hashtable>` | Per-tweak overrides by key, e.g. `-TweakSettings @{ DisableCopilot = $true; User_MyTweak = $true }`. Keys defined in `config/user/user-tweaks.psd1` work too |
 | `-AppxParallelism <1-8>` | Number of parallel workers for leftover `WindowsApps` folder cleanup after AppX removal (Default: 4, `1` = sequential). DISM package removal itself always runs sequentially |
 | `-CpuBoostMode <Efficient\|Aggressive\|Off\|Default>` | Configures CPU power performance boost mode |
 | `-PowerPreset <Desktop\|Handheld\|Balanced\|VM\|Default>` | Applies hardware-tailored power policy table |
@@ -435,50 +452,50 @@ nano11-main/
 │   ├── Nano11Wim.ps1          # Native WIM export, fingerprinting and repair
 │   ├── Nano11Report.ps1       # HTML build report (nano11_report.html)
 │   ├── Nano11Resume.ps1       # Resume-ISO mode and phase checkpoints
-│   └── Nano11SelfTest.ps1     # Self-test suite (loaded only for -TestSelf)
-│   ├── Nano11Extensions.ps1   # User extensibility engine (user tweaks, presets, custom scripts, config diff, recovery readiness)
+│   ├── Nano11SelfTest.ps1     # Self-test suite (loaded only for -TestSelf)
+│   └── Nano11Extensions.ps1   # User extensibility engine (user tweaks, presets, custom scripts, config diff, recovery readiness)
 ├── gui/
-│   └── Nano11Gui.ps1          # WinForms GUI (loaded only for -GUI / menu [7])
-├── autounattend.xml           # Unattended setup template (scripts injected at build time)
-├── nano11-GUI.bat             # GUI launcher
-├── oscdimg.exe                # Bundled ISO mastering tool
-├── LICENSE                    # MIT License
-├── README.md                  # This file
-├── CHANGELOG.md               # Change history
-├── PSScriptAnalyzerSettings.psd1  # Linter configuration
+│   └── Nano11Gui.ps1          # WinForms GUI, one function per tab (loaded only for -GUI / menu [7]); the migrator window reuses its parts
 ├── phases/                    # 18 build phases (dot-sourced by orchestrator)
-│   ├── 01-environment.ps1     # ... through 18-iso.ps1
+│   └── 01-environment.ps1 ... 18-iso.ps1   # 09 has two files: 09-physical-debloat.ps1 and 09-winsxs.ps1
+├── config/
+│   ├── tweaks.psd1            # Single source of truth for every tweak/component setting and CLI switch pair
+│   ├── dependencies.psd1      # Dependency & feature-impact catalog (conflicts, impacts, unknowns)
+│   ├── nano11.config.schema.json  # JSON Schema for profile validation
+│   └── user/                  # User-edited files (all optional)
+│       ├── user-tweaks.psd1          # User-defined tweaks, presets and custom scripts
+│       └── user-migration-rules.psd1 # User-defined migration rules
+├── tools/                     # Optional tooling
+│   ├── migrator/              # PC migration tool, separate from the ISO build (bundled into the ISO with -IncludeMigrationAssistant)
+│   │   ├── Nano11-Migrator.ps1    # Standalone migration & backup tool (CLI modes + two-tab GUI wizard)
+│   │   ├── Nano11Migration.ps1    # Migration engine (backup, restore, verify, app inventory, report)
+│   │   └── migration-rules.psd1   # Standard migration rules (game saves, app configs)
+│   ├── custom-scripts/        # User scripts by stage: PreBuild/ OfflineImage/ FirstLogon/ UserOnce/ (see its README.md)
+│   ├── nano11-physical-debloat/   # Rust tool for Advanced Debloat physical deletion
+│   ├── Measure-Nano11GuestBaseline.ps1  # In-guest footprint / idle load / boot-time measurement
+│   └── Compare-Nano11Benchmarks.ps1     # Multi-run benchmark statistical comparison
 ├── scripts/                   # Embedded setup scripts (injected into autounattend.xml)
 │   ├── Specialize.ps1
 │   ├── FirstLogon.ps1
 │   ├── DefaultUser.ps1
 │   ├── UserOnce.ps1
 │   └── Winhancements.ps1
-├── templates/                 # HTML report template (reference)
-│   └── report.html
-docs/                      # Documentation
-│   └── EXTENSIBILITY_GUIDE.md  # User extensibility guide
-├── config/
-│   ├── tweaks.psd1            # Single source of truth for every tweak/component setting and CLI switch pair
-│   ├── dependencies.psd1      # Dependency & feature-impact catalog (conflicts, impacts, unknowns)
-│   ├── user/                  # User-edited files (all optional)
-│   │   ├── user-tweaks.psd1      # User-defined tweaks, presets and custom scripts
-│   │   └── user-migration-rules.psd1  # User-defined migration rules
-│   └── nano11.config.schema.json  # JSON Schema for profile validation
+├── templates/
+│   └── report.html            # HTML report template (reference)
 ├── profiles/                  # Saved build profiles (JSON, incl. per-tweak TweakSettings)
-├── tools/                     # Optional tooling
-│   ├── custom-scripts/        # User scripts by stage: PreBuild/ OfflineImage/ FirstLogon/ UserOnce/
-│   ├── nano11-physical-debloat/   # Rust tool for Advanced Debloat physical deletion
-│   ├── Measure-Nano11GuestBaseline.ps1  # In-guest footprint / idle load / boot-time measurement
-│   ├── Compare-Nano11Benchmarks.ps1     # Multi-run benchmark statistical comparison
-│   └── migrator/             # PC migration tool, separate from the ISO build (phase 11 bundles it into the ISO)
-│       ├── Nano11-Migrator.ps1    # Standalone PC migration & backup tool (CLI + GUI wizard)
-│       ├── Nano11Migration.ps1    # Migration engine (backup, restore, app inventory, rules)
-│       └── migration-rules.psd1   # Standard PC migration rules (game saves, app configs, custom paths)
-├── tests/                     # Pester test suite
-│   └── nano11.Tests.ps1
-├── .github/                   # CI/CD workflows
-│   └── workflows/ci.yml
+├── docs/
+│   ├── EXTENSIBILITY_GUIDE.md # Extensibility guide (Japanese): quick start + reference
+│   └── dev/SESSION_BRIEFS.md  # Work briefs used for the S1-S12 fix sessions
+├── tests/
+│   └── nano11.Tests.ps1       # Pester test suite
+├── .github/workflows/ci.yml   # CI workflow
+├── autounattend.xml           # Unattended setup template (scripts injected at build time)
+├── nano11-GUI.bat             # GUI launcher
+├── oscdimg.exe                # Bundled ISO mastering tool
+├── PSScriptAnalyzerSettings.psd1  # Linter configuration
+├── LICENSE                    # MIT License
+├── README.md                  # This file
+├── CHANGELOG.md               # Change history
 ├── logs/                      # Build logs (auto-rotated, gitignored)
 └── build_diagnostics/         # Failed build diagnostics (auto-pruned, gitignored)
 ```
