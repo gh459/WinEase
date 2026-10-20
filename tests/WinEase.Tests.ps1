@@ -609,7 +609,11 @@ Describe "WinEase helpers - oscdimg integrity (Test-OscdimgIntegrity)" {
         $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
         . $helpersPath
         if (-not (Get-Command -Name Get-AuthenticodeSignature -ErrorAction SilentlyContinue)) {
-            function global:Get-AuthenticodeSignature { param($FilePath, [switch]$ErrorAction) return $null }
+            function global:Get-AuthenticodeSignature {
+                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+                param($FilePath, [switch]$ErrorAction)
+                return $null
+            }
         }
     }
 
