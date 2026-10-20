@@ -435,21 +435,22 @@ Describe "WinEase helpers - Repair-WinEaseDeniedAcl" {
 
             # Verify owner and ACL rules
             $aclAfter = Get-Acl -LiteralPath $tempDir
-            $ownerSid = $aclAfter.Owner
+            $ownerSid = try { $aclAfter.Owner.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { $aclAfter.Owner }
             $ownerSid | Should Match 'S-1-5-32-544|Administrators'
 
             # Verify Deny rules for S-1-5-32-544 are gone
-            $denyRules = @($aclAfter.Access | Where-Object {
+            $accessRules = @($aclAfter.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]))
+            $denyRules = @($accessRules | Where-Object {
                 $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Deny -and
                 $_.IdentityReference.Value -eq 'S-1-5-32-544'
             })
             $denyRules.Count | Should Be 0
 
             # Verify Allow rule for S-1-5-32-544 exists
-            $allowRules = @($aclAfter.Access | Where-Object {
+            $allowRules = @($accessRules | Where-Object {
                 $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
                 $_.IdentityReference.Value -eq 'S-1-5-32-544' -and
-                $_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl
+                ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl)
             })
             $allowRules.Count | Should BeGreaterThan 0
         } finally {
@@ -471,7 +472,8 @@ Describe "WinEase helpers - Repair-WinEaseDeniedAcl" {
             $result | Should Be $null
 
             $aclAfter = Get-Acl -LiteralPath $tempDir
-            $allowRules = @($aclAfter.Access | Where-Object {
+            $accessRules = @($aclAfter.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]))
+            $allowRules = @($accessRules | Where-Object {
                 $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
                 $_.IdentityReference.Value -eq 'S-1-5-32-544'
             })
