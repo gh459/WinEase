@@ -588,18 +588,18 @@ Describe "WinEase helpers - Test-IsNtfsVolume" {
         $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
         . $helpersPath
         if (-not (Get-Command Get-Volume -ErrorAction SilentlyContinue)) {
-            function Get-Volume { param([string]$DriveLetter, $ErrorAction) }
+            function Get-Volume { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([string]$DriveLetter, $ErrorAction) }
         }
     }
 
     It "returns false for null, empty or whitespace path" {
-        Test-IsNtfsVolume -Path $null | Should -Be $false
-        Test-IsNtfsVolume -Path "" | Should -Be $false
-        Test-IsNtfsVolume -Path "   " | Should -Be $false
+        Test-IsNtfsVolume -Path $null | Should Be $false
+        Test-IsNtfsVolume -Path "" | Should Be $false
+        Test-IsNtfsVolume -Path "   " | Should Be $false
     }
 
     It "returns false for relative path without root" {
-        Test-IsNtfsVolume -Path "relative/path/to/file" | Should -Be $false
+        Test-IsNtfsVolume -Path "relative/path/to/file" | Should Be $false
     }
 
     It "returns true when DriveInfo reports NTFS" {
@@ -609,7 +609,7 @@ Describe "WinEase helpers - Test-IsNtfsVolume" {
                 DriveFormat = 'NTFS'
             }
         } -ParameterFilter { $TypeName -eq 'System.IO.DriveInfo' }
-        Test-IsNtfsVolume -Path "/test/path" | Should -Be $true
+        Test-IsNtfsVolume -Path "/test/path" | Should Be $true
     }
 
     It "returns false when DriveInfo reports FAT32" {
@@ -619,25 +619,25 @@ Describe "WinEase helpers - Test-IsNtfsVolume" {
                 DriveFormat = 'FAT32'
             }
         } -ParameterFilter { $TypeName -eq 'System.IO.DriveInfo' }
-        Test-IsNtfsVolume -Path "/test/path" | Should -Be $false
+        Test-IsNtfsVolume -Path "/test/path" | Should Be $false
     }
 
     It "falls back to Get-Volume and returns true when volume is NTFS" {
         Mock New-Object { throw "DriveInfo failed" } -ParameterFilter { $TypeName -eq 'System.IO.DriveInfo' }
         Mock Get-Volume { [PSCustomObject]@{ FileSystem = 'NTFS' } }
-        Test-IsNtfsVolume -Path "C:\test\path" | Should -Be $true
+        Test-IsNtfsVolume -Path "C:\test\path" | Should Be $true
     }
 
     It "falls back to Get-Volume and returns false when volume is FAT32" {
         Mock New-Object { throw "DriveInfo failed" } -ParameterFilter { $TypeName -eq 'System.IO.DriveInfo' }
         Mock Get-Volume { [PSCustomObject]@{ FileSystem = 'FAT32' } }
-        Test-IsNtfsVolume -Path "C:\test\path" | Should -Be $false
+        Test-IsNtfsVolume -Path "C:\test\path" | Should Be $false
     }
 
     It "returns false when Get-Volume throws exception" {
         Mock New-Object { throw "DriveInfo failed" } -ParameterFilter { $TypeName -eq 'System.IO.DriveInfo' }
         Mock Get-Volume { throw "Volume not found" }
-        Test-IsNtfsVolume -Path "X:\test\path" | Should -Be $false
+        Test-IsNtfsVolume -Path "X:\test\path" | Should Be $false
     }
 
     It "returns false for UNC path when DriveInfo is not ready" {
@@ -647,7 +647,7 @@ Describe "WinEase helpers - Test-IsNtfsVolume" {
                 DriveFormat = 'NTFS'
             }
         } -ParameterFilter { $TypeName -eq 'System.IO.DriveInfo' }
-        Test-IsNtfsVolume -Path "\\server\share\file" | Should -Be $false
+        Test-IsNtfsVolume -Path "\\server\share\file" | Should Be $false
     }
 }
 
