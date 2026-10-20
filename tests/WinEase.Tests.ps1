@@ -604,6 +604,108 @@ Describe "WinEase helpers - Path and Directory Safety Guards" {
     }
 }
 
+Describe "WinEase helpers - Get-SafeShortPath" {
+    BeforeAll {
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+    }
+
+    It "returns null or empty string when input is null or empty" {
+        Get-SafeShortPath -Path $null | Should Be $null
+        Get-SafeShortPath -Path "" | Should Be ""
+    }
+
+    It "returns original path when path does not exist" {
+        $nonExistent = "C:\NonExistentPath_With Spaces_12345\file.txt"
+        Get-SafeShortPath -Path $nonExistent | Should Be $nonExistent
+    }
+
+    It "returns original path when path has no spaces" {
+        $tempFile = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_nospaces_" + [guid]::NewGuid().ToString('N') + ".txt")
+        [System.IO.File]::WriteAllText($tempFile, "test")
+        try {
+            Get-SafeShortPath -Path $tempFile | Should Be $tempFile
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "converts file path with spaces to 8.3 short path using FileSystemObject" {
+        $tempDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_space dir_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+        $tempFile = Join-Path -Path $tempDir -ChildPath "test file.txt"
+        [System.IO.File]::WriteAllText($tempFile, "test")
+
+        try {
+            $fsoMock = New-Object PSCustomObject
+            $fsoMock | Add-Member -MemberType ScriptMethod -Name "GetFile" -Value {
+                param($p)
+                return [PSCustomObject]@{ ShortPath = 'C:\WINEAS~1\TESTFI~1.TXT' }
+            }
+            Mock New-Object { return $fsoMock } -ParameterFilter { $ComObject -eq 'Scripting.FileSystemObject' }
+
+            $result = Get-SafeShortPath -Path $tempFile
+            $result | Should Be 'C:\WINEAS~1\TESTFI~1.TXT'
+            Assert-MockCalled New-Object -Times 1 -ParameterFilter { $ComObject -eq 'Scripting.FileSystemObject' }
+        } finally {
+            Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "converts folder path with spaces to 8.3 short path using FileSystemObject" {
+        $tempDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_space dir_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+
+        try {
+            $fsoMock = New-Object PSCustomObject
+            $fsoMock | Add-Member -MemberType ScriptMethod -Name "GetFolder" -Value {
+                param($p)
+                return [PSCustomObject]@{ ShortPath = 'C:\WINEAS~1' }
+            }
+            Mock New-Object { return $fsoMock } -ParameterFilter { $ComObject -eq 'Scripting.FileSystemObject' }
+
+            $result = Get-SafeShortPath -Path $tempDir
+            $result | Should Be 'C:\WINEAS~1'
+            Assert-MockCalled New-Object -Times 1 -ParameterFilter { $ComObject -eq 'Scripting.FileSystemObject' }
+        } finally {
+            Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "falls back to original path when FileSystemObject ShortPath is empty" {
+        $tempDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_space dir_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+
+        try {
+            $fsoMock = New-Object PSCustomObject
+            $fsoMock | Add-Member -MemberType ScriptMethod -Name "GetFolder" -Value {
+                param($p)
+                return [PSCustomObject]@{ ShortPath = $null }
+            }
+            Mock New-Object { return $fsoMock } -ParameterFilter { $ComObject -eq 'Scripting.FileSystemObject' }
+
+            $result = Get-SafeShortPath -Path $tempDir
+            $result | Should Be $tempDir
+        } finally {
+            Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "falls back to original path when exception is thrown" {
+        $tempDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_space dir_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+
+        try {
+            Mock New-Object { throw "COM Object creation failed" } -ParameterFilter { $ComObject -eq 'Scripting.FileSystemObject' }
+
+            $result = Get-SafeShortPath -Path $tempDir
+            $result | Should Be $tempDir
+        } finally {
+            Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 Describe "WinEase helpers - Statistical Analysis and Benchmark Comparison" {
     BeforeAll {
         $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
