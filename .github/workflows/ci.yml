@@ -7,6 +7,13 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   self-test:
     name: Self-test (AST + unattend schema + presets)
