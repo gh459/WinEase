@@ -282,20 +282,30 @@ function Test-IsPathPreserved {
     }
 
     $normPath = try { ConvertTo-WinEaseNormalizedPath -Path $Path } catch { $Path.TrimEnd('\', '/') }
+    # Pre-compute trailing slash path for case-insensitive parent boundary comparisons
+    $normPathWithSlash = $normPath + '\'
 
     foreach ($pDir in $PreservedDirs) {
         if ([string]::IsNullOrWhiteSpace($pDir)) { continue }
+
+        # Canonicalize pDir with ConvertTo-WinEaseNormalizedPath to ensure consistent drive path normalization
         $normPDir = try { ConvertTo-WinEaseNormalizedPath -Path $pDir } catch { $pDir.TrimEnd('\', '/') }
 
+        # Case-insensitive exact match
         if ($normPath -ieq $normPDir) {
             Write-Warning "Directory '$normPath' is in PreservedMountDirs. Deletion prohibited."
             return $true
         }
-        if ($normPDir.StartsWith($normPath + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+
+        # Case-insensitive parent check: is $normPath a parent of preserved directory $normPDir?
+        if ($normPDir.StartsWith($normPathWithSlash, [System.StringComparison]::OrdinalIgnoreCase)) {
             Write-Warning "Directory '$normPath' is a parent of preserved directory '$normPDir'. Deletion prohibited."
             return $true
         }
-        if ($normPath.StartsWith($normPDir + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+
+        # Case-insensitive descendant check: is $normPath a descendant of preserved directory $normPDir?
+        $normPDirWithSlash = $normPDir + '\'
+        if ($normPath.StartsWith($normPDirWithSlash, [System.StringComparison]::OrdinalIgnoreCase)) {
             Write-Warning "Directory '$normPath' is a descendant of preserved directory '$normPDir'. Deletion prohibited."
             return $true
         }
