@@ -44,6 +44,19 @@ Describe "WinEase builder - AST syntax" {
         [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$errors) | Out-Null
         $errors.Count | Should Be 0
     }
+    It "phases\10-registry.ps1 parses with zero parser errors" {
+        $p10Path = Join-Path $script:RepoRoot "phases\10-registry.ps1"
+        $content = [System.IO.File]::ReadAllText($p10Path, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $errors = $null
+        [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$errors) | Out-Null
+        $errors.Count | Should Be 0
+    }
+    It "phases\10-registry.ps1 TakeOwnershipContextMenu avoids cmd.exe /c %1 command injection" {
+        $p10Path = Join-Path $script:RepoRoot "phases\10-registry.ps1"
+        $content = [System.IO.File]::ReadAllText($p10Path, [System.Text.Encoding]::UTF8)
+        $content | Should Not Match 'cmd\.exe /c takeown.*%1'
+        $content | Should Match 'powershell\.exe.*takeown\.exe'
+    }
 }
 
 Describe "WinEase builder - autounattend.xml" {
