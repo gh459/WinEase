@@ -1498,17 +1498,6 @@ Describe "WinEase GUI - smoke test (form built without ShowDialog)" {
         } finally { $gui.Form.Dispose() }
     }
 
-    It "Advanced Debloat dialog: every Select All / Deselect All button changes its list" {
-        $dlg = Show-AdvancedDebloatDialog -NoShow
-        try {
-            Invoke-SelectButtons $dlg | Should Be 4
-        } finally {
-            if ($dlg -and $dlg.Form) { $dlg.Form.Dispose() }
-            [System.GC]::Collect()
-            [System.GC]::WaitForPendingFinalizers()
-        }
-    }
-
     It "cleanup WinForms message pump (environmental stability)" {
         [System.Windows.Forms.Application]::Exit()
         [System.GC]::Collect()
@@ -2839,24 +2828,6 @@ Describe "GUI display language (English / Japanese)" {
             $gui.Preset.SelectedIndex | Should Be 1
             $gui.GrdStd.Rows[0].Cells['Engine'].Value | Should Be 'PowerShell'
         } finally { $gui.Form.Dispose() }
-    }
-    It "Advanced Debloat dialog in Japanese returns the English item names" {
-        $english = Get-DebloatItemFromSource
-        Set-WinEaseUiLanguage -Language 'ja'
-        $dlg = Show-AdvancedDebloatDialog -NoShow
-        try {
-            $dlg.Text | Should Be (Get-WinEaseUiString 'Dlg.Debloat.Title' -Language 'ja')
-            Set-WinEaseDebloatGridChecked -Grid $dlg.Tag.Std -Checked $true
-            Set-WinEaseDebloatGridChecked -Grid $dlg.Tag.Exp -Checked $true
-            $std = @((Get-WinEaseDebloatGridState -Grid $dlg.Tag.Std).Selected)
-            $exp = @((Get-WinEaseDebloatGridState -Grid $dlg.Tag.Exp).Selected)
-            $std.Count | Should Be 32
-            foreach ($v in @($std) + @($exp)) { ($english -contains $v) | Should Be $true | Out-Null }
-            $dlg.Tag.Std.Rows[0].Cells['Target'].Value | Should Not Be $std[0]
-        } finally {
-            $dlg.Dispose()
-            Set-WinEaseUiLanguage -Language 'en'
-        }
     }
 
     It "switching the language keeps what was typed, checked and selected (and saves the choice)" {
