@@ -588,7 +588,11 @@ Describe "WinEase helpers - Test-IsNtfsVolume" {
         $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
         . $helpersPath
         if (-not (Get-Command Get-Volume -ErrorAction SilentlyContinue)) {
-            function Get-Volume { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([string]$DriveLetter, $ErrorAction) }
+            function Get-Volume {
+                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '')]
+                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+                param([string]$DriveLetter, $ErrorAction)
+            }
         }
     }
 
