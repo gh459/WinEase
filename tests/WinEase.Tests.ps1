@@ -6,7 +6,9 @@
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingInvokeExpression', '', Justification = 'Evaluates literal arrays/hashtables taken from the repo''s own source AST')]
 param()
 
-$script:RepoRoot = Split-Path -Parent $PSScriptRoot
+if (-not $script:RepoRoot) {
+    $script:RepoRoot = Split-Path -Parent $PSScriptRoot
+}
 $script:BuilderPath = Join-Path -Path $script:RepoRoot -ChildPath "WinEasebuilder.ps1"
 $script:GuiPath = Join-Path -Path $script:RepoRoot -ChildPath "gui\WinEaseGui.ps1"
 $script:UnattendPath = Join-Path -Path $script:RepoRoot -ChildPath "autounattend.xml"
@@ -563,6 +565,9 @@ Describe "WinEase helpers - BuildContext advanced debloat lists" {
 
 Describe "WinEase helpers - Path and Directory Safety Guards" {
     BeforeAll {
+        if (-not $script:RepoRoot) {
+            $script:RepoRoot = Split-Path -Parent $PSScriptRoot
+        }
         $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
         . $helpersPath
     }
@@ -570,25 +575,25 @@ Describe "WinEase helpers - Path and Directory Safety Guards" {
     It "Test-WinEasePathWithin blocks .. traversal escape attempts" {
         $base = "C:\TestFolder\Work"
         $traversal = "C:\TestFolder\Work\..\..\Windows"
-        Test-WinEasePathWithin -Path $traversal -Root $base | Should Be $false
+        Test-WinEasePathWithin -Path $traversal -Root $base | Should -Be $false
     }
 
     It "Test-WinEasePathWithin accepts legitimate subpaths" {
         $base = "C:\TestFolder\Work"
         $sub = "C:\TestFolder\Work\Subdir\file.txt"
-        Test-WinEasePathWithin -Path $sub -Root $base | Should Be $true
+        Test-WinEasePathWithin -Path $sub -Root $base | Should -Be $true
     }
 
     It "Test-IsSafePathToDelete protects OS root and protected system folders" {
-        Test-IsSafePathToDelete -Path "C:\" | Should Be $false
-        Test-IsSafePathToDelete -Path "C:\Windows" | Should Be $false
-        Test-IsSafePathToDelete -Path "C:\Program Files" | Should Be $false
-        Test-IsSafePathToDelete -Path "C:\Users" | Should Be $false
+        Test-IsSafePathToDelete -Path "C:\" | Should -Be $false
+        Test-IsSafePathToDelete -Path "C:\Windows" | Should -Be $false
+        Test-IsSafePathToDelete -Path "C:\Program Files" | Should -Be $false
+        Test-IsSafePathToDelete -Path "C:\Users" | Should -Be $false
     }
 
     It "Test-IsSafePathToDelete protects repo root and parent directories" {
-        Test-IsSafePathToDelete -Path $script:RepoRoot | Should Be $false
-        Test-IsSafePathToDelete -Path (Join-Path $script:RepoRoot "WinEasehelpers.ps1") | Should Be $false
+        Test-IsSafePathToDelete -Path $script:RepoRoot | Should -Be $false
+        Test-IsSafePathToDelete -Path (Join-Path $script:RepoRoot "WinEasehelpers.ps1") | Should -Be $false
     }
 
     It "Get-WinEaseVolumeFreeSpaceGB returns positive value for valid drive and throws on invalid" {
@@ -600,7 +605,76 @@ Describe "WinEase helpers - Path and Directory Safety Guards" {
 
     It "Test-CanSafelyDeleteDirectory refuses to delete workspace base directory itself" {
         $baseDir = "C:\TestFolder\BaseWork"
-        Test-CanSafelyDeleteDirectory -Path $baseDir -ExpectedBaseDir $baseDir | Should Be $false
+        Test-CanSafelyDeleteDirectory -Path $baseDir -ExpectedBaseDir $baseDir | Should -Be $false
+    }
+
+    It "Test-CanSafelyDeleteVhdx returns false when build did not succeed" {
+        $script:BuildSucceeded = $false
+        $tempFile = New-TemporaryFile
+        try {
+            Test-CanSafelyDeleteVhdx -VhdxPath $tempFile.FullName -VhdxDetached $true | Should -Be $false
+        } finally {
+            Remove-Item -LiteralPath $tempFile.FullName -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "Test-CanSafelyDeleteVhdx returns false when VHDX is attached (VhdxDetached is false)" {
+        $script:BuildSucceeded = $true
+        $tempFile = New-TemporaryFile
+        try {
+            Test-CanSafelyDeleteVhdx -VhdxPath $tempFile.FullName -VhdxDetached $false | Should -Be $false
+        } finally {
+            Remove-Item -LiteralPath $tempFile.FullName -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "Test-CanSafelyDeleteVhdx returns false for null, empty or non-existent path" {
+        $script:BuildSucceeded = $true
+        Test-CanSafelyDeleteVhdx -VhdxPath "" -VhdxDetached $true | Should -Be $false
+        Test-CanSafelyDeleteVhdx -VhdxPath $null -VhdxDetached $true | Should -Be $false
+        $tempDir = [System.IO.Path]::GetTempPath()
+        $nonExistent = Join-Path $tempDir "nonexistent_$([guid]::NewGuid().ToString('N')).vhdx"
+        Test-CanSafelyDeleteVhdx -VhdxPath $nonExistent -VhdxDetached $true | Should -Be $false
+    }
+
+    It "Test-CanSafelyDeleteVhdx returns false when Test-IsSafePathToDelete rejects path" {
+        $script:BuildSucceeded = $true
+        Mock Test-Path { $true } -ParameterFilter { $LiteralPath -eq 'C:\Windows\disk.vhdx' }
+        Mock Test-IsSafePathToDelete { $false }
+        Test-CanSafelyDeleteVhdx -VhdxPath "C:\Windows\disk.vhdx" -VhdxDetached $true | Should -Be $false
+    }
+
+    It "Test-CanSafelyDeleteVhdx returns false when VHDX is outside expected base directory" {
+        $script:BuildSucceeded = $true
+        Mock Test-Path { $true } -ParameterFilter { $LiteralPath -eq 'C:\OutsideWorkspace\disk.vhdx' }
+        Mock Test-IsSafePathToDelete { $true }
+        Test-CanSafelyDeleteVhdx -VhdxPath "C:\OutsideWorkspace\disk.vhdx" -VhdxDetached $true -ExpectedBaseDir "C:\Workspace" | Should -Be $false
+    }
+
+    It "Test-CanSafelyDeleteVhdx returns false when VHDX is in or under preserved directories" {
+        $script:BuildSucceeded = $true
+        $preserved = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        [void]$preserved.Add("C:\Workspace\PreservedDir")
+
+        Mock Test-Path { $true } -ParameterFilter { $LiteralPath -like 'C:\Workspace\PreservedDir*' }
+        Mock Test-IsSafePathToDelete { $true }
+
+        # VHDX equals preserved directory
+        Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\PreservedDir" -VhdxDetached $true -ExpectedBaseDir "C:\Workspace" -PreservedDirs $preserved | Should -Be $false
+
+        # VHDX is under preserved directory
+        Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\PreservedDir\sub\disk.vhdx" -VhdxDetached $true -ExpectedBaseDir "C:\Workspace" -PreservedDirs $preserved | Should -Be $false
+    }
+
+    It "Test-CanSafelyDeleteVhdx returns true for valid, detached VHDX inside base directory and not preserved" {
+        $script:BuildSucceeded = $true
+        $preserved = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        [void]$preserved.Add("C:\Workspace\OtherPreserved")
+
+        Mock Test-Path { $true } -ParameterFilter { $LiteralPath -eq 'C:\Workspace\SafeSub\disk.vhdx' }
+        Mock Test-IsSafePathToDelete { $true }
+
+        Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\SafeSub\disk.vhdx" -VhdxDetached $true -ExpectedBaseDir "C:\Workspace" -PreservedDirs $preserved | Should -Be $true
     }
 }
 

@@ -6,8 +6,14 @@
 # scope may be gone. A handler gets its target from $this.Tag, or the shared GUI context
 # (controls, checkbox tables, result) from $this.FindForm().Tag.
 
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
+if ($IsWindows -or $env:OS -eq 'Windows_NT') {
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+    } catch {
+        Write-Verbose "WinForms assemblies not available: $_"
+    }
+}
 
 # Repository root (this file lives in <repo>\gui)
 $script:WinEaseGuiRepoRoot = Split-Path -Parent $PSScriptRoot
