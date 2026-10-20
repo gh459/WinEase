@@ -1,4 +1,5 @@
 # benchmark_winui_init.ps1 - Benchmark WinUI Host init message generation
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '', Justification = 'Benchmark timing variables')]
 param(
     [int]$Iterations = 1000
 )
@@ -9,7 +10,7 @@ $winUiHostPath = Join-Path $repoRoot "gui\WinEaseWinUiHost.ps1"
 
 if (-not (Test-Path -LiteralPath $schemaPath)) {
     Write-Error "schema.psd1 not found at $schemaPath"
-    exit 1
+    throw "schema.psd1 not found"
 }
 
 # Load schema definitions into script scope as WinEaseGui.ps1 does
@@ -87,5 +88,5 @@ foreach ($count in @(1000, 5000, 10000)) {
     $tOpt = $swOptimized.ElapsedMilliseconds
     $ratio = if ($tOpt -gt 0) { [math]::Round($tBase / $tOpt, 1) } else { "N/A" }
 
-    Write-Host "Count = $count items -> Baseline (+=): $tBase ms | Optimized (@(foreach)): $tOpt ms | Speedup: ${ratio}x"
+    Write-Host "Count = $count items (Items: $($tweaks1.Count) vs $($tweaks2.Count)) -> Baseline (+=): $tBase ms | Optimized (@(foreach)): $tOpt ms | Speedup: ${ratio}x"
 }
