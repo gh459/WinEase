@@ -386,6 +386,11 @@ Describe "WinEase builder - phase timing telemetry" {
 }
 
 Describe "WinEase helpers - atomic file I/O (Write-WinEaseTextFileAtomic)" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+    }
+
     It "writes text content atomically and cleans temporary files" {
         $tempFile = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_test_atomic_" + [guid]::NewGuid().ToString('N') + ".txt")
         $c1 = "First line of content"
@@ -408,6 +413,11 @@ Describe "WinEase helpers - atomic file I/O (Write-WinEaseTextFileAtomic)" {
 }
 
 Describe "WinEase helpers - configuration conflict resolution (Test-WinEaseConfigConflicts)" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+    }
+
     It "detects the Store and Windows Update dependency conflict without changing the settings" {
         $cfg = [PSCustomObject]@{
             KeepStore = $true
@@ -438,6 +448,11 @@ Describe "WinEase helpers - configuration conflict resolution (Test-WinEaseConfi
 }
 
 Describe "WinEase helpers - build resume integrity (Test-WinEaseResumeIntegrity)" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+    }
+
     It "fails validation on non-existent or empty workspace" {
         $dummyDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_empty_" + [guid]::NewGuid().ToString('N'))
         $res = Test-WinEaseResumeIntegrity -WorkspaceDir $dummyDir
@@ -476,6 +491,11 @@ Describe "WinEase helpers - build resume integrity (Test-WinEaseResumeIntegrity)
 }
 
 Describe "WinEase helpers - BuildContext lifecycle" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+    }
+
     It "instantiates BuildContext with all required properties and initial values" {
         $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
         . $helpersPath
@@ -494,6 +514,7 @@ Describe "WinEase helpers - BuildContext lifecycle" {
 
 Describe "WinEase helpers - BuildContext advanced debloat lists" {
     BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
         . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
         $script:SavedStd = $script:advancedDebloatStandard
         $script:SavedExp = $script:advancedDebloatExperimental
@@ -561,8 +582,78 @@ Describe "WinEase helpers - BuildContext advanced debloat lists" {
     }
 }
 
+Describe "WinEase helpers - Test-IsNtfsVolume" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+        if (-not (Get-Command Get-Volume -ErrorAction SilentlyContinue)) {
+            function Get-Volume { param([string]$DriveLetter, $ErrorAction) }
+        }
+    }
+
+    It "returns false for null, empty or whitespace path" {
+        Test-IsNtfsVolume -Path $null | Should -Be $false
+        Test-IsNtfsVolume -Path "" | Should -Be $false
+        Test-IsNtfsVolume -Path "   " | Should -Be $false
+    }
+
+    It "returns false for relative path without root" {
+        Test-IsNtfsVolume -Path "relative/path/to/file" | Should -Be $false
+    }
+
+    It "returns true when DriveInfo reports NTFS" {
+        Mock New-Object {
+            [PSCustomObject]@{
+                IsReady     = $true
+                DriveFormat = 'NTFS'
+            }
+        } -ParameterFilter { $TypeName -eq 'System.IO.DriveInfo' }
+        Test-IsNtfsVolume -Path "/test/path" | Should -Be $true
+    }
+
+    It "returns false when DriveInfo reports FAT32" {
+        Mock New-Object {
+            [PSCustomObject]@{
+                IsReady     = $true
+                DriveFormat = 'FAT32'
+            }
+        } -ParameterFilter { $TypeName -eq 'System.IO.DriveInfo' }
+        Test-IsNtfsVolume -Path "/test/path" | Should -Be $false
+    }
+
+    It "falls back to Get-Volume and returns true when volume is NTFS" {
+        Mock New-Object { throw "DriveInfo failed" } -ParameterFilter { $TypeName -eq 'System.IO.DriveInfo' }
+        Mock Get-Volume { [PSCustomObject]@{ FileSystem = 'NTFS' } }
+        Test-IsNtfsVolume -Path "C:\test\path" | Should -Be $true
+    }
+
+    It "falls back to Get-Volume and returns false when volume is FAT32" {
+        Mock New-Object { throw "DriveInfo failed" } -ParameterFilter { $TypeName -eq 'System.IO.DriveInfo' }
+        Mock Get-Volume { [PSCustomObject]@{ FileSystem = 'FAT32' } }
+        Test-IsNtfsVolume -Path "C:\test\path" | Should -Be $false
+    }
+
+    It "returns false when Get-Volume throws exception" {
+        Mock New-Object { throw "DriveInfo failed" } -ParameterFilter { $TypeName -eq 'System.IO.DriveInfo' }
+        Mock Get-Volume { throw "Volume not found" }
+        Test-IsNtfsVolume -Path "X:\test\path" | Should -Be $false
+    }
+
+    It "returns false for UNC path when DriveInfo is not ready" {
+        Mock New-Object {
+            [PSCustomObject]@{
+                IsReady     = $false
+                DriveFormat = 'NTFS'
+            }
+        } -ParameterFilter { $TypeName -eq 'System.IO.DriveInfo' }
+        Test-IsNtfsVolume -Path "\\server\share\file" | Should -Be $false
+    }
+}
+
 Describe "WinEase helpers - Path and Directory Safety Guards" {
     BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
         $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
         . $helpersPath
     }
