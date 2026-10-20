@@ -611,8 +611,8 @@ Describe "WinEase helpers - Get-SafeShortPath" {
     }
 
     It "returns null or empty string when input is null or empty" {
-        Get-SafeShortPath -Path $null | Should Be $null
-        Get-SafeShortPath -Path "" | Should Be ""
+        Get-SafeShortPath -Path $null | Should BeNullOrEmpty
+        Get-SafeShortPath -Path "" | Should BeNullOrEmpty
     }
 
     It "returns original path when path does not exist" {
@@ -639,7 +639,8 @@ Describe "WinEase helpers - Get-SafeShortPath" {
         try {
             $fsoMock = New-Object PSCustomObject
             $fsoMock | Add-Member -MemberType ScriptMethod -Name "GetFile" -Value {
-                param($p)
+                param($FilePath)
+                [void]$FilePath
                 return [PSCustomObject]@{ ShortPath = 'C:\WINEAS~1\TESTFI~1.TXT' }
             }
             Mock New-Object { return $fsoMock } -ParameterFilter { $ComObject -eq 'Scripting.FileSystemObject' }
@@ -659,7 +660,8 @@ Describe "WinEase helpers - Get-SafeShortPath" {
         try {
             $fsoMock = New-Object PSCustomObject
             $fsoMock | Add-Member -MemberType ScriptMethod -Name "GetFolder" -Value {
-                param($p)
+                param($FolderPath)
+                [void]$FolderPath
                 return [PSCustomObject]@{ ShortPath = 'C:\WINEAS~1' }
             }
             Mock New-Object { return $fsoMock } -ParameterFilter { $ComObject -eq 'Scripting.FileSystemObject' }
@@ -679,7 +681,8 @@ Describe "WinEase helpers - Get-SafeShortPath" {
         try {
             $fsoMock = New-Object PSCustomObject
             $fsoMock | Add-Member -MemberType ScriptMethod -Name "GetFolder" -Value {
-                param($p)
+                param($FolderPath)
+                [void]$FolderPath
                 return [PSCustomObject]@{ ShortPath = $null }
             }
             Mock New-Object { return $fsoMock } -ParameterFilter { $ComObject -eq 'Scripting.FileSystemObject' }
