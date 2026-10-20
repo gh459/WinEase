@@ -69,14 +69,13 @@ function New-WinEaseWinUiInitMessage {
         $d = $script:AllTweakDefs[$tk]
         $tweaks += , [ordered]@{ Key = $tk; Category = "$($d.Category)"; Default = [bool]$d.Default; Description = "$($d.Description)"; DescriptionJa = "$($d.DescriptionJa)" }
     }
-    $components = @()
-    foreach ($cd in $script:ComponentDefs.Values) {
+    $components = @(foreach ($cd in $script:ComponentDefs.Values) {
         if (-not $cd.Gui) { continue }
-        $components += , [ordered]@{
+        [ordered]@{
             Key = $cd.Key; Text = "$($cd.Gui.Text)"; Description = "$($cd.Gui.Description)"; Default = [bool]$cd.Gui.Default
             Tab = "$($cd.Gui.Tab)"; Order = [int]$cd.Gui.Order
         }
-    }
+    })
     $initial = [ordered]@{}
     foreach ($k in @('SourceDrive', 'WorkDir', 'Index', 'InjectDrivers', 'UserName', 'ComputerName', 'PresetKey')) {
         $initial[$k] = if ($null -ne $InitialSettings[$k]) { "$($InitialSettings[$k])" } else { '' }
@@ -343,7 +342,18 @@ function Show-WinEaseWinUiGUI {
         $init = New-WinEaseWinUiInitMessage -InitialSettings $InitialSettings -Language $script:WinEaseUiLanguage
         $initJson = $init | ConvertTo-Json -Depth 12 -Compress
         # Debug aid: WINEASE_WINUI_INIT_DUMP=<file> keeps the init message (WinEaseGui.exe --init <file> previews it)
-        if ($env:WINEASE_WINUI_INIT_DUMP) { [System.IO.File]::WriteAllText($env:WINEASE_WINUI_INIT_DUMP, $initJson, $utf8) }
+        if ($env:WINEASE_WINUI_INIT_DUMP) {
+            try {
+                $dumpPath = $env:WINEASE_WINUI_INIT_DUMP
+                $dumpDir = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($dumpPath))
+                if ($dumpDir -and -not (Test-Path -LiteralPath $dumpDir)) {
+                    [void][System.IO.Directory]::CreateDirectory($dumpDir)
+                }
+                [System.IO.File]::WriteAllText($dumpPath, $initJson, $utf8)
+            } catch {
+                Write-Verbose "Failed to dump init JSON to '$env:WINEASE_WINUI_INIT_DUMP': $($_.Exception.Message)"
+            }
+        }
         $writer.WriteLine($initJson)
         while ($null -ne ($line = $proc.StandardOutput.ReadLine())) {
             if (-not $line.Trim().StartsWith('{')) { continue }
