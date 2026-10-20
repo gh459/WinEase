@@ -10,6 +10,9 @@ public sealed record TweakDef(string Key, string Category, bool Default, string 
 public sealed record ComponentDef(string Key, string Text, string Description, bool Default, string Tab, int Order);
 public sealed record PresetDef(string Key, Dictionary<string, bool> Components, Dictionary<string, bool> Tweaks, string PayloadFormat);
 
+// The execution engine of one Advanced Debloat target (config\schema.psd1 -> DebloatEngines)
+public sealed record EngineDef(List<string> Engines, string Default);
+
 // The init message of gui\WinEaseWinUiHost.ps1 (New-WinEaseWinUiInitMessage)
 public sealed class InitData
 {
@@ -22,6 +25,7 @@ public sealed class InitData
     public List<string> PresetNames { get; }
     public List<string> DebloatStandard { get; }
     public List<string> DebloatExperimental { get; }
+    public Dictionary<string, EngineDef> DebloatEngines { get; } = new(StringComparer.Ordinal);
     public JsonObject Initial { get; }
     public string DefaultWorkDir { get; }
     public string DefaultMigrationRoot { get; }
@@ -50,6 +54,13 @@ public sealed class InitData
         if (PresetNames.Count == 0) PresetNames = Presets.Select(p => p.Key).ToList();
         DebloatStandard = StrList(o["DebloatStandard"]);
         DebloatExperimental = StrList(o["DebloatExperimental"]);
+        foreach (var kv in (o["DebloatEngines"] as JsonObject) ?? new JsonObject())
+        {
+            if (kv.Value is not JsonObject def) continue;
+            var engines = new List<string>();
+            foreach (var e in Arr(def["Engines"])) engines.Add(Str(e));
+            DebloatEngines[kv.Key] = new EngineDef(engines, Str(def["Default"]));
+        }
         Initial = o["Initial"] as JsonObject ?? new JsonObject();
         DefaultWorkDir = Str(o["DefaultWorkDir"]);
         DefaultMigrationRoot = Str(o["DefaultMigrationRoot"]);

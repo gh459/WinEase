@@ -200,10 +200,6 @@ param(
     [switch]$RemoveWebViewPostOOBE,
     [switch]$FastExport,
     [switch]$UefiOnly,
-    [ValidateSet('Efficient', 'Aggressive', 'Off', 'Default')]
-    [string]$CpuBoostMode = 'Default',
-    [ValidateSet('Desktop', 'Handheld', 'Balanced', 'VM', 'Default')]
-    [string]$PowerPreset = 'Default',
     [alias("NoActivationRestrictions", "UnlockPersonalization")]
     [switch]$BypassActivationRestrictions,
     [alias("UltraLowRAM", "LowRAM")]
@@ -226,6 +222,60 @@ param(
     [switch]$SvcHostConsolidation,
     [switch]$HideSearchBox,
     [switch]$MenuShowDelayZero,
+    # Removal options (polarity: OFF = keep, ON = remove). These used to run
+    # unconditionally on every build.
+    [switch]$RemoveHelpFiles,
+    [switch]$RemoveEdge,
+    [switch]$RemoveWindowsBackup,
+    [switch]$RemoveWebExperienceHost,
+    [switch]$RemoveOfflineCacheFiles,
+    [switch]$RemoveRecall,
+    [switch]$RemoveInternetExplorer,
+    [switch]$RemoveWordPad,
+    [switch]$RemoveStepsRecorder,
+    [switch]$RemoveSnippingTool,
+    [switch]$RemovePaint,
+    [switch]$RemoveXpsViewer,
+    [switch]$RemovePowerShellISE,
+    [switch]$RemoveOpenSSHClient,
+    [switch]$RemoveHelloFace,
+    [switch]$RemoveBitLockerFeature,
+    [switch]$RemoveNarratorApp,
+    [switch]$RemoveMagnifierApp,
+    [switch]$RemoveMediaPlayerFeature,
+    [switch]$RemoveTabletPCMath,
+    [switch]$RemoveWebcamExperience,
+    [switch]$RemoveWallpaperContent,
+    [switch]$RemoveSearchEngineClient,
+    [switch]$RemovePrintingManagement,
+    [switch]$RemoveMpeg2Decoder,
+    [switch]$RemoveWmic,
+    [switch]$RemoveWirelessDisplay,
+    [switch]$RemoveSnmpClient,
+    [switch]$RemoveTelnetClient,
+    [switch]$RemoveSimpleTcpClient,
+    [switch]$RemoveRdc,
+    [switch]$RemoveFaxClient,
+    [switch]$RemoveUserExperienceVirt,
+    [switch]$RemoveDeviceManagementEnt,
+    [switch]$RemoveNotepad,
+    [switch]$RemoveMathRecognizer,
+    [switch]$RemovePrintingWfs,
+    [switch]$RemoveKernelLA57,
+    [switch]$RemoveTpmWmiProvider,
+    # Language packs (OFF = protected, ON = may be removed)
+    [switch]$RemoveLanguageJaJP,
+    [switch]$RemoveLanguageKoKR,
+    [switch]$RemoveLanguageZhCN,
+    [switch]$RemoveLanguageZhTW,
+    # Post-install (first logon) options
+    [switch]$EnableCompactOS,
+    [switch]$EnableNtfs8dot3Disable,
+    [switch]$EnableUltimatePerformancePower,
+    [switch]$EnableMsiMode,
+    [switch]$DisableAccessibilityTools,
+    [switch]$DisableWindowsSearchProcess,
+    [switch]$DisableComputerRestore,
     [switch]$NoRadicalRAM,
     # Hashtable (@{ GPULatency = $false }) or string "GPULatency=0;TimerBCD=1" (the string form survives
     # being passed through powershell.exe -File, e.g. on elevation or in batch queue mode)
@@ -312,6 +362,14 @@ if (Test-Path -LiteralPath $helperModuleEarly) {
 # M2: dot-source the extension module early (functions needed before AllTweakDefs init); the PC migration engine lives in tools\migrator and is not part of the ISO build
 $extModuleEarly = Join-Path -Path $scriptDirEarly -ChildPath "lib\WinEaseExtensions.ps1"
 if (Test-Path -LiteralPath $extModuleEarly) { . $extModuleEarly }
+# The Advanced Debloat engine table and the safe per-target handlers (lib\WinEaseDebloat.ps1).
+# The phases call these, so the module has to be loaded before the first phase runs.
+$debloatModuleEarly = Join-Path -Path $scriptDirEarly -ChildPath "lib\WinEaseDebloat.ps1"
+if (Test-Path -LiteralPath $debloatModuleEarly) {
+    . $debloatModuleEarly
+} else {
+    throw "Required debloat module not found: $debloatModuleEarly"
+}
 
 # Normalize -TweakGroupOverrides to a hashtable of [bool]
 if ($null -ne $TweakGroupOverrides -and $TweakGroupOverrides -isnot [System.Collections.IDictionary]) {
@@ -509,9 +567,9 @@ if ((-not $TestSelf) -and ($env:WINEASE_TEST_MODE -ne "1") -and (-not $isDryRunM
     }
 }
 
-# Every tweak and component setting is defined once, in config\tweaks.psd1. The tables below
+# Every tweak and component setting is defined once, in config\schema.psd1. The tables below
 # are derived from it; add or rename a setting there, never here.
-$script:WinEaseSettingsDefPath = Join-Path -Path $scriptDirEarly -ChildPath "config\tweaks.psd1"
+$script:WinEaseSettingsDefPath = Join-Path -Path $scriptDirEarly -ChildPath "config\schema.psd1"
 if (-not (Test-Path -LiteralPath $script:WinEaseSettingsDefPath)) {
     throw "Settings definition file not found: $($script:WinEaseSettingsDefPath)"
 }
@@ -541,6 +599,28 @@ try {
 $script:ComponentDefs = [ordered]@{}
 foreach ($cd in $script:WinEaseSettingsDef.Components) { $script:ComponentDefs[$cd.Key] = $cd }
 
+# Execution engine of every Advanced Debloat target (item text -> Engines / Default / RustKey / Phase).
+# config\schema.psd1 is the single source of truth; the GUI, the profile format, the
+# lib\WinEaseDebloat.ps1 helpers and phases\09-physical-debloat.ps1 all read this table.
+$script:WinEaseDebloatEngines = [ordered]@{}
+$script:WinEaseDebloatLegacyMap = [ordered]@{}
+foreach ($de in @($script:WinEaseSettingsDef.DebloatEngines)) {
+    if (-not $de -or -not $de.Item) { continue }
+    $script:WinEaseDebloatEngines[[string]$de.Item] = $de
+    foreach ($legacyItem in @($de.Legacy)) {
+        if ($legacyItem) { $script:WinEaseDebloatLegacyMap[[string]$legacyItem] = [string]$de.Item }
+    }
+}
+
+# The engine the user picked for a target (item text -> 'PowerShell' | 'Rust'). A target
+# that is not listed here runs on the engine registered in config\schema.psd1.
+$script:DebloatEngineSelection = [ordered]@{}
+
+# The explicit settings of the user (command line, JSON profile, GUI). They are the
+# highest layer of the configuration: a preset never overrules them.
+$script:ConfigOverrides = [ordered]@{}
+$script:TweakOverrides  = [ordered]@{}
+
 $script:TweakSettings = [ordered]@{}
 foreach ($tk in $script:AllTweakDefs.Keys) {
     $script:TweakSettings[$tk] = [bool]$script:AllTweakDefs[$tk].Default
@@ -562,8 +642,8 @@ function Sync-WinEaseTweakVariables {
 }
 
 # Profile key order: component settings first, then every tweak key (-SaveProfile writes these,
-# -LoadProfile accepts them)
-$script:WinEaseProfileKeys = @($script:ComponentDefs.Keys) + @($script:AllTweakDefs.Keys)
+# -LoadProfile accepts them). The debloat engine selection is not a component, it is added here.
+$script:WinEaseProfileKeys = @($script:ComponentDefs.Keys) + @($script:AllTweakDefs.Keys) + @('DebloatEngineSelection')
 
 # Read a component's script variable typed as its definition says (Bool -> [bool], String -> [string])
 function Get-WinEaseComponentValue {
@@ -582,11 +662,14 @@ function Get-WinEaseCurrentConfig {
     foreach ($cd in $script:ComponentDefs.Values) {
         if ($cd.Type -ne 'Special') { $config[$cd.Key] = Get-WinEaseComponentValue -Def $cd }
     }
+    $engineSel = [ordered]@{}
+    foreach ($k in $script:DebloatEngineSelection.Keys) { $engineSel[$k] = [string]$script:DebloatEngineSelection[$k] }
     $config += @{
         TweakGroups                  = $tweakGroups
         PayloadFormat                = if ($script:exportESDMode) { "ESD" } elseif ($script:splitWIMMode) { "SWM" } else { "WIM" }
         AdvancedDebloatStandard      = @($script:advancedDebloatStandard)
         AdvancedDebloatExperimental  = @($script:advancedDebloatExperimental)
+        DebloatEngineSelection       = $engineSel
         TweakSettings                = $script:TweakSettings
     }
     return $config
@@ -712,309 +795,33 @@ foreach ($tgKey in $script:TweakGroups.Keys) {
     $script:activeTweakGroups[$tgKey] = [bool]$script:TweakGroups[$tgKey].Default
 }
 
-$script:PowerPresets = [ordered]@{
-    Desktop   = @{ UsbSuspend = 0; PcieLpm = 0; BoostAc = 2; BoostDc = 2; DiskIdle = 0 }
-    Handheld  = @{ UsbSuspend = 0; PcieLpm = 1; BoostAc = 1; BoostDc = 1; DiskIdle = 60 }
-    Balanced  = @{ UsbSuspend = 1; PcieLpm = 1; BoostAc = 2; BoostDc = 1; DiskIdle = 180 }
-    VM        = @{ UsbSuspend = 1; PcieLpm = 0; BoostAc = 2; BoostDc = 2; DiskIdle = 0 }
+# The built-in presets live in config\presets.psd1 - the single source of truth for them.
+# A preset is only the list of the individual options it switches on; it never forces a
+# value on its own (Resolve-WinEaseConfiguration applies the user settings on top).
+$script:BuiltInPresetsPath = Join-Path -Path $scriptDirEarly -ChildPath "config\presets.psd1"
+if (-not (Test-Path -LiteralPath $script:BuiltInPresetsPath)) {
+    throw "Required preset file not found: $script:BuiltInPresetsPath"
 }
-
-$script:BuiltInPresets = [ordered]@{
-    'extreme' = [ordered]@{
-        ProfileName          = 'Extreme Slim & Gaming'
-        Description          = 'Maximum debloat, ultra-low latency kernel/timer tuning, minimal footprint.'
-        RemoveDefender       = $true
-        KeepAsianIME         = $true
-        KeepExtraFonts       = $false
-        RemoveDrivers        = $true
-        DisableWindowsUpdate = $true
-        KeepBluetooth        = $true
-        WSLSupport           = $false
-        KeepRecoveryEnv      = $false
-        SafeDebloatMode      = $true
-        UltraSlimMode        = $true
-        SetJapaneseKeyboard  = $true
-        AtlasReviOSMode      = $true
-        RemoveStore          = $true
-        KeepBasicApps        = $false
-        KeepSearchIndex      = $false
-        KeepXboxServices     = $false
-        KeepAudioTweaks      = $true
-        PayloadFormat        = 'WIM'
-        UseVHDX              = $false
-        PowerPreset          = 'Desktop'
-        RemoveLegacyFOD      = $true
-        TrimWallpapers       = $true
-        HibernateMode        = 'Off'
-        CrashDumpMode        = 'None'
-        DisableCPUMitigations= $false
-        MMCSSGaming          = $true
-        DAWMode              = $false
-        DisableMemCompression= $true
-        DisableFSE           = $true
-        NvidiaLowLatency     = $true
-        NoKernelPaging       = $true
-        DisableUSBSuspend    = $true
-        NoHypervisor         = $true
-        RemoveWebViewPostOOBE= $false
-        FastExport           = $false
-        UefiOnly             = $false
-        CpuBoostMode         = 'Aggressive'
-        BypassActivationRestrictions = $true
-        RadicalRAM           = $true
-        TweakGroups          = [ordered]@{
-            NetworkStack   = $true
-            TimerBCD       = $true
-            GPULatency     = $true
-            ServiceTrim    = $true
-        }
-    }
-    'balanced' = [ordered]@{
-        ProfileName          = 'Balanced Pro'
-        Description          = 'Safe daily debloat: Windows Update & Defender preserved, high stability.'
-        RemoveDefender       = $false
-        KeepAsianIME         = $true
-        KeepExtraFonts       = $true
-        RemoveDrivers        = $false
-        DisableWindowsUpdate = $false
-        KeepBluetooth        = $true
-        WSLSupport           = $false
-        KeepRecoveryEnv      = $true
-        SafeDebloatMode      = $true
-        UltraSlimMode        = $false
-        SetJapaneseKeyboard  = $true
-        AtlasReviOSMode      = $true
-        RemoveStore          = $false
-        KeepBasicApps        = $true
-        KeepSearchIndex      = $true
-        KeepXboxServices     = $true
-        KeepAudioTweaks      = $false
-        PayloadFormat        = 'WIM'
-        UseVHDX              = $false
-        PowerPreset          = 'Balanced'
-        RemoveLegacyFOD      = $false
-        TrimWallpapers       = $false
-        HibernateMode        = 'Keep'
-        CrashDumpMode        = 'Automatic'
-        DisableCPUMitigations= $false
-        MMCSSGaming          = $false
-        DAWMode              = $false
-        DisableMemCompression= $false
-        DisableFSE           = $false
-        NvidiaLowLatency     = $false
-        NoKernelPaging       = $false
-        DisableUSBSuspend    = $false
-        NoHypervisor         = $false
-        RemoveWebViewPostOOBE= $false
-        FastExport           = $false
-        UefiOnly             = $false
-        CpuBoostMode         = 'Default'
-        BypassActivationRestrictions = $false
-        RadicalRAM           = $false
-        TweakGroups          = [ordered]@{
-            NetworkStack   = $true
-            TimerBCD       = $true
-            GPULatency     = $true
-            ServiceTrim    = $false
-        }
-    }
-    'fat32' = [ordered]@{
-        ProfileName          = 'FAT32 USB Split-WIM'
-        Description          = 'Split-WIM payload for 100% FAT32 USB installer compatibility.'
-        RemoveDefender       = $true
-        KeepAsianIME         = $true
-        KeepExtraFonts       = $false
-        RemoveDrivers        = $true
-        DisableWindowsUpdate = $true
-        KeepBluetooth        = $true
-        WSLSupport           = $false
-        KeepRecoveryEnv      = $false
-        SafeDebloatMode      = $true
-        UltraSlimMode        = $true
-        SetJapaneseKeyboard  = $true
-        AtlasReviOSMode      = $true
-        RemoveStore          = $true
-        KeepBasicApps        = $false
-        KeepSearchIndex      = $false
-        KeepXboxServices     = $false
-        KeepAudioTweaks      = $true
-        PayloadFormat        = 'SWM'
-        UseVHDX              = $false
-        PowerPreset          = 'Desktop'
-        RemoveLegacyFOD      = $true
-        TrimWallpapers       = $true
-        HibernateMode        = 'Off'
-        CrashDumpMode        = 'None'
-        DisableCPUMitigations= $false
-        MMCSSGaming          = $true
-        DAWMode              = $false
-        DisableMemCompression= $true
-        DisableFSE           = $true
-        NvidiaLowLatency     = $true
-        NoKernelPaging       = $true
-        DisableUSBSuspend    = $true
-        NoHypervisor         = $true
-        RemoveWebViewPostOOBE= $false
-        FastExport           = $false
-        UefiOnly             = $false
-        CpuBoostMode         = 'Aggressive'
-        BypassActivationRestrictions = $true
-        RadicalRAM           = $true
-        TweakGroups          = [ordered]@{
-            NetworkStack   = $true
-            TimerBCD       = $true
-            GPULatency     = $true
-            ServiceTrim    = $true
-        }
-    }
-    'handheld' = [ordered]@{
-        ProfileName          = 'Portable Gaming PC'
-        Description          = 'Tuned for handhelds (ROG Ally, Steam Deck): battery balance & gamepad protection.'
-        RemoveDefender       = $true
-        KeepAsianIME         = $true
-        KeepExtraFonts       = $false
-        RemoveDrivers        = $true
-        DisableWindowsUpdate = $true
-        KeepBluetooth        = $true
-        WSLSupport           = $false
-        KeepRecoveryEnv      = $false
-        SafeDebloatMode      = $true
-        UltraSlimMode        = $true
-        SetJapaneseKeyboard  = $true
-        AtlasReviOSMode      = $true
-        RemoveStore          = $true
-        KeepBasicApps        = $false
-        KeepSearchIndex      = $false
-        KeepXboxServices     = $true
-        KeepAudioTweaks      = $true
-        PayloadFormat        = 'WIM'
-        UseVHDX              = $false
-        PowerPreset          = 'Handheld'
-        RemoveLegacyFOD      = $true
-        TrimWallpapers       = $true
-        HibernateMode        = 'Reduced'
-        CrashDumpMode        = 'Small'
-        DisableCPUMitigations= $false
-        MMCSSGaming          = $true
-        DAWMode              = $false
-        DisableMemCompression= $true
-        DisableFSE           = $true
-        NvidiaLowLatency     = $false
-        NoKernelPaging       = $true
-        DisableUSBSuspend    = $true
-        NoHypervisor         = $true
-        RemoveWebViewPostOOBE= $false
-        FastExport           = $false
-        UefiOnly             = $false
-        CpuBoostMode         = 'Efficient'
-        BypassActivationRestrictions = $true
-        RadicalRAM           = $true
-        TweakGroups          = [ordered]@{
-            NetworkStack   = $true
-            TimerBCD       = $true
-            GPULatency     = $true
-            ServiceTrim    = $true
-        }
-    }
-    'vm' = [ordered]@{
-        ProfileName          = 'VM & Developer Workstation'
-        Description          = 'Configured for virtual machines and developers: WSL2 & Hyper-V enabled.'
-        RemoveDefender       = $false
-        KeepAsianIME         = $true
-        KeepExtraFonts       = $true
-        RemoveDrivers        = $false
-        DisableWindowsUpdate = $false
-        KeepBluetooth        = $false
-        WSLSupport           = $true
-        KeepRecoveryEnv      = $true
-        SafeDebloatMode      = $true
-        UltraSlimMode        = $false
-        SetJapaneseKeyboard  = $false
-        AtlasReviOSMode      = $false
-        RemoveStore          = $false
-        KeepBasicApps        = $true
-        KeepSearchIndex      = $true
-        KeepXboxServices     = $false
-        KeepAudioTweaks      = $false
-        PayloadFormat        = 'WIM'
-        UseVHDX              = $false
-        PowerPreset          = 'VM'
-        RemoveLegacyFOD      = $false
-        TrimWallpapers       = $false
-        HibernateMode        = 'Off'
-        CrashDumpMode        = 'Automatic'
-        DisableCPUMitigations= $false
-        MMCSSGaming          = $false
-        DAWMode              = $false
-        DisableMemCompression= $false
-        DisableFSE           = $false
-        NvidiaLowLatency     = $false
-        NoKernelPaging       = $false
-        DisableUSBSuspend    = $false
-        NoHypervisor         = $false
-        RemoveWebViewPostOOBE= $false
-        FastExport           = $false
-        UefiOnly             = $false
-        CpuBoostMode         = 'Aggressive'
-        BypassActivationRestrictions = $true
-        RadicalRAM           = $true
-        TweakGroups          = [ordered]@{
-            NetworkStack   = $true
-            TimerBCD       = $true
-            GPULatency     = $true
-            ServiceTrim    = $false
-        }
-    }
-    'audio' = [ordered]@{
-        ProfileName          = 'Audio & DAW Production'
-        Description          = 'Pro Audio MMCSS priority, zero DPC latency spikes, VST compatibility protected.'
-        RemoveDefender       = $true
-        KeepAsianIME         = $true
-        KeepExtraFonts       = $true
-        RemoveDrivers        = $false
-        DisableWindowsUpdate = $true
-        KeepBluetooth        = $false
-        WSLSupport           = $false
-        KeepRecoveryEnv      = $false
-        SafeDebloatMode      = $true
-        UltraSlimMode        = $false
-        SetJapaneseKeyboard  = $true
-        AtlasReviOSMode      = $true
-        RemoveStore          = $false
-        KeepBasicApps        = $true
-        KeepSearchIndex      = $false
-        KeepXboxServices     = $false
-        KeepAudioTweaks      = $true
-        PayloadFormat        = 'WIM'
-        UseVHDX              = $false
-        PowerPreset          = 'Desktop'
-        RemoveLegacyFOD      = $false
-        TrimWallpapers       = $false
-        HibernateMode        = 'Off'
-        CrashDumpMode        = 'Small'
-        DisableCPUMitigations= $false
-        MMCSSGaming          = $false
-        DAWMode              = $true
-        DisableMemCompression= $false
-        DisableFSE           = $false
-        NvidiaLowLatency     = $false
-        NoKernelPaging       = $true
-        DisableUSBSuspend    = $true
-        NoHypervisor         = $true
-        RemoveWebViewPostOOBE= $false
-        FastExport           = $false
-        UefiOnly             = $false
-        CpuBoostMode         = 'Aggressive'
-        BypassActivationRestrictions = $true
-        RadicalRAM           = $true
-        TweakGroups          = [ordered]@{
-            NetworkStack   = $false
-            TimerBCD       = $true
-            GPULatency     = $false
-            ServiceTrim    = $true
-        }
-    }
+$presetFile = Import-PowerShellDataFile -LiteralPath $script:BuiltInPresetsPath
+$script:BuiltInPresets = [ordered]@{}
+foreach ($presetKey in @($presetFile.PresetOrder)) {
+    if ($presetFile.Presets.Contains($presetKey)) { $script:BuiltInPresets[$presetKey] = $presetFile.Presets[$presetKey] }
 }
+# a preset that is not in the order list is still valid (a user preset for example)
+foreach ($presetKey in @($presetFile.Presets.Keys)) {
+    if (-not $script:BuiltInPresets.Contains($presetKey)) { $script:BuiltInPresets[$presetKey] = $presetFile.Presets[$presetKey] }
+}
+# The descriptive names of the presets (config\presets.psd1 -> Aliases) plus the numbered
+# shortcuts of the interactive menu.
+$script:BuiltInPresetAliases = [ordered]@{
+    '1' = 'extreme'
+    '2' = 'balanced'
+    '3' = 'fat32'
+    '4' = 'handheld'
+    '5' = 'vm'
+    '6' = 'audio'
+}
+foreach ($aliasKey in @($presetFile.Aliases.Keys)) { $script:BuiltInPresetAliases[[string]$aliasKey] = [string]$presetFile.Aliases[$aliasKey] }
 
 # M2: Load user presets now that BuiltInPresets is defined
 try {
@@ -1029,31 +836,8 @@ function Get-WinEasePreset {
     param([string]$Name)
     if (-not $Name) { return $script:BuiltInPresets['extreme'] }
     $clean = $Name.Trim().ToLower()
-    $aliasMap = @{
-        '1'          = 'extreme'
-        'extreme'    = 'extreme'
-        'gaming'     = 'extreme'
-        'slim'       = 'extreme'
-        '2'          = 'balanced'
-        'balanced'   = 'balanced'
-        'safe'       = 'balanced'
-        'pro'        = 'balanced'
-        '3'          = 'fat32'
-        'fat32'      = 'fat32'
-        'split'      = 'fat32'
-        'splitwim'   = 'fat32'
-        '4'          = 'handheld'
-        'handheld'   = 'handheld'
-        'ally'       = 'handheld'
-        'deck'       = 'handheld'
-        'legion'     = 'handheld'
-        '5'          = 'vm'
-        'dev'        = 'vm'
-        'developer'  = 'vm'
-        '6'          = 'audio'
-        'daw'        = 'audio'
-        'dtm'        = 'audio'
-    }
+        # The descriptive names and the numbered shortcuts come from config\presets.psd1.
+        $aliasMap = $script:BuiltInPresetAliases
     $targetKey = if ($aliasMap.ContainsKey($clean)) { $aliasMap[$clean] } else { $clean }
     if ($script:BuiltInPresets.Contains($targetKey)) {
         return $script:BuiltInPresets[$targetKey]
@@ -1094,17 +878,70 @@ function Apply-ProfileSettings {
         return $defaultVal
     }
 
+    # The effective configuration is resolved in one place (Resolve-WinEaseConfiguration):
+    # the base defaults, then the preset, then the explicit settings of the user. An
+    # individual setting always wins, so a preset never overrules it.
+    $sourceIsProfile = [bool]$ProfileObject
+    $baseComponents = [ordered]@{}
+    $presetComponents = [ordered]@{}
+    $overrideComponents = [ordered]@{}
     foreach ($cd in $script:ComponentDefs.Values) {
         # Components without a Default (SourceDrive, SkipEiCfg, ...) are not applied from a profile
         if ($cd.Type -eq 'Special' -or -not $cd.ContainsKey('Default')) { continue }
-        $raw = & $getVal $cd.Key $cd.Default
-        $val = if ($cd.Type -eq 'String') { $raw.ToString() } else { [bool]$raw }
+        $baseComponents[$cd.Key] = if ($cd.Type -eq 'String') { [string]$cd.Default } else { [bool]$cd.Default }
+        $raw = & $getVal $cd.Key $null
+        if ($null -eq $raw) { continue }
+        if ($sourceIsProfile) { $overrideComponents[$cd.Key] = $raw } else { $presetComponents[$cd.Key] = $raw }
+    }
+    # the explicit settings of the user (command line) win over everything
+    foreach ($k in $script:ConfigOverrides.Keys) { $overrideComponents[$k] = $script:ConfigOverrides[$k] }
+    $resolvedComponents = Resolve-WinEaseConfiguration -Base $baseComponents -Preset $presetComponents -Overrides $overrideComponents
+    foreach ($k in $resolvedComponents.Components.Keys) {
+        $cd = $script:ComponentDefs[$k]
+        $val = if ($cd.Type -eq 'String') { "$($resolvedComponents.Components[$k])" } else { [bool]$resolvedComponents.Components[$k] }
         Set-Variable -Name $cd.Variable -Scope Script -Value $val
     }
     $advStd = & $getVal 'AdvancedDebloatStandard' $null
     if ($advStd) { $script:advancedDebloatStandard = @($advStd) } else { $script:advancedDebloatStandard = @() }
     $advExp = & $getVal 'AdvancedDebloatExperimental' $null
     if ($advExp) { $script:advancedDebloatExperimental = @($advExp) } else { $script:advancedDebloatExperimental = @() }
+
+    # Older profiles still contain the "Physical: <target>" entries that were merged into
+    # the standard list. They are mapped onto the canonical target and keep the Rust engine.
+    $legacyEngines = [ordered]@{}
+    $normStd = @()
+    foreach ($raw in @($script:advancedDebloatStandard)) {
+        $item = ConvertTo-WinEaseDebloatTarget -Item ([string]$raw)
+        if (-not $item) { continue }
+        if ($item -ne [string]$raw) { $legacyEngines[$item] = 'Rust' }
+        $normStd += $item
+    }
+    $normExp = @()
+    foreach ($raw in @($script:advancedDebloatExperimental)) {
+        $item = ConvertTo-WinEaseDebloatTarget -Item ([string]$raw)
+        if (-not $item) { continue }
+        if ($item -ne [string]$raw) { $legacyEngines[$item] = 'Rust' }
+        $normExp += $item
+    }
+    $script:advancedDebloatStandard  = @($normStd | Where-Object { $_ } | Select-Object -Unique)
+    $script:advancedDebloatExperimental = @($normExp | Where-Object { $_ } | Select-Object -Unique)
+
+    # Engine selection (PowerShell <-> Rust) per target
+    $script:DebloatEngineSelection = [ordered]@{}
+    $engineSel = & $getVal 'DebloatEngineSelection' $null
+    if ($engineSel) {
+        $map = @{}
+        if ($engineSel -is [System.Collections.IDictionary]) {
+            foreach ($k in $engineSel.Keys) { $map[[string]$k] = [string]$engineSel[$k] }
+        } else {
+            foreach ($p in $engineSel.PSObject.Properties) { $map[[string]$p.Name] = [string]$p.Value }
+        }
+        Set-WinEaseDebloatEngineSelection -Selection $map
+    }
+    # A merged legacy entry always keeps the Rust engine, unless the profile picked one
+    foreach ($k in $legacyEngines.Keys) {
+        if (-not $script:DebloatEngineSelection.Contains($k)) { $script:DebloatEngineSelection[$k] = $legacyEngines[$k] }
+    }
 
     # Modular Tweak Groups
     $tGroups = & $getVal 'TweakGroups' $null
@@ -1124,9 +961,12 @@ function Apply-ProfileSettings {
     elseif ($fmt -eq 'SWM') { $script:splitWIMMode = $true; $script:exportESDMode = $false }
     else { $script:exportESDMode = $false; $script:splitWIMMode = $false }
 
-    $script:TweakSettings = [ordered]@{}
+    # The individual tweaks follow the same three layers as the components.
+    $tweakBase = [ordered]@{}
+    $tweakPreset = [ordered]@{}
+    $tweakOverride = [ordered]@{}
     foreach ($tk in $script:AllTweakDefs.Keys) {
-        $script:TweakSettings[$tk] = [bool]$script:AllTweakDefs[$tk].Default
+        $tweakBase[$tk] = [bool]$script:AllTweakDefs[$tk].Default
     }
     $tweakOverrides = & $getVal 'TweakSettings' $null
     if ($tweakOverrides) {
@@ -1134,14 +974,14 @@ function Apply-ProfileSettings {
             foreach ($k in $tweakOverrides.Keys) {
                 $rk = Resolve-WinEaseTweakKey $k
                 if ($script:AllTweakDefs.Contains($rk)) {
-                    $script:TweakSettings[$rk] = [bool]$tweakOverrides[$k]
+                    if ($sourceIsProfile) { $tweakOverride[$rk] = [bool]$tweakOverrides[$k] } else { $tweakPreset[$rk] = [bool]$tweakOverrides[$k] }
                 }
             }
         } elseif ($tweakOverrides.PSObject) {
             foreach ($prop in $tweakOverrides.PSObject.Properties) {
                 $rk = Resolve-WinEaseTweakKey $prop.Name
                 if ($script:AllTweakDefs.Contains($rk)) {
-                    $script:TweakSettings[$rk] = [bool]$prop.Value
+                    if ($sourceIsProfile) { $tweakOverride[$rk] = [bool]$prop.Value } else { $tweakPreset[$rk] = [bool]$prop.Value }
                 }
             }
         }
@@ -1149,7 +989,7 @@ function Apply-ProfileSettings {
     foreach ($k in $script:AllTweakDefs.Keys) {
         $val = & $getVal $k $null
         if ($null -ne $val) {
-            $script:TweakSettings[$k] = [bool]$val
+            $tweakOverride[$k] = [bool]$val
         }
     }
     return $targetPreset
@@ -1358,28 +1198,16 @@ if (-not $NonInteractive -and -not $GUI -and -not $isDryRunMode) {
 Write-Host ""
 Write-Host "--- Customization Settings ---" -ForegroundColor Green
 
-# 1. Initialize recommended baseline defaults
-$removeDefender = $true
-$keepAsianIME = $true
-$keepExtraFonts = $true
-$removeDrivers = $false
-$disableWU = $true
-$keepBT = $true
-$wslSupport = $false
-$keepRecoveryEnv = $false
-$safeDebloatMode = $true
-$ultraSlimMode = $true
-$setJapaneseKeyboard = $true
-$atlasReviOSMode = $true
+# 1. The defaults of the components come from config\schema.psd1 - the single source of
+#    truth. A preset (config\presets.psd1), a profile or the command line overwrites them
+#    below; an explicit setting of the user always wins (Resolve-WinEaseConfiguration).
+foreach ($cd in $script:ComponentDefs.Values) {
+    if ($cd.Type -eq 'Special' -or -not $cd.ContainsKey('Default')) { continue }
+    $val = if ($cd.Type -eq 'String') { [string]$cd.Default } else { [bool]$cd.Default }
+    Set-Variable -Name $cd.Variable -Scope Script -Value $val
+}
 $exportESDMode = $false
 $splitWIMMode = $false
-$removeStore = $false
-$keepXboxServices = $false
-$keepAudioTweaks = $false
-$bypassActivationRestrictions = $true
-$radicalRAM = $true
-$mmcssGaming = $true     # Games MMCSS task tuning (matches the 'extreme' baseline above)
-$dawMode = $false        # Pro Audio MMCSS task tuning
 $selectedProfile = $null
 
 # 2. Track explicitly supplied CLI parameters from bound parameters snapshot
@@ -1446,6 +1274,7 @@ function Invoke-WinEaseGuiSession {
         TweakSettings                = $script:TweakSettings
         AdvancedDebloatStandard      = $script:advancedDebloatStandard
         AdvancedDebloatExperimental  = $script:advancedDebloatExperimental
+        DebloatEngineSelection       = $script:DebloatEngineSelection
     }
     # Services & Apps tab checkboxes
     foreach ($cd in $script:ComponentDefs.Values) {
@@ -1494,6 +1323,24 @@ function Invoke-WinEaseGuiSession {
 
     if ($guiResult.AdvancedDebloatStandard)     { $script:advancedDebloatStandard     = @($guiResult.AdvancedDebloatStandard) }     else { $script:advancedDebloatStandard     = @() }
     if ($guiResult.AdvancedDebloatExperimental) { $script:advancedDebloatExperimental = @($guiResult.AdvancedDebloatExperimental) } else { $script:advancedDebloatExperimental = @() }
+
+    # Engine selection (PowerShell <-> Rust) per target. Entries for targets that are not
+    # selected, or that the target does not support, are dropped.
+    $script:DebloatEngineSelection = [ordered]@{}
+    if ($guiResult.DebloatEngineSelection) {
+        $engineMap = @{}
+        if ($guiResult.DebloatEngineSelection -is [System.Collections.IDictionary]) {
+            foreach ($k in $guiResult.DebloatEngineSelection.Keys) { $engineMap[[string]$k] = [string]$guiResult.DebloatEngineSelection[$k] }
+        } else {
+            foreach ($p in $guiResult.DebloatEngineSelection.PSObject.Properties) { $engineMap[[string]$p.Name] = [string]$p.Value }
+        }
+        Set-WinEaseDebloatEngineSelection -Selection $engineMap
+    }
+    $rustCount = @($script:advancedDebloatStandard + $script:advancedDebloatExperimental |
+        Where-Object { (Resolve-WinEaseDebloatEngine -Item ([string]$_)) -eq 'Rust' }).Count
+    if ($rustCount -gt 0) {
+        Write-Host "Debloat engine: $rustCount target(s) run on the Rust engine (forced physical deletion)." -ForegroundColor Yellow
+    }
 
     # Explicit Physical Debloat Consent Gate
     # The GUI windows (WinUI 3 and the classic WinForms window) both ask for this consent
@@ -1566,7 +1413,7 @@ $getBoundVal = {
     return [bool]$v
 }
 
-# Paired Keep/Remove-style switches, driven by CliBindings in config\tweaks.psd1
+# Paired Keep/Remove-style switches, driven by CliBindings in config\schema.psd1
 foreach ($cb in $script:WinEaseSettingsDef.CliBindings) {
     foreach ($grp in $cb.Switches) {
         $hit = @($grp.Names | Where-Object { $bound.ContainsKey($_) }) | Select-Object -First 1
@@ -1574,6 +1421,11 @@ foreach ($cb in $script:WinEaseSettingsDef.CliBindings) {
         $val = & $getBoundVal $hit
         if ($grp.Invert) { $val = -not $val }
         Set-Variable -Name $cb.Variable -Value $val
+        # The command line is the explicit setting of the user: a preset that is applied
+        # later must not overrule it.
+        foreach ($cd in $script:ComponentDefs.Values) {
+            if ($cd.Variable -eq $cb.Variable) { $script:ConfigOverrides[$cd.Key] = $val }
+        }
         if ($grp.Also) { foreach ($ak in $grp.Also.Keys) { Set-Variable -Name $ak -Value $grp.Also[$ak] } }
         [void]$cliBound.Add($cb.Tag)
         break
@@ -1581,27 +1433,31 @@ foreach ($cb in $script:WinEaseSettingsDef.CliBindings) {
 }
 
 # 21. Advanced Modular Optimization Tweak Toggles overrides
-# Components marked CliSwitch in config\tweaks.psd1: a [switch] named like the key sets its variable
+# Components marked CliSwitch in config\schema.psd1: a [switch] named like the key sets its variable
 foreach ($cd in $script:ComponentDefs.Values) {
     if ($cd.CliSwitch -and (& $isAnyBound @($cd.Key))) {
-        Set-Variable -Name $cd.Variable -Scope Script -Value (& $getBoundVal $cd.Key)
+        $cdValue = (& $getBoundVal $cd.Key)
+        Set-Variable -Name $cd.Variable -Scope Script -Value $cdValue
+        $script:ConfigOverrides[$cd.Key] = $cdValue
         [void]$cliBound.Add($cd.Key)
     }
 }
 if ($bound.ContainsKey('HibernateMode'))     { $hibernateMode   = $bound['HibernateMode'];          [void]$cliBound.Add('HibernateMode') }
 if ($bound.ContainsKey('CrashDumpMode'))     { $crashDumpMode   = $bound['CrashDumpMode'];          [void]$cliBound.Add('CrashDumpMode') }
-if ($bound.ContainsKey('CpuBoostMode') -and $bound['CpuBoostMode'] -ne 'Default') { $cpuBoostMode = $bound['CpuBoostMode']; [void]$cliBound.Add('CpuBoostMode') }
-if ($bound.ContainsKey('PowerPreset') -and $bound['PowerPreset'] -ne 'Default')   { $powerPreset   = $bound['PowerPreset'];   [void]$cliBound.Add('PowerPreset') }
 
 # Override script:TweakSettings from CLI switches or -TweakSettings argument
 if ($bound.ContainsKey('TweakSettings') -and $bound['TweakSettings']) {
     if ($bound['TweakSettings'] -is [hashtable]) {
         foreach ($k in $bound['TweakSettings'].Keys) {
-            $script:TweakSettings[(Resolve-WinEaseTweakKey $k)] = [bool]$bound['TweakSettings'][$k]
+            $rk = Resolve-WinEaseTweakKey $k
+            $script:TweakSettings[$rk] = [bool]$bound['TweakSettings'][$k]
+            $script:TweakOverrides[$rk] = [bool]$bound['TweakSettings'][$k]
         }
     } elseif ($bound['TweakSettings'] -is [PSCustomObject]) {
         foreach ($p in $bound['TweakSettings'].PSObject.Properties) {
-            $script:TweakSettings[(Resolve-WinEaseTweakKey $p.Name)] = [bool]$p.Value
+            $rk = Resolve-WinEaseTweakKey $p.Name
+            $script:TweakSettings[$rk] = [bool]$p.Value
+            $script:TweakOverrides[$rk] = [bool]$p.Value
         }
     }
 }
@@ -1609,6 +1465,7 @@ if ($script:AllTweakDefs) {
     foreach ($tk in $script:AllTweakDefs.Keys) {
         if ($bound.ContainsKey($tk)) {
             $script:TweakSettings[$tk] = [bool]$bound[$tk]
+            $script:TweakOverrides[$tk] = [bool]$bound[$tk]
         }
     }
 }
@@ -1950,6 +1807,8 @@ $resolvedConfig = [PSCustomObject]@{
     KeepXboxServices           = $keepXboxServices
     KeepAudioTweaks            = $keepAudioTweaks
     AllowPhysicalDebloat       = [bool]$allowPhysicalDebloat
+    AdvancedDebloatStandard    = @($script:advancedDebloatStandard)
+    AdvancedDebloatExperimental = @($script:advancedDebloatExperimental)
     PayloadFormat              = if ($exportESDMode) { "ESD" } elseif ($splitWIMMode) { "SWM" } else { "WIM" }
     TweakSettings              = $script:TweakSettings
 }
@@ -2301,16 +2160,40 @@ if ($ResumeIsoOnly) {
 try {
     $phasesDir = Join-Path -Path $scriptDir -ChildPath "phases"
 
-    # Check configuration conflict matrix and auto-resolve
+    # Check the configuration for contradictions. The check itself only reports: it never
+    # changes a setting of the user (the "auto resolve" of an earlier version silently
+    # rewrote e.g. the Windows Update switch - AUD-14).
     Write-Host "Checking configuration conflict matrix..." -ForegroundColor Cyan
-    $conflictCheck = Test-WinEaseConfigConflicts -Config $resolvedConfig -AutoResolve
+    $conflictCheck = Test-WinEaseConfigConflicts -Config $resolvedConfig
     if ($conflictCheck.Conflicts.Count -gt 0) {
-        Write-Host "  Detected and auto-resolved $($conflictCheck.Conflicts.Count) configuration conflict(s):" -ForegroundColor Yellow
+        Write-Host "  Detected $($conflictCheck.Conflicts.Count) configuration conflict(s):" -ForegroundColor Yellow
         foreach ($cf in $conflictCheck.Conflicts) {
             Write-Host "    - [$($cf.Type)] $($cf.Rule): $($cf.Details) -> $($cf.Resolution)" -ForegroundColor Yellow
         }
     } else {
         Write-Host "  No configuration conflicts detected." -ForegroundColor Green
+    }
+
+    # The safeguards are applied here and reported: a "keep" request always wins over a
+    # selected debloat target, and the physical debloat needs its explicit consent.
+    $removedBySafeguard = [System.Collections.Generic.List[string]]::new()
+    foreach ($cf in $conflictCheck.Conflicts) {
+        if (-not $cf.Safeguard) { continue }
+        if ($cf.Safeguard.Action -eq 'ClearExperimental') {
+            $removedBySafeguard.AddRange(@($script:advancedDebloatExperimental))
+            $script:advancedDebloatExperimental = @()
+            if ($script:TweakSettings.Contains('PhysicalDebloat')) { $script:TweakSettings['PhysicalDebloat'] = $false }
+            Write-Host "  [Safety] The physical debloat needs the explicit consent (-AllowPhysicalDebloat): the experimental deletions were cleared." -ForegroundColor Yellow
+            continue
+        }
+        if ($cf.Safeguard.Action -eq 'RemoveItems') {
+            foreach ($item in @($cf.Safeguard.Items)) { if ($item) { $removedBySafeguard.Add([string]$item) } }
+        }
+    }
+    if ($removedBySafeguard.Count -gt 0) {
+        $script:advancedDebloatStandard     = @($script:advancedDebloatStandard     | Where-Object { $removedBySafeguard -notcontains $_ })
+        $script:advancedDebloatExperimental = @($script:advancedDebloatExperimental | Where-Object { $removedBySafeguard -notcontains $_ })
+        Write-Host "  [Safety] $($removedBySafeguard.Count) debloat target(s) were removed because a 'keep' request contradicts them." -ForegroundColor Yellow
     }
     # Sync resolved settings back to execution variables
     if ($conflictCheck.ResolvedConfig) {

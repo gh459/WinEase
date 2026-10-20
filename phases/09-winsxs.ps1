@@ -19,7 +19,14 @@ if (Test-Path -LiteralPath $ntoskrnlPath) {
     } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
 
-if ($safeDebloatMode) {
+# The Advanced Debloat target "WinSxS cleanup (/StartComponentCleanup /ResetBase)" asks for
+# the aggressive variant: it also resets the base, which the safe mode never does.
+$winSxSAggressive = $false
+if (Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue) {
+    $winSxSAggressive = Test-WinEaseDebloatTarget -Item 'WinSxS cleanup (/StartComponentCleanup /ResetBase) [1-3GB]'
+}
+
+if ($safeDebloatMode -and -not $winSxSAggressive) {
     Write-Host "Preserving component store integrity for 100% reliable Windows Setup deployment..." -ForegroundColor Green
     Write-Host "  -> Skipping unstable offline StartComponentCleanup (prevents 0x80070570 stream corruption at 77%)." -ForegroundColor Cyan
     Write-Host "  -> Disk space optimization is safely handled via Phase 13 Export-Image (/Compress:max)." -ForegroundColor Green
@@ -41,8 +48,8 @@ if ($safeDebloatMode) {
         } else {
             Write-Warning "  - Component Store cleanup exited with code $LASTEXITCODE (non-fatal, continuing)."
         }
-        if ($ForceWinSxSCleanup) {
-            Write-Host "Attempting /StartComponentCleanup /ResetBase (force mode)..." -ForegroundColor Cyan
+        if ($ForceWinSxSCleanup -or $winSxSAggressive) {
+            Write-Host "Attempting /StartComponentCleanup /ResetBase (aggressive mode)..." -ForegroundColor Cyan
             & dism.exe /English "/image:$scratchDir" /Cleanup-Image /StartComponentCleanup /ResetBase > $null 2>&1
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "  - ResetBase succeeded." -ForegroundColor Green

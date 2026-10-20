@@ -194,7 +194,6 @@ function Invoke-WinEaseResumeIsoBuild {
             ResumeMode       = $true
             KeepSearchIndex  = [bool]$keepSearchIndex
             DisableWindowsUpdate = [bool]$disableWU
-            PowerPreset      = $PowerPreset
             SourceDrive      = "(resume mode)"
             PayloadFormat    = if ($expectedPayloadFile -eq 'install.esd') { "ESD" } else { "WIM" }
         }

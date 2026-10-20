@@ -1,6 +1,14 @@
 & { try {
-  # Terminate rogue background sync processes
-  Stop-Process -Name 'SearchHost', 'CrossDeviceResume' -Force -ErrorAction SilentlyContinue;
+  # Terminate rogue background sync processes.
+  # The SearchHost termination follows the DisableWindowsSearchProcess option, the
+  # CrossDeviceResume termination follows DisableCrossDevice. Both used to run
+  # unconditionally for every user.
+  if (Test-Path 'C:\Windows\Setup\Scripts\disable-search-process.flag') {
+    Stop-Process -Name 'SearchHost' -Force -ErrorAction SilentlyContinue;
+  }
+  if (Test-Path 'C:\Windows\Setup\Scripts\disable-crossdevice.flag') {
+    Stop-Process -Name 'CrossDeviceResume' -Force -ErrorAction SilentlyContinue;
+  }
 
   # Remove SecHealthUI AppX package for current user if Defender was removed
   if (Test-Path 'C:\Windows\Setup\Scripts\remove-defender.flag') {

@@ -224,7 +224,7 @@ The GUI allows you to:
 - Select an auto-detected installation media drive or browse directly to an official Windows 11 `.iso` file.
 - Pick a one-click built-in profile preset (**Extreme Slim & Gaming**, **Balanced Pro**, **FAT32 USB Split-WIM**, **Portable Gaming PC**, **VM & Developer**, or **Audio & DAW Production**).
 - Toggle any of the debloat, localization, hardware injection, and modular performance options. Every tab has **Select All / Clear All** buttons, including both lists on the **Advanced Debloat** tab (Select All on the destructive Experimental list asks for confirmation).
-- Every switch shown in the GUI is defined in `config/tweaks.psd1` and is guaranteed to reach the build (covered by Pester wiring tests).
+- Every switch shown in the GUI is defined in `config/schema.psd1` and is guaranteed to reach the build (covered by Pester wiring tests).
 - Choose your payload format (**install.wim**, **install.esd**, or **install.swm** for FAT32 USB).
 - Toggle **High-Speed VHDX Scratch Disk** (`-UseVHDX`) to eliminate host fragmentation.
 - Open **Tab 8 "Migration & Backup"** to check recovery readiness, export an app inventory, estimate and run a backup/restore of personal folders, game saves and app settings, verify a backup (SHA-256), retry only failed restore tasks, diff any preset against the current window ("Preset Diff"), and switch on **Include Migration Assistant (PC-to-PC transfer tools)** (`-IncludeMigrationAssistant`). It also shows how many user extensions were loaded and any load errors. The migration engine is loaded the first time the tab is opened.
@@ -438,7 +438,7 @@ This working copy carries the following changes on top of the upstream fork:
 
 - **GUI settings now actually reach the build**: 24 tweak switches whose names did not match what Phase 10 read (or had no implementation), 7 variable-backed toggles such as `RadicalRAM` (previously always off), and 15 Advanced Debloat Standard items that were silently skipped are now wired through, implemented, or removed from the GUI. Older profiles using legacy key names keep working through aliases.
 - **Select All / Clear All buttons fixed and extended**: the buttons on tabs 2-5 did nothing; they now work, and the Advanced Debloat tab got them too.
-- **Single source of truth for settings**: every tweak and component setting lives in `config/tweaks.psd1`; the GUI, profiles and CLI switches are generated from it so names can no longer drift apart.
+- **Single source of truth for settings**: every tweak and component setting lives in `config/schema.psd1`; the GUI, profiles and CLI switches are generated from it so names can no longer drift apart.
 - **GUI split out**: the WinForms GUI moved to `gui/WinEaseGui.ps1` with shared control helpers (about 1,200 lines out of `WinEasebuilder.ps1`).
 - **Safer AppX folder cleanup**: no more recursive `takeown /R` / `icacls /T`; junctions are removed as links so deletion never follows them out of the image.
 - **Benchmark tooling**: `tools/Measure-WinEaseGuestBaseline.ps1` and `tools/Compare-WinEaseBenchmarks.ps1` measure and compare installed-system footprint, idle load and boot time.

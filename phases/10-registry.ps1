@@ -596,7 +596,6 @@ $serviceConfigs = [ordered]@{
     "Ndu"                                      = 4
     "PcaSvc"                                   = 4
     "PhoneSvc"                                 = 4
-    "PrintNotify"                              = 4
     "RemoteRegistry"                           = 4
     "RetailDemo"                               = 4
     "SCardSvr"                                 = 4
@@ -644,6 +643,48 @@ if ($disableWU -or (Test-TweakEnabled 'DisableWindowsUpdate' $false)) {
 if ([bool]$script:activeTweakGroups['ServiceTrim']) {
     foreach ($svc in $serviceConfigs.GetEnumerator()) {
         reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\$($svc.Key)" /f /v "Start" /t REG_DWORD /d $($svc.Value) > $null 2>&1
+    }
+}
+
+# The services of the components the Advanced Debloat tab removes. These used to be
+# printed in phase 09 and nothing else happened: the services stayed enabled, so the
+# items did not do what the GUI promised. They are applied on their own, because the
+# user asked for this component explicitly - they do not depend on the ServiceTrim group.
+function Set-WinEaseServiceStartIfPresent {
+    param([Parameter(Mandatory = $true)][string]$Name, [Parameter(Mandatory = $true)][int]$Start)
+    & reg.exe query "HKLM\zSYSTEM\ControlSet001\Services\$Name" > $null 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Verbose "Service $Name is not in the image - nothing to set."
+        return $false
+    }
+    & reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\$Name" /f /v "Start" /t REG_DWORD /d $Start > $null 2>&1
+    return $true
+}
+
+if (Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue) {
+    $advServices = [ordered]@{}
+    if (Test-WinEaseDebloatTarget -Item 'Remove Print Spooler (service + binary) [20-30MB]') {
+        $advServices["Spooler"] = 4
+        $advServices["PrintNotify"] = 4
+    }
+    if (Test-WinEaseDebloatTarget -Item 'Remove Bluetooth stack (service + binary) [20-40MB]') {
+        $advServices["bthserv"] = 4
+        $advServices["BthAvctpSvc"] = 4
+        $advServices["BluetoothUserService"] = 3
+    }
+    if (Test-WinEaseDebloatTarget -Item 'Remove Remote Desktop host (service + binary) [30-50MB]') {
+        $advServices["TermService"] = 4
+        $advServices["UmRdpService"] = 4
+    }
+    if (Test-WinEaseDebloatTarget -Item 'Remove touch/pen/ink components [20-30MB]') {
+        $advServices["TabletInputService"] = 4
+    }
+    if (Test-WinEaseDebloatTarget -Item 'Physical: BitLocker (complete removal) [~30-50MB]') {
+        $advServices["fvevc"] = 4
+    }
+    foreach ($svc in $advServices.GetEnumerator()) {
+        Write-Host "  - Disabling service: $($svc.Key) (Advanced Debloat)" -ForegroundColor Cyan
+        [void](Set-WinEaseServiceStartIfPresent -Name $svc.Key -Start $svc.Value)
     }
 }
 

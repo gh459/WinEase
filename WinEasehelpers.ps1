@@ -538,8 +538,6 @@ class BuildContext {
     [bool]$RemoveWebViewPostOOBE
     [bool]$FastExport
     [bool]$UefiOnly
-    [string]$CpuBoostMode
-    [string]$PowerPreset
     [bool]$BypassActivationRestrictions
     [bool]$RadicalRAM
     [bool]$AllowPhysicalDebloat
@@ -677,8 +675,6 @@ function New-BuildContextFromScriptScope {
     $ctx.RemoveWebViewPostOOBE = $removeWebViewPostOOBE
     $ctx.FastExport = $fastExport
     $ctx.UefiOnly = $uefiOnly
-    $ctx.CpuBoostMode = $cpuBoostMode
-    $ctx.PowerPreset = $powerPreset
     $ctx.BypassActivationRestrictions = $bypassActivationRestrictions
     $ctx.RadicalRAM = $radicalRAM
     $ctx.AllowPhysicalDebloat = if ($null -ne $allowPhysicalDebloat) { [bool]$allowPhysicalDebloat } elseif ($null -ne $script:AllowPhysicalDebloat) { [bool]$script:AllowPhysicalDebloat } else { $false }
@@ -1144,12 +1140,100 @@ function Write-WinEaseTextFileAtomic {
 # ==============================================================================
 # Helper function: Detect and resolve configuration conflicts across debloat selections and tweaks
 # ==============================================================================
+function Get-WinEaseOptionPolarity {
+    <#
+    .SYNOPSIS
+        The polarity of an option, derived from its key.
+    .DESCRIPTION
+        The convention of the whole configuration (config\schema.psd1):
+          Remove*  the option removes something        OFF = keep it
+          Disable* the option switches something off    OFF = leave it on
+          Enable*  the option switches something on     OFF = leave it off
+          Keep*    the option keeps something           ON  = keep it
+        Every other key is a plain feature switch: ON = the feature is active.
+
+        The "keep" options are the inverted ones: they are on by default and the user
+        switches them off to get the removal.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory=$true)][string]$Key)
+    if ($Key -match '^Remove') { return 'Remove' }
+    if ($Key -match '^Disable') { return 'Disable' }
+    if ($Key -match '^Enable') { return 'Enable' }
+    if ($Key -match '^Keep') { return 'Keep' }
+    return 'Feature'
+}
+function Resolve-WinEaseConfiguration {
+    <#
+    .SYNOPSIS
+        Resolves the effective configuration of a build.
+    .DESCRIPTION
+        The order of the three layers is fixed:
+          1. the base defaults (config\schema.psd1 / config\schema.psd1)
+          2. the preset (config\presets.psd1)
+          3. the individual settings of the user (profile, GUI, command line)
+
+        An individual setting always wins: an option the user set explicitly to $false
+        stays false, even when the preset switches it on. A "keep" request is never
+        overruled by a preset, and a preset never overrules the command line.
+    .PARAMETER Base
+        The defaults of the components.
+    .PARAMETER Preset
+        The values of the preset.
+    .PARAMETER Overrides
+        The explicit settings of the user. They win over the preset.
+    .PARAMETER TweakBase
+        The defaults of the individual tweaks.
+    .PARAMETER TweakPreset
+        The values of the preset for the individual tweaks.
+    .PARAMETER TweakOverrides
+        The explicit settings of the user for the individual tweaks.
+    .OUTPUTS
+        A PSCustomObject with the resolved Components and Tweaks.
+    #>
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [hashtable]$Base = @{},
+        [hashtable]$Preset = @{},
+        [hashtable]$Overrides = @{},
+        [hashtable]$TweakBase = @{},
+        [hashtable]$TweakPreset = @{},
+        [hashtable]$TweakOverrides = @{}
+    )
+    $components = [ordered]@{}
+    foreach ($k in $Base.Keys) { $components[$k] = $Base[$k] }
+    foreach ($k in $Preset.Keys) { if ($components.Contains($k)) { $components[$k] = $Preset[$k] } }
+    foreach ($k in $Overrides.Keys) { if ($components.Contains($k)) { $components[$k] = $Overrides[$k] } }
+
+    $tweaks = [ordered]@{}
+    foreach ($k in $TweakBase.Keys) { $tweaks[$k] = $TweakBase[$k] }
+    foreach ($k in $TweakPreset.Keys) { if ($tweaks.Contains($k)) { $tweaks[$k] = $TweakPreset[$k] } }
+    foreach ($k in $TweakOverrides.Keys) { if ($tweaks.Contains($k)) { $tweaks[$k] = $TweakOverrides[$k] } }
+
+    return [PSCustomObject]@{
+        Components = $components
+        Tweaks     = $tweaks
+    }
+}
 function Test-WinEaseConfigConflicts {
+    <#
+    .SYNOPSIS
+        Checks a configuration for contradictions. It never changes the settings.
+    .DESCRIPTION
+        The check is a pure validation: it reports what contradicts and what the
+        resolution would be, but it never writes a value back (AUD-14). A setting of the
+        user is never overruled silently.
+
+        A conflict can carry a safeguard: a resolution that protects the build and must
+        not be left to the user (a "keep" request that contradicts a selected debloat
+        target, or the physical debloat without its explicit consent). The builder
+        applies those safeguards and reports them.
+    #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory=$true)]
-        [object]$Config,
-        [switch]$AutoResolve
+        [object]$Config
     )
     $conflicts = [System.Collections.Generic.List[object]]::new()
     $warnings = [System.Collections.Generic.List[string]]::new()
@@ -1163,16 +1247,6 @@ function Test-WinEaseConfigConflicts {
             return $Config.PSObject.Properties[$key].Value
         }
         return $null
-    }
-    $setVal = {
-        param($key, $val)
-        if ($Config -is [System.Collections.IDictionary]) {
-            $Config[$key] = $val
-        } elseif ($Config.PSObject.Properties[$key]) {
-            $Config.PSObject.Properties[$key].Value = $val
-        } else {
-            $Config | Add-Member -NotePropertyName $key -NotePropertyValue $val -Force
-        }
     }
 
     $rawStd = & $getVal 'advancedDebloatStandard'
@@ -1192,26 +1266,15 @@ function Test-WinEaseConfigConflicts {
         }
         return $false
     }
-    $setTweak = {
-        param($tkey, $tval)
-        if ($tweakSettings -is [System.Collections.IDictionary]) {
-            $tweakSettings[$tkey] = [bool]$tval
-        } elseif ($tweakSettings -and $tweakSettings.PSObject.Properties[$tkey]) {
-            $tweakSettings.PSObject.Properties[$tkey].Value = [bool]$tval
-        }
-    }
 
     # 1. Edge conflict
     if (& $getVal 'KeepEdge') {
         $expEdge = $expItems | Where-Object { $_ -match 'Edge' }
         if ($expEdge) {
             $msg = "KeepEdge is true, but advancedDebloatExperimental contains '$($expEdge -join ', ')lib'."
-            $conf = [PSCustomObject]@{ Rule = "KeepEdge"; Type = "Browser"; Details = $msg; Resolution = "Removed Edge items from experimental debloat" }
+            $conf = [PSCustomObject]@{ Rule = "KeepEdge"; Type = "Browser"; Details = $msg; Resolution = "Removed Edge items from experimental debloat"; Safeguard = [PSCustomObject]@{ Action = "RemoveItems"; Items = @($expEdge) } }
             $conflicts.Add($conf)
             $warnings.Add("Conflict: $msg")
-            if ($AutoResolve) {
-                foreach ($item in @($expEdge)) { [void]$expItems.Remove($item) }
-            }
         }
     }
 
@@ -1220,12 +1283,9 @@ function Test-WinEaseConfigConflicts {
         $expDef = $expItems | Where-Object { $_ -match 'Defender|Firewall' }
         if ($expDef) {
             $msg = "Defender is kept, but advancedDebloatExperimental contains '$($expDef -join ', ')lib'."
-            $conf = [PSCustomObject]@{ Rule = "Defender"; Type = "Security"; Details = $msg; Resolution = "Removed Defender items from experimental debloat" }
+            $conf = [PSCustomObject]@{ Rule = "Defender"; Type = "Security"; Details = $msg; Resolution = "Removed Defender items from experimental debloat"; Safeguard = [PSCustomObject]@{ Action = "RemoveItems"; Items = @($expDef) } }
             $conflicts.Add($conf)
             $warnings.Add("Conflict: $msg")
-            if ($AutoResolve) {
-                foreach ($item in @($expDef)) { [void]$expItems.Remove($item) }
-            }
         }
     }
 
@@ -1234,12 +1294,9 @@ function Test-WinEaseConfigConflicts {
         $stdWinre = $stdItems | Where-Object { $_ -match 'WinRE' }
         if ($stdWinre) {
             $msg = "KeepRecoveryEnv is true, but advancedDebloatStandard contains '$($stdWinre -join ', ')lib'."
-            $conf = [PSCustomObject]@{ Rule = "WinRE"; Type = "Recovery"; Details = $msg; Resolution = "Removed WinRE removal from debloat" }
+            $conf = [PSCustomObject]@{ Rule = "WinRE"; Type = "Recovery"; Details = $msg; Resolution = "Removed WinRE removal from debloat"; Safeguard = [PSCustomObject]@{ Action = "RemoveItems"; Items = @($stdWinre) } }
             $conflicts.Add($conf)
             $warnings.Add("Conflict: $msg")
-            if ($AutoResolve) {
-                foreach ($item in @($stdWinre)) { [void]$stdItems.Remove($item) }
-            }
         }
     }
 
@@ -1248,12 +1305,9 @@ function Test-WinEaseConfigConflicts {
         $expSearch = $expItems | Where-Object { $_ -match 'Search index' }
         if ($expSearch) {
             $msg = "KeepSearchIndex is true, but advancedDebloatExperimental contains '$($expSearch -join ', ')lib'."
-            $conf = [PSCustomObject]@{ Rule = "SearchIndex"; Type = "System"; Details = $msg; Resolution = "Removed Search index removal from debloat" }
+            $conf = [PSCustomObject]@{ Rule = "SearchIndex"; Type = "System"; Details = $msg; Resolution = "Removed Search index removal from debloat"; Safeguard = [PSCustomObject]@{ Action = "RemoveItems"; Items = @($expSearch) } }
             $conflicts.Add($conf)
             $warnings.Add("Conflict: $msg")
-            if ($AutoResolve) {
-                foreach ($item in @($expSearch)) { [void]$expItems.Remove($item) }
-            }
         }
     }
 
@@ -1262,13 +1316,9 @@ function Test-WinEaseConfigConflicts {
         $stdXbox = $stdItems | Where-Object { $_ -match 'Xbox' }
         if ($stdXbox) {
             $msg = "KeepXboxServices is true, but debloat contains '$($stdXbox -join ', ')lib'."
-            $conf = [PSCustomObject]@{ Rule = "XboxServices"; Type = "Gaming"; Details = $msg; Resolution = "Removed Xbox debloat items" }
+            $conf = [PSCustomObject]@{ Rule = "XboxServices"; Type = "Gaming"; Details = $msg; Resolution = "Removed Xbox debloat items"; Safeguard = [PSCustomObject]@{ Action = "RemoveItems"; Items = @($stdXbox) + @($expItems | Where-Object { $_ -match 'Xbox' }) } }
             $conflicts.Add($conf)
             $warnings.Add("Conflict: $msg")
-            if ($AutoResolve) {
-                foreach ($item in @($stdXbox)) { [void]$stdItems.Remove($item) }
-                foreach ($item in @($expItems | Where-Object { $_ -match 'Xbox' })) { [void]$expItems.Remove($item) }
-            }
         }
     }
 
@@ -1278,13 +1328,9 @@ function Test-WinEaseConfigConflicts {
         $expBT = $expItems | Where-Object { $_ -match 'Bluetooth' }
         if ($stdBT -or $expBT) {
             $msg = "KeepBT is true, but debloat contains Bluetooth items."
-            $conf = [PSCustomObject]@{ Rule = "Bluetooth"; Type = "Hardware"; Details = $msg; Resolution = "Removed Bluetooth debloat items" }
+            $conf = [PSCustomObject]@{ Rule = "Bluetooth"; Type = "Hardware"; Details = $msg; Resolution = "Removed Bluetooth debloat items"; Safeguard = [PSCustomObject]@{ Action = "RemoveItems"; Items = @($stdBT) + @($expBT) } }
             $conflicts.Add($conf)
             $warnings.Add("Conflict: $msg")
-            if ($AutoResolve) {
-                foreach ($item in @($stdBT)) { [void]$stdItems.Remove($item) }
-                foreach ($item in @($expBT)) { [void]$expItems.Remove($item) }
-            }
         }
     }
 
@@ -1296,23 +1342,17 @@ function Test-WinEaseConfigConflicts {
 
     if ($storeRetained -and $disableWUVal) {
         $msg = "Microsoft Store is kept, but DisableWindowsUpdate is true. Store downloads/updates require Windows Update."
-        $conf = [PSCustomObject]@{ Rule = "StoreWindowsUpdateDependency"; Type = "Dependency"; Details = $msg; Resolution = "Set DisableWindowsUpdate = $false to ensure Store functionality" }
+        $conf = [PSCustomObject]@{ Rule = "StoreWindowsUpdateDependency"; Type = "Dependency"; Details = $msg; Resolution = "Set DisableWindowsUpdate = $false to ensure Store functionality"; Safeguard = $null }
         $conflicts.Add($conf)
         $warnings.Add("Conflict: $msg")
-        if ($AutoResolve) {
-            & $setVal 'DisableWindowsUpdate' $false
-        }
     }
 
     # 8. Store retention conflict (KeepStore vs RemoveStore)
     if ($keepStoreVal -and $removeStoreVal) {
         $msg = "KeepStore is true, but RemoveStore is also set to true."
-        $conf = [PSCustomObject]@{ Rule = "KeepStoreVsRemoveStore"; Type = "Logic"; Details = $msg; Resolution = "Set RemoveStore = $false (KeepStore takes precedence)" }
+        $conf = [PSCustomObject]@{ Rule = "KeepStoreVsRemoveStore"; Type = "Logic"; Details = $msg; Resolution = "Set RemoveStore = $false (KeepStore takes precedence)"; Safeguard = $null }
         $conflicts.Add($conf)
         $warnings.Add("Conflict: $msg")
-        if ($AutoResolve) {
-            & $setVal 'RemoveStore' $false
-        }
     }
 
     # 9. Physical Debloat Safety Gate (-AllowPhysicalDebloat guard)
@@ -1321,13 +1361,9 @@ function Test-WinEaseConfigConflicts {
     $hasPhysExp = ($expItems.Count -gt 0)
     if ((-not $allowPhys) -and ($physTweak -or $hasPhysExp)) {
         $msg = "Destructive physical debloat is requested, but -AllowPhysicalDebloat safety guard is not enabled."
-        $conf = [PSCustomObject]@{ Rule = "PhysicalDebloatSafetyGate"; Type = "Safety"; Details = $msg; Resolution = "Disabled PhysicalDebloat tweak and cleared experimental deletions" }
+        $conf = [PSCustomObject]@{ Rule = "PhysicalDebloatSafetyGate"; Type = "Safety"; Details = $msg; Resolution = "Disabled PhysicalDebloat tweak and cleared experimental deletions"; Safeguard = [PSCustomObject]@{ Action = "ClearExperimental" } }
         $conflicts.Add($conf)
         $warnings.Add("Conflict: $msg")
-        if ($AutoResolve) {
-            & $setTweak 'PhysicalDebloat' $false
-            $expItems.Clear()
-        }
     }
 
     # 10. Asian IME Preservation
@@ -1335,12 +1371,9 @@ function Test-WinEaseConfigConflicts {
         $imeItems = $stdItems | Where-Object { $_ -match 'IME' }
         if ($imeItems) {
             $msg = "KeepAsianIME is true, but debloat contains IME removal items."
-            $conf = [PSCustomObject]@{ Rule = "KeepAsianIME"; Type = "Localization"; Details = $msg; Resolution = "Removed IME removal items" }
+            $conf = [PSCustomObject]@{ Rule = "KeepAsianIME"; Type = "Localization"; Details = $msg; Resolution = "Removed IME removal items"; Safeguard = [PSCustomObject]@{ Action = "RemoveItems"; Items = @($imeItems) } }
             $conflicts.Add($conf)
             $warnings.Add("Conflict: $msg")
-            if ($AutoResolve) {
-                foreach ($item in @($imeItems)) { [void]$stdItems.Remove($item) }
-            }
         }
     }
 
@@ -1349,18 +1382,10 @@ function Test-WinEaseConfigConflicts {
         $fontItems = $stdItems | Where-Object { $_ -match 'font' }
         if ($fontItems) {
             $msg = "KeepExtraFonts is true, but debloat contains font removal items."
-            $conf = [PSCustomObject]@{ Rule = "KeepExtraFonts"; Type = "Localization"; Details = $msg; Resolution = "Removed font removal items" }
+            $conf = [PSCustomObject]@{ Rule = "KeepExtraFonts"; Type = "Localization"; Details = $msg; Resolution = "Removed font removal items"; Safeguard = [PSCustomObject]@{ Action = "RemoveItems"; Items = @($fontItems) } }
             $conflicts.Add($conf)
             $warnings.Add("Conflict: $msg")
-            if ($AutoResolve) {
-                foreach ($item in @($fontItems)) { [void]$stdItems.Remove($item) }
-            }
         }
-    }
-
-    if ($AutoResolve) {
-        & $setVal 'advancedDebloatStandard' ($stdItems.ToArray())
-        & $setVal 'advancedDebloatExperimental' ($expItems.ToArray())
     }
 
     return [PSCustomObject]@{
@@ -1368,6 +1393,7 @@ function Test-WinEaseConfigConflicts {
         Conflicts      = [object[]]$conflicts
         Warnings       = [string[]]$warnings
         ResolvedConfig = $Config
+        Safeguards     = @($conflicts | Where-Object { $_.Safeguard } | ForEach-Object { $_.Safeguard })
     }
 }
 

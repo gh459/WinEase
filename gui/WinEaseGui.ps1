@@ -162,7 +162,7 @@ function Set-WinEaseUiLanguage {
 }
 
 # Checkbox / tooltip text of a tweak: the language table, then DescriptionJa of a user tweak (Japanese only),
-# then the Description from config\tweaks.psd1
+# then the Description from config\schema.psd1
 function Get-WinEaseTweakDescription {
     param([Parameter(Mandatory = $true)][string]$Key, [Parameter(Mandatory = $true)][hashtable]$Def)
     $fallback = [string]$Def.Description
@@ -602,6 +602,237 @@ function Add-WinEaseSelectButtons {
     return @{ Select = $btnSelect; Clear = $btnClear }
 }
 
+# =========================================================================
+# Advanced Debloat: target selection + execution engine (PowerShell / Rust)
+# =========================================================================
+# The engine bindings come from config\schema.psd1 (DebloatEngines), the single source of
+# truth. The builder loads that table already; the GUI loads it itself when it runs
+# without the builder (the automated GUI tests do that).
+function Get-WinEaseDebloatEngineDefs {
+    if ($script:WinEaseDebloatEngineDefs) { return $script:WinEaseDebloatEngineDefs }
+    $defs = @{}
+    $source = $null
+    if ((Get-Variable -Name 'WinEaseDebloatEngines' -Scope Script -ErrorAction SilentlyContinue) -and $script:WinEaseDebloatEngines) {
+        $source = $script:WinEaseDebloatEngines
+    } else {
+        $cfgPath = Join-Path -Path $script:WinEaseGuiRepoRoot -ChildPath 'config\schema.psd1'
+        if (Test-Path -LiteralPath $cfgPath) {
+            try {
+                $cfg = Import-PowerShellDataFile -LiteralPath $cfgPath
+                $source = @{}
+                foreach ($d in @($cfg.DebloatEngines)) {
+                    if (-not $d -or -not $d.Item) { continue }
+                    $source[[string]$d.Item] = $d
+                }
+            } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        }
+    }
+    if ($source) {
+        foreach ($k in $source.Keys) {
+            $d = $source[$k]
+            $defs[[string]$k] = @{ Engines = @($d.Engines); Default = [string]$d.Default }
+        }
+    }
+    $script:WinEaseDebloatEngineDefs = $defs
+    return $defs
+}
+
+# The engine of a target: the user's choice wins, otherwise the registered default.
+function Get-WinEaseDebloatEngine {
+    param([string]$Item, [hashtable]$EngineDefs, [hashtable]$EngineSelection)
+    $allowed = @('PowerShell', 'Rust')
+    $fallback = 'PowerShell'
+    if ($EngineDefs -and $EngineDefs.Contains($Item)) {
+        $allowed = @($EngineDefs[$Item].Engines)
+        if ($EngineDefs[$Item].Default) { $fallback = [string]$EngineDefs[$Item].Default }
+    }
+    if ($EngineSelection -and $EngineSelection.Contains($Item)) {
+        $chosen = [string]$EngineSelection[$Item]
+        if ($allowed -contains $chosen) { return $chosen }
+    }
+    if ($allowed -contains $fallback) { return $fallback }
+    if ($allowed.Count -gt 0) { return [string]$allowed[0] }
+    return $fallback
+}
+
+# Locks the engine cell of one row. The engine is only editable while the target is
+# selected: an unselected target never runs, so there is no engine to pick.
+function Update-WinEaseDebloatRowState {
+    param(
+        [Parameter(Mandatory = $true)][object]$Grid,
+        [Parameter(Mandatory = $true)][int]$RowIndex,
+        [hashtable]$EngineDefs
+    )
+    if ($RowIndex -lt 0 -or $RowIndex -ge $Grid.Rows.Count) { return }
+    $row = $Grid.Rows[$RowIndex]
+    $item = [string]$row.Tag
+    $selected = [bool]$row.Cells['On'].Value
+    $allowed = @('PowerShell', 'Rust')
+    if ($EngineDefs -and $EngineDefs.Contains($item)) { $allowed = @($EngineDefs[$item].Engines) }
+    $cell = $row.Cells['Engine']
+    $locked = (-not $selected) -or ($allowed.Count -le 1)
+    $cell.ReadOnly = $locked
+    if ($locked) {
+        $cell.Style.ForeColor = $script:WinEaseGuiColors.Muted
+    } else {
+        $cell.Style.ForeColor = $script:WinEaseGuiColors.Text
+    }
+    $cell.Style.BackColor = $script:WinEaseGuiColors.Input
+}
+
+# One row per Advanced Debloat target: the checkbox selects the target, the Engine column
+# picks the engine that removes it (PowerShell = safe, Rust = forced physical deletion).
+function New-WinEaseDebloatGrid {
+    param(
+        [string[]]$Items = @(),
+        [object[]]$Selected = @(),
+        [hashtable]$EngineDefs = @{},
+        [hashtable]$EngineSelection = @{},
+        [switch]$Fill,
+        [int]$X, [int]$Y, [int]$Width, [int]$Height,
+        [System.Drawing.Font]$Font,
+        [object]$Parent
+    )
+    $grid = New-Object System.Windows.Forms.DataGridView
+    if ($Fill) {
+        $grid.Dock = [System.Windows.Forms.DockStyle]::Fill
+    } else {
+        $grid.Location = New-Object System.Drawing.Point($X, $Y)
+        $grid.Size = New-Object System.Drawing.Size($Width, $Height)
+    }
+    if ($Font) { $grid.Font = $Font }
+    $grid.AllowUserToAddRows = $false
+    $grid.AllowUserToDeleteRows = $false
+    $grid.AllowUserToResizeRows = $false
+    $grid.RowHeadersVisible = $false
+    $grid.SelectionMode = [System.Windows.Forms.DataGridViewSelectionMode]::CellSelect
+    $grid.MultiSelect = $false
+    $grid.BackgroundColor = $script:WinEaseGuiColors.Input
+    $grid.BorderStyle = [System.Windows.Forms.BorderStyle]::None
+    $grid.GridColor = $script:WinEaseGuiColors.Input
+    $grid.EnableHeadersVisualStyles = $false
+    $grid.ColumnHeadersBorderStyle = [System.Windows.Forms.DataGridViewHeaderBorderStyle]::None
+    $grid.DefaultCellStyle.BackColor = $script:WinEaseGuiColors.Input
+    $grid.DefaultCellStyle.ForeColor = $script:WinEaseGuiColors.Text
+    $grid.DefaultCellStyle.SelectionBackColor = $script:WinEaseGuiColors.Input
+    $grid.DefaultCellStyle.SelectionForeColor = $script:WinEaseGuiColors.Text
+    $grid.ColumnHeadersDefaultCellStyle.BackColor = $script:WinEaseGuiColors.Input
+    $grid.ColumnHeadersDefaultCellStyle.ForeColor = $script:WinEaseGuiColors.Text
+    $grid.ColumnHeadersHeight = 22
+
+    $colOn = New-Object System.Windows.Forms.DataGridViewCheckBoxColumn
+    $colOn.Name = 'On'
+    $colOn.HeaderText = ''
+    $colOn.Width = 32
+    $colOn.Resizable = [System.Windows.Forms.DataGridViewTriState]::False
+    $colOn.SortMode = [System.Windows.Forms.DataGridViewColumnSortMode]::NotSortable
+
+    $colTarget = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
+    $colTarget.Name = 'Target'
+    $colTarget.HeaderText = (Get-WinEaseUiString 'Debloat.Column.Target' -Default 'Target')
+    $colTarget.AutoSizeMode = [System.Windows.Forms.DataGridViewAutoSizeColumnMode]::Fill
+    $colTarget.SortMode = [System.Windows.Forms.DataGridViewColumnSortMode]::NotSortable
+
+    $colEngine = New-Object System.Windows.Forms.DataGridViewComboBoxColumn
+    $colEngine.Name = 'Engine'
+    $colEngine.HeaderText = (Get-WinEaseUiString 'Debloat.Column.Engine' -Default 'Engine')
+    $colEngine.Width = 108
+    $colEngine.Resizable = [System.Windows.Forms.DataGridViewTriState]::False
+    $colEngine.SortMode = [System.Windows.Forms.DataGridViewColumnSortMode]::NotSortable
+    $colEngine.DisplayStyle = [System.Windows.Forms.DataGridViewComboBoxDisplayStyle]::DropDownButton
+    [void]$colEngine.Items.Add('PowerShell')
+    [void]$colEngine.Items.Add('Rust')
+    [void]$grid.Columns.Add($colOn)
+    [void]$grid.Columns.Add($colTarget)
+    [void]$grid.Columns.Add($colEngine)
+
+    foreach ($item in $Items) {
+        $idx = $grid.Rows.Add()
+        $row = $grid.Rows[$idx]
+        $row.Tag = $item
+        $row.Cells['On'].Value = ($Selected -contains $item)
+        $row.Cells['Target'].Value = (Get-WinEaseDebloatItemText -Item $item)
+        $row.Cells['Engine'].Value = (Get-WinEaseDebloatEngine -Item $item -EngineDefs $EngineDefs -EngineSelection $EngineSelection)
+        $row.Cells['Target'].ToolTipText = $item
+    }
+
+    $grid.Add_CurrentCellDirtyStateChanged({
+        if ($this.IsCurrentCellDirty) {
+            [void]$this.CommitEdit([System.Windows.Forms.DataGridViewDataErrorContexts]::Commit)
+        }
+    })
+    $grid.Add_CellValueChanged({
+        $e = $args[0]
+        if (-not $e -or $e.RowIndex -lt 0) { return }
+        $defs = Get-WinEaseDebloatEngineDefs
+        if ($e.ColumnIndex -eq 0) {
+            Update-WinEaseDebloatRowState -Grid $this -RowIndex $e.RowIndex -EngineDefs $defs
+            # Selecting a target changes the build; the preset becomes "Custom" and the
+            # size estimate is refreshed (same behaviour as the other checkboxes).
+            $form = $this.FindForm()
+            $gui = if ($form) { $form.Tag } else { $null }
+            if ($gui -and -not $script:updatingPreset) {
+                if ($gui.Preset -and $gui.Preset.Items.Count -gt 0) {
+                    $script:updatingPreset = $true
+                    $gui.Preset.SelectedIndex = ($gui.Preset.Items.Count - 1)
+                    $script:updatingPreset = $false
+                }
+                Update-WinEaseGuiEstimate -Gui $gui
+            }
+        }
+    })
+
+    if ($Parent) { $Parent.Controls.Add($grid) }
+    for ($i = 0; $i -lt $grid.Rows.Count; $i++) {
+        Update-WinEaseDebloatRowState -Grid $grid -RowIndex $i -EngineDefs $EngineDefs
+    }
+    return $grid
+}
+
+# Select All / Clear All for a debloat grid
+function Set-WinEaseDebloatGridChecked {
+    param([Parameter(Mandatory = $true)][object]$Grid, [bool]$Checked)
+    $defs = Get-WinEaseDebloatEngineDefs
+    for ($i = 0; $i -lt $Grid.Rows.Count; $i++) {
+        $Grid.Rows[$i].Cells['On'].Value = $Checked
+        Update-WinEaseDebloatRowState -Grid $Grid -RowIndex $i -EngineDefs $defs
+    }
+}
+
+# The selected targets and the engine of every target of a debloat grid
+function Get-WinEaseDebloatGridState {
+    param([Parameter(Mandatory = $true)][object]$Grid)
+    $selected = @()
+    $engines = @{}
+    for ($i = 0; $i -lt $Grid.Rows.Count; $i++) {
+        $row = $Grid.Rows[$i]
+        $item = [string]$row.Tag
+        if ([bool]$row.Cells['On'].Value) { $selected += $item }
+        $engines[$item] = [string]$row.Cells['Engine'].Value
+    }
+    return @{ Selected = $selected; Engines = $engines }
+}
+
+# The global engine switch: applies one engine to every target that supports it.
+function Set-WinEaseDebloatEngineForAll {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Grids,
+        [Parameter(Mandatory = $true)][ValidateSet('PowerShell', 'Rust')][string]$Engine
+    )
+    $defs = Get-WinEaseDebloatEngineDefs
+    foreach ($grid in $Grids) {
+        if (-not $grid) { continue }
+        for ($i = 0; $i -lt $grid.Rows.Count; $i++) {
+            $row = $grid.Rows[$i]
+            $item = [string]$row.Tag
+            $allowed = @('PowerShell', 'Rust')
+            if ($defs.Contains($item)) { $allowed = @($defs[$item].Engines) }
+            if ($allowed -notcontains $Engine) { continue }
+            $row.Cells['Engine'].Value = $Engine
+        }
+    }
+}
+
 # Toggle checkbox for one setting key. Changing it by hand switches the preset to Custom
 # and refreshes the size estimate (both found through the form's GUI context).
 function New-WinEaseToggleCheckBox {
@@ -665,86 +896,23 @@ function Show-AdvancedDebloatDialog {
         [switch]$NoShow
     )
 
-    $stdItems = @(
-        "Remove WinRE (reagentc /disable + file delete) [500-700MB]",
-        "Remove PatchCache (dir delete) [200-500MB]",
-        "Remove Delivery Optimization cache (dir delete) [100-500MB]",
-        "Remove non-Japanese language packs (DISM) [200-500MB]",
-        "Remove non-essential fonts (file delete) [50-100MB]",
-        "WinSxS cleanup (/StartComponentCleanup /ResetBase) [1-3GB]",
-        "Remove pagefile.sys (pagefile disable) [4-16GB]",
-        "Remove hiberfil.sys (powercfg /h off) [4-16GB]",
-        "Remove swapfile.sys (pagefile disable) [256MB-1GB]",
-        "Remove Provisioned AppX (list-based) [100-300MB]",
-        "Remove Windows Media Player (component) [50-100MB]",
-        "Remove Remote Desktop host (service + binary) [30-50MB]",
-        "Remove Bluetooth stack (service + binary) [20-40MB]",
-        "Remove Print Spooler (service + binary) [20-30MB]",
-        "Remove touch/pen/ink components [20-30MB]",
-        "Preserve accessibility tools for OOBE (IFEO-blocked after setup) [0MB]",
-        "Remove help files [10-20MB]",
-        "Remove non-Japanese IME [5-15MB]",
-        "Remove event logs [10-50MB]",
-        "Remove crash dumps [varies]",
-        "Remove Windows Store cache [varies]",
-        "Remove Provisioning packages [5-10MB]",
-        "Remove Windows Sandbox [10-20MB]",
-        "Remove WSL / VM Platform [20-40MB]",
-        "Remove .NET Framework 3.5 [100MB]",
-        "Remove Windows PowerShell ISE [5MB]",
-        "Remove Steps Recorder [2MB]",
-        "Remove Telnet/TFTP client [1MB]",
-        "Remove SNMP service [2MB]",
-        "Remove Windows Identity Foundation [10MB]",
-        "Remove Fax service [5MB]",
-        "Remove XPS Viewer [5MB]"
-    )
-
-    $expItems = @(
-        "Physical: Edge / WebView2 (complete removal) [~200MB]",
-        "Physical: Defender (complete removal) [~50MB]",
-        "Physical: Cortana / Search (complete removal) [~100MB]",
-        "Physical: OneDrive (complete removal) [~50MB]",
-        "Physical: Telemetry/DiagTrack (complete removal) [~30MB]",
-        "Physical: Hyper-V / Virtualization stack [~200-400MB]",
-        "Physical: IIS (Web server) [~50-100MB]",
-        "Physical: Windows Firewall (complete removal) [~20-40MB]",
-        "Physical: Bluetooth stack (complete removal) [~20-40MB]",
-        "Physical: Print Spooler (complete removal) [~20-30MB]",
-        "Physical: Touch/Pen/Ink (complete removal) [~20-30MB]",
-        "Physical: Accessibility tools (OOBE-safe: retained, IFEO-blocked) [0MB]",
-        "Physical: Windows Media Player (complete removal) [~50-100MB]",
-        "Physical: Remote Desktop host (OOBE-safe: Terminal Server keys retained) [~0MB]",
-        "Physical: BitLocker (complete removal) [~30-50MB]",
-        "Physical: Windows Sandbox (complete removal) [~10-20MB]",
-        "Physical: WSL / VM Platform (complete removal) [~20-40MB]",
-        "Physical: Help files (complete removal) [~10-20MB]",
-        "Physical: Crash dumps (complete removal) [varies]",
-        "Physical: Provisioning packages (complete removal) [~5-10MB]",
-        "Physical: Delivery Optimization (complete removal) [varies]",
-        "Physical: Windows Search index (complete removal) [varies]",
-        "Physical: Windows.old (complete removal) [varies]",
-        "Physical: Temp files (complete removal) [varies]",
-        "Physical: Installer cache PatchCache (complete removal) [varies]",
-        "Physical: pagefile.sys (disable + delete) [4-16GB]",
-        "Physical: hiberfil.sys (disable + delete) [4-16GB]",
-        "Physical: swapfile.sys (disable + delete) [256MB-1GB]",
-        "Physical: Memory.dmp (complete removal) [varies]",
-        "Physical: Minidump (complete removal) [varies]",
-        "Physical: Cortana / Search (complete removal) [~100MB]",
-        "Physical: OneDrive (complete removal) [~50MB]",
-        "Physical: Telemetry/DiagTrack (complete removal) [~30MB]",
-        "Physical: Hyper-V / Virtualization stack [~200-400MB]",
-        "Physical: IIS (Web server) [~50-100MB]",
-        "Physical: Windows Firewall (complete removal) [~20-40MB]",
-        "Physical: Bluetooth stack (complete removal) [~20-40MB]",
-        "Physical: Print Spooler (complete removal) [~20-30MB]",
-        "Physical: Touch/Pen/Ink (complete removal) [~20-30MB]",
-        "Physical: Accessibility tools (OOBE-safe: retained, IFEO-blocked) [0MB]",
-        "Physical: Windows Media Player (complete removal) [~50-100MB]",
-        "Physical: Remote Desktop host (OOBE-safe: Terminal Server keys retained) [~0MB]",
-        "Physical: BitLocker (complete removal) [~30-50MB]"
-    )
+    # The two debloat lists are defined once at script level
+    # ($script:WinEaseDebloatStandardItems / $script:WinEaseDebloatExperimentalItems) and
+    # used by both this dialog and the Advanced Debloat tab. They used to be duplicated
+    # here, and the copies had drifted apart (the dialog listed 43 experimental items
+    # while the tab listed 30), so some options were only reachable from one of the two.
+    $stdItems = $script:WinEaseDebloatStandardItems
+    $expItems = $script:WinEaseDebloatExperimentalItems
+    $engineDefs = Get-WinEaseDebloatEngineDefs
+    $engineSel = @{}
+    if ($InitialSettings -and $InitialSettings.DebloatEngineSelection) {
+        $rawEngine = $InitialSettings.DebloatEngineSelection
+        if ($rawEngine -is [System.Collections.IDictionary]) {
+            foreach ($k in $rawEngine.Keys) { $engineSel[[string]$k] = [string]$rawEngine[$k] }
+        } else {
+            foreach ($p in $rawEngine.PSObject.Properties) { $engineSel[[string]$p.Name] = [string]$p.Value }
+        }
+    }
 
     $dlgBack = $script:WinEaseGuiColors.DialogAlt
     $dlgFore = $script:WinEaseGuiColors.Text
@@ -754,12 +922,30 @@ function Show-AdvancedDebloatDialog {
 
     $tabControl = New-WinEaseTabControl -X 10 -Y 10 -Width 665 -Height 480 -Parent $dlg
 
+    # Global engine switch: applies one engine to every target that supports it
+    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Debloat.Engine.All') -X 10 -Y 495 -Width 135 -Height 20 `
+        -ForeColor $dlgFore -Font (New-Object System.Drawing.Font($UiFontName, 9)) -Parent $dlg)
+    $cmbAllEngine = New-WinEaseComboBox -Items @('PowerShell', 'Rust') -DropList -SelectedIndex 0 `
+        -X 150 -Y 492 -Width 115 -Height 24 -BackColor $script:WinEaseGuiColors.Input -ForeColor $dlgFore -Parent $dlg
+
     # Standard tab
     $tabStd = New-WinEaseTabPage -Text (Get-WinEaseUiString 'Dlg.Debloat.TabStandard') -TabControl $tabControl -BackColor $dlgBack
     $preStd = @()
     if ($InitialSettings -and $InitialSettings.AdvancedDebloatStandard) { $preStd = @($InitialSettings.AdvancedDebloatStandard) }
-    $clbStd = New-WinEaseCheckedList -Items $stdItems -Selected $preStd -DisplayText $script:WinEaseDebloatDisplayText -X 10 -Y 10 -Width 640 -Height 380 -Font $listFont -Parent $tabStd
-    [void](Add-WinEaseSelectButtons -Parent $tabStd -Target $clbStd -X 10 -Y 395 -Width 100 -Height 28 -ClearText (Get-WinEaseUiString 'Button.DeselectAll') -ForeColor $dlgFore)
+    $grdStd = New-WinEaseDebloatGrid -Items $stdItems -Selected $preStd -EngineDefs $engineDefs `
+        -EngineSelection $engineSel -X 10 -Y 10 -Width 640 -Height 380 -Font $listFont -Parent $tabStd
+    $onSelectStd = {
+        $t = $this.Tag
+        Set-WinEaseDebloatGridChecked -Grid $t.Grid -Checked $t.Checked
+    }
+    $onClearStd = {
+        $t = $this.Tag
+        Set-WinEaseDebloatGridChecked -Grid $t.Grid -Checked $t.Checked
+    }
+    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.SelectAll') -X 10 -Y 395 -Width 100 -Height 28 -ForeColor $dlgFore -Parent $tabStd `
+        -Tag @{ Grid = $grdStd; Checked = $true } -OnClick $onSelectStd)
+    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.DeselectAll') -X 115 -Y 395 -Width 100 -Height 28 -ForeColor $dlgFore -Parent $tabStd `
+        -Tag @{ Grid = $grdStd; Checked = $false } -OnClick $onClearStd)
 
     # Experimental tab
     $tabExp = New-WinEaseTabPage -Text (Get-WinEaseUiString 'Dlg.Debloat.TabExperimental') -TabControl $tabControl -BackColor $dlgBack
@@ -767,16 +953,38 @@ function Show-AdvancedDebloatDialog {
         -ForeColor $script:WinEaseGuiColors.Danger -Font (New-Object System.Drawing.Font($UiFontName, 9, [System.Drawing.FontStyle]::Bold)) -Parent $tabExp)
     $preExp = @()
     if ($InitialSettings -and $InitialSettings.AdvancedDebloatExperimental) { $preExp = @($InitialSettings.AdvancedDebloatExperimental) }
-    $clbExp = New-WinEaseCheckedList -Items $expItems -Selected $preExp -DisplayText $script:WinEaseDebloatDisplayText -X 10 -Y 30 -Width 640 -Height 365 -Font $listFont -Parent $tabExp
-    [void](Add-WinEaseSelectButtons -Parent $tabExp -Target $clbExp -X 10 -Y 400 -Width 100 -Height 28 -ClearText (Get-WinEaseUiString 'Button.DeselectAll') -ForeColor $dlgFore)
+    $grdExp = New-WinEaseDebloatGrid -Items $expItems -Selected $preExp -EngineDefs $engineDefs `
+        -EngineSelection $engineSel -X 10 -Y 30 -Width 640 -Height 365 -Font $listFont -Parent $tabExp
+    $onSelectExp = {
+        $t = $this.Tag
+        Set-WinEaseDebloatGridChecked -Grid $t.Grid -Checked $t.Checked
+    }
+    $onClearExp = {
+        $t = $this.Tag
+        Set-WinEaseDebloatGridChecked -Grid $t.Grid -Checked $t.Checked
+    }
+    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.SelectAll') -X 10 -Y 400 -Width 100 -Height 28 -ForeColor $dlgFore -Parent $tabExp `
+        -Tag @{ Grid = $grdExp; Checked = $true } -OnClick $onSelectExp)
+    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.DeselectAll') -X 115 -Y 400 -Width 100 -Height 28 -ForeColor $dlgFore -Parent $tabExp `
+        -Tag @{ Grid = $grdExp; Checked = $false } -OnClick $onClearExp)
 
-    # Both lists travel on the dialog's Tag for the Preview / OK handlers
-    $dlg.Tag = @{ Std = $clbStd; Exp = $clbExp }
+    # Both grids travel on the dialog's Tag for the Preview / OK handlers
+    $dlg.Tag = @{ Std = $grdStd; Exp = $grdExp; Engine = $cmbAllEngine }
+
+    $cmbAllEngine.Add_SelectedIndexChanged({
+        $engine = [string]$this.SelectedItem
+        if (-not $engine) { return }
+        $t = $this.FindForm().Tag
+        if (-not $t) { return }
+        Set-WinEaseDebloatEngineForAll -Grids @($t.Std, $t.Exp) -Engine $engine
+    })
 
     [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.Preview') -X 10 -Y 500 -Width 100 -Height 30 -ForeColor $dlgFore -Parent $dlg -OnClick {
         $t = $this.FindForm().Tag
-        $stdSel = Get-WinEaseCheckedItems -List $t.Std
-        $expSel = Get-WinEaseCheckedItems -List $t.Exp
+        $stdState = Get-WinEaseDebloatGridState -Grid $t.Std
+        $expState = Get-WinEaseDebloatGridState -Grid $t.Exp
+        $stdSel = @($stdState.Selected)
+        $expSel = @($expState.Selected)
         $msg = (Get-WinEaseUiString 'Dlg.Debloat.Preview.Selected' -Format $stdSel.Count, $expSel.Count) + "`n`n"
         $msg += (Get-WinEaseUiString 'Dlg.Debloat.Preview.Standard' -Format $stdSel.Count) + "`n"
         foreach ($s in $stdSel) { $msg += "  - $(Get-WinEaseDebloatItemText -Item $s)`n" }
@@ -791,8 +999,12 @@ function Show-AdvancedDebloatDialog {
     # OK / Cancel
     [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.OK') -X 480 -Y 500 -Width 90 -Height 30 -BackColor $script:WinEaseGuiColors.Primary -Parent $dlg -OnClick {
         $f = $this.FindForm()
-        $script:advDebloatStd = Get-WinEaseCheckedItems -List $f.Tag.Std
-        $script:advDebloatExp = Get-WinEaseCheckedItems -List $f.Tag.Exp
+        $stdState = Get-WinEaseDebloatGridState -Grid $f.Tag.Std
+        $expState = Get-WinEaseDebloatGridState -Grid $f.Tag.Exp
+        $script:advDebloatStd = @($stdState.Selected)
+        $script:advDebloatExp = @($expState.Selected)
+        $script:advDebloatEngines = $stdState.Engines
+        foreach ($k in $expState.Engines.Keys) { $script:advDebloatEngines[$k] = $expState.Engines[$k] }
         $f.DialogResult = [System.Windows.Forms.DialogResult]::OK
         $f.Close()
     })
@@ -807,9 +1019,9 @@ function Show-AdvancedDebloatDialog {
     $dlg.TopMost = $true
     $result = $dlg.ShowDialog()
     if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
-        return @{ Success = $true; StandardSelected = $script:advDebloatStd; ExperimentalSelected = $script:advDebloatExp }
+        return @{ Success = $true; StandardSelected = $script:advDebloatStd; ExperimentalSelected = $script:advDebloatExp; EngineSelection = $script:advDebloatEngines }
     }
-    return @{ Success = $false; StandardSelected = @(); ExperimentalSelected = @() }
+    return @{ Success = $false; StandardSelected = @(); ExperimentalSelected = @(); EngineSelection = @{} }
 }
 
 # =========================================================================
@@ -983,11 +1195,21 @@ function Get-WinEaseGuiDraftConfig {
     }
     $cfg['TweakSettings'] = $resolvedTweaks
     $stdSelected = @()
-    if ($Gui.ClbStd) { foreach ($item in $Gui.ClbStd.CheckedItems) { $stdSelected += (Get-WinEaseListItemValue $item) } }
     $expSelected = @()
-    if ($Gui.ClbExp) { foreach ($item in $Gui.ClbExp.CheckedItems) { $expSelected += (Get-WinEaseListItemValue $item) } }
+    $engineSel = @{}
+    if ($Gui.GrdStd) {
+        $st = Get-WinEaseDebloatGridState -Grid $Gui.GrdStd
+        $stdSelected = @($st.Selected)
+        $engineSel = $st.Engines
+    }
+    if ($Gui.GrdExp) {
+        $st = Get-WinEaseDebloatGridState -Grid $Gui.GrdExp
+        $expSelected = @($st.Selected)
+        foreach ($k in $st.Engines.Keys) { $engineSel[$k] = $st.Engines[$k] }
+    }
     $cfg['AdvancedDebloatStandard'] = $stdSelected
     $cfg['AdvancedDebloatExperimental'] = $expSelected
+    $cfg['DebloatEngineSelection'] = $engineSel
     return $cfg
 }
 
@@ -1224,13 +1446,33 @@ function Complete-WinEaseGuiResult {
     }
     $formResult.TweakSettings = $resolvedTweaks
 
-    # Advanced Debloat items
+    # Advanced Debloat items and the engine that removes them
     $stdSelected = @()
-    foreach ($item in $Gui.ClbStd.CheckedItems) { $stdSelected += (Get-WinEaseListItemValue $item) }
     $expSelected = @()
-    foreach ($item in $Gui.ClbExp.CheckedItems) { $expSelected += (Get-WinEaseListItemValue $item) }
+    $engineSelection = [ordered]@{}
+    if ($Gui.GrdStd) {
+        $st = Get-WinEaseDebloatGridState -Grid $Gui.GrdStd
+        $stdSelected = @($st.Selected)
+        $engineSelection = $st.Engines
+    }
+    if ($Gui.GrdExp) {
+        $st = Get-WinEaseDebloatGridState -Grid $Gui.GrdExp
+        $expSelected = @($st.Selected)
+        foreach ($k in $st.Engines.Keys) { $engineSelection[$k] = $st.Engines[$k] }
+    }
     $formResult.AdvancedDebloatStandard     = $stdSelected
     $formResult.AdvancedDebloatExperimental = $expSelected
+    # Only the targets that run on another engine than their registered default are saved,
+    # so a profile stays small and the default is restored automatically for the rest.
+    $engineDefs = Get-WinEaseDebloatEngineDefs
+    $engineDelta = [ordered]@{}
+    foreach ($k in $engineSelection.Keys) {
+        $engine = [string]$engineSelection[$k]
+        $default = 'PowerShell'
+        if ($engineDefs.Contains($k) -and $engineDefs[$k].Default) { $default = [string]$engineDefs[$k].Default }
+        if ($engine -ne $default) { $engineDelta[$k] = $engine }
+    }
+    $formResult.DebloatEngineSelection = $engineDelta
 
     # Physical debloat consent. The WinUI 3 window asks for this itself (it owns the
     # confirmation dialog), the classic WinForms window did not, so the builder ended up
@@ -1365,7 +1607,7 @@ function New-WinEaseTweakTabs {
         [System.Windows.Forms.ToolTip]$ToolTip
     )
     # =========================================================================
-    # TABS 2-5: tweak toggles from config\tweaks.psd1, one tab per category
+    # TABS 2-5: tweak toggles from config\schema.psd1, one tab per category
     # =========================================================================
     foreach ($cat in @(
         @((Get-WinEaseUiString 'Tab.Security'), "Security"),
@@ -1407,7 +1649,7 @@ function New-WinEaseServicesTab {
     # =========================================================================
     $page = New-WinEaseToggleTab -Text (Get-WinEaseUiString 'Tab.Services') -TabControl $tabControl
 
-    # Components with a Gui entry in config\tweaks.psd1, in their Gui.Order
+    # Components with a Gui entry in config\schema.psd1, in their Gui.Order
     $svcDefs = @($script:ComponentDefs.Values | Where-Object { $_.Gui -and $_.Gui.Tab -ne 'Migration' } | Sort-Object { [int]$_.Gui.Order } | ForEach-Object {
         @{ Key = $_.Key; Text = (Get-WinEaseUiString -Key "Component.$($_.Key).Text" -Default $_.Gui.Text); Desc = (Get-WinEaseUiString -Key "Component.$($_.Key).Description" -Default $_.Gui.Description); Def = [bool]$_.Gui.Default }
     })
@@ -1467,26 +1709,10 @@ $script:WinEaseDebloatExperimentalItems = @(
     "Physical: Hyper-V / Virtualization stack [~200-400MB]",
     "Physical: IIS (Web server) [~50-100MB]",
     "Physical: Windows Firewall (complete removal) [~20-40MB]",
-    "Physical: Bluetooth stack (complete removal) [~20-40MB]",
-    "Physical: Print Spooler (complete removal) [~20-30MB]",
-    "Physical: Touch/Pen/Ink (complete removal) [~20-30MB]",
-    "Physical: Accessibility tools (OOBE-safe: retained, IFEO-blocked) [0MB]",
-    "Physical: Windows Media Player (complete removal) [~50-100MB]",
-    "Physical: Remote Desktop host (OOBE-safe: Terminal Server keys retained) [~0MB]",
     "Physical: BitLocker (complete removal) [~30-50MB]",
-    "Physical: Windows Sandbox (complete removal) [~10-20MB]",
-    "Physical: WSL / VM Platform (complete removal) [~20-40MB]",
-    "Physical: Help files (complete removal) [~10-20MB]",
-    "Physical: Crash dumps (complete removal) [varies]",
-    "Physical: Provisioning packages (complete removal) [~5-10MB]",
-    "Physical: Delivery Optimization (complete removal) [varies]",
     "Physical: Windows Search index (complete removal) [varies]",
     "Physical: Windows.old (complete removal) [varies]",
     "Physical: Temp files (complete removal) [varies]",
-    "Physical: Installer cache PatchCache (complete removal) [varies]",
-    "Physical: pagefile.sys (disable + delete) [4-16GB]",
-    "Physical: hiberfil.sys (disable + delete) [4-16GB]",
-    "Physical: swapfile.sys (disable + delete) [256MB-1GB]",
     "Physical: Memory.dmp (complete removal) [varies]",
     "Physical: Minidump (complete removal) [varies]"
 )
@@ -1504,33 +1730,68 @@ function New-WinEaseDebloatTab {
     # =========================================================================
     $stdItems = $script:WinEaseDebloatStandardItems
     $expItems = $script:WinEaseDebloatExperimentalItems
+    $engineDefs = Get-WinEaseDebloatEngineDefs
+    $engineSel = @{}
+    if ($InitialSettings -and $InitialSettings.DebloatEngineSelection) {
+        $rawEngine = $InitialSettings.DebloatEngineSelection
+        if ($rawEngine -is [System.Collections.IDictionary]) {
+            foreach ($k in $rawEngine.Keys) { $engineSel[[string]$k] = [string]$rawEngine[$k] }
+        } else {
+            foreach ($p in $rawEngine.PSObject.Properties) { $engineSel[[string]$p.Name] = [string]$p.Value }
+        }
+    }
 
     $preStd = @()
     if ($InitialSettings.AdvancedDebloatStandard) { $preStd = @($InitialSettings.AdvancedDebloatStandard) }
     $preExp = @()
     if ($InitialSettings.AdvancedDebloatExperimental) { $preExp = @($InitialSettings.AdvancedDebloatExperimental) }
 
-    $tabDebloat = New-WinEaseTabPage -Text (Get-WinEaseUiString 'Tab.Debloat') -TabControl $tabControl
+    $tabDebloat = New-WinEaseTabPage -Text (Get-WinEaseUiString 'Tab.Debloat') -TabControl $TabControl
     $barDeb = New-WinEaseButtonBar -Parent $tabDebloat
-    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Debloat.Notice') -X 15 -Y 11 -Width 650 -Height 20 `
+    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Debloat.Notice') -X 15 -Y 11 -Width 430 -Height 20 `
         -ForeColor $script:WinEaseGuiColors.Warn -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $barDeb)
+    # Global engine switch: applies one engine to every target that supports it
+    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Debloat.Engine.All') -X 455 -Y 11 -Width 135 -Height 20 `
+        -ForeColor $script:WinEaseGuiColors.Text -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $barDeb)
+    $cmbAllEngine = New-WinEaseComboBox -Items @('PowerShell', 'Rust') -DropList -SelectedIndex 0 `
+        -X 590 -Y 8 -Width 115 -Height 22 -BackColor $script:WinEaseGuiColors.Input -ForeColor $script:WinEaseGuiColors.Text -Parent $barDeb
     $flowDeb = New-WinEaseFlowPanel -Parent $tabDebloat
 
     # Standard Debloat group
     $grpStdDeb = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'Debloat.Group.Standard') -Width 410 -Height 480 -Parent $flowDeb
-    $gui.ClbStd = New-WinEaseCheckedList -Items $stdItems -Selected $preStd -DisplayText $script:WinEaseDebloatDisplayText -Fill -Parent $grpStdDeb
+    $gui.GrdStd = New-WinEaseDebloatGrid -Items $stdItems -Selected $preStd -EngineDefs $engineDefs `
+        -EngineSelection $engineSel -Fill -Parent $grpStdDeb
 
     # Experimental Debloat group
     $grpExpDeb = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'Debloat.Group.Experimental') -Width 410 -Height 480 `
         -ForeColor $script:WinEaseGuiColors.Danger -Parent $flowDeb
-    $gui.ClbExp = New-WinEaseCheckedList -Items $expItems -Selected $preExp -DisplayText $script:WinEaseDebloatDisplayText -Fill -Parent $grpExpDeb
+    $gui.GrdExp = New-WinEaseDebloatGrid -Items $expItems -Selected $preExp -EngineDefs $engineDefs `
+        -EngineSelection $engineSel -Fill -Parent $grpExpDeb
 
     # Select All / Clear All bar at the bottom of each debloat group
-    foreach ($pair in @(@($grpStdDeb, $gui.ClbStd, $null), @($grpExpDeb, $gui.ClbExp, (Get-WinEaseUiString 'Debloat.ConfirmSelectExperimental')))) {
+    foreach ($pair in @(@($grpStdDeb, $gui.GrdStd, $null), @($grpExpDeb, $gui.GrdExp, (Get-WinEaseUiString 'Debloat.ConfirmSelectExperimental')))) {
         $barList = New-WinEaseButtonBar -Parent $pair[0] -Dock Bottom -Height 34 -BackColor $null
         $pair[1].BringToFront()
-        [void](Add-WinEaseSelectButtons -Parent $barList -Target $pair[1] -X 5 -Y 4 -Step 100 -ConfirmSelect $pair[2])
+        $onSelect = {
+            $t = $this.Tag
+            if ($t.Confirm -and -not (Confirm-WinEaseGuiAction -Message $t.Confirm)) { return }
+            Set-WinEaseDebloatGridChecked -Grid $t.Grid -Checked $t.Checked
+        }
+        [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.SelectAll') -X 5 -Y 4 -Width 95 -Height 26 `
+            -Tag @{ Grid = $pair[1]; Checked = $true; Confirm = $pair[2] } -OnClick $onSelect -Parent $barList)
+        [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.ClearAll') -X 105 -Y 4 -Width 95 -Height 26 `
+            -Tag @{ Grid = $pair[1]; Checked = $false; Confirm = $null } -OnClick $onSelect -Parent $barList)
     }
+
+    # The global engine switch applies to both lists at once
+    $cmbAllEngine.Add_SelectedIndexChanged({
+        $engine = [string]$this.SelectedItem
+        if (-not $engine) { return }
+        $form = $this.FindForm()
+        $guiCtx = if ($form) { $form.Tag } else { $null }
+        if (-not $guiCtx) { return }
+        Set-WinEaseDebloatEngineForAll -Grids @($guiCtx.GrdStd, $guiCtx.GrdExp) -Engine $engine
+    })
 }
 
 # Tab 8, right column: backup / restore / verify / estimate action buttons
@@ -1723,7 +1984,7 @@ function New-WinEaseMigrationTab {
     $tabMigration = New-WinEaseTabPage -Text (Get-WinEaseUiString 'Tab.Migration') -TabControl $tabControl
     $flowMig = New-WinEaseFlowPanel -Parent $tabMigration
 
-    # Top card: Post-Install Migration Assistant (a component switch from config\tweaks.psd1, Gui.Tab = 'Migration')
+    # Top card: Post-Install Migration Assistant (a component switch from config\schema.psd1, Gui.Tab = 'Migration')
     $grpAssist = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'Mig.Group.Assistant') -Width 840 -Height 60 -Parent $flowMig
     $asDef = $script:ComponentDefs['IncludeMigrationAssistant']
     if ($asDef -and $asDef.Gui) {
@@ -1936,7 +2197,10 @@ function Initialize-WinEaseGuiContent {
     $initPresetName = "$($InitialSettings.PresetKey)".Trim().ToLower()
     $initPresetIdx = [array]::IndexOf($initPresetKeys, $initPresetName)
     if ($initPresetIdx -lt 0) {
-        $initPresetIdx = if ($initPresetName) { $cmbPreset.Items.Count - 1 } else { 0 }
+        # No preset was chosen yet: the window starts on the safe "balanced" preset and every
+        # debloat target runs on the safe PowerShell engine. A preset that was chosen
+        # explicitly (a profile, the command line) is never overridden.
+        $initPresetIdx = if ($initPresetName) { $cmbPreset.Items.Count - 1 } else { 1 }
     }
     $cmbPreset.SelectedIndex = $initPresetIdx
 

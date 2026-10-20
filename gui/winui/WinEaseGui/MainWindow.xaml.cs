@@ -42,6 +42,8 @@ public sealed partial class MainWindow : Window
     private readonly Dictionary<string, bool> _components = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _debloatStd = new();
     private readonly HashSet<string> _debloatExp = new();
+    // The engine (PowerShell / Rust) the user picked for an Advanced Debloat target
+    private readonly Dictionary<string, string> _debloatEngines = new(StringComparer.Ordinal);
     private List<string> _sources;
     private string _migRoot;
     private readonly HashSet<string> _migFolders = new() { "Documents", "Desktop", "Pictures" };
@@ -101,11 +103,18 @@ public sealed partial class MainWindow : Window
         foreach (var cd in _init.Components) _components[cd.Key] = initComponents.TryGetValue(cd.Key, out bool v) ? v : cd.Default;
         foreach (var s in InitData.StrList(ini["AdvancedDebloatStandard"])) _debloatStd.Add(s);
         foreach (var s in InitData.StrList(ini["AdvancedDebloatExperimental"])) _debloatExp.Add(s);
+        // The engine the user picked for a target (the rest runs on the registered default)
+        foreach (var kv in (ini["DebloatEngineSelection"] as JsonObject) ?? new JsonObject())
+        {
+            if (kv.Value is JsonValue v && v.TryGetValue(out string? engine) && engine is not null) _debloatEngines[kv.Key] = engine;
+        }
 
-        // Preset: a built-in key selects that entry, any other name selects Custom, nothing selects the first one
+        // Preset: a built-in key selects that entry, any other name selects Custom, nothing selects the safe one
         string presetKey = InitData.Str(ini["PresetKey"]).Trim().ToLowerInvariant();
         int idx = _init.Presets.FindIndex(p => p.Key == presetKey);
-        if (idx < 0) idx = presetKey.Length > 0 ? PresetLabelKeys.Length - 1 : 0;
+        // No preset was chosen yet: start on the safe "balanced" preset (index 1); every debloat
+        // target then runs on the safe PowerShell engine. An explicit preset is never overridden.
+        if (idx < 0) idx = presetKey.Length > 0 ? PresetLabelKeys.Length - 1 : 1;
         _presetIndex = idx;
         _basePresetKey = idx < _init.Presets.Count ? _init.Presets[idx].Key : null;
     }
@@ -453,7 +462,7 @@ public sealed partial class MainWindow : Window
     }
 
     // =======================================================================================================
-    // Pages 2-5 and 9: tweak switches from config\tweaks.psd1 (and config\user\user-tweaks.psd1)
+    // Pages 2-5 and 9: tweak switches from config\schema.psd1 (and config\user\user-tweaks.psd1)
     // =======================================================================================================
     private string TweakDescription(TweakDef t)
     {
@@ -501,7 +510,7 @@ public sealed partial class MainWindow : Window
     }
 
     // =======================================================================================================
-    // Page 6: component switches (config\tweaks.psd1 Components with a Gui entry)
+    // Page 6: component switches (config\schema.psd1 Components with a Gui entry)
     // =======================================================================================================
     private string ComponentText(ComponentDef c) => _s.Get($"Component.{c.Key}.Text", c.Text);
     private string ComponentDescription(ComponentDef c) => _s.Get($"Component.{c.Key}.Description", c.Description);
@@ -536,9 +545,29 @@ public sealed partial class MainWindow : Window
             Severity = InfoBarSeverity.Warning,
             Message = _s.Get("Debloat.Notice"),
         });
+        // Global engine switch: applies one engine to every target that supports it
+        var allRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 0, 0, 6) };
+        allRow.Children.Add(new TextBlock { Text = _s.Get("Debloat.Engine.All"), VerticalAlignment = VerticalAlignment.Center });
+        var allCombo = new ComboBox { MinWidth = 140, SelectedIndex = 0 };
+        allCombo.Items.Add("PowerShell");
+        allCombo.Items.Add("Rust");
+        allCombo.SelectionChanged += (_, _) =>
+        {
+            if (allCombo.SelectedIndex < 0) return;
+            string engine = allCombo.SelectedIndex == 0 ? "PowerShell" : "Rust";
+            foreach (var kv in _debloatEngineRows) SetDebloatEngine(kv.Key, engine, kv.Value.Combo);
+        };
+        allRow.Children.Add(allCombo);
+        PageHost.Children.Add(allRow);
+
         AddDebloatList(_s.Get("Debloat.Group.Standard"), _init.DebloatStandard, _debloatStd, null, danger: false);
         AddDebloatList(_s.Get("Debloat.Group.Experimental"), _init.DebloatExperimental, _debloatExp, _s.Get("Debloat.ConfirmSelectExperimental"), danger: true);
     }
+
+    // One row of the Advanced Debloat list: the checkbox selects the target, the combo picks the
+    // engine that removes it. The combo is locked while the target is not selected, because an
+    // unselected target never runs (invariant: OFF protects the target from both engines).
+    private readonly Dictionary<string, (ComboBox Combo, CheckBox Box)> _debloatEngineRows = new(StringComparer.Ordinal);
 
     private void AddDebloatList(string title, List<string> items, HashSet<string> selected, string? confirmSelectAll, bool danger)
     {
@@ -559,13 +588,57 @@ public sealed partial class MainWindow : Window
         foreach (string item in items.Distinct())
         {
             string value = item;
-            var cb = new CheckBox { Content = _s.Get("Debloat:" + item, item), IsChecked = selected.Contains(item) };
-            cb.Checked += (_, _) => selected.Add(value);
-            cb.Unchecked += (_, _) => selected.Remove(value);
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 0, 0, 2) };
+            var cb = new CheckBox { Content = _s.Get("Debloat:" + item, item), IsChecked = selected.Contains(item), MinWidth = 380 };
+            cb.Checked += (_, _) => { selected.Add(value); UpdateDebloatEngineState(value); };
+            cb.Unchecked += (_, _) => { selected.Remove(value); UpdateDebloatEngineState(value); };
             boxes.Add(cb);
-            panel.Children.Add(cb);
+            row.Children.Add(cb);
+
+            var combo = new ComboBox { MinWidth = 120, HorizontalAlignment = HorizontalAlignment.Left };
+            foreach (string eng in DebloatEnginesFor(value)) combo.Items.Add(eng);
+            combo.SelectedIndex = 0;
+            combo.SelectionChanged += (_, _) => { if (combo.SelectedIndex >= 0) SetDebloatEngine(value, (string)combo.SelectedItem, combo); };
+            row.Children.Add(combo);
+            _debloatEngineRows[value] = (combo, cb);
+            panel.Children.Add(row);
         }
         PageHost.Children.Add(Card(panel));
+        foreach (var kv in _debloatEngineRows) UpdateDebloatEngineState(kv.Key);
+    }
+
+    // The engines a target supports (PowerShell and/or Rust)
+    private List<string> DebloatEnginesFor(string item)
+    {
+        if (_init.DebloatEngines.TryGetValue(item, out var def) && def.Engines.Count > 0) return def.Engines;
+        return new List<string> { "PowerShell", "Rust" };
+    }
+
+    // The engine of a target: the user's choice wins, otherwise the registered default
+    private string DebloatEngineOf(string item)
+    {
+        List<string> allowed = DebloatEnginesFor(item);
+        if (_debloatEngines.TryGetValue(item, out string? chosen) && allowed.Contains(chosen)) return chosen;
+        if (_init.DebloatEngines.TryGetValue(item, out var def) && def.Default.Length > 0 && allowed.Contains(def.Default)) return def.Default;
+        return allowed.Count > 0 ? allowed[0] : "PowerShell";
+    }
+
+    private void SetDebloatEngine(string item, string engine, ComboBox combo)
+    {
+        if (!DebloatEnginesFor(item).Contains(engine)) return;
+        _debloatEngines[item] = engine;
+        if (combo.SelectedItem is string current && current != engine) combo.SelectedItem = engine;
+    }
+
+    // The engine combo is only editable while the target is selected
+    private void UpdateDebloatEngineState(string item)
+    {
+        if (!_debloatEngineRows.TryGetValue(item, out var row)) return;
+        bool selected = row.Box.IsChecked == true;
+        bool single = DebloatEnginesFor(item).Count <= 1;
+        row.Combo.IsEnabled = selected && !single;
+        string engine = DebloatEngineOf(item);
+        if (row.Combo.SelectedItem is string current && current != engine) row.Combo.SelectedItem = engine;
     }
 
     // =======================================================================================================
@@ -795,6 +868,7 @@ public sealed partial class MainWindow : Window
         cfg["TweakSettings"] = tweaks;
         cfg["AdvancedDebloatStandard"] = ToArray(_init.DebloatStandard.Where(_debloatStd.Contains));
         cfg["AdvancedDebloatExperimental"] = ToArray(_init.DebloatExperimental.Where(_debloatExp.Contains).Distinct());
+        cfg["DebloatEngineSelection"] = DebloatEngineSelectionObject();
         return cfg;
     }
 
@@ -830,8 +904,25 @@ public sealed partial class MainWindow : Window
             ["TweakSettings"] = tweaks,
             ["AdvancedDebloatStandard"] = ToArray(_init.DebloatStandard.Where(_debloatStd.Contains)),
             ["AdvancedDebloatExperimental"] = ToArray(_init.DebloatExperimental.Where(_debloatExp.Contains).Distinct()),
+            ["DebloatEngineSelection"] = DebloatEngineSelectionObject(),
             ["PhysicalDebloatConsent"] = consent,
         };
+    }
+
+    // The engine per Advanced Debloat target. Only the targets that run on another engine than
+    // their registered default are reported, so the profile stays small.
+    private JsonObject DebloatEngineSelectionObject()
+    {
+        var engines = new JsonObject();
+        foreach (string item in _init.DebloatStandard.Concat(_init.DebloatExperimental).Distinct())
+        {
+            bool selected = _debloatStd.Contains(item) || _debloatExp.Contains(item);
+            if (!selected) continue;
+            string engine = DebloatEngineOf(item);
+            string fallback = _init.DebloatEngines.TryGetValue(item, out var def) ? def.Default : "PowerShell";
+            if (engine != fallback) engines[item] = engine;
+        }
+        return engines;
     }
 
     // =======================================================================================================
@@ -875,6 +966,7 @@ public sealed partial class MainWindow : Window
             {
                 _debloatStd.Clear();
                 _debloatExp.Clear();
+                _debloatEngines.Clear();
             }
         }
 

@@ -14,14 +14,23 @@ $scripts = @(
 	};
 	{
 		# Disable Computer Restore on System Drive
+		# Guarded by the DisableComputerRestore option: phase 11 only stages the flag when
+		# the option is enabled, because disabling System Restore removes the safety net the
+		# user may rely on.
 		try {
-			Disable-ComputerRestore -Drive "C:\" 2>$null;
+			if (Test-Path "C:\Windows\Setup\Scripts\disable-computer-restore.flag") {
+				Disable-ComputerRestore -Drive "C:\" 2>$null;
+			}
 		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Enable CompactOS NTFS Compression
+		# Guarded by the EnableCompactOS option: the flag is only staged by phase 11 when
+		# the option is enabled, so an image that must not be compressed simply has no flag.
 		try {
-			& Compact.exe /CompactOS:always 2>$null;
+			if (Test-Path "C:\Windows\Setup\Scripts\enable-compactos.flag") {
+				& Compact.exe /CompactOS:always 2>$null;
+			}
 		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
@@ -63,8 +72,10 @@ $scripts = @(
 	{
 		# NTFS I/O Overhead Reduction
 		try {
-			& fsutil.exe behavior set disablelastaccess 1 2>$null;
-			& fsutil.exe 8dot3name set 1 2>$null;
+			if (Test-Path "C:\Windows\Setup\Scripts\enable-ntfs8dot3.flag") {
+				& fsutil.exe behavior set disablelastaccess 1 2>$null;
+				& fsutil.exe 8dot3name set 1 2>$null;
+			}
 		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
@@ -330,25 +341,74 @@ $scripts = @(
 		# Cross-Device Resume enforcement: kill the resume host if it launched before IFEO applied,
 		# and re-assert the IFEO debugger block online (the executable is bundled inside the protected
 		# MicrosoftWindows.Client.CBS shell package, so it must be neutralized, never deleted).
+		# Guarded by the DisableCrossDevice option.
 		try {
-			Get-Process -Name CrossDeviceResume -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
-			New-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\CrossDeviceResume.exe' -Force -ErrorAction SilentlyContinue | Out-Null;
-			Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\CrossDeviceResume.exe' -Name 'Debugger' -Value 'rundll32.exe' -Force -ErrorAction SilentlyContinue;
+			if (Test-Path "C:\Windows\Setup\Scripts\disable-crossdevice.flag") {
+				Get-Process -Name CrossDeviceResume -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
+				New-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\CrossDeviceResume.exe' -Force -ErrorAction SilentlyContinue | Out-Null;
+				Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\CrossDeviceResume.exe' -Name 'Debugger' -Value 'rundll32.exe' -Force -ErrorAction SilentlyContinue;
+			}
 		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Accessibility tools enforcement (post-OOBE): osk.exe / Narrator.exe / Magnify.exe are
-		# RETAINED in System32 for OOBE stability (the offline debloat preserves them by design),
-		# but must never launch on the desktop. Execution is redirected to a harmless host via IFEO
-		# and any prematurely started instance is terminated.
+		# RETAINED in System32 for OOBE stability (the offline debloat preserves them by design).
+		# Blocking them is opt-in: the flag is only staged by phase 11 when the
+		# DisableAccessibilityTools option is enabled. Without the option these tools keep
+		# working normally on the desktop.
 		try {
-			foreach ($acc in 'osk.exe','Narrator.exe','Magnify.exe') {
-				$accKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$acc";
-				New-Item -Path $accKey -Force -ErrorAction SilentlyContinue | Out-Null;
-				Set-ItemProperty -LiteralPath $accKey -Name 'Debugger' -Value 'rundll32.exe' -Force -ErrorAction SilentlyContinue;
-				Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($acc)) -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
+			if (Test-Path "C:\Windows\Setup\Scripts\disable-accessibility.flag") {
+				foreach ($acc in 'osk.exe','Narrator.exe','Magnify.exe') {
+					$accKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$acc";
+					New-Item -Path $accKey -Force -ErrorAction SilentlyContinue | Out-Null;
+					Set-ItemProperty -LiteralPath $accKey -Name 'Debugger' -Value 'rundll32.exe' -Force -ErrorAction SilentlyContinue;
+					Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($acc)) -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
+				}
 			}
 		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+	};
+	{
+		# Hibernate mode (staged by phase 11 from the HibernateMode option).
+		#   Off     -> hibernation is disabled, hiberfil.sys is removed (reclaims disk)
+		#   Reduced -> fast startup is disabled but hibernation itself is kept
+		#   Keep    -> nothing is changed
+		# The flag carries the mode name; nothing happens when it is absent.
+		$hibernateFlag = "C:\Windows\Setup\Scripts\hibernate-mode.flag"
+		if (Test-Path $hibernateFlag) {
+			try {
+				$hibernateMode = (Get-Content -LiteralPath $hibernateFlag -Raw -ErrorAction SilentlyContinue)
+				if ($null -eq $hibernateMode) { $hibernateMode = '' }
+				$hibernateMode = $hibernateMode.Trim()
+				switch ($hibernateMode.ToLowerInvariant()) {
+					'off' {
+						& powercfg.exe /hibernate off 2>$null;
+						& powercfg.exe /h off 2>$null;
+					}
+					'reduced' {
+						# Keep hibernation but turn off fast startup, which is the part that
+						# restores the previous session on boot.
+						& powercfg.exe /h off 2>$null;
+					}
+					default {
+						# 'keep' - leave the power configuration alone.
+					}
+				}
+				Remove-Item -LiteralPath $hibernateFlag -Force -ErrorAction SilentlyContinue;
+			} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+		}
+	};
+	{
+		# Page file removal (staged by phase 11 when the Advanced Debloat tab asks for it).
+		# The page file cannot be deleted while Windows is running, so the paging file is
+		# switched off here; Windows removes pagefile.sys at the next boot.
+		$pagefileFlag = "C:\Windows\Setup\Scripts\remove-pagefile.flag"
+		if (Test-Path $pagefileFlag) {
+			try {
+				& reg.exe add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" /v PagingFiles /t REG_MULTI_SZ /d "" /f 2>$null | Out-Null
+				& reg.exe add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" /v ExistingPageFiles /t REG_MULTI_SZ /d "" /f 2>$null | Out-Null
+			} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+			Remove-Item -LiteralPath $pagefileFlag -Force -ErrorAction SilentlyContinue;
+		}
 	};
 	{
 		# USB selective suspend disable (staged by phase 11 when -DisableUSBSuspend is set).
@@ -408,11 +468,19 @@ $scripts = @(
 			try {
 				Stop-Service -Name WSearch -Force -ErrorAction SilentlyContinue;
 				Set-Service -Name WSearch -StartupType Disabled -ErrorAction SilentlyContinue;
-				Get-Process -Name SearchHost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
-				Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' -Name 'SearchboxTaskbarMode' -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue;
+				if (Test-Path "C:\Windows\Setup\Scripts\disable-search-process.flag") {
+					Get-Process -Name SearchHost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
+				}
 			} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 			Remove-Item "C:\Windows\Setup\Scripts\disable-search.flag" -Force -ErrorAction SilentlyContinue;
 		}
+		# Hiding the taskbar search box follows the HideSearchBox option on its own; it used
+		# to be an unconditional side effect of disabling the search service.
+		try {
+			if (Test-Path "C:\Windows\Setup\Scripts\enable-hide-searchbox.flag") {
+				Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' -Name 'SearchboxTaskbarMode' -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue;
+			}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Residual per-user Appx removal fallback: Windows Backup / Web Experience host / Get Started

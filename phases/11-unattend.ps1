@@ -196,18 +196,28 @@ if (Test-Path -LiteralPath $unattendSource) {
     }
 
     # Save canonical unattend XML directly via Save-WinEaseUnattendXml (No double BOM, verified UTF-8)
+    # The destinations are kept in script scope so that later modifications of the same
+    # document (for example the custom FirstLogon script registration further down) can be
+    # written back to exactly the same set of files. Without this the nodes that are added
+    # after this point were never persisted.
     $isoRootUnattend = Join-Path -Path $WinEaseDir -ChildPath "autounattend.xml"
+    $script:UnattendSaveTargets = [System.Collections.Generic.List[string]]::new()
+    $script:UnattendSaveTargets.Add($isoRootUnattend)
     Save-WinEaseUnattendXml -XmlDocument $xmlDoc -DestinationPath $isoRootUnattend
 
     $sysprepDir = Join-Path -Path $scratchDir -ChildPath "Windows\System32\Sysprep"
     if (Test-Path -LiteralPath $sysprepDir) {
-        Save-WinEaseUnattendXml -XmlDocument $xmlDoc -DestinationPath (Join-Path -Path $sysprepDir -ChildPath "autounattend.xml")
+        $sysprepUnattend = Join-Path -Path $sysprepDir -ChildPath "autounattend.xml"
+        $script:UnattendSaveTargets.Add($sysprepUnattend)
+        Save-WinEaseUnattendXml -XmlDocument $xmlDoc -DestinationPath $sysprepUnattend
     }
     $pantherDir = Join-Path -Path $scratchDir -ChildPath "Windows\Panther"
     if (-not (Test-Path -LiteralPath $pantherDir)) {
         New-Item -Path $pantherDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
     }
-    Save-WinEaseUnattendXml -XmlDocument $xmlDoc -DestinationPath (Join-Path -Path $pantherDir -ChildPath "unattend.xml")
+    $pantherUnattend = Join-Path -Path $pantherDir -ChildPath "unattend.xml"
+    $script:UnattendSaveTargets.Add($pantherUnattend)
+    Save-WinEaseUnattendXml -XmlDocument $xmlDoc -DestinationPath $pantherUnattend
 
     # 6. Pre-extract all 5 embedded setup scripts directly into mounted image ($scratchDir)
     Write-Host "Pre-extracting embedded setup scripts directly into mounted image ($scratchDir)..." -ForegroundColor Cyan
@@ -1036,11 +1046,26 @@ exit 0
     if ($script:activeTweakGroups -and $script:activeTweakGroups.Contains('TimerBCD') -and $script:activeTweakGroups['TimerBCD']) {
         Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "timer-bcd.flag") -Value "1" -Encoding ascii -Force
     }
-    if ($script:activeTweakGroups -and $script:activeTweakGroups.Contains('GPULatency') -and $script:activeTweakGroups['GPULatency']) {
-        Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "gpu-latency.flag") -Value "1" -Encoding ascii -Force
-    }
     if ($removeWebViewPostOOBE) {
         Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "remove-webview.flag") -Value "1" -Encoding ascii -Force
+    }
+    # Post-install (first logon) flags. Each of these used to run unconditionally on the
+    # installed system; they are now only staged when the matching option is enabled.
+    $postInstallFlags = [ordered]@{
+        'EnableCompactOS'              = 'enable-compactos.flag'
+        'EnableNtfs8dot3Disable'       = 'enable-ntfs8dot3.flag'
+        'EnableUltimatePerformancePower' = 'enable-ultimate-power.flag'
+        'EnableMsiMode'                = 'enable-msimode.flag'
+        'DisableAccessibilityTools'    = 'disable-accessibility.flag'
+        'DisableWindowsSearchProcess'  = 'disable-search-process.flag'
+        'DisableComputerRestore'      = 'disable-computer-restore.flag'
+        'HideSearchBox'                = 'enable-hide-searchbox.flag'
+        'DisableCrossDevice'           = 'disable-crossdevice.flag'
+    }
+    foreach ($flagKey in $postInstallFlags.Keys) {
+        if (Test-TweakEnabled $flagKey $false) {
+            Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath $postInstallFlags[$flagKey]) -Value "1" -Encoding ascii -Force
+        }
     }
     if ($bypassActivationRestrictions) {
         Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "bypass-activation.flag") -Value "1" -Encoding ascii -Force
@@ -1049,31 +1074,37 @@ exit 0
         Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "disable-search.flag") -Value "1" -Encoding ascii -Force
         Write-Host "  - Staged disable-search.flag (FirstLogon will stop & disable WSearch online)" -ForegroundColor Green
     }
-    if ($radicalRAM) {
-        Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "radical-ram.flag") -Value "1" -Encoding ascii -Force
-    }
-    if ($NoPostInstallAssets) {
-        Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "no-postinstall-assets.flag") -Value "1" -Encoding ascii -Force
-    }
-    if ($keepXboxServices) {
-        Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "keep-xbox.flag") -Value "1" -Encoding ascii -Force
-    }
-    if ($keepBasicApps) {
-        Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "keep-basic-apps.flag") -Value "1" -Encoding ascii -Force
-    }
-    if (-not $disableWU) {
-        Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "keep-windows-update.flag") -Value "1" -Encoding ascii -Force
-    }
-    if ($PowerPreset -and $PowerPreset -ne 'Default') {
-        Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "power-preset.flag") -Value $PowerPreset -Encoding ascii -Force
-    }
+    # The radical-ram, keep-xbox, keep-basic-apps, keep-windows-update and gpu-latency flags
+    # were removed: each of those options is already applied offline (phase 05 removes the
+    # AppX packages, phase 10 sets the service Start values and the GPU scheduler mode), so
+    # the flags were never read and only added noise to the image.
     if ($disableUSBSuspend -or (Test-TweakEnabled 'DisableUSBSuspend' $false)) {
         # USB selective suspend can only be changed on the running system (powercfg), not in the
         # offline image, so the online step is staged here and executed by FirstLogon.ps1.
         Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "disable-usb-suspend.flag") -Value "1" -Encoding ascii -Force
     }
-    if ($HibernateMode) {
-        Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "hibernate-mode.flag") -Value $HibernateMode -Encoding ascii -Force
+    # HibernateMode is a Component whose variable is only initialised when a profile or
+    # the GUI supplied a value, so it can be $null here. Reading it defensively keeps the
+    # "no profile" path working.
+    $hibernateModeValue = if ($null -ne $HibernateMode) { "$HibernateMode" } else { 'Keep' }
+    # The Advanced Debloat tab can ask for the hibernation file to be removed as well.
+    if ((Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue) -and
+        (Test-WinEaseDebloatTarget -Item 'Remove hiberfil.sys (powercfg /h off) [4-16GB]')) {
+        $hibernateModeValue = 'Off'
+    }
+    if ($hibernateModeValue -and $hibernateModeValue -ne 'Keep') {
+        # The mode name is carried in the flag: Off disables hibernation and removes
+        # hiberfil.sys, Reduced turns off fast startup but keeps hibernation.
+        Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "hibernate-mode.flag") -Value $hibernateModeValue -Encoding ascii -Force
+    }
+    # The Advanced Debloat tab can ask for the page file to be removed as well. The page
+    # file cannot be deleted from the offline image (Windows recreates it), so the switch
+    # is a post-install one: the page file is disabled and the file is deleted on the
+    # installed system.
+    if ((Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue) -and
+        (Test-WinEaseDebloatTarget -Item 'Remove pagefile.sys (pagefile disable) [4-16GB]')) {
+        Write-Host "  - Page file removal requested (Advanced Debloat): staging the post-install switch" -ForegroundColor Cyan
+        Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "remove-pagefile.flag") -Value "1" -Encoding ascii -Force
     }
 
     # Save build traceability manifest (WinEase-build-info.json)
@@ -1092,8 +1123,7 @@ exit 0
         KeepAudioTweaks       = [bool]($KeepAudioTweaks -or $DAWMode)
         DAWMode               = [bool]$DAWMode
         DisableWindowsUpdate  = [bool]$disableWU
-        PowerPreset           = $PowerPreset
-        HibernateMode         = $HibernateMode
+        HibernateMode         = $hibernateModeValue
         RemoveDefender        = [bool]$removeDefender
         BypassActivation      = $bypassActivationRestrictions
         NetworkStack          = [bool]($script:activeTweakGroups -and $script:activeTweakGroups.Contains('NetworkStack') -and $script:activeTweakGroups['NetworkStack'])
@@ -1698,6 +1728,16 @@ try {
                     $nextOrder++
                 }
                 Write-Host "  Registered $($customScripts.Count) custom FirstLogon script(s) in autounattend.xml" -ForegroundColor Green
+                # AUD-01: the nodes added above only exist in the in-memory DOM. The document
+                # was written to disk much earlier in this phase, so without an explicit save
+                # here the custom FirstLogon commands were silently dropped and never ran.
+                foreach ($dest in $script:UnattendSaveTargets) {
+                    try {
+                        Save-WinEaseUnattendXml -XmlDocument $xmlDoc -DestinationPath $dest
+                    } catch {
+                        Write-Warning "  - Could not persist the custom FirstLogon commands to '$dest': $($_.Exception.Message)"
+                    }
+                }
             }
         }
     }

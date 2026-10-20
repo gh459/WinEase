@@ -48,7 +48,7 @@ Example: turn off the Sticky Keys confirmation shown when Shift is pressed five 
 
 | Field | Meaning |
 | :--- | :--- |
-| `Key` | Name of the setting. Start it with `User_`. A key that already exists in `config/tweaks.psd1` is skipped with a warning |
+| `Key` | Name of the setting. Start it with `User_`. A key that already exists in `config/schema.psd1` is skipped with a warning |
 | `Category` | Which GUI tab shows it (see above) |
 | `Default` | Whether it is ticked initially |
 | `Description` | Checkbox text |
@@ -193,7 +193,7 @@ Load any new file the same way (turning it into a module would hide those variab
 
 | File | Role |
 | :--- | :--- |
-| `tweaks.psd1` | The **single source of truth** for every switch and component. The GUI, profiles and CLI are generated from it |
+| `schema.psd1` | The **single source of truth** for every switch and component. The GUI, profiles and CLI are generated from it |
 | `dependencies.psd1` | Dependency/impact catalog (used to detect Conflicts, Impacts, Unknowns) |
 | `WinEase.config.schema.json` | JSON schema for profiles |
 | `user/user-tweaks.psd1` | Your tweaks, presets and custom scripts |

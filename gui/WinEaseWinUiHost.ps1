@@ -90,6 +90,25 @@ function New-WinEaseWinUiInitMessage {
     $initial['Components'] = $initComponents
     $initial['AdvancedDebloatStandard'] = @($InitialSettings.AdvancedDebloatStandard | Where-Object { $_ })
     $initial['AdvancedDebloatExperimental'] = @($InitialSettings.AdvancedDebloatExperimental | Where-Object { $_ })
+    # The engine the user picked for a target (the rest runs on the registered default)
+    $initEngines = [ordered]@{}
+    if ($InitialSettings.DebloatEngineSelection) {
+        foreach ($k in $InitialSettings.DebloatEngineSelection.Keys) {
+            $initEngines[[string]$k] = [string]$InitialSettings.DebloatEngineSelection[$k]
+        }
+    }
+    $initial['DebloatEngineSelection'] = $initEngines
+
+    # The engine bindings of every Advanced Debloat target (config\schema.psd1 -> DebloatEngines)
+    $engineDefs = [ordered]@{}
+    $allEngineDefs = Get-WinEaseDebloatEngineDefs
+    foreach ($item in (@($script:WinEaseDebloatStandardItems) + @($script:WinEaseDebloatExperimentalItems))) {
+        if (-not $allEngineDefs.Contains($item)) { continue }
+        $engineDefs[$item] = [ordered]@{
+            Engines = @($allEngineDefs[$item].Engines)
+            Default = [string]$allEngineDefs[$item].Default
+        }
+    }
 
     $extRes = $script:UserExtensionsResult
     $extErrors = @()
@@ -111,6 +130,7 @@ function New-WinEaseWinUiInitMessage {
         PresetNames          = @($script:BuiltInPresets.Keys | ForEach-Object { "$_" })
         DebloatStandard      = $script:WinEaseDebloatStandardItems
         DebloatExperimental  = $script:WinEaseDebloatExperimentalItems
+        DebloatEngines       = $engineDefs
         Initial              = $initial
         DefaultWorkDir       = (Get-WinEaseGuiDefaultWorkDir)
         DefaultMigrationRoot = (Get-WinEaseDefaultMigrationBackupPath)
@@ -284,6 +304,12 @@ function ConvertFrom-WinEaseWinUiResult {
     $out.TweakSettings = $tweaks
     $out.AdvancedDebloatStandard = @($r.AdvancedDebloatStandard | Where-Object { $_ } | ForEach-Object { "$_" })
     $out.AdvancedDebloatExperimental = @($r.AdvancedDebloatExperimental | Where-Object { $_ } | ForEach-Object { "$_" })
+    # The engine per Advanced Debloat target (PowerShell / Rust)
+    $engines = [ordered]@{}
+    if ($r.DebloatEngineSelection) {
+        foreach ($k in $r.DebloatEngineSelection.Keys) { $engines[[string]$k] = [string]$r.DebloatEngineSelection[$k] }
+    }
+    $out.DebloatEngineSelection = $engines
     return $out
 }
 

@@ -39,15 +39,22 @@ if ($UserCustomizations) {
 } else {
     Write-Log "Mode: System Optimizations (Pre-baked offline into SYSTEM & SOFTWARE hives)" "INFO"
     try {
-        Write-Log "Configuring active Ultimate Performance power scheme..." "INFO"
-        $uPlan = & powercfg.exe -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 2>$null
-        if ($uPlan -match '([a-f0-9-]{36})') {
-            $guid = $matches[1]
-            & powercfg.exe /setactive $guid 2>$null
-            Write-Log "Ultimate Performance power plan ($guid) duplicated and activated." "SUCCESS"
+        # The Ultimate Performance power plan is opt-in: the flag is only staged by phase 11
+        # when the EnableUltimatePerformancePower option is enabled. It used to be applied
+        # unconditionally on every installed system.
+        if (Test-Path 'C:\Windows\Setup\Scripts\enable-ultimate-power.flag') {
+            Write-Log "Configuring active Ultimate Performance power scheme..." "INFO"
+            $uPlan = & powercfg.exe -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 2>$null
+            if ($uPlan -match '([a-f0-9-]{36})') {
+                $guid = $matches[1]
+                & powercfg.exe /setactive $guid 2>$null
+                Write-Log "Ultimate Performance power plan ($guid) duplicated and activated." "SUCCESS"
+            } else {
+                & powercfg.exe /setactive SCHEME_MIN 2>$null
+                Write-Log "High Performance power plan (SCHEME_MIN) activated." "INFO"
+            }
         } else {
-            & powercfg.exe /setactive SCHEME_MIN 2>$null
-            Write-Log "High Performance power plan (SCHEME_MIN) activated." "INFO"
+            Write-Log "Power plan activation skipped (EnableUltimatePerformancePower is off)." "INFO"
         }
     } catch {
         Write-Log "Power plan activation handled with fallback: $_" "WARNING"

@@ -54,6 +54,9 @@ if ($imageIntlText -match 'Default system UI language\s*:\s*([a-zA-Z]{2}-[a-zA-Z
 } else {
     Write-Host "Default system UI language code could not be detected, falling back to en-US." -ForegroundColor Yellow
 }
+# The language of the image is protected: the language pack removal (the Advanced Debloat
+# item "Remove non-Japanese language packs") never touches it.
+$script:detectedImageLanguage = $languageCode
 
 # Size-first Asian IME decoupling target (README "Keep Asian IMEs" behavior):
 # Retain only the IME package family matching the target UI language (ko-kr / zh-cn / zh-tw).
