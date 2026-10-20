@@ -862,7 +862,8 @@ exit 0
     }
 
     # 8. SetupComplete.cmd two-stage verification marker creation & System-level Finalization
-    $setupCompleteLines = @(
+    $setupCompleteLines = [System.Collections.Generic.List[string]]::new()
+    $setupCompleteLines.AddRange([string[]]@(
         "@echo off",
         "setlocal enabledelayedexpansion",
         "if not exist `"%SystemDrive%\ProgramData\WinEase`" mkdir `"%SystemDrive%\ProgramData\WinEase`"",
@@ -873,9 +874,9 @@ exit 0
         "echo %DATE% %TIME% SetupComplete Started > `"%SystemDrive%\ProgramData\WinEase\setupcomplete.started`"",
         "echo [%DATE% %TIME%] ===== SetupComplete.cmd execution started ===== >> `"!LOGFILE!`"",
         "set `"SC_FAIL_COUNT=0`""
-    )
+    ))
     if ($removeDefender) {
-        $setupCompleteLines += @(
+        $setupCompleteLines.AddRange([string[]]@(
             "rem --- Stage 1: Configure Defender services to disabled with separated result and state tracking ---",
             "for %%S in (WinDefend MDCoreSvc WdBoot WdFilter Sense SecurityHealthService WdNisSvc) do (",
             "    sc.exe query %%S >nul 2>&1",
@@ -970,21 +971,21 @@ exit 0
             "    echo [%DATE% %TIME%] [FAIL] WOW6432Node smartscreen.exe IFEO check exception or access denied - code: !errorlevel! >> `"!LOGFILE!`"",
             "    set /a SC_FAIL_COUNT+=1",
             ")"
-        )
+        ))
     }
     # OOBE -> first user session transition hardening:
     #  - Re-assert the Winlogon auto-logon target (msoobe can re-point it at the temporary
     #    defaultuser0 account, which makes the transition logon fail with 1326 and stalls setup).
     #  - Arm a one-shot watchdog that reboots exactly once if no interactive session appears.
-    $setupCompleteLines += @(
+    $setupCompleteLines.AddRange([string[]]@(
         "rem --- Stage 5: OOBE->user transition auto-logon repair and one-shot watchdog ---",
         "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%SystemDrive%\Windows\Setup\Scripts\WinEase-oobe-autologon-repair.ps1`" >> `"!LOGFILE!`" 2>&1",
         "if !errorlevel! neq 0 echo [%DATE% %TIME%] [WARN] OOBE auto-logon repair returned error code !errorlevel! >> `"!LOGFILE!`"",
         "schtasks.exe /create /f /tn `"WinEase-TransitionWatchdog`" /sc onstart /delay 0003:00 /ru SYSTEM /tr `"powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File %SystemDrive%\Windows\Setup\Scripts\WinEase-transition-watchdog.ps1`" >> `"!LOGFILE!`" 2>&1",
         "if !errorlevel! neq 0 echo [%DATE% %TIME%] [WARN] Transition watchdog task creation failed with code !errorlevel! >> `"!LOGFILE!`"",
         "schtasks.exe /run /tn `"WinEase-TransitionWatchdog`" >> `"!LOGFILE!`" 2>&1"
-    )
-    $setupCompleteLines += @(
+    ))
+    $setupCompleteLines.AddRange([string[]]@(
         "if !SC_FAIL_COUNT! equ 0 (",
         "    if exist `"%SystemDrive%\ProgramData\WinEase\setupcomplete.failed`" del /f /q `"%SystemDrive%\ProgramData\WinEase\setupcomplete.failed`" 2>nul",
         "    echo %DATE% %TIME% SetupComplete Succeeded > `"%SystemDrive%\ProgramData\WinEase\setupcomplete.succeeded`"",
@@ -996,7 +997,7 @@ exit 0
         "    echo [%DATE% %TIME%] ===== SetupComplete failed with !SC_FAIL_COUNT! errors ===== >> `"!LOGFILE!`"",
         "    exit /b 1",
         ")"
-    )
+    ))
     $setupCompleteLines -join "`r`n" | Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "SetupComplete.cmd") -Encoding ascii
     Write-Host "  [SetupComplete] Configured two-stage markers with individual logging and explicit exit codes" -ForegroundColor Green
 
