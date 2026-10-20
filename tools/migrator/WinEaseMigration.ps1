@@ -1000,16 +1000,11 @@ function Format-WinEaseByteSize {
     return "$Bytes B"
 }
 
-# Export-WinEaseMigrationReport: writes <ReportPath> (dark HTML) and a .json with the same base name.
-# MigrationResult may be the object returned by Start-WinEaseMigrationBackup (UserData / CustomResult /
-# RulesResult / AppInventory) and/or by Start-WinEaseMigrationRestore (Results). Every part is optional.
-function Export-WinEaseMigrationReport {
+function Get-WinEaseMigrationReportData {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [psobject]$MigrationResult,
-        [Parameter(Mandatory = $true)]
-        [string]$ReportPath
+        [psobject]$MigrationResult
     )
     $succeeded = @()    # Area, Item, Detail
     $skippedItems = @() # Item, Reason
@@ -1093,7 +1088,7 @@ function Export-WinEaseMigrationReport {
     }
     $manual += [PSCustomObject]@{ Item = 'Accounts and sign-ins'; Note = 'Sign in again to your Microsoft account, browsers, Steam/Epic/other launchers and any cloud-sync clients. Saved passwords and tokens are not migrated.' }
 
-    $data = [ordered]@{
+    return [ordered]@{
         Generated = (Get-Date).ToString('o')
         Summary   = [ordered]@{ Succeeded = $succeeded.Count; Skipped = $skippedItems.Count; Failed = $failedItems.Count; ManualActions = $manual.Count }
         Success   = [ordered]@{ Files = $files; TotalBytes = $bytes; TotalSize = (Format-WinEaseByteSize -Bytes $bytes); Sha256Verified = $hashOk; Sha256Missing = $hashMissing; Items = @($succeeded) }
@@ -1102,14 +1097,14 @@ function Export-WinEaseMigrationReport {
         Manual    = @($manual)
         Tasks     = @($tasks)
     }
+}
 
-    # --- JSON ---
-    $parent = Split-Path -Parent $ReportPath
-    if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-    $jsonPath = [System.IO.Path]::ChangeExtension($ReportPath, '.json')
-    [System.IO.File]::WriteAllText($jsonPath, ($data | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding $true))
-
-    # --- HTML (dark theme, palette matches lib/WinEaseReport.ps1). Every dynamic value is HTML-encoded. ---
+function ConvertTo-WinEaseMigrationHtml {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Collections.IDictionary]$ReportData
+    )
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine('<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>WinEase Migration Report</title>')
     [void]$sb.AppendLine('<style>')
@@ -1125,10 +1120,11 @@ function Export-WinEaseMigrationReport {
     [void]$sb.AppendLine('code { font-family: Consolas, monospace; background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 4px; color: #38bdf8; }')
     [void]$sb.AppendLine('</style></head><body><div class="wrap">')
     [void]$sb.AppendLine('<h1>WinEase Migration Report</h1>')
-    [void]$sb.AppendLine("<div class=`"sub`">Generated: $(ConvertTo-WinEaseHtmlText $data.Generated)</div>")
+    [void]$sb.AppendLine("<div class=`"sub`">Generated: $(ConvertTo-WinEaseHtmlText $ReportData.Generated)</div>")
 
     [void]$sb.AppendLine('<div class="section-card"><h2>Succeeded</h2>')
-    [void]$sb.AppendLine("<p><span class=`"ok`">$(ConvertTo-WinEaseHtmlText $files) file(s)</span>, $(ConvertTo-WinEaseHtmlText $data.Success.TotalSize) total. SHA-256 recorded for <span class=`"ok`">$hashOk</span> file(s); not recorded for <span class=`"warn`">$hashMissing</span>.</p>")
+    [void]$sb.AppendLine("<p><span class=`"ok`">$(ConvertTo-WinEaseHtmlText $ReportData.Success.Files) file(s)</span>, $(ConvertTo-WinEaseHtmlText $ReportData.Success.TotalSize) total. SHA-256 recorded for <span class=`"ok`">$($ReportData.Success.Sha256Verified)</span> file(s); not recorded for <span class=`"warn`">$($ReportData.Success.Sha256Missing)</span>.</p>")
+    $succeeded = @($ReportData.Success.Items)
     if ($succeeded.Count -gt 0) {
         [void]$sb.AppendLine('<table><tr><th>Area</th><th>Item</th><th>Detail</th></tr>')
         foreach ($i in $succeeded) { [void]$sb.AppendLine("<tr><td>$(ConvertTo-WinEaseHtmlText $i.Area)</td><td>$(ConvertTo-WinEaseHtmlText $i.Item)</td><td>$(ConvertTo-WinEaseHtmlText $i.Detail)</td></tr>") }
@@ -1136,6 +1132,7 @@ function Export-WinEaseMigrationReport {
     }
     [void]$sb.AppendLine('</div>')
 
+    $skippedItems = @($ReportData.Skipped)
     [void]$sb.AppendLine('<div class="section-card"><h2>Skipped</h2>')
     if ($skippedItems.Count -eq 0) { [void]$sb.AppendLine('<p class="muted">Nothing was skipped.</p>') }
     else {
@@ -1145,6 +1142,7 @@ function Export-WinEaseMigrationReport {
     }
     [void]$sb.AppendLine('</div>')
 
+    $failedItems = @($ReportData.Failed)
     [void]$sb.AppendLine('<div class="section-card"><h2>Failed</h2>')
     if ($failedItems.Count -eq 0) { [void]$sb.AppendLine('<p class="ok">No failures.</p>') }
     else {
@@ -1154,12 +1152,38 @@ function Export-WinEaseMigrationReport {
     }
     [void]$sb.AppendLine('</div>')
 
+    $manual = @($ReportData.Manual)
     [void]$sb.AppendLine('<div class="section-card"><h2>Manual actions required</h2>')
     [void]$sb.AppendLine('<table><tr><th>Item</th><th>What to do</th></tr>')
     foreach ($i in $manual) { [void]$sb.AppendLine("<tr><td>$(ConvertTo-WinEaseHtmlText $i.Item)</td><td>$(ConvertTo-WinEaseHtmlText $i.Note)</td></tr>") }
     [void]$sb.AppendLine('</table></div>')
     [void]$sb.AppendLine('</div></body></html>')
-    [System.IO.File]::WriteAllText($ReportPath, $sb.ToString(), (New-Object System.Text.UTF8Encoding $true))
+
+    return $sb.ToString()
+}
+
+# Export-WinEaseMigrationReport: writes <ReportPath> (dark HTML) and a .json with the same base name.
+# MigrationResult may be the object returned by Start-WinEaseMigrationBackup (UserData / CustomResult /
+# RulesResult / AppInventory) and/or by Start-WinEaseMigrationRestore (Results). Every part is optional.
+function Export-WinEaseMigrationReport {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$MigrationResult,
+        [Parameter(Mandatory = $true)]
+        [string]$ReportPath
+    )
+    $data = Get-WinEaseMigrationReportData -MigrationResult $MigrationResult
+
+    # --- JSON ---
+    $parent = Split-Path -Parent $ReportPath
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    $jsonPath = [System.IO.Path]::ChangeExtension($ReportPath, '.json')
+    [System.IO.File]::WriteAllText($jsonPath, ($data | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding $true))
+
+    # --- HTML (dark theme, palette matches lib/WinEaseReport.ps1). Every dynamic value is HTML-encoded. ---
+    $html = ConvertTo-WinEaseMigrationHtml -ReportData $data
+    [System.IO.File]::WriteAllText($ReportPath, $html, (New-Object System.Text.UTF8Encoding $true))
 
     return [PSCustomObject]@{ HtmlPath = $ReportPath; JsonPath = $jsonPath; Data = [PSCustomObject]$data }
 }
