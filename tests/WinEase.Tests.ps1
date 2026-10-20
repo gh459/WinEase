@@ -1612,6 +1612,52 @@ if (-not (Get-Command -Name Test-WinEaseDependencies -ErrorAction SilentlyContin
     . (Join-Path -Path $script:RepoRoot -ChildPath "WinEasehelpers.ps1")
 }
 
+Describe "Import-WinEaseDependencyCatalog" {
+    BeforeEach {
+        $script:SavedCat = $script:WinEaseDependencyCatalog
+        $script:SavedCatPath = $script:WinEaseDependencyCatalogPath
+    }
+    AfterEach {
+        $script:WinEaseDependencyCatalog = $script:SavedCat
+        $script:WinEaseDependencyCatalogPath = $script:SavedCatPath
+    }
+
+    It "imports default dependency catalog when Path is null, empty, or whitespace" {
+        $catalog = Import-WinEaseDependencyCatalog
+        $catalog | Should Not Be $null
+        $catalog.Components | Should Not Be $null
+        $catalog.Tweaks | Should Not Be $null
+        $script:WinEaseDependencyCatalog | Should Be $catalog
+        $script:WinEaseDependencyCatalogPath | Should Match 'config\\dependencies\.psd1$'
+
+        $catalog2 = Import-WinEaseDependencyCatalog -Path "   "
+        $catalog2 | Should Not Be $null
+        $script:WinEaseDependencyCatalogPath | Should Match 'config\\dependencies\.psd1$'
+    }
+
+    It "imports a custom dependency catalog file from specified path" {
+        $tempCatalogFile = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("test_catalog_" + [guid]::NewGuid().ToString('N') + ".psd1")
+        try {
+            '@{ Version = "9.9"; Components = @{ CustomComp = @{ Summary = "Test" } } }' | Set-Content -LiteralPath $tempCatalogFile -Encoding UTF8
+            $catalog = Import-WinEaseDependencyCatalog -Path $tempCatalogFile
+            $catalog | Should Not Be $null
+            $catalog.Version | Should Be "9.9"
+            $catalog.Components.CustomComp.Summary | Should Be "Test"
+            $script:WinEaseDependencyCatalog | Should Be $catalog
+            $script:WinEaseDependencyCatalogPath | Should Be $tempCatalogFile
+        } finally {
+            if (Test-Path -LiteralPath $tempCatalogFile) {
+                Remove-Item -LiteralPath $tempCatalogFile -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "throws when specified path does not exist" {
+        $nonExistentPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("non_existent_" + [guid]::NewGuid().ToString('N') + ".psd1")
+        { Import-WinEaseDependencyCatalog -Path $nonExistentPath } | Should Throw "Dependency catalog not found:"
+    }
+}
+
 Describe "WinEase dependency checker" {
     $depsPath = Join-Path -Path $script:RepoRoot -ChildPath "config\dependencies.psd1"
     $tweaksPath = Join-Path -Path $script:RepoRoot -ChildPath "config\schema.psd1"
