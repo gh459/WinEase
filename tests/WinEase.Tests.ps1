@@ -6,7 +6,7 @@
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingInvokeExpression', '', Justification = 'Evaluates literal arrays/hashtables taken from the repo''s own source AST')]
 param()
 
-$script:RepoRoot = Split-Path -Parent $PSScriptRoot
+$script:RepoRoot = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { Get-Location | Select-Object -ExpandProperty Path }
 $script:BuilderPath = Join-Path -Path $script:RepoRoot -ChildPath "WinEasebuilder.ps1"
 $script:GuiPath = Join-Path -Path $script:RepoRoot -ChildPath "gui\WinEaseGui.ps1"
 $script:UnattendPath = Join-Path -Path $script:RepoRoot -ChildPath "autounattend.xml"
@@ -558,6 +558,41 @@ Describe "WinEase helpers - BuildContext advanced debloat lists" {
         ($script:advancedDebloatStandard -is [bool]) | Should Be $false
         @($script:advancedDebloatStandard).Count | Should Be 0
         @($script:advancedDebloatExperimental).Count | Should Be 0
+    }
+}
+
+Describe "WinEase helpers - ConvertTo-WinEaseNormalizedPath" {
+    BeforeAll {
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+    }
+
+    It "converts forward slashes to backslashes and trims trailing slashes" {
+        $normalized = ConvertTo-WinEaseNormalizedPath -Path "C:/Windows/System32/"
+        $expected = [System.IO.Path]::GetFullPath("C:\Windows\System32").TrimEnd('\')
+        $normalized | Should Be $expected
+    }
+
+    It "resolves relative path segments" {
+        $normalized = ConvertTo-WinEaseNormalizedPath -Path "C:\Windows\System32\..\System32\Drivers"
+        $expected = [System.IO.Path]::GetFullPath("C:\Windows\System32\..\System32\Drivers").TrimEnd('\')
+        $normalized | Should Be $expected
+    }
+
+    It "throws when Path is null, empty, or whitespace" {
+        { ConvertTo-WinEaseNormalizedPath -Path "" } | Should Throw
+        { ConvertTo-WinEaseNormalizedPath -Path "   " } | Should Throw
+    }
+
+    It "throws when Path does not start with an absolute local drive letter" {
+        { ConvertTo-WinEaseNormalizedPath -Path "relative/path/to/folder" } | Should Throw
+        { ConvertTo-WinEaseNormalizedPath -Path "C:relative/path" } | Should Throw
+        { ConvertTo-WinEaseNormalizedPath -Path "\\server\share\folder" } | Should Throw
+    }
+
+    It "throws when Path is a drive root" {
+        { ConvertTo-WinEaseNormalizedPath -Path "C:\" } | Should Throw
+        { ConvertTo-WinEaseNormalizedPath -Path "D:/" } | Should Throw
     }
 }
 
