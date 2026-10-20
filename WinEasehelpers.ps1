@@ -707,45 +707,6 @@ function New-BuildContextFromScriptScope {
     return $ctx
 }
 
-# Helper: sync BuildContext back to script-scope variables (bridge for incremental migration)
-function Sync-ScriptScopeFromContext {
-    param([BuildContext]$ctx)
-    $script:BaseWorkDir = $ctx.BaseWorkDir
-    $script:BuildId = $ctx.BuildId
-    $script:DiagDir = $ctx.DiagDir
-    $script:DiagnosticData = $ctx.DiagnosticData
-    $script:CurrentPhase = $ctx.CurrentPhase
-    $script:PhaseTimings = $ctx.PhaseTimings
-    $script:PhaseStopwatch = $ctx.PhaseStopwatch
-    $script:BuildSucceeded = $ctx.BuildSucceeded
-    $script:FinalPayloadVerified = $ctx.FinalPayloadVerified
-    $script:VerifiedFinalWimSha256 = $ctx.VerifiedFinalWimSha256
-    $script:IsoPayloadVerified = $ctx.IsoPayloadVerified
-    $script:StreamIntegrityVerified = $ctx.StreamIntegrityVerified
-    $script:StreamIntegrityMethod = $ctx.StreamIntegrityMethod
-    $script:RemovedPackagesCount = $ctx.RemovedPackagesCount
-    $script:WinSxSSavedMB = $ctx.WinSxSSavedMB
-    $script:WinSxsBeforeMB = $ctx.WinSxsBeforeMB
-    $script:WinSxsAfterMB = $ctx.WinSxsAfterMB
-    $script:DismLogPath = $ctx.DismLogPath
-    $script:DefenderExclusionAdded = $ctx.DefenderExclusionAdded
-    $script:HivesLoaded = $ctx.HivesLoaded
-    $script:MountOpened = $ctx.MountOpened
-    $script:DismMountDir = $ctx.DismMountDir
-    $script:ManagedMountDirs = $ctx.ManagedMountDirs
-    $script:AllocatedMountDirs = $ctx.AllocatedMountDirs
-    $script:PreservedMountDirs = $ctx.PreservedMountDirs
-    $script:IsoCreatedSuccessfully = $ctx.IsoCreatedSuccessfully
-    $script:IsoPayloadMatch = $ctx.IsoPayloadMatch
-    $script:ExportSucceeded = $ctx.ExportSucceeded
-    $script:IsoGenerated = $ctx.IsoGenerated
-    $script:AllowPhysicalDebloat = $ctx.AllowPhysicalDebloat
-    $script:AdvancedDebloatStandard = [string[]]@($ctx.AdvancedDebloatStandard | Where-Object { $null -ne $_ })
-    $script:AdvancedDebloatExperimental = [string[]]@($ctx.AdvancedDebloatExperimental | Where-Object { $null -ne $_ })
-    $script:activeTweakGroups = $ctx.ActiveTweakGroups
-    $script:TweakSettings = $ctx.TweakSettings
-}
-
 # Safe existence probe: Test-Path throws on some access-denied paths (verified),
 # while Directory/File.Exists never throw.
 function Test-WinEasePathExistsSafe {

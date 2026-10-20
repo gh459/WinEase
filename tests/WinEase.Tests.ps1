@@ -534,7 +534,7 @@ Describe "WinEase helpers - BuildContext advanced debloat lists" {
         $ctx.AdvancedDebloatExperimental[0] | Should Be 'SoleExp'
     }
 
-    It "keeps multiple elements in order through context and back to script scope" {
+    It "keeps multiple elements in order through context" {
         $std = @('Zeta', 'Alpha', 'Mid')
         $exp = @('E2', 'E1')
         $script:advancedDebloatStandard = $std
@@ -542,22 +542,8 @@ Describe "WinEase helpers - BuildContext advanced debloat lists" {
         $ctx = New-BuildContextFromScriptScope
         ($ctx.AdvancedDebloatStandard -join '|') | Should Be 'Zeta|Alpha|Mid'
         ($ctx.AdvancedDebloatExperimental -join '|') | Should Be 'E2|E1'
-        $script:advancedDebloatStandard = @()
-        $script:advancedDebloatExperimental = @()
-        Sync-ScriptScopeFromContext $ctx
-        @($script:advancedDebloatStandard).Count | Should Be 3
-        ($script:advancedDebloatStandard -join '|') | Should Be 'Zeta|Alpha|Mid'
-        ($script:advancedDebloatExperimental -join '|') | Should Be 'E2|E1'
-        ($script:advancedDebloatStandard -is [string[]]) | Should Be $true
-        ($script:advancedDebloatExperimental -is [string[]]) | Should Be $true
-    }
-
-    It "syncs an empty context back as an empty array, not a Boolean" {
-        $ctx = [BuildContext]::new()
-        Sync-ScriptScopeFromContext $ctx
-        ($script:advancedDebloatStandard -is [bool]) | Should Be $false
-        @($script:advancedDebloatStandard).Count | Should Be 0
-        @($script:advancedDebloatExperimental).Count | Should Be 0
+        ($ctx.AdvancedDebloatStandard -is [string[]]) | Should Be $true
+        ($ctx.AdvancedDebloatExperimental -is [string[]]) | Should Be $true
     }
 }
 
