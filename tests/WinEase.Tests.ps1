@@ -481,6 +481,75 @@ Describe "WinEase helpers - BuildContext lifecycle" {
     }
 }
 
+Describe "WinEase helpers - BuildContext advanced debloat lists" {
+    BeforeAll {
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+        $script:SavedStd = $script:advancedDebloatStandard
+        $script:SavedExp = $script:advancedDebloatExperimental
+    }
+    AfterAll {
+        $script:advancedDebloatStandard = $script:SavedStd
+        $script:advancedDebloatExperimental = $script:SavedExp
+    }
+
+    It "defaults both lists to empty string arrays" {
+        $ctx = [BuildContext]::new()
+        @($ctx.AdvancedDebloatStandard).Count | Should Be 0
+        @($ctx.AdvancedDebloatExperimental).Count | Should Be 0
+    }
+
+    It "keeps `$null as an empty list" {
+        $script:advancedDebloatStandard = $null
+        $script:advancedDebloatExperimental = $null
+        $ctx = New-BuildContextFromScriptScope
+        @($ctx.AdvancedDebloatStandard).Count | Should Be 0
+        @($ctx.AdvancedDebloatExperimental).Count | Should Be 0
+    }
+
+    It "keeps an empty array empty" {
+        $script:advancedDebloatStandard = @()
+        $script:advancedDebloatExperimental = @()
+        $ctx = New-BuildContextFromScriptScope
+        @($ctx.AdvancedDebloatStandard).Count | Should Be 0
+        @($ctx.AdvancedDebloatExperimental).Count | Should Be 0
+    }
+
+    It "keeps a single element" {
+        $script:advancedDebloatStandard = @('OnlyOne')
+        $script:advancedDebloatExperimental = @('SoleExp')
+        $ctx = New-BuildContextFromScriptScope
+        @($ctx.AdvancedDebloatStandard).Count | Should Be 1
+        $ctx.AdvancedDebloatStandard[0] | Should Be 'OnlyOne'
+        $ctx.AdvancedDebloatExperimental[0] | Should Be 'SoleExp'
+    }
+
+    It "keeps multiple elements in order through context and back to script scope" {
+        $std = @('Zeta', 'Alpha', 'Mid')
+        $exp = @('E2', 'E1')
+        $script:advancedDebloatStandard = $std
+        $script:advancedDebloatExperimental = $exp
+        $ctx = New-BuildContextFromScriptScope
+        ($ctx.AdvancedDebloatStandard -join '|') | Should Be 'Zeta|Alpha|Mid'
+        ($ctx.AdvancedDebloatExperimental -join '|') | Should Be 'E2|E1'
+        $script:advancedDebloatStandard = @()
+        $script:advancedDebloatExperimental = @()
+        Sync-ScriptScopeFromContext $ctx
+        @($script:advancedDebloatStandard).Count | Should Be 3
+        ($script:advancedDebloatStandard -join '|') | Should Be 'Zeta|Alpha|Mid'
+        ($script:advancedDebloatExperimental -join '|') | Should Be 'E2|E1'
+        ($script:advancedDebloatStandard -is [string[]]) | Should Be $true
+        ($script:advancedDebloatExperimental -is [string[]]) | Should Be $true
+    }
+
+    It "syncs an empty context back as an empty array, not a Boolean" {
+        $ctx = [BuildContext]::new()
+        Sync-ScriptScopeFromContext $ctx
+        ($script:advancedDebloatStandard -is [bool]) | Should Be $false
+        @($script:advancedDebloatStandard).Count | Should Be 0
+        @($script:advancedDebloatExperimental).Count | Should Be 0
+    }
+}
+
 Describe "WinEase helpers - Path and Directory Safety Guards" {
     BeforeAll {
         $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
