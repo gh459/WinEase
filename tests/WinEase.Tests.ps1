@@ -3034,3 +3034,545 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
         $builder | Should Match 'falling back to the classic window'
     }
 }
+
+# --- Safety pass (2026-10-21): the restore path validation, the AppX target selection
+# --- and the consistency of the security defaults. ---
+
+Describe "Migration restore - path validation" {
+    BeforeAll {
+        if (-not (Get-Command -Name Resolve-WinEaseSafeRelativePath -ErrorAction SilentlyContinue)) {
+            . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+        }
+        if (-not (Get-Command -Name Restore-WinEaseCustomPaths -ErrorAction SilentlyContinue)) {
+            . (Join-Path $script:RepoRoot "tools\migrator\WinEaseMigration.ps1")
+        }
+        function New-WinEaseTestManifest {
+            param([string]$Path, [object[]]$Entries)
+            [PSCustomObject]@{ Created = (Get-Date).ToString('o'); Entries = @($Entries) } |
+                ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $Path -Encoding UTF8
+        }
+        function New-WinEaseTestEntry {
+            # one manifest entry; the file it points at is created by the test itself
+            param(
+                [string]$Category = 'Docs',
+                [string]$RelativePath = 'a.txt',
+                [string]$SourcePath = '',
+                [string]$Sha256 = ''
+            )
+            return [PSCustomObject]@{
+                Category = $Category; RelativePath = $RelativePath; Sha256 = $Sha256; SourcePath = $SourcePath
+            }
+        }
+        function New-WinEaseTestPayload {
+            # writes the payload of a backup and returns its hash
+            param([string]$Path, [string]$Content = 'payload')
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
+            Set-Content -LiteralPath $Path -Value $Content
+            return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+        }
+    }
+
+    It "restores a normal backup into the profile" {
+        $bk = Join-Path $TestDrive 'ok-backup'
+        $userProfile = Join-Path $TestDrive 'ok-profile'
+        New-Item -ItemType Directory -Force -Path $userProfile | Out-Null
+        $src = Join-Path $TestDrive 'ok-src'
+        New-Item -ItemType Directory -Force -Path $src | Out-Null
+        Set-Content -LiteralPath (Join-Path $src 'a.txt') -Value 'hello'
+        Backup-WinEaseUserData -FolderMap @{ Documents = $src } -BackupRoot $bk | Out-Null
+        $saved = $env:USERPROFILE
+        $env:USERPROFILE = $userProfile
+        try {
+            $r = Restore-WinEaseUserData -BackupRoot $bk -ConflictPolicy Overwrite
+            $r.RestoredFiles | Should Be 1
+            @($r.FailedFiles).Count | Should Be 0
+            (Test-Path -LiteralPath (Join-Path $userProfile 'a.txt')) | Should Be $true
+        } finally { $env:USERPROFILE = $saved }
+    }
+
+    It "restores a normal custom path into an allowed location" {
+        $bk = Join-Path $TestDrive 'cp-backup'
+        $target = Join-Path $TestDrive 'cp-target'
+        New-Item -ItemType Directory -Force -Path $target | Out-Null
+        Set-Content -LiteralPath (Join-Path $target 'note.txt') -Value 'note'
+        Backup-WinEaseCustomPaths -Paths @($target) -BackupRoot $bk | Out-Null
+        $r = Restore-WinEaseCustomPaths -BackupRoot $bk -ConflictPolicy Overwrite -AllowedSourcePaths @($target)
+        $r.RestoredFiles | Should Be 1
+        @($r.FailedFiles).Count | Should Be 0
+    }
+
+    It "refuses a relative path that climbs out of the profile" {
+        $bk = Join-Path $TestDrive 'dotdot-backup'
+        $outside = Join-Path $TestDrive 'outside'
+        New-Item -ItemType Directory -Force -Path $bk, $outside | Out-Null
+        $hash = New-WinEaseTestPayload -Path (Join-Path $bk 'Docs\payload.txt')
+        $entry = New-WinEaseTestEntry -RelativePath '..\..\outside\evil.txt' -Sha256 $hash
+        New-WinEaseTestManifest -Path (Join-Path $bk 'migration-manifest.json') -Entries @($entry)
+        $userProfile = Join-Path $TestDrive 'dotdot-profile'
+        New-Item -ItemType Directory -Force -Path $userProfile | Out-Null
+        $saved = $env:USERPROFILE
+        $env:USERPROFILE = $userProfile
+        try {
+            $r = Restore-WinEaseUserData -BackupRoot $bk -ConflictPolicy Overwrite
+            $r.RestoredFiles | Should Be 0
+            @($r.FailedFiles).Count | Should Be 1
+            (@($r.FailedFiles)[0].Error) | Should Match 'Refused'
+            (Test-Path -LiteralPath (Join-Path $outside 'evil.txt')) | Should Be $false
+        } finally { $env:USERPROFILE = $saved }
+    }
+
+    It "refuses a relative path that climbs several levels" {
+        $bk = Join-Path $TestDrive 'deep-backup'
+        New-Item -ItemType Directory -Force -Path $bk | Out-Null
+        $hash = New-WinEaseTestPayload -Path (Join-Path $bk 'Docs\payload.txt')
+        $entry = New-WinEaseTestEntry -RelativePath 'a\b\..\..\..\evil.txt' -Sha256 $hash
+        New-WinEaseTestManifest -Path (Join-Path $bk 'migration-manifest.json') -Entries @($entry)
+        $userProfile = Join-Path $TestDrive 'deep-profile'
+        New-Item -ItemType Directory -Force -Path $userProfile | Out-Null
+        $saved = $env:USERPROFILE
+        $env:USERPROFILE = $userProfile
+        try {
+            $r = Restore-WinEaseUserData -BackupRoot $bk -ConflictPolicy Overwrite
+            $r.RestoredFiles | Should Be 0
+            @($r.FailedFiles).Count | Should Be 1
+            (@($r.FailedFiles)[0].Error) | Should Match 'Refused'
+        } finally { $env:USERPROFILE = $saved }
+    }
+
+    It "refuses an absolute path in the manifest" {
+        $bk = Join-Path $TestDrive 'abs-backup'
+        New-Item -ItemType Directory -Force -Path $bk | Out-Null
+        $hash = New-WinEaseTestPayload -Path (Join-Path $bk 'Docs\payload.txt')
+        $entry = New-WinEaseTestEntry -RelativePath 'C:\Windows\Temp\evil.txt' -Sha256 $hash
+        New-WinEaseTestManifest -Path (Join-Path $bk 'migration-manifest.json') -Entries @($entry)
+        $userProfile = Join-Path $TestDrive 'abs-profile'
+        New-Item -ItemType Directory -Force -Path $userProfile | Out-Null
+        $saved = $env:USERPROFILE
+        $env:USERPROFILE = $userProfile
+        try {
+            $r = Restore-WinEaseUserData -BackupRoot $bk -ConflictPolicy Overwrite
+            $r.RestoredFiles | Should Be 0
+            @($r.FailedFiles).Count | Should Be 1
+            (@($r.FailedFiles)[0].Error) | Should Match 'Refused'
+        } finally { $env:USERPROFILE = $saved }
+    }
+
+    It "refuses a UNC path in the manifest" {
+        $bk = Join-Path $TestDrive 'unc-backup'
+        New-Item -ItemType Directory -Force -Path $bk | Out-Null
+        $hash = New-WinEaseTestPayload -Path (Join-Path $bk 'Docs\payload.txt')
+        $entry = New-WinEaseTestEntry -RelativePath '\\server\share\evil.txt' -Sha256 $hash
+        New-WinEaseTestManifest -Path (Join-Path $bk 'migration-manifest.json') -Entries @($entry)
+        $userProfile = Join-Path $TestDrive 'unc-profile'
+        New-Item -ItemType Directory -Force -Path $userProfile | Out-Null
+        $saved = $env:USERPROFILE
+        $env:USERPROFILE = $userProfile
+        try {
+            $r = Restore-WinEaseUserData -BackupRoot $bk -ConflictPolicy Overwrite
+            $r.RestoredFiles | Should Be 0
+            @($r.FailedFiles).Count | Should Be 1
+            (@($r.FailedFiles)[0].Error) | Should Match 'Refused'
+        } finally { $env:USERPROFILE = $saved }
+    }
+
+    It "refuses a category that points outside the backup directory" {
+        $bk = Join-Path $TestDrive 'cat-backup'
+        New-Item -ItemType Directory -Force -Path $bk | Out-Null
+        $hash = New-WinEaseTestPayload -Path (Join-Path $bk 'Docs\payload.txt')
+        $entry = New-WinEaseTestEntry -Category '..\..' -RelativePath 'a.txt' -Sha256 $hash
+        New-WinEaseTestManifest -Path (Join-Path $bk 'migration-manifest.json') -Entries @($entry)
+        $r = Restore-WinEaseUserData -BackupRoot $bk -ConflictPolicy Overwrite
+        $r.RestoredFiles | Should Be 0
+        @($r.FailedFiles).Count | Should Be 1
+        (@($r.FailedFiles)[0].Error) | Should Match 'Refused'
+    }
+
+    It "refuses a manipulated manifest whose source path is outside the allowed locations" {
+        $bk = Join-Path $TestDrive 'manip-backup'
+        $allowed = Join-Path $TestDrive 'manip-allowed'
+        $outside = Join-Path $TestDrive 'manip-outside'
+        New-Item -ItemType Directory -Force -Path $bk, $allowed, $outside | Out-Null
+        $hash = New-WinEaseTestPayload -Path (Join-Path $bk 'Custom\evil.txt')
+        $entry = New-WinEaseTestEntry -Category 'CustomPath' -RelativePath 'evil.txt' -SourcePath (Join-Path $outside 'evil.txt') -Sha256 $hash
+        New-WinEaseTestManifest -Path (Join-Path $bk 'migration-manifest.json') -Entries @($entry)
+        $r = Restore-WinEaseCustomPaths -BackupRoot $bk -ConflictPolicy Overwrite -AllowedSourcePaths @($allowed)
+        $r.RestoredFiles | Should Be 0
+        @($r.FailedFiles).Count | Should Be 1
+        (@($r.FailedFiles)[0].Error) | Should Match 'Refused'
+        (Test-Path -LiteralPath (Join-Path $outside 'evil.txt')) | Should Be $false
+    }
+
+    It "refuses a custom path restore without an allowed location" {
+        $bk = Join-Path $TestDrive 'noallow-backup'
+        $outside = Join-Path $TestDrive 'noallow-outside'
+        New-Item -ItemType Directory -Force -Path $bk, $outside | Out-Null
+        $hash = New-WinEaseTestPayload -Path (Join-Path $bk 'Custom\evil.txt')
+        $entry = New-WinEaseTestEntry -Category 'CustomPath' -RelativePath 'evil.txt' -SourcePath (Join-Path $outside 'evil.txt') -Sha256 $hash
+        New-WinEaseTestManifest -Path (Join-Path $bk 'migration-manifest.json') -Entries @($entry)
+        $r = Restore-WinEaseCustomPaths -BackupRoot $bk -ConflictPolicy Overwrite
+        $r.RestoredFiles | Should Be 0
+        @($r.FailedFiles).Count | Should Be 1
+        (@($r.FailedFiles)[0].Error) | Should Match 'no restore target was allowed'
+        (Test-Path -LiteralPath (Join-Path $outside 'evil.txt')) | Should Be $false
+    }
+
+    It "reports a missing backup file" {
+        $bk = Join-Path $TestDrive 'missing-backup'
+        New-Item -ItemType Directory -Force -Path (Join-Path $bk 'Docs') | Out-Null
+        $entry = New-WinEaseTestEntry -Category 'Docs' -RelativePath 'gone.txt'
+        New-WinEaseTestManifest -Path (Join-Path $bk 'migration-manifest.json') -Entries @($entry)
+        $r = Restore-WinEaseUserData -BackupRoot $bk -ConflictPolicy Overwrite
+        $r.RestoredFiles | Should Be 0
+        @($r.FailedFiles).Count | Should Be 1
+        (@($r.FailedFiles)[0].Error) | Should Be 'Backup file missing'
+    }
+
+    It "reports a hash mismatch and does not write the file" {
+        $bk = Join-Path $TestDrive 'hash-backup'
+        $userProfile = Join-Path $TestDrive 'hash-profile'
+        New-Item -ItemType Directory -Force -Path $bk, $userProfile | Out-Null
+        [void](New-WinEaseTestPayload -Path (Join-Path $bk 'Docs\a.txt'))
+        $entry = New-WinEaseTestEntry -RelativePath 'a.txt' -Sha256 ('0' * 64)
+        New-WinEaseTestManifest -Path (Join-Path $bk 'migration-manifest.json') -Entries @($entry)
+        $saved = $env:USERPROFILE
+        $env:USERPROFILE = $userProfile
+        try {
+            $r = Restore-WinEaseUserData -BackupRoot $bk -ConflictPolicy Overwrite
+            $r.RestoredFiles | Should Be 0
+            @($r.FailedFiles).Count | Should Be 1
+            (@($r.FailedFiles)[0].Error) | Should Be 'Hash mismatch (corrupt)'
+            (Test-Path -LiteralPath (Join-Path $userProfile 'a.txt')) | Should Be $false
+        } finally { $env:USERPROFILE = $saved }
+    }
+
+    It "a dry run does not write anything" {
+        $bk = Join-Path $TestDrive 'dry-backup'
+        $userProfile = Join-Path $TestDrive 'dry-profile'
+        New-Item -ItemType Directory -Force -Path $bk, $userProfile | Out-Null
+        $hash = New-WinEaseTestPayload -Path (Join-Path $bk 'Docs\a.txt')
+        $entry = New-WinEaseTestEntry -RelativePath 'a.txt' -Sha256 $hash
+        New-WinEaseTestManifest -Path (Join-Path $bk 'migration-manifest.json') -Entries @($entry)
+        $saved = $env:USERPROFILE
+        $env:USERPROFILE = $userProfile
+        try {
+            $r = Restore-WinEaseUserData -BackupRoot $bk -ConflictPolicy Overwrite -DryRun
+            $r.RestoredFiles | Should Be 1
+            (Test-Path -LiteralPath (Join-Path $userProfile 'a.txt')) | Should Be $false
+        } finally { $env:USERPROFILE = $saved }
+    }
+
+    It "keeps the conflict policies working" {
+        $bk = Join-Path $TestDrive 'conflict-backup'
+        $userProfile = Join-Path $TestDrive 'conflict-profile'
+        New-Item -ItemType Directory -Force -Path $bk, $userProfile | Out-Null
+        $hash = New-WinEaseTestPayload -Path (Join-Path $bk 'Docs\a.txt')
+        $entry = New-WinEaseTestEntry -RelativePath 'a.txt' -Sha256 $hash
+        New-WinEaseTestManifest -Path (Join-Path $bk 'migration-manifest.json') -Entries @($entry)
+        $dest = Join-Path $userProfile 'a.txt'
+        Set-Content -LiteralPath $dest -Value 'existing'
+        $saved = $env:USERPROFILE
+        $env:USERPROFILE = $userProfile
+        try {
+            # Skip keeps the file of the user
+            $skip = Restore-WinEaseUserData -BackupRoot $bk -ConflictPolicy Skip
+            $skip.SkippedFiles | Should Be 1
+            (Get-Content -LiteralPath $dest -Raw).Trim() | Should Be 'existing'
+            # BackupExisting keeps a copy of the file of the user
+            $bak = Restore-WinEaseUserData -BackupRoot $bk -ConflictPolicy BackupExisting
+            $bak.RestoredFiles | Should Be 1
+            (Test-Path -LiteralPath "$dest.WinEase.bak") | Should Be $true
+            (Get-Content -LiteralPath "$dest.WinEase.bak" -Raw).Trim() | Should Be 'existing'
+        } finally { $env:USERPROFILE = $saved }
+    }
+
+    It "refuses a restore target that traverses a symbolic link" {
+        $bk = Join-Path $TestDrive 'link-backup'
+        $userProfile = Join-Path $TestDrive 'link-profile'
+        $canary = Join-Path $TestDrive 'link-canary'
+        New-Item -ItemType Directory -Force -Path $bk, $userProfile, $canary | Out-Null
+        Set-Content -LiteralPath (Join-Path $canary 'precious.txt') -Value 'precious'
+        # the payload sits below a normal folder of the backup
+        $hash = New-WinEaseTestPayload -Path (Join-Path $bk 'Docs\out\a.txt')
+        $entry = New-WinEaseTestEntry -RelativePath 'out\a.txt' -Sha256 $hash
+        New-WinEaseTestManifest -Path (Join-Path $bk 'migration-manifest.json') -Entries @($entry)
+        # but the target of the restore runs through a junction
+        & cmd.exe /c "mklink /J `"$(Join-Path $userProfile 'out')`" `"$canary`"" > $null 2>&1
+        $saved = $env:USERPROFILE
+        $env:USERPROFILE = $userProfile
+        try {
+            $r = Restore-WinEaseUserData -BackupRoot $bk -ConflictPolicy Overwrite
+            $r.RestoredFiles | Should Be 0
+            @($r.FailedFiles).Count | Should Be 1
+            (@($r.FailedFiles)[0].Error) | Should Match 'Refused'
+            (Test-Path -LiteralPath (Join-Path $canary 'precious.txt')) | Should Be $true
+        } finally { $env:USERPROFILE = $saved }
+    }
+
+    It "the path validation helpers refuse the dangerous shapes" {
+        $root = Join-Path $TestDrive 'validate-root'
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $ok = Resolve-WinEaseSafeRelativePath -RelativePath 'sub\file.txt' -Root $root
+        $ok.IsSafe | Should Be $true
+        $ok.Path | Should Match 'sub'
+        foreach ($bad in @('..\evil.txt', 'a\..\..\evil.txt', 'C:\Windows\Temp\evil.txt', '\\server\share\evil.txt', '\Windows\evil.txt', '*.txt', '')) {
+            $r = Resolve-WinEaseSafeRelativePath -RelativePath $bad -Root $root
+            $r.IsSafe | Should Be $false
+            $r.Reason | Should Not BeNullOrEmpty
+        }
+        # a restore target outside the allowed locations is refused
+        $t = Resolve-WinEaseRestoreTarget -Path (Join-Path $TestDrive 'somewhere-else.txt') -AllowedRoots @($root)
+        $t.IsSafe | Should Be $false
+        # an absolute path inside the allowed location is accepted
+        $t2 = Resolve-WinEaseRestoreTarget -Path (Join-Path $root 'file.txt') -AllowedRoots @($root)
+        $t2.IsSafe | Should Be $true
+    }
+}
+
+Describe "AppX removal - the settings decide what is removed" {
+    BeforeAll {
+        if (-not (Get-Command -Name Get-WinEaseAppxRemovalPatterns -ErrorAction SilentlyContinue)) {
+            . (Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1")
+        }
+        $script:AppxSchema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+        $script:AppxDefinitions = @($script:AppxSchema.AppxRemoval)
+    }
+
+    It "the AppX list lives in the master schema" {
+        @($script:AppxDefinitions).Count | Should BeGreaterThan 40
+        foreach ($d in $script:AppxDefinitions) {
+            $d.Pattern | Should Not BeNullOrEmpty
+            $d.Group | Should Not BeNullOrEmpty
+            # a controlling setting must exist
+            if ($d.Option) {
+                $known = @(@($script:AppxSchema.Tweaks | ForEach-Object { $_.Key }) + @($script:AppxSchema.Components | ForEach-Object { $_.Key }))
+                ($known -contains $d.Option) | Should Be $true
+            }
+        }
+    }
+
+    It "nothing is removed when RemoveAppxBloatware is off" {
+        $patterns = @(Get-WinEaseAppxRemovalPatterns -Definitions $script:AppxDefinitions -Settings @{ RemoveAppxBloatware = $false; RemoveDefender = $true; RemoveStore = $true; KeepBasicApps = $false; KeepXboxServices = $false })
+        $patterns.Count | Should Be 0
+    }
+
+    It "the default removal list is applied when the option is on" {
+        $patterns = @(Get-WinEaseAppxRemovalPatterns -Definitions $script:AppxDefinitions -Settings @{ RemoveAppxBloatware = $true; RemoveDefender = $false; RemoveStore = $false; KeepBasicApps = $true; KeepXboxServices = $true })
+        $patterns.Count | Should BeGreaterThan 40
+        # the basic apps and the Xbox apps stay when they are kept
+        ($patterns -contains '*Paint*') | Should Be $false
+        ($patterns -contains '*WindowsCalculator*') | Should Be $false
+        ($patterns -contains '*Xbox*') | Should Be $false
+        # the default list is there
+        ($patterns -contains '*Zune*') | Should Be $true
+        ($patterns -contains '*Clipchamp*') | Should Be $true
+        # the Store and the Security UI follow their own setting
+        ($patterns -contains 'Microsoft.WindowsStore_*') | Should Be $false
+        ($patterns -contains '*Microsoft.SecHealthUI*') | Should Be $false
+    }
+
+    It "the basic apps and the Xbox apps follow their own setting" {
+        $patterns = @(Get-WinEaseAppxRemovalPatterns -Definitions $script:AppxDefinitions -Settings @{ RemoveAppxBloatware = $true; RemoveDefender = $false; RemoveStore = $false; KeepBasicApps = $false; KeepXboxServices = $false })
+        ($patterns -contains '*Paint*') | Should Be $true
+        ($patterns -contains '*Notepad*') | Should Be $true
+        ($patterns -contains '*WindowsCalculator*') | Should Be $true
+        ($patterns -contains '*Xbox*') | Should Be $true
+        ($patterns -contains '*Gaming*') | Should Be $true
+    }
+
+    It "the Store and the Security UI follow their own setting" {
+        $patterns = @(Get-WinEaseAppxRemovalPatterns -Definitions $script:AppxDefinitions -Settings @{ RemoveAppxBloatware = $true; RemoveDefender = $true; RemoveStore = $true; KeepBasicApps = $true; KeepXboxServices = $true })
+        ($patterns -contains 'Microsoft.WindowsStore_*') | Should Be $true
+        ($patterns -contains 'Microsoft.StorePurchaseApp_*') | Should Be $true
+        ($patterns -contains '*Microsoft.SecHealthUI*') | Should Be $true
+        ($patterns -contains '*Microsoft.Windows.SecHealthUI*') | Should Be $true
+    }
+
+    It "the installed and the provisioned packages are decided by the same rule" {
+        $removal = Get-WinEaseAppxPatternRegex -Patterns @('*Zune*', '*Paint*')
+        $protected = Get-WinEaseAppxPatternRegex -Patterns @('*Microsoft.VCLibs*')
+        # a package of the removal list
+        Test-WinEaseAppxPackageRemovable -Name 'Microsoft.ZuneMusic_2019.22091.10041.0_neutral_~_8wekyb3d8bbwe' -DisplayName 'Zune Music' -RemovalRegex $removal -ProtectedRegex $protected | Should Be $true
+        # a protected package is never removed
+        Test-WinEaseAppxPackageRemovable -Name 'Microsoft.VCLibs.140.00_14.0.33519.0_x64__8wekyb3d8bbwe' -DisplayName 'VCLibs' -RemovalRegex $removal -ProtectedRegex $protected | Should Be $false
+        # a package that is in neither list stays
+        Test-WinEaseAppxPackageRemovable -Name 'Microsoft.WindowsCalculator_11.2405.0.0_neutral_~_8wekyb3d8bbwe' -DisplayName 'Calculator' -RemovalRegex $removal -ProtectedRegex $protected | Should Be $false
+        # an empty removal list removes nothing
+        Test-WinEaseAppxPackageRemovable -Name 'Microsoft.ZuneMusic_1.0_neutral_~_8wekyb3d8bbwe' -DisplayName 'Zune' -RemovalRegex $null -ProtectedRegex $protected | Should Be $false
+    }
+
+    It "a package that does not exist does not break the removal" {
+        $removal = Get-WinEaseAppxPatternRegex -Patterns @('*Zune*')
+        $protected = Get-WinEaseAppxPatternRegex -Patterns @('*Microsoft.VCLibs*')
+        # a package without a name and without a display name is never removed
+        Test-WinEaseAppxPackageRemovable -Name '' -DisplayName '' -RemovalRegex $removal -ProtectedRegex $protected | Should Be $false
+        # an unknown package is simply not in the list
+        Test-WinEaseAppxPackageRemovable -Name 'Contoso.App_1.0_x64__abc' -DisplayName 'Contoso' -RemovalRegex $removal -ProtectedRegex $protected | Should Be $false
+    }
+
+    It "phase 05 uses the shared list and the shared decision" {
+        $src = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\05-appx.ps1"))
+        $src | Should Match 'Get-WinEaseAppxRemovalPatterns'
+        $src | Should Match 'Test-WinEaseAppxPackageRemovable'
+        # the fixed pattern list is gone
+        $src | Should Not Match "\*Zune\*', '\*Bing\*'"
+        # a dry run does not remove anything
+        $src | Should Match '\$isDryRunMode'
+    }
+
+    It "the second AppX pass of the Advanced Debloat target uses the same decision" {
+        $src = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1"))
+        $src | Should Match 'Test-WinEaseAppxPackageRemovable'
+    }
+
+    It "the GUI and the CLI resolve the same AppX setting" {
+        $presets = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\presets.psd1")
+        foreach ($key in $presets.PresetOrder) {
+            $preset = $presets.Presets[$key]
+            # every preset names the option, so the GUI and the CLI cannot drift apart
+            $preset.Contains('RemoveAppxBloatware') | Should Be $true
+        }
+        $component = @($script:AppxSchema.Components | Where-Object { $_.Key -eq 'RemoveAppxBloatware' })
+        $component.Count | Should Be 1
+        $component[0].Variable | Should Be 'removeAppxBloatware'
+    }
+}
+
+Describe "Security options - the defaults and the execution paths agree" {
+    BeforeAll {
+        $script:SecSchema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+        $script:SecPresets = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\presets.psd1")
+    }
+
+    It "the security options that disable a protection default to off" {
+        $defender = @($script:SecSchema.Components | Where-Object { $_.Key -eq 'RemoveDefender' })[0]
+        [bool]$defender.Default | Should Be $false
+        [bool]$defender.Gui.Default | Should Be $false
+        $wu = @($script:SecSchema.Components | Where-Object { $_.Key -eq 'DisableWindowsUpdate' })[0]
+        [bool]$wu.Default | Should Be $false
+        [bool]$wu.Gui.Default | Should Be $false
+        $winlogon = @($script:SecSchema.Tweaks | Where-Object { $_.Key -eq 'ConfigureWinlogon' })[0]
+        [bool]$winlogon.Default | Should Be $false
+        $uac = @($script:SecSchema.Tweaks | Where-Object { $_.Key -eq 'DisableUAC' })[0]
+        [bool]$uac.Default | Should Be $false
+    }
+
+    It "the JSON profile schema carries the same defaults" {
+        $json = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\WinEase.config.schema.json")) | ConvertFrom-Json
+        [bool]$json.properties.RemoveDefender.default | Should Be $false
+        [bool]$json.properties.DisableWindowsUpdate.default | Should Be $false
+        $json.properties.RemoveAppxBloatware | Should Not BeNullOrEmpty
+    }
+
+    It "the aggressive presets still ask for the aggressive security options" {
+        foreach ($key in @('extreme', 'fat32', 'handheld', 'audio')) {
+            $preset = $script:SecPresets.Presets[$key]
+            [bool]$preset['RemoveDefender'] | Should Be $true
+            [bool]$preset['DisableWindowsUpdate'] | Should Be $true
+            [bool]$preset.TweakSettings['ConfigureWinlogon'] | Should Be $true
+        }
+    }
+
+    It "the none preset removes nothing" {
+        $none = $script:SecPresets.Presets['none']
+        # every removal option is off
+        [bool]$none['RemoveDefender'] | Should Be $false
+        [bool]$none['RemoveStore'] | Should Be $false
+        [bool]$none['RemoveLegacyFOD'] | Should Be $false
+        [bool]$none['RemoveDrivers'] | Should Be $false
+        [bool]$none['DisableWindowsUpdate'] | Should Be $false
+        [bool]$none['RemoveAppxBloatware'] | Should Be $false
+        [bool]$none['UltraSlimMode'] | Should Be $false
+        # every "Keep ..." option is on
+        [bool]$none['KeepAsianIME'] | Should Be $true
+        [bool]$none['KeepExtraFonts'] | Should Be $true
+        [bool]$none['KeepBluetooth'] | Should Be $true
+        [bool]$none['KeepRecoveryEnv'] | Should Be $true
+        [bool]$none['KeepBasicApps'] | Should Be $true
+        [bool]$none['KeepXboxServices'] | Should Be $true
+        [bool]$none['KeepSearchIndex'] | Should Be $true
+        [bool]$none['KeepAudioTweaks'] | Should Be $true
+    }
+
+    It "the none preset names every option of the master schema" {
+        $none = $script:SecPresets.Presets['none']
+        $tweakKeys = @($script:SecSchema.Tweaks | ForEach-Object { $_.Key })
+        # the three prerequisites of the unattended setup keep their default
+        $bypass = @('BypassHardwareRequirements', 'BypassNetworkRequirement', 'BypassNRO')
+        foreach ($tk in $tweakKeys) {
+            if ($bypass -contains $tk) {
+                $none.TweakSettings.Contains($tk) | Should Be $false
+                continue
+            }
+            $none.TweakSettings.Contains($tk) | Should Be $true
+            [bool]$none.TweakSettings[$tk] | Should Be $false
+        }
+        $componentKeys = @($script:SecSchema.Components | Where-Object { $_.Type -ne 'Special' -and $_.ContainsKey('Default') } | ForEach-Object { $_.Key })
+        foreach ($ck in $componentKeys) {
+            $none.Contains($ck) | Should Be $true
+        }
+    }
+
+    It "the none preset removes no AppX package" {
+        if (-not (Get-Command -Name Get-WinEaseAppxRemovalPatterns -ErrorAction SilentlyContinue)) {
+            . (Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1")
+        }
+        $none = $script:SecPresets.Presets['none']
+        $definitions = @($script:SecSchema.AppxRemoval)
+        $settings = @{
+            RemoveAppxBloatware = [bool]$none['RemoveAppxBloatware']
+            RemoveDefender      = [bool]$none['RemoveDefender']
+            RemoveStore         = [bool]$none['RemoveStore']
+            KeepBasicApps       = [bool]$none['KeepBasicApps']
+            KeepXboxServices    = [bool]$none['KeepXboxServices']
+        }
+        @(Get-WinEaseAppxRemovalPatterns -Definitions $definitions -Settings $settings).Count | Should Be 0
+    }
+
+    It "the blank-password auto-logon follows the option everywhere" {
+        # the unattend file: the AutoLogon section is removed when the option is off
+        $phase11 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\11-unattend.ps1"))
+        $phase11 | Should Match 'Test-TweakEnabled ''ConfigureWinlogon'' \$false'
+        $phase11 | Should Match 'local-name\(\)=.AutoLogon.'
+        # the registry phase: the Winlogon values are only written when the option is on
+        $phase10 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\10-registry.ps1"))
+        $phase10 | Should Match 'Test-TweakEnabled ''ConfigureWinlogon'' \$false'
+        # the network use of a blank password is blocked in every configuration
+        $phase10 | Should Match 'LimitBlankPasswordUse'
+        # the OOBE helpers are only deployed when the option is on
+        $phase11 | Should Match 'WinEase-oobe-autologon-repair\.ps1'
+        $phase11 | Should Match '\$configureWinlogon'
+    }
+
+    It "the unattend file loses the auto-logon section when the option is off" {
+        $raw = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "autounattend.xml"), [System.Text.Encoding]::UTF8)
+        $doc = [xml]$raw
+        # the option is off: the AutoLogon section is removed, the account stays
+        $doc = [xml]$raw
+        foreach ($n in @($doc.SelectNodes("//*[local-name()='AutoLogon']"))) { [void]$n.ParentNode.RemoveChild($n) }
+        @($doc.SelectNodes("//*[local-name()='AutoLogon']")).Count | Should Be 0
+        @($doc.SelectNodes("//*[local-name()='LocalAccount']")).Count | Should BeGreaterThan 0
+        # the option is on: the section stays untouched
+        $doc2 = [xml]$raw
+        @($doc2.SelectNodes("//*[local-name()='AutoLogon']")).Count | Should BeGreaterThan 0
+    }
+
+    It "the first logon removes the AppX packages only behind the flag" {
+        $firstLogon = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "scripts\FirstLogon.ps1"))
+        $firstLogon | Should Match 'remove-appx-packages\.flag'
+        # the unconditional per-user removal is gone
+        $firstLogon | Should Not Match 'Get-AppxPackage -AllUsers -Name \*WindowsBackupApp\*'
+        # the phase stages the list
+        $phase11 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\11-unattend.ps1"))
+        $phase11 | Should Match 'remove-appx-packages\.flag'
+    }
+
+    It "the security options are documented with their recovery" {
+        $doc = Join-Path $script:RepoRoot "docs\SECURITY_OPTIONS.md"
+        Test-Path -LiteralPath $doc | Should Be $true
+        $text = [System.IO.File]::ReadAllText($doc)
+        foreach ($key in @('RemoveDefender', 'DisableWindowsUpdate', 'ConfigureWinlogon', 'DisableUAC', 'EnableScripts', 'DisableCPUMitigations', 'PreventDeviceEncryption')) {
+            $text | Should Match ([regex]::Escape($key))
+        }
+        $text | Should Match 'Recovery'
+    }
+}

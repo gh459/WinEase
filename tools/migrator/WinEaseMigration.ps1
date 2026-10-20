@@ -375,12 +375,27 @@ function Backup-WinEaseUserData {
     foreach ($cat in $FolderMap.Keys) {
         $srcPath = $FolderMap[$cat]
         if (-not (Test-Path -LiteralPath $srcPath)) { continue }
+        # The category is a single directory name below the backup root. A category that
+        # carries a traversal must not be able to write outside the backup directory.
+        $catCheck = Resolve-WinEaseSafeRelativePath -RelativePath ([string]$cat) -Root $BackupRoot -Label 'category'
+        if (-not $catCheck.IsSafe) {
+            $failed += [PSCustomObject]@{ Path = [string]$cat; Error = "Refused: $($catCheck.Reason)" }
+            Write-Verbose "Ignored: $($catCheck.Reason)"
+            continue
+        }
+        $catRoot = $catCheck.Path
         try {
             $items = Get-ChildItem -LiteralPath $srcPath -Recurse -File -ErrorAction SilentlyContinue
         } catch { $items = @() }
         foreach ($it in $items) {
             $rel = Get-WinEaseRelativePath -BasePath $srcPath -FullName $it.FullName
-            $destPath = Join-Path -Path (Join-Path -Path $BackupRoot -ChildPath $cat) -ChildPath $rel
+            $destCheck = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $catRoot -Label 'backup path'
+            if (-not $destCheck.IsSafe) {
+                $failed += [PSCustomObject]@{ Path = $it.FullName; Error = "Refused: $($destCheck.Reason)" }
+                Write-Verbose "Ignored: $($destCheck.Reason)"
+                continue
+            }
+            $destPath = $destCheck.Path
             $destDir = Split-Path -Parent $destPath
             if ($DryRun) { $copied++; $totalBytes += $it.Length; continue }
             try {
@@ -440,30 +455,53 @@ function Restore-WinEaseUserData {
     if (Test-Path -LiteralPath $manifestPath) {
         try { $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json; $entries = $m.Entries } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
-    # Custom paths have their own restore (Restore-WinEaseCustomPaths); an optional category filter narrows the rest
-    $entries = @($entries | Where-Object { $_.Category -ne 'CustomPath' })
+    # Custom paths have their own restore (Restore-WinEaseCustomPaths); an optional category filter narrows the rest.
+    # A manifest without entries must not produce an empty entry: an empty relative path
+    # would resolve to the backup root itself and copy the whole backup into the profile.
+    $entries = @($entries | Where-Object { $_ -and $_.Category -ne 'CustomPath' })
     if ($Categories) { $entries = @($entries | Where-Object { $Categories -contains $_.Category }) }
     foreach ($entry in $entries) {
-        $srcPath = Join-Path -Path $BackupRoot -ChildPath $entry.RelativePath
-        if ($entry.Category) { $srcPath = Join-Path -Path (Join-Path -Path $BackupRoot -ChildPath $entry.Category) -ChildPath $entry.RelativePath }
+        $rel = [string]$entry.RelativePath
+        $cat = [string]$entry.Category
+        # The category is a single directory name below the backup root and the relative
+        # path is relative to it. Both come from the manifest, which is not trusted: a
+        # traversal in either of them must not reach outside the backup directory.
+        $catCheck = Resolve-WinEaseSafeRelativePath -RelativePath $cat -Root $BackupRoot -Label 'category'
+        if (-not $catCheck.IsSafe) {
+            $failed += [PSCustomObject]@{ Path = $cat; Error = "Refused: $($catCheck.Reason)" }
+            Write-Verbose "Ignored: $($catCheck.Reason)"
+            continue
+        }
+        $srcCheck = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $catCheck.Path -Label 'backup path'
+        if (-not $srcCheck.IsSafe) {
+            $failed += [PSCustomObject]@{ Path = $rel; Error = "Refused: $($srcCheck.Reason)" }
+            Write-Verbose "Ignored: $($srcCheck.Reason)"
+            continue
+        }
+        $srcPath = $srcCheck.Path
         # Actually backup stores under BackupRoot\<Category>\<rel>; handle both
         if (-not (Test-Path -LiteralPath $srcPath)) {
             # try BackupRoot\<rel>
-            $srcPath2 = Join-Path -Path $BackupRoot -ChildPath $entry.RelativePath
-            if (Test-Path -LiteralPath $srcPath2) { $srcPath = $srcPath2 }
+            $fallback = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $BackupRoot -Label 'backup path'
+            if ($fallback.IsSafe -and (Test-Path -LiteralPath $fallback.Path)) { $srcPath = $fallback.Path }
         }
-        if (-not (Test-Path -LiteralPath $srcPath)) { $failed += [PSCustomObject]@{ Path = $entry.RelativePath; Error = 'Backup file missing' }; continue }
+        if (-not (Test-Path -LiteralPath $srcPath)) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Backup file missing' }; continue }
         # verify hash
         if ($VerifyHashBeforeRestore -and $entry.Sha256) {
             try {
                 $h = (Get-FileHash -LiteralPath $srcPath -Algorithm SHA256).Hash
-                if ($h -ne $entry.Sha256) { $failed += [PSCustomObject]@{ Path = $entry.RelativePath; Error = 'Hash mismatch (corrupt)' }; continue }
+                if ($h -ne $entry.Sha256) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Hash mismatch (corrupt)' }; continue }
             } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         }
-        $destPath = $entry.RelativePath
-        # dest is relative to user profile home? We'll restore under USERPROFILE
-        $destPath = Join-Path -Path $env:USERPROFILE -ChildPath $entry.RelativePath
-        # but category-based: if RelativePath doesn't include category, prepend? Keep as-is per manifest
+        # The restore target is relative to the user profile home. The relative path is
+        # validated again for that root: it must not leave the profile.
+        $destCheck = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $env:USERPROFILE -Label 'restore path'
+        if (-not $destCheck.IsSafe) {
+            $failed += [PSCustomObject]@{ Path = $rel; Error = "Refused: $($destCheck.Reason)" }
+            Write-Verbose "Ignored: $($destCheck.Reason)"
+            continue
+        }
+        $destPath = $destCheck.Path
         if ($DryRun) { $restored++; continue }
         try {
             $destDir = Split-Path -Parent $destPath
@@ -481,7 +519,7 @@ function Restore-WinEaseUserData {
             Copy-Item -LiteralPath $srcPath -Destination $destPath -Force
             $restored++
         } catch {
-            $failed += [PSCustomObject]@{ Path = $entry.RelativePath; Error = $_.Exception.Message }
+            $failed += [PSCustomObject]@{ Path = $rel; Error = $_.Exception.Message }
             Write-Verbose "Ignored: $($_.Exception.Message)"
         }
     }
@@ -731,7 +769,8 @@ function Start-WinEaseMigrationRestore {
         [switch]$RetryFailedOnly,
         [ValidateSet('Skip','BackupExisting','OverwriteIfNewer','Overwrite')]
         [string]$ConflictPolicy = 'BackupExisting',
-        [switch]$DryRun
+        [switch]$DryRun,
+        [string[]]$AllowedCustomPaths = @()
     )
     $statePath = Join-Path -Path $BackupRoot -ChildPath 'restore-state.json'
     $state = [ordered]@{}
@@ -804,8 +843,16 @@ function Start-WinEaseMigrationRestore {
                     }
                 }
                 'Custom' {
-                    $detail = Restore-WinEaseCustomPaths -BackupRoot $BackupRoot -ConflictPolicy $ConflictPolicy -SourcePath $t.Target -DryRun:$DryRun
-                    if (@($detail.FailedFiles).Count -gt 0) { $status = 'Failed' }
+                    # The custom paths are only restored to the locations the caller
+                    # allowed for this restore. Without an allow list nothing is written:
+                    # the manifest alone never decides where a file goes.
+                    if (@($AllowedCustomPaths).Count -eq 0) {
+                        $status = 'Skipped'
+                        $detail = 'No restore target was allowed for the custom paths (pass the paths to restore to).'
+                    } else {
+                        $detail = Restore-WinEaseCustomPaths -BackupRoot $BackupRoot -ConflictPolicy $ConflictPolicy -SourcePath $t.Target -AllowedSourcePaths $AllowedCustomPaths -DryRun:$DryRun
+                        if (@($detail.FailedFiles).Count -gt 0) { $status = 'Failed' }
+                    }
                 }
                 default {
                     if ($t.Target) {
@@ -922,6 +969,11 @@ function Backup-WinEaseCustomPaths {
 }
 
 # Restore-WinEaseCustomPaths: restore arbitrary files/folders from backup
+#
+# The restore target is NOT taken from the manifest alone: the manifest is untrusted
+# input, so the caller has to name the locations this restore is allowed to write to
+# (-AllowedSourcePaths). Without an allow list the restore either uses the explicit
+# -DefaultRestoreRoot or refuses to write at all.
 function Restore-WinEaseCustomPaths {
     [CmdletBinding()]
     param(
@@ -931,7 +983,9 @@ function Restore-WinEaseCustomPaths {
         [string]$ConflictPolicy = 'BackupExisting',
         [switch]$VerifyHashBeforeRestore,
         [switch]$DryRun,
-        [string]$SourcePath
+        [string]$SourcePath,
+        [string[]]$AllowedSourcePaths = @(),
+        [string]$DefaultRestoreRoot = ''
     )
     if (-not $PSBoundParameters.ContainsKey('VerifyHashBeforeRestore')) { $VerifyHashBeforeRestore = $true }
     $restored = 0
@@ -952,21 +1006,63 @@ function Restore-WinEaseCustomPaths {
     }
 
     foreach ($entry in $entries) {
-        $srcPath = Join-Path -Path $customRoot -ChildPath $entry.RelativePath
-        if (-not (Test-Path -LiteralPath $srcPath)) { $failed += [PSCustomObject]@{ Path = $entry.RelativePath; Error = 'Backup file missing' }; continue }
+        $rel = [string]$entry.RelativePath
+        # The backup copy must stay inside the backup directory.
+        $srcCheck = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $customRoot -Label 'backup path'
+        if (-not $srcCheck.IsSafe) {
+            $failed += [PSCustomObject]@{ Path = $rel; Error = "Refused: $($srcCheck.Reason)" }
+            Write-Verbose "Ignored: $($srcCheck.Reason)"
+            continue
+        }
+        $srcPath = $srcCheck.Path
+        if (-not (Test-Path -LiteralPath $srcPath)) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Backup file missing' }; continue }
         if ($VerifyHashBeforeRestore -and $entry.Sha256) {
             try {
                 $h = (Get-FileHash -LiteralPath $srcPath -Algorithm SHA256).Hash
-                if ($h -ne $entry.Sha256) { $failed += [PSCustomObject]@{ Path = $entry.RelativePath; Error = 'Hash mismatch (corrupt)' }; continue }
+                if ($h -ne $entry.Sha256) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Hash mismatch (corrupt)' }; continue }
             } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         }
-        $destPath = $entry.SourcePath
-        if ([string]::IsNullOrWhiteSpace($destPath)) { $destPath = Join-Path -Path $env:USERPROFILE -ChildPath $entry.RelativePath }
+        # Restore target: the location the file came from is only a proposal. It is used
+        # when the caller allowed that location for this restore.
+        $destPath = $null
+        if (@($AllowedSourcePaths).Count -gt 0) {
+            $candidate = [string]$entry.SourcePath
+            if ([string]::IsNullOrWhiteSpace($candidate)) {
+                $failed += [PSCustomObject]@{ Path = $rel; Error = 'Refused: the manifest entry has no source path' }
+                Write-Verbose "Ignored: the manifest entry has no source path"
+                continue
+            }
+            $target = Resolve-WinEaseRestoreTarget -Path $candidate -AllowedRoots $AllowedSourcePaths
+            if (-not $target.IsSafe) {
+                $failed += [PSCustomObject]@{ Path = $rel; Error = "Refused: $($target.Reason)" }
+                Write-Verbose "Ignored: $($target.Reason)"
+                continue
+            }
+            $destPath = $target.Path
+        } elseif (-not [string]::IsNullOrWhiteSpace($DefaultRestoreRoot)) {
+            $target = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $DefaultRestoreRoot -Label 'restore path'
+            if (-not $target.IsSafe) {
+                $failed += [PSCustomObject]@{ Path = $rel; Error = "Refused: $($target.Reason)" }
+                Write-Verbose "Ignored: $($target.Reason)"
+                continue
+            }
+            $destPath = $target.Path
+        } else {
+            $failed += [PSCustomObject]@{ Path = $rel; Error = 'Refused: no restore target was allowed for this restore' }
+            Write-Verbose "Ignored: no restore target was allowed for this restore"
+            continue
+        }
         if ($DryRun) { $restored++; continue }
         try {
-            $destDir = Split-Path -Parent $destPath
-            if (-not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
-            if (Test-Path -LiteralPath $destPath) {
+            # A backed up folder is restored into the folder itself (the file name of the
+            # backup copy differs from the name of the destination), a backed up file is
+            # restored onto the file.
+            $destIsFolder = ($rel -match '[\\/]') -and (-not (Test-Path -LiteralPath $destPath -PathType Leaf))
+            $destDir = if ($destIsFolder) { $destPath } else { Split-Path -Parent $destPath }
+            if (-not [string]::IsNullOrWhiteSpace($destDir) -and -not (Test-Path -LiteralPath $destDir)) {
+                New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+            }
+            if (-not $destIsFolder -and (Test-Path -LiteralPath $destPath)) {
                 if ($ConflictPolicy -eq 'Skip') { $skipped++; continue }
                 elseif ($ConflictPolicy -eq 'BackupExisting') {
                     Copy-Item -LiteralPath $destPath -Destination "$destPath.WinEase.bak" -Force
@@ -979,7 +1075,7 @@ function Restore-WinEaseCustomPaths {
             Copy-Item -LiteralPath $srcPath -Destination $destPath -Force
             $restored++
         } catch {
-            $failed += [PSCustomObject]@{ Path = $entry.RelativePath; Error = $_.Exception.Message }
+            $failed += [PSCustomObject]@{ Path = $rel; Error = $_.Exception.Message }
             Write-Verbose "Ignored: $($_.Exception.Message)"
         }
     }

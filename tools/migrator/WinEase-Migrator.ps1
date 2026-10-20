@@ -14,7 +14,9 @@
 .PARAMETER UserFolders
     Known personal folders to back up (Documents, Desktop, Pictures, Videos, Downloads, Music).
 .PARAMETER CustomPaths
-    Extra files/folders to back up.
+    Extra files/folders to back up. In -Mode Restore these are the locations the custom
+    paths of the backup may be restored to: the manifest alone never decides where a
+    file is written to, so without this list no custom path is restored.
 .PARAMETER RuleIds
     Comma-separated migration rule IDs (game saves / app settings).
 .PARAMETER ConflictPolicy
@@ -518,7 +520,12 @@ switch ($Mode) {
         [PSCustomObject]@{ Mode = 'Backup'; Success = $verify.Success; Verify = $verify; ReportPath = $report; Manifest = $result }
     }
     'Restore' {
-        $result = Start-WinEaseMigrationRestore -BackupRoot $PackagePath -ConflictPolicy $ConflictPolicy -RetryFailedOnly:$RetryFailedOnly -DryRun:$DryRun
+        $restoreArgs = @{ BackupRoot = $PackagePath; ConflictPolicy = $ConflictPolicy; RetryFailedOnly = [bool]$RetryFailedOnly; DryRun = [bool]$DryRun }
+        # The custom paths of the backup are only restored to the locations that are
+        # named here. Without the list the custom path tasks are skipped.
+        $allowed = @($CustomPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($allowed.Count -gt 0) { $restoreArgs['AllowedCustomPaths'] = $allowed }
+        $result = Start-WinEaseMigrationRestore @restoreArgs
         Write-Host 'Restore completed.' -ForegroundColor Green
         $result.Results | ForEach-Object { Write-Host ('  {0}: {1}' -f $_.TaskId, $_.Status) }
         $report = $null
