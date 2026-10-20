@@ -47,6 +47,30 @@ function Test-WinEasePathWithin {
     return $p.StartsWith($r + '\', [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+# Helper function: path of an enumerated item relative to the folder it was enumerated from.
+# Get-ChildItem reports long names even when the folder was given in 8.3 form (for example
+# C:\Users\RUNNER~1\... for C:\Users\runneradmin\...), so slicing FullName by the length of the
+# caller's string cut the wrong number of characters ("nts\test.txt" instead of "test.txt").
+# The base is tried as given, then resolved by the file system provider; if neither is a prefix
+# of the item the file name alone is returned instead of a garbled path.
+function Get-WinEaseRelativePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$BasePath,
+        [Parameter(Mandatory = $true)][string]$FullName
+    )
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    $candidates.Add($BasePath)
+    try { $candidates.Add((Get-Item -LiteralPath $BasePath -Force -ErrorAction Stop).FullName) } catch { Write-Verbose "Get-WinEaseRelativePath: Get-Item failed: $($_.Exception.Message)" }
+    try { $candidates.Add((Resolve-Path -LiteralPath $BasePath -ErrorAction Stop).ProviderPath) } catch { Write-Verbose "Get-WinEaseRelativePath: Resolve-Path failed: $($_.Exception.Message)" }
+    foreach ($candidate in $candidates) {
+        $base = $candidate.TrimEnd('\', '/')
+        if ($base -and $FullName.StartsWith($base + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $FullName.Substring($base.Length + 1)
+        }
+    }
+    return [System.IO.Path]::GetFileName($FullName)
+}
+
 
 function Test-IsNtfsVolume {
     param([string]$Path)

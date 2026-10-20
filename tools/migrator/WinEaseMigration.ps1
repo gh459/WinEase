@@ -379,7 +379,7 @@ function Backup-WinEaseUserData {
             $items = Get-ChildItem -LiteralPath $srcPath -Recurse -File -ErrorAction SilentlyContinue
         } catch { $items = @() }
         foreach ($it in $items) {
-            $rel = $it.FullName.Substring($srcPath.Length).TrimStart('\')
+            $rel = Get-WinEaseRelativePath -BasePath $srcPath -FullName $it.FullName
             $destPath = Join-Path -Path (Join-Path -Path $BackupRoot -ChildPath $cat) -ChildPath $rel
             $destDir = Split-Path -Parent $destPath
             if ($DryRun) { $copied++; $totalBytes += $it.Length; continue }
@@ -541,7 +541,7 @@ function Invoke-WinEaseMigrationRulesBackup {
                 $item = Get-Item -LiteralPath $src
                 if ($item.PSIsContainer) {
                     Get-ChildItem -LiteralPath $src -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
-                        $rel = $_.FullName.Substring($src.Length).TrimStart('\')
+                        $rel = Get-WinEaseRelativePath -BasePath $src -FullName $_.FullName
                         if (-not $IncludeSecrets -and $rule.ExcludeSecrets -and (Test-WinEaseSecretPath -FilePath $_.Name -SecretPatterns $secretPatterns)) {
                             Write-Verbose "Excluded secret: $($_.FullName)"
                             $skipped++
@@ -615,7 +615,7 @@ function Invoke-WinEaseMigrationRulesRestore {
         }
         # File restore
         Get-ChildItem -LiteralPath $ruleBackupDir -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'registry.reg' } | ForEach-Object {
-            $rel = $_.FullName.Substring($ruleBackupDir.Length).TrimStart('\')
+            $rel = Get-WinEaseRelativePath -BasePath $ruleBackupDir -FullName $_.FullName
             # reconstruct source path from rule SourcePaths (use first existing parent)
             $src = $null
             foreach ($sp in @($rule.SourcePaths)) {
@@ -869,7 +869,7 @@ function Backup-WinEaseCustomPaths {
                 $files = Get-ChildItem -LiteralPath $expanded -Recurse -File -ErrorAction SilentlyContinue
             } catch { $files = @() }
             foreach ($f in $files) {
-                $rel = $f.FullName.Substring($expanded.Length).TrimStart('\')
+                $rel = Get-WinEaseRelativePath -BasePath $expanded -FullName $f.FullName
                 $destPath = Join-Path -Path (Join-Path -Path $customRoot -ChildPath $item.Name) -ChildPath $rel
                 if ($DryRun) { $copied++; $totalBytes += $f.Length; continue }
                 try {
