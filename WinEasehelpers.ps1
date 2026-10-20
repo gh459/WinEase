@@ -682,9 +682,12 @@ function New-BuildContextFromScriptScope {
     $ctx.BypassActivationRestrictions = $bypassActivationRestrictions
     $ctx.RadicalRAM = $radicalRAM
     $ctx.AllowPhysicalDebloat = if ($null -ne $allowPhysicalDebloat) { [bool]$allowPhysicalDebloat } elseif ($null -ne $script:AllowPhysicalDebloat) { [bool]$script:AllowPhysicalDebloat } else { $false }
-    # Item lists (string[]), not flags: keep elements and order; $null/unset becomes an empty list
-    $ctx.AdvancedDebloatStandard = if ($null -ne $advancedDebloatStandard) { [string[]]@($advancedDebloatStandard | Where-Object { $null -ne $_ }) } elseif ($null -ne $script:AdvancedDebloatStandard) { [string[]]@($script:AdvancedDebloatStandard | Where-Object { $null -ne $_ }) } else { [string[]]@() }
-    $ctx.AdvancedDebloatExperimental = if ($null -ne $advancedDebloatExperimental) { [string[]]@($advancedDebloatExperimental | Where-Object { $null -ne $_ }) } elseif ($null -ne $script:AdvancedDebloatExperimental) { [string[]]@($script:AdvancedDebloatExperimental | Where-Object { $null -ne $_ }) } else { [string[]]@() }
+    # Item lists (string[]), not flags: keep elements and order; $null/unset becomes an empty list.
+    # Assigned outside an if-expression: its output would unroll an empty array to $null.
+    $advStandardSrc = if ($null -ne $advancedDebloatStandard) { $advancedDebloatStandard } else { $script:AdvancedDebloatStandard }
+    $ctx.AdvancedDebloatStandard = [string[]]@($advStandardSrc | Where-Object { $null -ne $_ })
+    $advExperimentalSrc = if ($null -ne $advancedDebloatExperimental) { $advancedDebloatExperimental } else { $script:AdvancedDebloatExperimental }
+    $ctx.AdvancedDebloatExperimental = [string[]]@($advExperimentalSrc | Where-Object { $null -ne $_ })
     $ctx.ActiveTweakGroups = $script:activeTweakGroups
     $ctx.TweakSettings = if ($null -ne $script:TweakSettings) { $script:TweakSettings } else { [ordered]@{} }
     $ctx.PayloadFormat = $PayloadFormat
