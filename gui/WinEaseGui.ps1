@@ -1182,6 +1182,11 @@ function Invoke-WinEaseGuiMigrationJob {
     $o = Invoke-WinEaseGuiBackgroundJob -Button $Button -Form $Form -ArgumentList $RepoRoot, $Script, $Arguments -ScriptBlock {
         param($repoRoot, $inner, $jobArgs)
         Set-Location -LiteralPath $repoRoot
+        # The migration engine uses the shared helpers (relative paths, path boundaries,
+        # the restore path validation). A job starts with an empty session state, so
+        # both files are loaded here.
+        $helpers = Join-Path $repoRoot 'WinEasehelpers.ps1'
+        if (Test-Path -LiteralPath $helpers) { . $helpers }
         . (Join-Path $repoRoot 'tools\migrator\WinEaseMigration.ps1')
         & ([scriptblock]::Create($inner)) $jobArgs
     }
@@ -1751,6 +1756,11 @@ function New-WinEaseMigrationActionsGroup {
             $f = $btn.FindForm()
             $g = $f.Tag
             $ra = @{ BackupRoot = (Get-WinEaseGuiMigrationRoot -Gui $g); ConflictPolicy = (Get-WinEaseGuiConflictPolicy -Gui $g) }
+            # The custom paths of the backup are only restored to the locations that are
+            # listed in the custom path box: the manifest alone never decides where a
+            # file is written to.
+            $allowed = @($g.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            if ($allowed.Count -gt 0) { $ra['AllowedCustomPaths'] = $allowed }
             if ($retry) { $ra['RetryFailedOnly'] = $true }
             $o = Invoke-WinEaseGuiMigrationJob -Button $btn -Form $f -RepoRoot $script:WinEaseGuiRepoRoot -Arguments $ra -Script 'param($a) Start-WinEaseMigrationRestore @a'
             $msg = Get-WinEaseUiString 'Mig.Restore.Done'
@@ -1772,36 +1782,43 @@ function New-WinEaseMigrationCustomPathsGroup {
     $gui.CustomPaths = $txtCustomPaths
 
     [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Mig.Button.BackupCustom') -X 590 -Y 42 -Width 160 -Height 32 -Parent $grpCustom -OnClick {
-        $f = $this.FindForm()
+        $btn = $this
+        $f = $btn.FindForm()
         $g = $f.Tag
-        try {
-            $result = Invoke-WinEaseGuiBusy -Button $this -Form $f -ArgumentList $g -Action {
-                param($gui)
-                $root = Get-WinEaseGuiMigrationRoot -Gui $gui
-                $paths = @($gui.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-                if ($paths.Count -eq 0) { throw (Get-WinEaseUiString 'Mig.Custom.NoPaths') }
-                Backup-WinEaseCustomPaths -Paths $paths -BackupRoot $root
-            }
-            $msg = Get-WinEaseUiString 'Mig.Custom.BackupDone' -Format $result.CopiedFiles, $result.FailedFiles.Count
+        $paths = @($g.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        if ($paths.Count -eq 0) {
+            Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Mig.Custom.NoPaths') -Title (Get-WinEaseUiString 'Mig.Button.BackupCustom') -Kind Warning
+            return
+        }
+        $ca = @{ Paths = $paths; BackupRoot = (Get-WinEaseGuiMigrationRoot -Gui $g) }
+        $o = Invoke-WinEaseGuiMigrationJob -Button $btn -Form $f -RepoRoot $script:WinEaseGuiRepoRoot -Arguments $ca -Script 'param($a) Backup-WinEaseCustomPaths @a'
+        if ($o.Result) {
+            $msg = Get-WinEaseUiString 'Mig.Custom.BackupDone' -Format $o.Result.CopiedFiles, @($o.Result.FailedFiles).Count
             Show-WinEaseGuiMessage -Text $msg -Title (Get-WinEaseUiString 'Mig.Button.BackupCustom') -Kind Info
-            if ($g.MigStatus) { $g.MigStatus.Text = Get-WinEaseUiString 'Mig.Custom.BackupStatus' -Format $result.CopiedFiles }
-        } catch {
-            Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'Mig.Button.BackupCustom') -Kind Error
+            if ($g.MigStatus) { $g.MigStatus.Text = Get-WinEaseUiString 'Mig.Custom.BackupStatus' -Format $o.Result.CopiedFiles }
+        } else {
+            Show-WinEaseGuiJobOutcome -Outcome $o -Title (Get-WinEaseUiString 'Mig.Button.BackupCustom') -SuccessMessage (Get-WinEaseUiString 'Mig.Custom.BackupDone' -Format 0, 0)
         }
     })
     [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Mig.Button.RestoreCustom') -X 590 -Y 82 -Width 160 -Height 32 -Parent $grpCustom -OnClick {
-        $f = $this.FindForm()
+        $btn = $this
+        $f = $btn.FindForm()
         $g = $f.Tag
-        try {
-            $result = Invoke-WinEaseGuiBusy -Button $this -Form $f -ArgumentList $g -Action {
-                param($gui)
-                Restore-WinEaseCustomPaths -BackupRoot (Get-WinEaseGuiMigrationRoot -Gui $gui) -ConflictPolicy (Get-WinEaseGuiConflictPolicy -Gui $gui)
-            }
-            $msg = Get-WinEaseUiString 'Mig.Custom.RestoreDone' -Format $result.RestoredFiles, $result.FailedFiles.Count
+        # The custom paths are restored to the locations that are listed here: the
+        # manifest alone never decides where a file is written to.
+        $paths = @($g.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        if ($paths.Count -eq 0) {
+            Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Mig.Custom.NoPaths') -Title (Get-WinEaseUiString 'Mig.Button.RestoreCustom') -Kind Warning
+            return
+        }
+        $ra = @{ BackupRoot = (Get-WinEaseGuiMigrationRoot -Gui $g); ConflictPolicy = (Get-WinEaseGuiConflictPolicy -Gui $g); AllowedSourcePaths = $paths }
+        $o = Invoke-WinEaseGuiMigrationJob -Button $btn -Form $f -RepoRoot $script:WinEaseGuiRepoRoot -Arguments $ra -Script 'param($a) Restore-WinEaseCustomPaths @a'
+        if ($o.Result) {
+            $msg = Get-WinEaseUiString 'Mig.Custom.RestoreDone' -Format $o.Result.RestoredFiles, @($o.Result.FailedFiles).Count
             Show-WinEaseGuiMessage -Text $msg -Title (Get-WinEaseUiString 'Mig.Button.RestoreCustom') -Kind Info
-            if ($g.MigStatus) { $g.MigStatus.Text = Get-WinEaseUiString 'Mig.Custom.RestoreStatus' -Format $result.RestoredFiles }
-        } catch {
-            Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'Mig.Button.RestoreCustom') -Kind Error
+            if ($g.MigStatus) { $g.MigStatus.Text = Get-WinEaseUiString 'Mig.Custom.RestoreStatus' -Format $o.Result.RestoredFiles }
+        } else {
+            Show-WinEaseGuiJobOutcome -Outcome $o -Title (Get-WinEaseUiString 'Mig.Button.RestoreCustom') -SuccessMessage (Get-WinEaseUiString 'Mig.Custom.RestoreDone' -Format 0, 0)
         }
     })
 }

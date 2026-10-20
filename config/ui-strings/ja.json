@@ -382,4 +382,7 @@
   "Tweak.RemoveLanguageKoKR.Description": "髻灘嵜隱槭・險隱槭ヱ繝・け繧貞炎髯､縺ｧ縺阪ｋ迥ｶ諷九↓縺吶ｋ (OFF = 菫晁ｭｷ縺励※谿九☆)",
   "Tweak.RemoveLanguageZhCN.Description": "邁｡菴灘ｭ嶺ｸｭ蝗ｽ隱槭・險隱槭ヱ繝・け繧貞炎髯､縺ｧ縺阪ｋ迥ｶ諷九↓縺吶ｋ (OFF = 菫晁ｭｷ縺励※谿九☆)",
   "Tweak.RemoveLanguageZhTW.Description": "郢∽ｽ灘ｭ嶺ｸｭ蝗ｽ隱槭・險隱槭ヱ繝・け繧貞炎髯､縺ｧ縺阪ｋ迥ｶ諷九↓縺吶ｋ (OFF = 菫晁ｭｷ縺励※谿九☆)"
+,
+  "Component.RemoveAppxBloatware.Text": "プリインストール済み AppX の不要アプリを除去",
+  "Component.RemoveAppxBloatware.Description": "Zune・Clipchamp・Xbox・スポンサーアプリなどの初期搭載アプリを除去します。Notepad・Paint・Calculator などは「基本アプリを保持」で個別に除外できます。"
 }

@@ -153,6 +153,11 @@ param(
     [alias("NoStore", "RemoveMicrosoftStore")]
     [switch]$RemoveStore,
 
+    # 14b. Preinstalled AppX bloatware (the inbox apps of the image)
+    [switch]$KeepAppxBloatware,
+    [alias("NoAppxBloatware")]
+    [switch]$RemoveAppxBloatware,
+
     # 16. Fast VHDX Scratch Disk
     [alias("FastVHDX", "VHDX")]
     [switch]$UseVHDX,
@@ -1834,6 +1839,7 @@ $resolvedConfig = [PSCustomObject]@{
     AtlasReviOSMode            = $atlasReviOSMode
     RemoveStore                = $removeStore
     KeepXboxServices           = $keepXboxServices
+    RemoveAppxBloatware        = $removeAppxBloatware
     KeepAudioTweaks            = $keepAudioTweaks
     AllowPhysicalDebloat       = [bool]$allowPhysicalDebloat
     AdvancedDebloatStandard    = @($script:advancedDebloatStandard)
@@ -1865,9 +1871,17 @@ Write-Host "  - Japanese 106 Keyboard:   $setJapaneseKeyboard"
 Write-Host "  - AtlasOS & ReviOS Tuning: $atlasReviOSMode"
 Write-Host "  - Remove Microsoft Store:  $removeStore"
 Write-Host "  - Keep Xbox Services:      $keepXboxServices"
+Write-Host "  - Remove AppX Bloatware:   $removeAppxBloatware"
 Write-Host "  - Low-Latency Audio MMCSS: $keepAudioTweaks"
 Write-Host "  - Search Indexing:         $(if ($keepSearchIndex) { 'Enabled (kept)' } else { 'Disabled (WSearch service off + SearchHost blocked)' })"
 Write-Host "  - Force WinSxS Cleanup:    $ForceWinSxSCleanup (experimental, opt-in)"
+if ($removeDefender) {
+    Write-Host "  [!] Defender is removed: the installed system has NO antivirus protection." -ForegroundColor Yellow
+    Write-Host "      Recovery: 'Set-MpPreference -DisableRealtimeMonitoring \$false' and 'sc.exe config WinDefend start= delayed-auto' (see docs\SECURITY_OPTIONS.md)" -ForegroundColor Yellow
+}
+if ($disableWU) {
+    Write-Host "  [!] Windows Update is disabled: the installed system receives no patches until it is re-enabled." -ForegroundColor Yellow
+}
 if (Test-Path -LiteralPath $configSnapshotPath) {
     Write-Host "  - Config Snapshot:         $configSnapshotPath" -ForegroundColor DarkCyan
 }

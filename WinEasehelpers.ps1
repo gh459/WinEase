@@ -71,6 +71,233 @@ function Get-WinEaseRelativePath {
     return [System.IO.Path]::GetFileName($FullName)
 }
 
+# --- Restore path validation (shared by the PC migration engine) -------------------
+# The restore side of the migration feature reads a manifest that can come from an
+# untrusted source (a backup package, a shared drive, a cloud folder). Every path in
+# that manifest is therefore treated as untrusted input: it is normalized and checked
+# against the allowed root before a single byte is written.
+
+# Normalizes a path for containment comparisons:
+#   - '/' becomes '\'
+#   - the path is made absolute ('..' segments are resolved by GetFullPath)
+#   - the 8.3 short form is resolved to the long form when the path exists, so a
+#     containment check cannot be bypassed by writing the short name
+#   - trailing separators are removed
+# Returns $null when the path cannot be normalized.
+function ConvertTo-WinEaseComparablePath {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+    $clean = $Path.Replace('/', '\')
+    try {
+        $full = [System.IO.Path]::GetFullPath($clean)
+    } catch {
+        Write-Verbose "Ignored: $($_.Exception.Message)"
+        return $null
+    }
+    if ([string]::IsNullOrEmpty($full)) { return $null }
+    $resolved = $full
+    try {
+        $item = Get-Item -LiteralPath $full -Force -ErrorAction Stop
+        if ($item -and -not [string]::IsNullOrEmpty($item.FullName)) { $resolved = $item.FullName }
+    } catch {
+        Write-Verbose "Ignored: $($_.Exception.Message)"
+    }
+    $trimmed = $resolved.TrimEnd('\')
+    if ([string]::IsNullOrEmpty($trimmed)) { return $resolved }
+    # A drive root keeps its separator: "C:" would be resolved against the current
+    # directory of the drive instead of the root itself.
+    if ($trimmed -match '^[A-Za-z]:$') { return $resolved }
+    return $trimmed
+}
+
+# True when the path is an absolute local path: a drive letter with a root ("C:\x")
+# or a UNC share ("\\server\share\x"). A drive-relative ("C:x") or root-relative
+# ("\x") path is not absolute and is refused.
+function Test-WinEaseAbsoluteLocalPath {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    $clean = $Path.Replace('/', '\')
+    if ($clean -match '^[A-Za-z]:\\') { return $true }
+    if ($clean -match '^\\\\[^\\]+\\[^\\]+') { return $true }
+    return $false
+}
+
+# True when one of the existing elements between Root and Path is a symbolic link, a
+# junction or another reparse point. A write through such a link can land outside of
+# the allowed root, so the restore refuses the path instead of following it.
+function Test-WinEasePathHasReparsePoint {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [string]$Root
+    )
+    $p = ConvertTo-WinEaseComparablePath -Path $Path
+    if (-not $p) { return $true }
+    $r = $null
+    if (-not [string]::IsNullOrWhiteSpace($Root)) { $r = ConvertTo-WinEaseComparablePath -Path $Root }
+    if ($r -and -not (Test-WinEasePathWithin -Path $p -Root $r)) { return $true }
+    $current = $p
+    while ($current) {
+        if (Test-Path -LiteralPath $current) {
+            $item = Get-Item -LiteralPath $current -Force -ErrorAction SilentlyContinue
+            if ($item -and ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { return $true }
+        }
+        if ($r -and $current -ieq $r) { break }
+        $parent = Split-Path -Parent $current
+        if (-not $parent -or $parent -ieq $current) { break }
+        $current = $parent
+    }
+    return $false
+}
+
+# Validates a relative path that came from a manifest and returns the absolute path it
+# maps to inside the allowed root.
+#
+# Refused: an empty path, an absolute / drive-relative / UNC / root-relative path, a
+# path with a '..' segment, a path with a wildcard or an invalid character, a path that
+# leaves the root after normalization, and a path that traverses a symbolic link or a
+# junction.
+#
+# Returns @{ IsSafe = $bool; Path = <string>; Reason = <string> }
+function Resolve-WinEaseSafeRelativePath {
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$RelativePath,
+        [Parameter(Mandatory = $true)]
+        [string]$Root,
+        [string]$Label = 'path'
+    )
+    $result = [PSCustomObject]@{ IsSafe = $false; Path = $null; Reason = '' }
+    if ([string]::IsNullOrWhiteSpace($RelativePath)) {
+        $result.Reason = "the $Label is empty"
+        return $result
+    }
+    if ([string]::IsNullOrWhiteSpace($Root)) {
+        $result.Reason = 'the allowed root is empty'
+        return $result
+    }
+    $clean = $RelativePath.Replace('/', '\')
+    if ([System.IO.Path]::IsPathRooted($clean)) {
+        $result.Reason = "the $Label is not relative: '$RelativePath'"
+        return $result
+    }
+    if ($clean -match '[<>:"|?*]' -or $clean -match '[\x00-\x1f]') {
+        $result.Reason = "the $Label contains an invalid character: '$RelativePath'"
+        return $result
+    }
+    $segments = @($clean -split '\\' | Where-Object { $_ -ne '' -and $_ -ne '.' })
+    if ($segments.Count -eq 0) {
+        $result.Reason = "the $Label does not name a file: '$RelativePath'"
+        return $result
+    }
+    foreach ($seg in $segments) {
+        if ($seg -eq '..') {
+            $result.Reason = "the $Label leaves the allowed root ('..'): '$RelativePath'"
+            return $result
+        }
+    }
+    $rootFull = ConvertTo-WinEaseComparablePath -Path $Root
+    if (-not $rootFull) {
+        $result.Reason = "the allowed root cannot be resolved: '$Root'"
+        return $result
+    }
+    $joined = Join-Path -Path $rootFull -ChildPath ($segments -join '\')
+    $full = ConvertTo-WinEaseComparablePath -Path $joined
+    if (-not $full) {
+        $result.Reason = "the $Label cannot be resolved: '$RelativePath'"
+        return $result
+    }
+    if (-not (Test-WinEasePathWithin -Path $full -Root $rootFull)) {
+        $result.Reason = "the $Label leaves the allowed root '$Root': '$RelativePath'"
+        return $result
+    }
+    if (Test-WinEasePathHasReparsePoint -Path $full -Root $rootFull) {
+        $result.Reason = "the $Label traverses a symbolic link or junction: '$RelativePath'"
+        return $result
+    }
+    $result.IsSafe = $true
+    $result.Path = $full
+    return $result
+}
+
+# Validates an absolute restore destination against the roots the caller allows.
+#
+# Refused: a relative or drive-relative path, a path with a wildcard or an invalid
+# character, a path outside every allowed root, and a path that traverses a symbolic
+# link or a junction.
+#
+# Returns @{ IsSafe = $bool; Path = <string>; Reason = <string> }
+function Resolve-WinEaseRestoreTarget {
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$AllowedRoots
+    )
+    $result = [PSCustomObject]@{ IsSafe = $false; Path = $null; Reason = '' }
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        $result.Reason = 'the restore target is empty'
+        return $result
+    }
+    $clean = $Path.Replace('/', '\')
+    if (-not (Test-WinEaseAbsoluteLocalPath -Path $clean)) {
+        $result.Reason = "the restore target is not an absolute path: '$Path'"
+        return $result
+    }
+    $pathRoot = [System.IO.Path]::GetPathRoot($clean)
+    $rest = if ($pathRoot -and $clean.Length -gt $pathRoot.Length) { $clean.Substring($pathRoot.Length) } else { '' }
+    if ($rest -match '[<>:"|?*]' -or $rest -match '[\x00-\x1f]') {
+        $result.Reason = "the restore target contains an invalid character: '$Path'"
+        return $result
+    }
+    $full = ConvertTo-WinEaseComparablePath -Path $clean
+    if (-not $full) {
+        $result.Reason = "the restore target cannot be resolved: '$Path'"
+        return $result
+    }
+    $roots = @($AllowedRoots | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($roots.Count -eq 0) {
+        $result.Reason = 'no restore target was allowed for this restore'
+        return $result
+    }
+    $matchedRoot = $null
+    foreach ($r in $roots) {
+        $rootFull = ConvertTo-WinEaseComparablePath -Path $r
+        if (-not $rootFull) { continue }
+        if (Test-WinEasePathWithin -Path $full -Root $rootFull) { $matchedRoot = $rootFull; break }
+    }
+    if (-not $matchedRoot) {
+        $result.Reason = "the restore target '$Path' is outside the allowed locations ($($roots -join ', '))"
+        return $result
+    }
+    if (Test-WinEasePathHasReparsePoint -Path $full -Root $matchedRoot) {
+        $result.Reason = "the restore target traverses a symbolic link or junction: '$Path'"
+        return $result
+    }
+    $result.IsSafe = $true
+    $result.Path = $full
+    return $result
+}
+
 
 function Test-IsNtfsVolume {
     param([string]$Path)
@@ -532,6 +759,7 @@ class BuildContext {
     [bool]$KeepBasicApps
     [bool]$KeepSearchIndex
     [bool]$KeepXboxServices
+    [bool]$RemoveAppxBloatware
     [bool]$KeepAudioTweaks
     [bool]$UseVHDX
     [bool]$RemoveLegacyFOD
@@ -669,6 +897,7 @@ function New-BuildContextFromScriptScope {
     $ctx.KeepBasicApps = $keepBasicApps
     $ctx.KeepSearchIndex = $keepSearchIndex
     $ctx.KeepXboxServices = $keepXboxServices
+    $ctx.RemoveAppxBloatware = $removeAppxBloatware
     $ctx.KeepAudioTweaks = $keepAudioTweaks
     $ctx.UseVHDX = $useVHDX
     $ctx.RemoveLegacyFOD = $removeLegacyFOD

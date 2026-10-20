@@ -39,7 +39,7 @@
         @{ Key = 'DisableWPBT'; Category = 'Security'; Default = $false; Description = 'Disable Windows Platform Binary Table (OEM backdoor prevention)'; CliSwitch = $true }
         @{ Key = 'PreventDeviceEncryption'; Category = 'Security'; Default = $false; Description = 'Prevent automatic BitLocker device encryption on OOBE'; CliSwitch = $true }
         @{ Key = 'DisableCPUMitigations'; Category = 'Security'; Default = $false; Description = 'Disable Spectre/Meltdown CPU mitigations for raw throughput'; Variable = 'disableCPUMitigations'; CliSwitch = $true }
-        @{ Key = 'ConfigureWinlogon'; Category = 'Security'; Default = $true; Description = 'Allow blank-password local logon and pre-configure the Winlogon auto-logon account'; CliSwitch = $true }
+        @{ Key = 'ConfigureWinlogon'; Category = 'Security'; Default = $false; Description = 'Allow blank-password local logon and pre-configure the Winlogon auto-logon account'; CliSwitch = $true }
         @{ Key = 'EnableScripts'; Category = 'Security'; Default = $true; Description = 'Relax the PowerShell script execution policy to RemoteSigned'; CliSwitch = $true }
 
         # Privacy
@@ -176,11 +176,11 @@
 
     )
     Components = @(
-        @{ Key = 'RemoveDefender'; Variable = 'removeDefender'; Type = 'Bool'; Default = $true; Gui = @{ Order = 1; Text = 'Remove Windows Defender & Security UI'; Description = 'Disable and remove Defender AV, Security Center UI and background scanning'; Default = $true } }
+        @{ Key = 'RemoveDefender'; Variable = 'removeDefender'; Type = 'Bool'; Default = $false; Gui = @{ Order = 1; Text = 'Remove Windows Defender & Security UI'; Description = 'Disable and remove Defender AV, Security Center UI and background scanning'; Default = $false } }
         @{ Key = 'KeepAsianIME'; Variable = 'keepAsianIME'; Type = 'Bool'; Default = $true; Gui = @{ Order = 2; Text = 'Keep Asian IMEs (Japanese, Korean, Chinese)'; Description = 'Preserve MS-IME and regional input method components'; Default = $true } }
         @{ Key = 'KeepExtraFonts'; Variable = 'keepExtraFonts'; Type = 'Bool'; Default = $true; Gui = @{ Order = 3; Text = 'Keep Extra International & Regional Fonts'; Description = 'Preserve supplementary international fonts'; Default = $true } }
         @{ Key = 'RemoveDrivers'; Variable = 'removeDrivers'; Type = 'Bool'; Default = $false; Gui = @{ Order = 4; Text = 'Remove Legacy Storage & Network Drivers'; Description = 'Prune obsolete legacy floppy, modem, and tape drivers'; Default = $false } }
-        @{ Key = 'DisableWindowsUpdate'; Variable = 'disableWU'; Type = 'Bool'; Default = $true; Gui = @{ Order = 5; Text = 'Disable Automatic Windows Update'; Description = 'Prevent automated background patching and driver updates'; Default = $true } }
+        @{ Key = 'DisableWindowsUpdate'; Variable = 'disableWU'; Type = 'Bool'; Default = $false; Gui = @{ Order = 5; Text = 'Disable Automatic Windows Update'; Description = 'Prevent automated background patching and driver updates'; Default = $false } }
         @{ Key = 'KeepBluetooth'; Variable = 'keepBT'; Type = 'Bool'; Default = $true; Gui = @{ Order = 6; Text = 'Keep Bluetooth Services & Peripheral Stack'; Description = 'Preserve Bluetooth audio, keyboard, and peripheral connectivity'; Default = $true } }
         @{ Key = 'WSLSupport'; Variable = 'wslSupport'; Type = 'Bool'; Default = $false; Gui = @{ Order = 7; Text = 'Enable WSL2 & Virtual Machine Platform'; Description = 'Pre-enable WSL2 subsystem and virtual machine components'; Default = $false } }
         @{ Key = 'KeepRecoveryEnv'; Variable = 'keepRecoveryEnv'; Type = 'Bool'; Default = $false; Gui = @{ Order = 8; Text = 'Keep Recovery Environment (WinRE)'; Description = 'Preserve WinRE recovery image partition'; Default = $false } }
@@ -218,6 +218,7 @@
         @{ Key = 'AdvancedDebloatStandard'; Variable = ''; Type = 'Special' }
         @{ Key = 'AdvancedDebloatExperimental'; Variable = ''; Type = 'Special' }
         @{ Key = 'IncludeMigrationAssistant'; Variable = 'includeMigrationAssistant'; Type = 'Bool'; Default = $false; CliSwitch = $true; Gui = @{ Tab = 'Migration'; Order = 21; Text = 'Include Migration Assistant (PC-to-PC transfer tools)'; Description = 'Bundle the Nano11-Migrator tool into the image for post-install PC migration'; Default = $false } }
+        @{ Key = 'RemoveAppxBloatware'; Variable = 'removeAppxBloatware'; Type = 'Bool'; Default = $true; Gui = @{ Order = 22; Text = 'Remove Preinstalled AppX Bloatware'; Description = 'Remove the inbox apps of the image (Zune, Clipchamp, Xbox, sponsored apps). Individual groups follow their own setting.'; Default = $true } }
     )
 
     # CLI switch pairs nano11builder.ps1 applies in this order. For each entry the first
@@ -276,6 +277,9 @@
         @{ Tag = 'Store'; Variable = 'removeStore'; Switches = @(
             @{ Names = @('RemoveStore', 'NoStore', 'RemoveMicrosoftStore') }
             @{ Names = @('KeepStore'); Invert = $true }) }
+        @{ Tag = 'Appx'; Variable = 'removeAppxBloatware'; Switches = @(
+            @{ Names = @('RemoveAppxBloatware') }
+            @{ Names = @('KeepAppxBloatware', 'NoAppxBloatware'); Invert = $true }) }
         @{ Tag = 'ActivationRestrictions'; Variable = 'bypassActivationRestrictions'; Switches = @(
             @{ Names = @('BypassActivationRestrictions', 'NoActivationRestrictions', 'UnlockPersonalization') }) }
         @{ Tag = 'RadicalRAM'; Variable = 'radicalRAM'; Switches = @(
@@ -369,6 +373,117 @@
         'RemovePrintingWfs' = @{ FoDPackages = @('Microsoft-Windows-Printing-WFS-FoD-Package~') }
         'RemoveKernelLA57' = @{ FoDPackages = @('Microsoft-Windows-Kernel-LA57-FoD-Package~') }
     }
+
+    # The AppX packages the build removes (phase 05 and the "Remove Provisioned AppX"
+    # target of the Advanced Debloat tab).
+    #
+    # This table is the single source of truth for the list, exactly like Targets is
+    # for the FoD packages. A package is only removed when the setting that controls it
+    # asks for it:
+    #
+    #   Pattern  the wildcard the package name (or its display name) is matched against
+    #   Group    a logical group (documentation and reporting only)
+    #   Option   the setting key that controls the group. An empty Option means the
+    #            group belongs to the default removal list, which is controlled by
+    #            RemoveAppxBloatware as a whole.
+    #   Invert   the controlling setting is a "Keep..." option: the packages stay when
+    #            the setting is on and are removed when it is off.
+    #
+    # The protection whitelist (system-critical frameworks and shell hosts) is not part
+    # of this table: it is a safety invariant of phase 05 and never depends on a setting.
+    AppxRemoval = @(
+        # --- default removal list (RemoveAppxBloatware) ---
+        @{ Pattern = '*Zune*'; Group = 'Media' }
+        @{ Pattern = '*Bing*'; Group = 'Media' }
+        @{ Pattern = '*Clipchamp*'; Group = 'Media' }
+        @{ Pattern = '*People*'; Group = 'Media' }
+        @{ Pattern = '*PowerAutomate*'; Group = 'Media' }
+        @{ Pattern = '*Teams*'; Group = 'Media' }
+        @{ Pattern = '*Todos*'; Group = 'Media' }
+        @{ Pattern = '*YourPhone*'; Group = 'Media' }
+        @{ Pattern = '*SoundRecorder*'; Group = 'Media' }
+        @{ Pattern = '*Solitaire*'; Group = 'Media' }
+        @{ Pattern = '*FeedbackHub*'; Group = 'Media' }
+        @{ Pattern = '*Maps*'; Group = 'Media' }
+        @{ Pattern = '*OfficeHub*'; Group = 'Media' }
+        @{ Pattern = '*Help*'; Group = 'Media' }
+        @{ Pattern = '*Family*'; Group = 'Media' }
+        @{ Pattern = '*Alarms*'; Group = 'Media' }
+        @{ Pattern = '*CommunicationsApps*'; Group = 'Media' }
+        @{ Pattern = '*Copilot*'; Group = 'Media' }
+        @{ Pattern = '*CompatibilityEnhancements*'; Group = 'Media' }
+        @{ Pattern = '*AV1VideoExtension*'; Group = 'Media' }
+        @{ Pattern = '*AVCEncoderVideoExtension*'; Group = 'Media' }
+        @{ Pattern = '*HEIFImageExtension*'; Group = 'Media' }
+        @{ Pattern = '*HEVCVideoExtension*'; Group = 'Media' }
+        @{ Pattern = '*Microsoft.StickyNotes*'; Group = 'Media' }
+        @{ Pattern = '*OutlookForWindows*'; Group = 'Media' }
+        @{ Pattern = '*RawImageExtension*'; Group = 'Media' }
+        @{ Pattern = '*VP9VideoExtensions*'; Group = 'Media' }
+        @{ Pattern = '*WebpImageExtension*'; Group = 'Media' }
+        @{ Pattern = '*DevHome*'; Group = 'Media' }
+        @{ Pattern = '*CrossDevice*'; Group = 'Media' }
+        @{ Pattern = '*Getstarted*'; Group = 'Media' }
+        @{ Pattern = '*GetStarted*'; Group = 'Media' }
+        @{ Pattern = '*Microsoft.Getstarted*'; Group = 'Media' }
+        @{ Pattern = '*Tips*'; Group = 'Media' }
+        @{ Pattern = '*QuickAssist*'; Group = 'Media' }
+        @{ Pattern = '*Microsoft.Windows.Ai.Copilot*'; Group = 'AI' }
+        @{ Pattern = '*Recall*'; Group = 'AI' }
+        @{ Pattern = '*MicrosoftCorporationII.QuickAssist*'; Group = 'AI' }
+        @{ Pattern = '*MicrosoftCorporationII.MicrosoftFamily*'; Group = 'AI' }
+        @{ Pattern = '*Edge.DevToolsClient*'; Group = 'AI' }
+        @{ Pattern = '*549981C3F5F10*'; Group = 'AI' }
+        @{ Pattern = '*Client.WebExperience*'; Group = 'AI' }
+        @{ Pattern = '*Windows.Ai*'; Group = 'AI' }
+        @{ Pattern = '*WindowsAI*'; Group = 'AI' }
+        @{ Pattern = '*WindowsBackupApp*'; Group = 'AI' }
+        @{ Pattern = '*CopilotStudio*'; Group = 'AI' }
+        @{ Pattern = '*ClickToDo*'; Group = 'AI' }
+        @{ Pattern = '*WindowsAIClient*'; Group = 'AI' }
+        @{ Pattern = '*Microsoft.Windows.StudioFX*'; Group = 'AI' }
+        @{ Pattern = '*NewsAndInterests*'; Group = 'AI' }
+        @{ Pattern = '*RecallAgent*'; Group = 'AI' }
+        @{ Pattern = '*AIComponents*'; Group = 'AI' }
+        @{ Pattern = '*Microsoft.Windows.AiPca*'; Group = 'AI' }
+        @{ Pattern = '*Spotify*'; Group = 'Sponsor' }
+        @{ Pattern = '*Disney*'; Group = 'Sponsor' }
+        @{ Pattern = '*LinkedIn*'; Group = 'Sponsor' }
+        @{ Pattern = '*Twitter*'; Group = 'Sponsor' }
+        @{ Pattern = '*TikTok*'; Group = 'Sponsor' }
+        @{ Pattern = '*Facebook*'; Group = 'Sponsor' }
+        @{ Pattern = '*Instagram*'; Group = 'Sponsor' }
+        @{ Pattern = '*Netflix*'; Group = 'Sponsor' }
+        @{ Pattern = '*Amazon*'; Group = 'Sponsor' }
+        @{ Pattern = '*PrimeVideo*'; Group = 'Sponsor' }
+        @{ Pattern = '*CandyCrush*'; Group = 'Sponsor' }
+        @{ Pattern = '*Microsoft.WindowsFeedbackHub*'; Group = 'Legacy' }
+        @{ Pattern = '*Microsoft.3DBuilder*'; Group = 'Legacy' }
+        @{ Pattern = '*Print3D*'; Group = 'Legacy' }
+        @{ Pattern = '*Wallet*'; Group = 'Legacy' }
+        @{ Pattern = '*Pay*'; Group = 'Legacy' }
+        # --- basic productivity apps (KeepBasicApps) ---
+        @{ Pattern = '*Paint*'; Group = 'Basic'; Option = 'KeepBasicApps'; Invert = $true }
+        @{ Pattern = '*Notepad*'; Group = 'Basic'; Option = 'KeepBasicApps'; Invert = $true }
+        @{ Pattern = '*WindowsCalculator*'; Group = 'Basic'; Option = 'KeepBasicApps'; Invert = $true }
+        @{ Pattern = '*Calculator*'; Group = 'Basic'; Option = 'KeepBasicApps'; Invert = $true }
+        # --- Xbox / gaming (KeepXboxServices) ---
+        @{ Pattern = '*Gaming*'; Group = 'Xbox'; Option = 'KeepXboxServices'; Invert = $true }
+        @{ Pattern = '*Xbox*'; Group = 'Xbox'; Option = 'KeepXboxServices'; Invert = $true }
+        @{ Pattern = '*Microsoft.GamingApp*'; Group = 'Xbox'; Option = 'KeepXboxServices'; Invert = $true }
+        @{ Pattern = '*XboxGameOverlay*'; Group = 'Xbox'; Option = 'KeepXboxServices'; Invert = $true }
+        @{ Pattern = '*XboxSpeechToTextOverlay*'; Group = 'Xbox'; Option = 'KeepXboxServices'; Invert = $true }
+        @{ Pattern = '*XboxGamingOverlay*'; Group = 'Xbox'; Option = 'KeepXboxServices'; Invert = $true }
+        @{ Pattern = '*XboxIdentityProvider*'; Group = 'Xbox'; Option = 'KeepXboxServices'; Invert = $true }
+        @{ Pattern = '*Microsoft.MixedReality.Portal*'; Group = 'Xbox'; Option = 'KeepXboxServices'; Invert = $true }
+        @{ Pattern = '*MixedReality*'; Group = 'Xbox'; Option = 'KeepXboxServices'; Invert = $true }
+        # --- Microsoft Store (RemoveStore) ---
+        @{ Pattern = 'Microsoft.WindowsStore_*'; Group = 'Store'; Option = 'RemoveStore' }
+        @{ Pattern = 'Microsoft.StorePurchaseApp_*'; Group = 'Store'; Option = 'RemoveStore' }
+        # --- Windows Security UI (RemoveDefender) ---
+        @{ Pattern = '*Microsoft.SecHealthUI*'; Group = 'Defender'; Option = 'RemoveDefender' }
+        @{ Pattern = '*Microsoft.Windows.SecHealthUI*'; Group = 'Defender'; Option = 'RemoveDefender' }
+    )
     DebloatEngines = @(
         # --- Standard targets (safe engine by default) ---
         @{ Item = 'Remove WinRE (reagentc /disable + file delete) [500-700MB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '08-filesystem' }

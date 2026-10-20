@@ -77,6 +77,20 @@ if (Test-Path -LiteralPath $unattendSource) {
         $nsMgr = New-Object System.Xml.XmlNamespaceManager($xmlDoc.NameTable)
         $nsMgr.AddNamespace("u", $xmlDoc.DocumentElement.NamespaceURI)
 
+        # The blank-password auto-logon is only armed when the user asked for it
+        # (ConfigureWinlogon). Without that option the AutoLogon section is removed
+        # from the unattend file: setup then does not log in automatically any more.
+        # The password of the local account is left untouched on purpose: an account
+        # without a password element is not documented, and a setup that cannot create
+        # the account would leave the machine unusable. The empty password of the local
+        # account is therefore only a console login; the user sets a password after the
+        # first sign-in (docs\SECURITY_OPTIONS.md).
+        if (-not (Test-TweakEnabled 'ConfigureWinlogon' $false)) {
+            $autoLogonNodes = @($xmlDoc.SelectNodes("//*[local-name()='AutoLogon']"))
+            foreach ($alNode in $autoLogonNodes) { [void]$alNode.ParentNode.RemoveChild($alNode) }
+            Write-Host "  [AutoLogon] ConfigureWinlogon is off: the auto-logon section was removed from autounattend.xml (no automatic logon)." -ForegroundColor Yellow
+        }
+
         # A2: External script injection - if scripts/ folder exists, override embedded File node contents
         $scriptsDir = Join-Path -Path $scriptDir -ChildPath "scripts"
         if (Test-Path -LiteralPath $scriptsDir) {
@@ -841,6 +855,17 @@ exit 0
     # Inject the configured account name into the OOBE transition repair helper
     $helperScripts['WinEase-oobe-autologon-repair.ps1'] = $helperScripts['WinEase-oobe-autologon-repair.ps1'].Replace('__WINEASE_USERNAME__', $UserName)
 
+    # The blank-password auto-logon is only armed when the user asked for it
+    # (ConfigureWinlogon). Without that option the OOBE -> first session transition
+    # helpers are not deployed at all, so nothing re-arms the Winlogon keys.
+    $configureWinlogon = (Test-TweakEnabled 'ConfigureWinlogon' $false)
+    if (-not $configureWinlogon) {
+        foreach ($autoHelper in @('WinEase-oobe-autologon-repair.ps1', 'WinEase-transition-watchdog.ps1')) {
+            if ($helperScripts.Contains($autoHelper)) { $helperScripts.Remove($autoHelper) }
+        }
+        Write-Host "  [AutoLogon] ConfigureWinlogon is off: the blank-password auto-logon helpers are not deployed." -ForegroundColor Yellow
+    }
+
     foreach ($hName in $helperScripts.Keys) {
         $hContent = $helperScripts[$hName]
         $hDest = Join-Path -Path $setupScriptsDir -ChildPath $hName
@@ -977,14 +1002,22 @@ exit 0
     #  - Re-assert the Winlogon auto-logon target (msoobe can re-point it at the temporary
     #    defaultuser0 account, which makes the transition logon fail with 1326 and stalls setup).
     #  - Arm a one-shot watchdog that reboots exactly once if no interactive session appears.
-    $setupCompleteLines.AddRange([string[]]@(
-        "rem --- Stage 5: OOBE->user transition auto-logon repair and one-shot watchdog ---",
-        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%SystemDrive%\Windows\Setup\Scripts\WinEase-oobe-autologon-repair.ps1`" >> `"!LOGFILE!`" 2>&1",
-        "if !errorlevel! neq 0 echo [%DATE% %TIME%] [WARN] OOBE auto-logon repair returned error code !errorlevel! >> `"!LOGFILE!`"",
-        "schtasks.exe /create /f /tn `"WinEase-TransitionWatchdog`" /sc onstart /delay 0003:00 /ru SYSTEM /tr `"powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File %SystemDrive%\Windows\Setup\Scripts\WinEase-transition-watchdog.ps1`" >> `"!LOGFILE!`" 2>&1",
-        "if !errorlevel! neq 0 echo [%DATE% %TIME%] [WARN] Transition watchdog task creation failed with code !errorlevel! >> `"!LOGFILE!`"",
-        "schtasks.exe /run /tn `"WinEase-TransitionWatchdog`" >> `"!LOGFILE!`" 2>&1"
-    ))
+    # Both steps re-arm the blank-password auto-logon, so they only run when the user
+    # asked for it (ConfigureWinlogon).
+    if ($configureWinlogon) {
+        $setupCompleteLines.AddRange([string[]]@(
+            "rem --- Stage 5: OOBE->user transition auto-logon repair and one-shot watchdog ---",
+            "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%SystemDrive%\Windows\Setup\Scripts\WinEase-oobe-autologon-repair.ps1`" >> `"!LOGFILE!`" 2>&1",
+            "if !errorlevel! neq 0 echo [%DATE% %TIME%] [WARN] OOBE auto-logon repair returned error code !errorlevel! >> `"!LOGFILE!`"",
+            "schtasks.exe /create /f /tn `"WinEase-TransitionWatchdog`" /sc onstart /delay 0003:00 /ru SYSTEM /tr `"powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File %SystemDrive%\Windows\Setup\Scripts\WinEase-transition-watchdog.ps1`" >> `"!LOGFILE!`" 2>&1",
+            "if !errorlevel! neq 0 echo [%DATE% %TIME%] [WARN] Transition watchdog task creation failed with code !errorlevel! >> `"!LOGFILE!`"",
+            "schtasks.exe /run /tn `"WinEase-TransitionWatchdog`" >> `"!LOGFILE!`" 2>&1"
+        ))
+    } else {
+        $setupCompleteLines.AddRange([string[]]@(
+            "rem --- Stage 5: skipped (ConfigureWinlogon is off: no auto-logon is armed) ---"
+        ))
+    }
     $setupCompleteLines.AddRange([string[]]@(
         "if !SC_FAIL_COUNT! equ 0 (",
         "    if exist `"%SystemDrive%\ProgramData\WinEase\setupcomplete.failed`" del /f /q `"%SystemDrive%\ProgramData\WinEase\setupcomplete.failed`" 2>nul",
@@ -1068,6 +1101,17 @@ exit 0
             Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath $postInstallFlags[$flagKey]) -Value "1" -Encoding ascii -Force
         }
     }
+    # Residual per-user AppX removal: the per-user packages of the apps the offline
+    # pass removed from the image. The list follows the same options as the offline
+    # removal, so nothing is removed when the matching option is off.
+    $appxResidualPackages = @()
+    if (Test-TweakEnabled 'RemoveWindowsBackup' $true)    { $appxResidualPackages += 'WindowsBackupApp' }
+    if (Test-TweakEnabled 'RemoveWebExperienceHost' $true) { $appxResidualPackages += 'Client.WebExperience' }
+    if ($removeAppxBloatware)                               { $appxResidualPackages += 'Getstarted' }
+    if ($appxResidualPackages.Count -gt 0) {
+        Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "remove-appx-packages.flag") -Value ($appxResidualPackages -join "`r`n") -Encoding ascii -Force
+        Write-Host "  - Staged remove-appx-packages.flag ($($appxResidualPackages -join ', '))" -ForegroundColor Green
+    }
     if ($bypassActivationRestrictions) {
         Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "bypass-activation.flag") -Value "1" -Encoding ascii -Force
     }
@@ -1120,6 +1164,7 @@ exit 0
         JapaneseKeyboard      = $setJapaneseKeyboard
         KeepBasicApps         = $keepBasicApps
         KeepXboxServices      = [bool]$keepXboxServices
+        RemoveAppxBloatware   = [bool]$removeAppxBloatware
         KeepSearchIndex       = [bool]$keepSearchIndex
         KeepAudioTweaks       = [bool]($KeepAudioTweaks -or $DAWMode)
         DAWMode               = [bool]$DAWMode

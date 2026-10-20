@@ -3,6 +3,81 @@
 All notable changes to this fork are documented here. Versions follow the upstream
 WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
+## Unreleased (local fork, 2026-10-21) - safety and quality pass
+
+### Fixed
+- **The PC migration restore could write outside the location it was supposed to
+  restore.** `Restore-WinEaseCustomPaths` took the restore target straight from the
+  backup manifest (`SourcePath`), so a manipulated manifest could make the restore
+  write to any path of the machine. `Restore-WinEaseUserData` built its target from
+  the manifest relative path without checking the boundary, and the backup side
+  resolved the file to read from the same unchecked values. Every path of a manifest
+  is now normalized and checked against the allowed root before a single byte is
+  written: a relative path may not be absolute, drive-relative, UNC or root
+  relative, may not contain a `..` segment and may not traverse a symbolic link or
+  a junction. A refused path is reported as a failed entry with the reason.
+- **The restore target of the custom paths is no longer taken from the manifest
+  alone.** `Restore-WinEaseCustomPaths` and `Start-WinEaseMigrationRestore` take an
+  allow list of the locations this restore may write to
+  (`-AllowedSourcePaths` / `-AllowedCustomPaths`). The GUI passes the paths of the
+  "Custom paths" box, the migrator CLI passes `-CustomPaths`. Without an allow list
+  no custom path is restored (the task is reported as skipped).
+- **A manifest without entries copied the whole backup directory into the user
+  profile.** An empty manifest entry resolved to the backup root itself, so the
+  restore copied that directory into `%USERPROFILE%`.
+- **The GUI migration tab could not reach the migration engine.** The custom path
+  backup and restore buttons called functions that were never loaded into the GUI
+  scope, and the background job did not load `WinEasehelpers.ps1`, so the shared
+  helpers (`Get-WinEaseRelativePath`, `Test-WinEasePathWithin`) were missing.
+- **The provisioned AppX removal ran on every build, whatever the user chose.** The
+  pattern list of `phases/05-appx.ps1` was applied unconditionally; only
+  `KeepBasicApps`, `KeepXboxServices` and `RemoveStore` had any effect. The list now
+  lives in `config/schema.psd1` (`AppxRemoval`), every entry names the setting that
+  controls it, and the whole pass is controlled by the new `RemoveAppxBloatware`
+  option. The installed and the provisioned packages are decided by the same rule
+  (`Test-WinEaseAppxPackageRemovable`), and a dry run no longer removes anything.
+- **The blank-password auto-logon was armed even when the option was off.** The
+  `AutoLogon` section of `autounattend.xml` and the OOBE transition helpers were
+  written unconditionally, while `phases/10-registry.ps1` only wrote the Winlogon
+  values when `ConfigureWinlogon` was on - the option did not control the feature
+  it describes. The unattend file, the registry and the helpers now follow the
+  option, and the network use of a blank password stays blocked in every
+  configuration. The empty password of the local account stays in the unattend file
+  (an account without a password element is not documented and a setup that cannot
+  create the account would leave the machine unusable); it is a console login only,
+  see `docs/SECURITY_OPTIONS.md`.
+- **The first logon removed AppX packages unconditionally.** The residual per-user
+  removal of the Windows Backup app, the Web Experience host and Get Started now
+  follows the same options as the offline removal (`remove-appx-packages.flag`).
+
+### Changed
+- **The security options have conservative defaults.** `RemoveDefender`,
+  `DisableWindowsUpdate` and `ConfigureWinlogon` default to `false` now: Defender,
+  Windows Update and the blank-password auto-logon stay unless the user asks for
+  them. The `extreme`, `fat32`, `handheld` and `audio` presets still request them
+  explicitly, so their builds behave as before. The builder prints a warning with
+  the recovery commands when Defender or Windows Update are removed, and
+  `docs/SECURITY_OPTIONS.md` documents every option that disables a Windows
+  protection with its impact and its recovery.
+- **The `none` preset means "no removals" now.** It used to keep the defaults of the
+  tweaks (so Paint, Notepad, WordPad and the other optional features were still
+  removed) while its description promised the opposite, and it switched the "Keep
+  ..." options off (so the Asian IMEs, the extra fonts, Bluetooth and the recovery
+  environment were removed as well). Every removal option is off now, every "Keep
+  ..." option is on and every tweak stays at its default; only the three
+  prerequisites of the unattended setup stay enabled.
+- The `LimitBlankPasswordUse` value is written in every configuration, so a blank
+  password never works over the network.
+
+### Added
+- `RemoveAppxBloatware` (GUI: "Remove Preinstalled AppX Bloatware", CLI:
+  `-RemoveAppxBloatware` / `-KeepAppxBloatware`) removes the inbox apps of the
+  image as one switch.
+- `docs/SECURITY_OPTIONS.md`: what every security option does, what it costs and
+  how the protection is restored.
+- Regression tests for the restore path validation, the AppX target selection and
+  the consistency of the security defaults.
+
 ## Unreleased (local fork, 2026-10-19)
 
 The M1-M4 feature work and the S1-S12 follow-up sessions (design review against

@@ -221,6 +221,9 @@ function Export-WinEaseHtmlReport {
     $xboxStatus = if ($settings.KeepXboxServices) { '<span class="status-tag status-enabled">Preserved (Gaming / Handheld)</span>' } else { '<span class="status-tag status-disabled">Disabled (Debloated)</span>' }
     [void]$sb.AppendLine("        <tr><td><strong>Xbox Live &amp; Game Bar Services</strong></td><td>Xbox identity, GameDVR, and gaming overlay subsystem</td><td>$xboxStatus</td></tr>")
 
+    $appxStatus = if ($settings.RemoveAppxBloatware) { '<span class="status-tag status-disabled">Removed (Inbox Apps)</span>' } else { '<span class="status-tag status-retained">Retained (All Inbox Apps)</span>' }
+    [void]$sb.AppendLine("        <tr><td><strong>Preinstalled AppX Bloatware</strong></td><td>Zune, Clipchamp, Xbox, Teams, sponsored and OEM inbox apps</td><td>$appxStatus</td></tr>")
+
     $audioStatus = if ($settings.KeepAudioTweaks) { '<span class="status-tag status-enabled">Pro Audio MMCSS Priority</span>' } else { '<span class="status-tag status-retained">Standard Gaming Tuning</span>' }
     [void]$sb.AppendLine("        <tr><td><strong>Low-Latency Audio &amp; Multimedia</strong></td><td>MMCSS thread scheduling, SystemResponsiveness, ASIO low-jitter</td><td>$audioStatus</td></tr>")
 

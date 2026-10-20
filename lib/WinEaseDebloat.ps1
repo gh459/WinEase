@@ -162,6 +162,81 @@ function Get-WinEaseDebloatRustKey {
     return 'physical_' + $fallback.ToLower()
 }
 
+# --- the AppX removal list (phase 05 and the "Remove Provisioned AppX" target) --------
+# The list of the AppX packages the build removes lives in config\schema.psd1
+# (AppxRemoval). Every entry names the setting that controls it, so a package is only
+# removed when the user asked for it.
+
+function Get-WinEaseAppxRemovalDefinitions {
+    # The AppX removal definitions (config\schema.psd1 -> AppxRemoval).
+    if ((Get-Variable -Name 'WinEaseSettingsDef' -Scope Script -ErrorAction SilentlyContinue) -and $script:WinEaseSettingsDef.AppxRemoval) {
+        return @($script:WinEaseSettingsDef.AppxRemoval)
+    }
+    return @()
+}
+
+function Get-WinEaseAppxRemovalPatterns {
+    # The AppX wildcard patterns that apply to the current settings.
+    #
+    # Every definition names the setting that controls it:
+    #   Option = ''      the pattern belongs to the default removal list and is
+    #                    controlled by RemoveAppxBloatware as a whole
+    #   Option = '<key>' the pattern is applied when that setting is on
+    #   Invert = $true   the setting is a "Keep..." option: the pattern is applied when
+    #                    that setting is off
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [hashtable]$Settings = @{},
+        [object[]]$Definitions
+    )
+    if (-not $Definitions -or @($Definitions).Count -eq 0) { $Definitions = Get-WinEaseAppxRemovalDefinitions }
+    if (@($Definitions).Count -eq 0) { return @() }
+    if (-not $Settings.ContainsKey('RemoveAppxBloatware') -or -not [bool]$Settings['RemoveAppxBloatware']) { return @() }
+    $patterns = @()
+    foreach ($d in $Definitions) {
+        if (-not $d -or -not $d.Pattern) { continue }
+        $option = [string]$d.Option
+        if ([string]::IsNullOrWhiteSpace($option)) { $patterns += [string]$d.Pattern; continue }
+        if (-not $Settings.ContainsKey($option)) { continue }
+        $on = [bool]$Settings[$option]
+        if ([bool]$d.Invert) { $on = -not $on }
+        if ($on) { $patterns += [string]$d.Pattern }
+    }
+    return @($patterns | Select-Object -Unique)
+}
+
+function Get-WinEaseAppxPatternRegex {
+    # The regex of a list of AppX wildcard patterns ('*' matches any text).
+    [CmdletBinding()]
+    [OutputType([regex])]
+    param(
+        [string[]]$Patterns = @()
+    )
+    if (@($Patterns).Count -eq 0) { return $null }
+    $escaped = @($Patterns | Sort-Object -Unique | ForEach-Object { [regex]::Escape($_) -replace '\\\*', '.*' })
+    return [regex]::new(('^(' + ($escaped -join '|') + ')$'), [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+}
+
+function Test-WinEaseAppxPackageRemovable {
+    # The single decision for an AppX package: the same rule for the installed and for
+    # the provisioned packages. A package that matches the protection whitelist is
+    # never removed, whatever the removal list says.
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [string]$Name,
+        [string]$DisplayName,
+        [regex]$RemovalRegex,
+        [regex]$ProtectedRegex
+    )
+    if (-not $RemovalRegex) { return $false }
+    if ($ProtectedRegex) {
+        if (($Name -and $ProtectedRegex.IsMatch($Name)) -or ($DisplayName -and $ProtectedRegex.IsMatch($DisplayName))) { return $false }
+    }
+    return [bool](($Name -and $RemovalRegex.IsMatch($Name)) -or ($DisplayName -and $RemovalRegex.IsMatch($DisplayName)))
+}
+
 # --- the safe (PowerShell) handlers ---------------------------------------------------
 function Invoke-WinEaseDebloatFeatureRemoval {
     # Disable/remove optional features of the mounted image (DISM).
@@ -325,12 +400,11 @@ function Invoke-WinEaseDebloatTarget {
         }
         'Remove Provisioned AppX (list-based) [100-300MB]' {
             # Second pass over the Phase 05 pattern list (same protection whitelist) for the
-            # packages that survived it.
+            # packages that survived it. The decision is the shared one, so the installed
+            # and the provisioned packages are treated exactly the same.
             if ($appxRegex -and $protectedAppxRegex) {
                 $leftoverAppx = @(Get-AppxProvisionedPackage -Path $scratchDir -ErrorAction SilentlyContinue | Where-Object {
-                    $n = $_.PackageName; $d = $_.DisplayName
-                    if (($n -and $protectedAppxRegex.IsMatch($n)) -or ($d -and $protectedAppxRegex.IsMatch($d))) { return $false }
-                    return (($n -and $appxRegex.IsMatch($n)) -or ($d -and $appxRegex.IsMatch($d)))
+                    Test-WinEaseAppxPackageRemovable -Name $_.PackageName -DisplayName $_.DisplayName -RemovalRegex $appxRegex -ProtectedRegex $protectedAppxRegex
                 })
                 if ($leftoverAppx.Count -eq 0) { Write-Host "    [OK] No listed provisioned AppX packages remain" -ForegroundColor Green }
                 foreach ($pkg in $leftoverAppx) {

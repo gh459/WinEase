@@ -492,12 +492,18 @@ $scripts = @(
 		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
-		# Residual per-user Appx removal fallback: Windows Backup / Web Experience host / Get Started
-		try {
-			Get-AppxPackage -AllUsers -Name *WindowsBackupApp* -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue;
-			Get-AppxPackage -AllUsers -Name *Client.WebExperience* -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue;
-			Get-AppxPackage -AllUsers -Name *Getstarted* -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue;
-		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+		# Residual per-user Appx removal fallback: the packages the offline pass removed
+		# from the image. Phase 11 stages the list, so nothing is removed when the
+		# matching option is off.
+		$appxListFile = "C:\Windows\Setup\Scripts\remove-appx-packages.flag";
+		if (Test-Path $appxListFile) {
+			foreach ($appxName in @(Get-Content -LiteralPath $appxListFile -ErrorAction SilentlyContinue)) {
+				if ([string]::IsNullOrWhiteSpace($appxName)) { continue }
+				try {
+					Get-AppxPackage -AllUsers -Name "*$appxName*" -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue;
+				} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+			}
+		}
 	};
 	{
 		# Signal FirstLogon completion and restore persistent AutoLogon security
