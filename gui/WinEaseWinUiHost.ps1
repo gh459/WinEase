@@ -39,44 +39,47 @@ function ConvertTo-WinEaseHashtable {
 # Built-in presets resolved the way the window applies them (Set-WinEaseGuiPreset): every component the preset
 # names, every tweak (preset TweakSettings, then a top-level preset key, then the tweak default), payload format
 function Get-WinEaseWinUiPresets {
-    $list = @()
-    foreach ($pKey in @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')) {
-        $pObj = Get-WinEasePreset -Name $pKey
-        if (-not $pObj) { continue }
-        $components = [ordered]@{}
-        foreach ($cd in $script:ComponentDefs.Values) {
-            if ($cd.Gui -and $pObj.Contains($cd.Key)) { $components[$cd.Key] = [bool]$pObj[$cd.Key] }
+    $list = @(
+        foreach ($pKey in @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')) {
+            $pObj = Get-WinEasePreset -Name $pKey
+            if (-not $pObj) { continue }
+            $components = [ordered]@{}
+            foreach ($cd in $script:ComponentDefs.Values) {
+                if ($cd.Gui -and $pObj.Contains($cd.Key)) { $components[$cd.Key] = [bool]$pObj[$cd.Key] }
+            }
+            $pTweaks = $pObj.TweakSettings
+            $tweaks = [ordered]@{}
+            foreach ($tk in $script:AllTweakDefs.Keys) {
+                if ($pTweaks -and $pTweaks.Contains($tk)) { $tweaks[$tk] = [bool]$pTweaks[$tk] }
+                elseif ($pObj.Contains($tk)) { $tweaks[$tk] = [bool]$pObj[$tk] }
+                else { $tweaks[$tk] = [bool]$script:AllTweakDefs[$tk].Default }
+            }
+            $fmt = "$($pObj.PayloadFormat)".ToUpper()
+            if ($fmt -notin @('ESD', 'SWM')) { $fmt = 'WIM' }
+            [ordered]@{ Key = $pKey; Components = $components; Tweaks = $tweaks; PayloadFormat = $fmt }
         }
-        $pTweaks = $pObj.TweakSettings
-        $tweaks = [ordered]@{}
-        foreach ($tk in $script:AllTweakDefs.Keys) {
-            if ($pTweaks -and $pTweaks.Contains($tk)) { $tweaks[$tk] = [bool]$pTweaks[$tk] }
-            elseif ($pObj.Contains($tk)) { $tweaks[$tk] = [bool]$pObj[$tk] }
-            else { $tweaks[$tk] = [bool]$script:AllTweakDefs[$tk].Default }
-        }
-        $fmt = "$($pObj.PayloadFormat)".ToUpper()
-        if ($fmt -notin @('ESD', 'SWM')) { $fmt = 'WIM' }
-        $list += , [ordered]@{ Key = $pKey; Components = $components; Tweaks = $tweaks; PayloadFormat = $fmt }
-    }
+    )
     return ,$list
 }
 
 # The first message: everything the window needs to build itself
 function New-WinEaseWinUiInitMessage {
     param([hashtable]$InitialSettings, [string]$Language)
-    $tweaks = @()
-    foreach ($tk in $script:AllTweakDefs.Keys) {
-        $d = $script:AllTweakDefs[$tk]
-        $tweaks += , [ordered]@{ Key = $tk; Category = "$($d.Category)"; Default = [bool]$d.Default; Description = "$($d.Description)"; DescriptionJa = "$($d.DescriptionJa)" }
-    }
-    $components = @()
-    foreach ($cd in $script:ComponentDefs.Values) {
-        if (-not $cd.Gui) { continue }
-        $components += , [ordered]@{
-            Key = $cd.Key; Text = "$($cd.Gui.Text)"; Description = "$($cd.Gui.Description)"; Default = [bool]$cd.Gui.Default
-            Tab = "$($cd.Gui.Tab)"; Order = [int]$cd.Gui.Order
+    $tweaks = @(
+        foreach ($tk in $script:AllTweakDefs.Keys) {
+            $d = $script:AllTweakDefs[$tk]
+            [ordered]@{ Key = $tk; Category = "$($d.Category)"; Default = [bool]$d.Default; Description = "$($d.Description)"; DescriptionJa = "$($d.DescriptionJa)" }
         }
-    }
+    )
+    $components = @(
+        foreach ($cd in $script:ComponentDefs.Values) {
+            if (-not $cd.Gui) { continue }
+            [ordered]@{
+                Key = $cd.Key; Text = "$($cd.Gui.Text)"; Description = "$($cd.Gui.Description)"; Default = [bool]$cd.Gui.Default
+                Tab = "$($cd.Gui.Tab)"; Order = [int]$cd.Gui.Order
+            }
+        }
+    )
     $initial = [ordered]@{}
     foreach ($k in @('SourceDrive', 'WorkDir', 'Index', 'InjectDrivers', 'UserName', 'ComputerName', 'PresetKey')) {
         $initial[$k] = if ($null -ne $InitialSettings[$k]) { "$($InitialSettings[$k])" } else { '' }
@@ -186,14 +189,15 @@ function Invoke-WinEaseWinUiRequest {
             return @{ Title = (Get-WinEaseUiString 'Mig.Readiness.Title'); Text = $msg }
         }
         'migrationRules' {
-            $rules = @()
-            try {
-                . (Join-Path $repo 'tools\migrator\WinEaseMigration.ps1')
-                $data = Get-WinEaseMigrationRules
-                foreach ($r in (@($data.GameRules) + @($data.AppConfigRules))) {
-                    if ($r -and $r.Id) { $rules += , [ordered]@{ Id = [string]$r.Id; Name = "$($r.Name)" } }
-                }
-            } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+            $rules = @(
+                try {
+                    . (Join-Path $repo 'tools\migrator\WinEaseMigration.ps1')
+                    $data = Get-WinEaseMigrationRules
+                    foreach ($r in (@($data.GameRules) + @($data.AppConfigRules))) {
+                        if ($r -and $r.Id) { [ordered]@{ Id = [string]$r.Id; Name = "$($r.Name)" } }
+                    }
+                } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+            )
             return @{ Data = $rules }
         }
         'exportApps' {
