@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.Windows.Storage.Pickers;
@@ -160,6 +161,15 @@ public sealed partial class MainWindow : Window
         CancelButton.Content = _s.Get("Button.Cancel");
         StatusText.Text = _bridge.IsConnected ? "" : "Standalone preview (not connected to WinEasebuilder.ps1)";
 
+        AutomationProperties.SetName(DryRunCheck, _s.Get("Main.DryRun"));
+        AutomationProperties.SetName(LanguageCombo, LanguageLabel.Text);
+        AutomationProperties.SetName(PresetDiffButton, _s.Get("Button.PresetDiff"));
+        AutomationProperties.SetName(DependenciesButton, _s.Get("Button.CheckDependencies"));
+        AutomationProperties.SetName(StartButton, _s.Get("Button.StartBuild"));
+        AutomationProperties.SetName(CancelButton, _s.Get("Button.Cancel"));
+        ToolTipService.SetToolTip(PresetDiffButton, _s.Get("Button.PresetDiff"));
+        ToolTipService.SetToolTip(DependenciesButton, _s.Get("Button.CheckDependencies"));
+
         BuildNav();
         UpdateEstimate();
     }
@@ -293,6 +303,11 @@ public sealed partial class MainWindow : Window
             fe.VerticalAlignment = VerticalAlignment.Center;
             Grid.SetColumn(fe, 2);
             grid.Children.Add(fe);
+            AutomationProperties.SetName(fe, header);
+            if (!string.IsNullOrWhiteSpace(description))
+            {
+                AutomationProperties.SetHelpText(fe, description);
+            }
         }
         return Card(grid);
     }
@@ -300,13 +315,15 @@ public sealed partial class MainWindow : Window
     // A labelled row inside a card: label column, then the field, then optional buttons
     private static Grid FieldRow(string label, FrameworkElement field, params FrameworkElement[] buttons)
     {
+        string cleanLabel = label.Trim().TrimEnd(':', '：', ' ');
         var g = new Grid { ColumnSpacing = 8, Margin = new Thickness(0, 4, 0, 4) };
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(190) });
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var lbl = new TextBlock { Text = label.Trim().TrimEnd(':', '：'), VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
+        var lbl = new TextBlock { Text = cleanLabel, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
         g.Children.Add(lbl);
         Grid.SetColumn(field, 1);
         g.Children.Add(field);
+        AutomationProperties.SetName(field, cleanLabel);
         int col = 2;
         foreach (var b in buttons)
         {
