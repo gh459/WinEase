@@ -561,6 +561,31 @@ Describe "WinEase helpers - BuildContext advanced debloat lists" {
     }
 }
 
+Describe "WinEase helpers - Build ID Generator" {
+    BeforeAll {
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+    }
+
+    It "New-WinEaseBuildId returns build ID matching expected timestamp and GUID format" {
+        $id = New-WinEaseBuildId
+        $id | Should Match '^\d{8}_\d{6}_[a-f0-9]{8}$'
+    }
+
+    It "New-WinEaseBuildId respects provided timestamp parameter" {
+        $ts = Get-Date -Year 2025 -Month 5 -Day 20 -Hour 14 -Minute 30 -Second 15
+        $id = New-WinEaseBuildId -Timestamp $ts
+        $id | Should Match '^20250520_143015_[a-f0-9]{8}$'
+    }
+
+    It "New-WinEaseBuildId generates unique build IDs for same timestamp" {
+        $ts = Get-Date -Year 2025 -Month 5 -Day 20 -Hour 14 -Minute 30 -Second 15
+        $id1 = New-WinEaseBuildId -Timestamp $ts
+        $id2 = New-WinEaseBuildId -Timestamp $ts
+        $id1 | Should Not Be $id2
+    }
+}
+
 Describe "WinEase helpers - Path and Directory Safety Guards" {
     BeforeAll {
         $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
