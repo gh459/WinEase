@@ -604,6 +604,55 @@ Describe "WinEase helpers - Path and Directory Safety Guards" {
     }
 }
 
+Describe "WinEase helpers - Get-WinEaseRelativePath" {
+    BeforeAll {
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+    }
+
+    It "returns relative path when BasePath is a prefix of FullName" {
+        $base = "C:\Users\runneradmin\AppData\Local\Temp"
+        $full = "C:\Users\runneradmin\AppData\Local\Temp\subfolder\file.txt"
+        $rel = Get-WinEaseRelativePath -BasePath $base -FullName $full
+        $rel | Should Be "subfolder\file.txt"
+    }
+
+    It "handles trailing slashes on BasePath" {
+        $base = "C:\Users\runneradmin\AppData\Local\Temp\"
+        $full = "C:\Users\runneradmin\AppData\Local\Temp\subfolder\file.txt"
+        $rel = Get-WinEaseRelativePath -BasePath $base -FullName $full
+        $rel | Should Be "subfolder\file.txt"
+    }
+
+    It "is case-insensitive when matching BasePath against FullName" {
+        $base = "c:\users\runneradmin\appdata\local\temp"
+        $full = "C:\USERS\RUNNERADMIN\APPDATA\LOCAL\TEMP\subfolder\file.txt"
+        $rel = Get-WinEaseRelativePath -BasePath $base -FullName $full
+        $rel | Should Be "subfolder\file.txt"
+    }
+
+    It "returns only filename when BasePath is not a prefix of FullName" {
+        $base = "C:\Users\differentuser"
+        $full = "C:\Users\runneradmin\AppData\Local\Temp\subfolder\file.txt"
+        $rel = Get-WinEaseRelativePath -BasePath $base -FullName $full
+        $rel | Should Be "file.txt"
+    }
+
+    It "resolves real filesystem paths when BasePath exists on disk" {
+        $tmpDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_relpath_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+        try {
+            $subFile = Join-Path -Path $tmpDir -ChildPath "nested\test.txt"
+            $rel = Get-WinEaseRelativePath -BasePath $tmpDir -FullName $subFile
+            $rel | Should Be "nested\test.txt"
+        } finally {
+            if (Test-Path -LiteralPath $tmpDir) {
+                Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
 Describe "WinEase helpers - Statistical Analysis and Benchmark Comparison" {
     BeforeAll {
         $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
