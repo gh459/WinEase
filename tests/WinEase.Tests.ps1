@@ -1151,6 +1151,97 @@ Describe "WinEase helpers - Get-SafeShortPath" {
     }
 }
 
+Describe "WinEase helpers - oscdimg integrity (Test-OscdimgIntegrity)" {
+    BeforeAll {
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+        if (-not (Get-Command -Name Get-AuthenticodeSignature -ErrorAction SilentlyContinue)) {
+            function global:Get-AuthenticodeSignature {
+                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+                param($FilePath, [switch]$ErrorAction)
+                return $null
+            }
+        }
+    }
+
+    It "returns `$false for null, empty, or whitespace paths" {
+        Test-OscdimgIntegrity -OscdimgPath $null | Should Be $false
+        Test-OscdimgIntegrity -OscdimgPath "" | Should Be $false
+    }
+
+    It "returns `$false for a non-existent file path" {
+        $fakePath = Join-Path ([System.IO.Path]::GetTempPath()) ("nonexistent_oscdimg_" + [guid]::NewGuid().ToString('N') + ".exe")
+        Test-OscdimgIntegrity -OscdimgPath $fakePath | Should Be $false
+    }
+
+    It "returns `$true for bundled oscdimg.exe if present" {
+        $bundled = Join-Path $script:RepoRoot "oscdimg.exe"
+        if (Test-Path -LiteralPath $bundled) {
+            Test-OscdimgIntegrity -OscdimgPath $bundled | Should Be $true
+        }
+    }
+
+    It "returns `$true for files with valid Microsoft Authenticode signature" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_sig_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy exe content")
+        try {
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{
+                    Status            = 'Valid'
+                    SignerCertificate = [PSCustomObject]@{ Subject = 'CN=Microsoft Corporation, O=Microsoft Corporation' }
+                }
+            }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $true
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "returns `$true for files matching each known pinned SHA256 hash" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_hash_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy exe content")
+        $pinnedHashes = @(
+            'F5129F313ED7EB46F2677CF522E64264A225F226307ED0DDB52BB14C46E7CFDD',
+            '8DC3FB38E75C42127BE0A29D64CA6D79DFDDFDCBEE4A3BA8B36CFEBDCC1689E2',
+            'CE53D1C8C08FF54B4B91D2DFDE80F9D86427BC8C78FA6BBDE278456CDD2E2B85',
+            'B27E36C95A7490A175B5F17781C5C7A7C0B0C4670ACBF5B0BA0E0556BCDE0F46'
+        )
+        try {
+            Mock Get-AuthenticodeSignature { return $null }
+            foreach ($hash in $pinnedHashes) {
+                Mock Get-FileHash { return [PSCustomObject]@{ Hash = $hash } }
+                Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $true
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "returns `$false for files with unknown SHA256 hashes" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_bad_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "bad exe content")
+        try {
+            Mock Get-AuthenticodeSignature { return $null }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = '0000000000000000000000000000000000000000000000000000000000000000' } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "handles exceptions in Get-AuthenticodeSignature and Get-FileHash gracefully" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_err_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "err content")
+        try {
+            Mock Get-AuthenticodeSignature { throw "Signature check failed" }
+            Mock Get-FileHash { throw "Hash check failed" }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 Describe "WinEase helpers - Statistical Analysis and Benchmark Comparison" {
     BeforeAll {
         $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
