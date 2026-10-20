@@ -57,6 +57,11 @@ Describe "WinEase builder - AST syntax" {
         $content | Should Not Match 'cmd\.exe /c takeown.*%1'
         $content | Should Match 'powershell\.exe.*takeown\.exe'
     }
+    It "phases\10-registry.ps1 CmdAsAdminContextMenu escapes %V against command injection" {
+        $regPath = Join-Path -Path $script:RepoRoot -ChildPath "phases\10-registry.ps1"
+        $content = [System.IO.File]::ReadAllText($regPath, [System.Text.Encoding]::UTF8)
+        $content | Should Match 'pushd,\\"%V\\"'
+    }
 }
 
 Describe "WinEase builder - autounattend.xml" {
