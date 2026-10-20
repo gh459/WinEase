@@ -20,7 +20,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Run WinEase self-test
         shell: pwsh
@@ -34,7 +34,7 @@ jobs:
     needs: self-test
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Run Pester tests
         # The suite is written in Pester 3 syntax ("Should Be" without dashes), which Pester 5
@@ -55,7 +55,7 @@ jobs:
     needs: self-test
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Run dry-run (extreme profile)
         shell: pwsh
