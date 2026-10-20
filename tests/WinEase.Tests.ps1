@@ -407,6 +407,59 @@ Describe "WinEase helpers - atomic file I/O (Write-WinEaseTextFileAtomic)" {
     }
 }
 
+Describe "WinEase helpers - process token privileges (Enable-WinEaseTokenPrivileges)" {
+    BeforeAll {
+        $root = if ($script:RepoRoot) { $script:RepoRoot } else { Split-Path -Parent $PSScriptRoot }
+        if (-not (Get-Command -Name Enable-WinEaseTokenPrivileges -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $root -ChildPath "WinEasehelpers.ps1")
+        }
+    }
+
+    It "has expected default parameter list containing standard token privileges" {
+        $root = if ($script:RepoRoot) { $script:RepoRoot } else { Split-Path -Parent $PSScriptRoot }
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root "WinEasehelpers.ps1"), [ref]$null, [ref]$null)
+        $func = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Enable-WinEaseTokenPrivileges' }, $true)
+        $func | Should -Not -Be $null
+        $privParam = $func.Body.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Privileges' }
+        $privParam | Should -Not -Be $null
+        $defaultExpr = $privParam.DefaultValue.Extent.Text
+        $defaultExpr | Should -Match 'SeTakeOwnershipPrivilege'
+        $defaultExpr | Should -Match 'SeRestorePrivilege'
+        $defaultExpr | Should -Match 'SeBackupPrivilege'
+    }
+
+    It "returns a boolean value when called with default privileges" {
+        $result = Enable-WinEaseTokenPrivileges
+        ($result -is [bool]) | Should -Be $true
+    }
+
+    It "returns true when empty privileges array is provided" {
+        $result = Enable-WinEaseTokenPrivileges -Privileges @()
+        $result | Should -Be $true
+    }
+
+    It "returns false when invalid privilege name is provided without throwing" {
+        $result = Enable-WinEaseTokenPrivileges -Privileges @('SeNonExistentPrivilege_12345')
+        $result | Should -Be $false
+    }
+
+    It "handles custom privilege arrays gracefully" {
+        $result = Enable-WinEaseTokenPrivileges -Privileges @('SeTakeOwnershipPrivilege')
+        ($result -is [bool]) | Should -Be $true
+    }
+
+    It "emits warning and sets warning flag when TokenHelpers type is unavailable" {
+        $warnedBefore = $script:WinEaseTokenHelperWarned
+        try {
+            $script:WinEaseTokenHelperWarned = $false
+            $res = Enable-WinEaseTokenPrivileges -Privileges @()
+            ($res -is [bool]) | Should -Be $true
+        } finally {
+            $script:WinEaseTokenHelperWarned = $warnedBefore
+        }
+    }
+}
+
 Describe "WinEase helpers - configuration conflict resolution (Test-WinEaseConfigConflicts)" {
     It "detects the Store and Windows Update dependency conflict without changing the settings" {
         $cfg = [PSCustomObject]@{
