@@ -304,6 +304,7 @@ function Test-IsNtfsVolume {
     try {
         if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
         $root = [System.IO.Path]::GetPathRoot($Path)
+        if (-not $root -and $Path -match '^[a-zA-Z]:') { $root = $Path.Substring(0, 2) + '\' }
         if (-not $root) { return $false }
         try {
             $drive = New-Object System.IO.DriveInfo($root)
