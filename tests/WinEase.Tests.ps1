@@ -3218,4 +3218,26 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
         $builder | Should Match 'Show-WinEaseWinUiGUI'
         $builder | Should Match 'falling back to the classic window'
     }
+
+    It "handles WINEASE_WINUI_INIT_DUMP environment variable creating parent directories safely" {
+        $dumpFolder = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("winease_dump_test_" + [Guid]::NewGuid().ToString('N'))
+        $dumpFile = Join-Path -Path $dumpFolder -ChildPath "nested\init_dump.json"
+        $oldDump = $env:WINEASE_WINUI_INIT_DUMP
+        try {
+            $env:WINEASE_WINUI_INIT_DUMP = $dumpFile
+            $init = New-WinEaseWinUiInitMessage -Language 'en' -InitialSettings @{}
+            $initJson = $init | ConvertTo-Json -Depth 12 -Compress
+            $dumpDir = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($env:WINEASE_WINUI_INIT_DUMP))
+            if ($dumpDir -and -not (Test-Path -LiteralPath $dumpDir)) {
+                [void][System.IO.Directory]::CreateDirectory($dumpDir)
+            }
+            [System.IO.File]::WriteAllText($env:WINEASE_WINUI_INIT_DUMP, $initJson, [System.Text.Encoding]::UTF8)
+            (Test-Path -LiteralPath $dumpFile) | Should Be $true
+            $content = [System.IO.File]::ReadAllText($dumpFile)
+            $content | Should Match '"Op":"init"'
+        } finally {
+            $env:WINEASE_WINUI_INIT_DUMP = $oldDump
+            if (Test-Path -LiteralPath $dumpFolder) { Remove-Item -LiteralPath $dumpFolder -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
 }
