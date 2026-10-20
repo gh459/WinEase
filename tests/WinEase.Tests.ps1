@@ -44,6 +44,14 @@ Describe "WinEase builder - AST syntax" {
         [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$errors) | Out-Null
         $errors.Count | Should Be 0
     }
+    It "phases\10-registry.ps1 parses with zero parser errors and escapes %V against command injection" {
+        $regPath = Join-Path -Path $script:RepoRoot -ChildPath "phases\10-registry.ps1"
+        $content = [System.IO.File]::ReadAllText($regPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $errors = $null
+        [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$errors) | Out-Null
+        $errors.Count | Should Be 0
+        $content | Should Match 'pushd,\\"%V\\"'
+    }
 }
 
 Describe "WinEase builder - autounattend.xml" {

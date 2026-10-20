@@ -532,7 +532,7 @@ if (Test-TweakEnabled 'TakeOwnershipContextMenu' $false) {
 if (Test-TweakEnabled 'CmdAsAdminContextMenu' $false) {
     reg.exe add "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas" /f /ve /t REG_SZ /d "Open Command Prompt as Administrator" > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas" /f /v "HasLUAShield" /t REG_SZ /d '""' > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas\command" /f /ve /t REG_SZ /d 'PowerShell -windowstyle hidden -Command \"Start-Process cmd.exe -ArgumentList ''/s,/k,pushd,%V'' -Verb RunAs\"' > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas\command" /f /ve /t REG_SZ /d 'PowerShell -windowstyle hidden -Command \"Start-Process cmd.exe -ArgumentList ''/s,/k,pushd,\"%V\"'' -Verb RunAs\"' > $null 2>&1
 }
 
 if (Test-TweakEnabled 'PhotoViewerAssociations' $true) {
