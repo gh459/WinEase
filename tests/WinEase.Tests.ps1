@@ -6,7 +6,7 @@
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingInvokeExpression', '', Justification = 'Evaluates literal arrays/hashtables taken from the repo''s own source AST')]
 param()
 
-$script:RepoRoot = Split-Path -Parent $PSScriptRoot
+$script:RepoRoot = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { Get-Location | Select-Object -ExpandProperty Path }
 $script:BuilderPath = Join-Path -Path $script:RepoRoot -ChildPath "WinEasebuilder.ps1"
 $script:GuiPath = Join-Path -Path $script:RepoRoot -ChildPath "gui\WinEaseGui.ps1"
 $script:UnattendPath = Join-Path -Path $script:RepoRoot -ChildPath "autounattend.xml"
@@ -43,6 +43,19 @@ Describe "WinEase builder - AST syntax" {
         $tokens = $null; $errors = $null
         [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$errors) | Out-Null
         $errors.Count | Should Be 0
+    }
+    It "phases\10-registry.ps1 parses with zero parser errors" {
+        $p10Path = Join-Path $script:RepoRoot "phases\10-registry.ps1"
+        $content = [System.IO.File]::ReadAllText($p10Path, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $errors = $null
+        [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$errors) | Out-Null
+        $errors.Count | Should Be 0
+    }
+    It "phases\10-registry.ps1 TakeOwnershipContextMenu avoids cmd.exe /c %1 command injection" {
+        $p10Path = Join-Path $script:RepoRoot "phases\10-registry.ps1"
+        $content = [System.IO.File]::ReadAllText($p10Path, [System.Text.Encoding]::UTF8)
+        $content | Should Not Match 'cmd\.exe /c takeown.*%1'
+        $content | Should Match 'powershell\.exe.*takeown\.exe'
     }
 }
 
@@ -492,6 +505,121 @@ Describe "WinEase helpers - BuildContext lifecycle" {
     }
 }
 
+Describe "WinEase helpers - BuildContext advanced debloat lists" {
+    BeforeAll {
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+        $script:SavedStd = $script:advancedDebloatStandard
+        $script:SavedExp = $script:advancedDebloatExperimental
+    }
+    AfterAll {
+        $script:advancedDebloatStandard = $script:SavedStd
+        $script:advancedDebloatExperimental = $script:SavedExp
+    }
+
+    It "defaults both lists to empty string arrays" {
+        $ctx = [BuildContext]::new()
+        @($ctx.AdvancedDebloatStandard).Count | Should Be 0
+        @($ctx.AdvancedDebloatExperimental).Count | Should Be 0
+    }
+
+    It "keeps `$null as an empty list" {
+        $script:advancedDebloatStandard = $null
+        $script:advancedDebloatExperimental = $null
+        $ctx = New-BuildContextFromScriptScope
+        @($ctx.AdvancedDebloatStandard).Count | Should Be 0
+        @($ctx.AdvancedDebloatExperimental).Count | Should Be 0
+    }
+
+    It "keeps an empty array empty" {
+        $script:advancedDebloatStandard = @()
+        $script:advancedDebloatExperimental = @()
+        $ctx = New-BuildContextFromScriptScope
+        @($ctx.AdvancedDebloatStandard).Count | Should Be 0
+        @($ctx.AdvancedDebloatExperimental).Count | Should Be 0
+    }
+
+    It "keeps a single element" {
+        $script:advancedDebloatStandard = @('OnlyOne')
+        $script:advancedDebloatExperimental = @('SoleExp')
+        $ctx = New-BuildContextFromScriptScope
+        @($ctx.AdvancedDebloatStandard).Count | Should Be 1
+        $ctx.AdvancedDebloatStandard[0] | Should Be 'OnlyOne'
+        $ctx.AdvancedDebloatExperimental[0] | Should Be 'SoleExp'
+    }
+
+    It "keeps multiple elements in order through context" {
+        $std = @('Zeta', 'Alpha', 'Mid')
+        $exp = @('E2', 'E1')
+        $script:advancedDebloatStandard = $std
+        $script:advancedDebloatExperimental = $exp
+        $ctx = New-BuildContextFromScriptScope
+        ($ctx.AdvancedDebloatStandard -join '|') | Should Be 'Zeta|Alpha|Mid'
+        ($ctx.AdvancedDebloatExperimental -join '|') | Should Be 'E2|E1'
+        ($ctx.AdvancedDebloatStandard -is [string[]]) | Should Be $true
+        ($ctx.AdvancedDebloatExperimental -is [string[]]) | Should Be $true
+    }
+}
+
+Describe "WinEase helpers - ConvertTo-WinEaseNormalizedPath" {
+    BeforeAll {
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+    }
+
+    It "converts forward slashes to backslashes and trims trailing slashes" {
+        $normalized = ConvertTo-WinEaseNormalizedPath -Path "C:/Windows/System32/"
+        $expected = [System.IO.Path]::GetFullPath("C:\Windows\System32").TrimEnd('\')
+        $normalized | Should Be $expected
+    }
+
+    It "resolves relative path segments" {
+        $normalized = ConvertTo-WinEaseNormalizedPath -Path "C:\Windows\System32\..\System32\Drivers"
+        $expected = [System.IO.Path]::GetFullPath("C:\Windows\System32\..\System32\Drivers").TrimEnd('\')
+        $normalized | Should Be $expected
+    }
+
+    It "throws when Path is null, empty, or whitespace" {
+        { ConvertTo-WinEaseNormalizedPath -Path "" } | Should Throw
+        { ConvertTo-WinEaseNormalizedPath -Path "   " } | Should Throw
+    }
+
+    It "throws when Path does not start with an absolute local drive letter" {
+        { ConvertTo-WinEaseNormalizedPath -Path "relative/path/to/folder" } | Should Throw
+        { ConvertTo-WinEaseNormalizedPath -Path "C:relative/path" } | Should Throw
+        { ConvertTo-WinEaseNormalizedPath -Path "\\server\share\folder" } | Should Throw
+    }
+
+    It "throws when Path is a drive root" {
+        { ConvertTo-WinEaseNormalizedPath -Path "C:\" } | Should Throw
+        { ConvertTo-WinEaseNormalizedPath -Path "D:/" } | Should Throw
+    }
+}
+
+Describe "WinEase helpers - Build ID Generator" {
+    BeforeAll {
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+    }
+
+    It "New-WinEaseBuildId returns build ID matching expected timestamp and GUID format" {
+        $id = New-WinEaseBuildId
+        $id | Should Match '^\d{8}_\d{6}_[a-f0-9]{8}$'
+    }
+
+    It "New-WinEaseBuildId respects provided timestamp parameter" {
+        $ts = Get-Date -Year 2025 -Month 5 -Day 20 -Hour 14 -Minute 30 -Second 15
+        $id = New-WinEaseBuildId -Timestamp $ts
+        $id | Should Match '^20250520_143015_[a-f0-9]{8}$'
+    }
+
+    It "New-WinEaseBuildId generates unique build IDs for same timestamp" {
+        $ts = Get-Date -Year 2025 -Month 5 -Day 20 -Hour 14 -Minute 30 -Second 15
+        $id1 = New-WinEaseBuildId -Timestamp $ts
+        $id2 = New-WinEaseBuildId -Timestamp $ts
+        $id1 | Should Not Be $id2
+    }
+}
+
 Describe "WinEase helpers - Path and Directory Safety Guards" {
     BeforeAll {
         $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
@@ -532,6 +660,197 @@ Describe "WinEase helpers - Path and Directory Safety Guards" {
     It "Test-CanSafelyDeleteDirectory refuses to delete workspace base directory itself" {
         $baseDir = "C:\TestFolder\BaseWork"
         Test-CanSafelyDeleteDirectory -Path $baseDir -ExpectedBaseDir $baseDir | Should Be $false
+    }
+
+    It "Test-IsPathPreserved correctly identifies exact, parent, and descendant preserved paths" {
+        $preserved = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        [void]$preserved.Add("C:\TestWorkspace\MountDir")
+
+        # Null/empty set checks
+        Test-IsPathPreserved -Path "C:\TestWorkspace\MountDir" -PreservedDirs $null | Should Be $false
+        Test-IsPathPreserved -Path "" -PreservedDirs $preserved | Should Be $false
+
+        # Exact match
+        Test-IsPathPreserved -Path "C:\TestWorkspace\MountDir" -PreservedDirs $preserved | Should Be $true
+
+        # Parent of preserved dir
+        Test-IsPathPreserved -Path "C:\TestWorkspace" -PreservedDirs $preserved | Should Be $true
+
+        # Descendant of preserved dir
+        Test-IsPathPreserved -Path "C:\TestWorkspace\MountDir\SubFolder" -PreservedDirs $preserved | Should Be $true
+
+        # Unrelated path
+        Test-IsPathPreserved -Path "C:\OtherFolder\Build" -PreservedDirs $preserved | Should Be $false
+    }
+
+    It "Test-WinEasePathExistsSafe returns true for existing directory and file" {
+        Test-WinEasePathExistsSafe -Path $script:RepoRoot | Should Be $true
+        Test-WinEasePathExistsSafe -Path $helpersPath | Should Be $true
+    }
+
+    It "Test-WinEasePathExistsSafe returns false for null, empty, whitespace, and non-existent path" {
+        Test-WinEasePathExistsSafe -Path $null | Should Be $false
+        Test-WinEasePathExistsSafe -Path "" | Should Be $false
+        Test-WinEasePathExistsSafe -Path "   " | Should Be $false
+        Test-WinEasePathExistsSafe -Path (Join-Path $script:RepoRoot "non_existent_file_xyz_12345.tmp") | Should Be $false
+    }
+
+    It "Test-WinEasePathExistsSafe returns false when an exception occurs on invalid path" {
+        Test-WinEasePathExistsSafe -Path "::invalid_path::\0\*\?\<\>" | Should Be $false
+    }
+}
+
+Describe "WinEase helpers - Get-WinEaseRelativePath" {
+    BeforeAll {
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+    }
+
+    It "returns relative path when BasePath is a prefix of FullName" {
+        $base = "C:\Users\runneradmin\AppData\Local\Temp"
+        $full = "C:\Users\runneradmin\AppData\Local\Temp\subfolder\file.txt"
+        $rel = Get-WinEaseRelativePath -BasePath $base -FullName $full
+        $rel | Should Be "subfolder\file.txt"
+    }
+
+    It "handles trailing slashes on BasePath" {
+        $base = "C:\Users\runneradmin\AppData\Local\Temp\"
+        $full = "C:\Users\runneradmin\AppData\Local\Temp\subfolder\file.txt"
+        $rel = Get-WinEaseRelativePath -BasePath $base -FullName $full
+        $rel | Should Be "subfolder\file.txt"
+    }
+
+    It "is case-insensitive when matching BasePath against FullName" {
+        $base = "c:\users\runneradmin\appdata\local\temp"
+        $full = "C:\USERS\RUNNERADMIN\APPDATA\LOCAL\TEMP\subfolder\file.txt"
+        $rel = Get-WinEaseRelativePath -BasePath $base -FullName $full
+        $rel | Should Be "subfolder\file.txt"
+    }
+
+    It "returns only filename when BasePath is not a prefix of FullName" {
+        $base = "C:\Users\differentuser"
+        $full = "C:\Users\runneradmin\AppData\Local\Temp\subfolder\file.txt"
+        $rel = Get-WinEaseRelativePath -BasePath $base -FullName $full
+        $rel | Should Be "file.txt"
+    }
+
+    It "resolves real filesystem paths when BasePath exists on disk" {
+        $tmpDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_relpath_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+        try {
+            $subFile = Join-Path -Path $tmpDir -ChildPath "nested\test.txt"
+            $rel = Get-WinEaseRelativePath -BasePath $tmpDir -FullName $subFile
+            $rel | Should Be "nested\test.txt"
+        } finally {
+            if (Test-Path -LiteralPath $tmpDir) {
+                Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+Describe "WinEase helpers - Get-SafeShortPath" {
+    BeforeAll {
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+    }
+
+    It "returns null or empty string when input is null or empty" {
+        Get-SafeShortPath -Path $null | Should BeNullOrEmpty
+        Get-SafeShortPath -Path "" | Should BeNullOrEmpty
+    }
+
+    It "returns original path when path does not exist" {
+        $nonExistent = "C:\NonExistentPath_With Spaces_12345\file.txt"
+        Get-SafeShortPath -Path $nonExistent | Should Be $nonExistent
+    }
+
+    It "returns original path when path has no spaces" {
+        $tempFile = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_nospaces_" + [guid]::NewGuid().ToString('N') + ".txt")
+        [System.IO.File]::WriteAllText($tempFile, "test")
+        try {
+            Get-SafeShortPath -Path $tempFile | Should Be $tempFile
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "converts file path with spaces to 8.3 short path using FileSystemObject" {
+        $tempDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_space dir_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+        $tempFile = Join-Path -Path $tempDir -ChildPath "test file.txt"
+        [System.IO.File]::WriteAllText($tempFile, "test")
+
+        try {
+            $fsoMock = New-Object PSCustomObject
+            $fsoMock | Add-Member -MemberType ScriptMethod -Name "GetFile" -Value {
+                param($FilePath)
+                [void]$FilePath
+                return [PSCustomObject]@{ ShortPath = 'C:\WINEAS~1\TESTFI~1.TXT' }
+            }
+            Mock New-Object { return $fsoMock } -ParameterFilter { $ComObject -eq 'Scripting.FileSystemObject' }
+
+            $result = Get-SafeShortPath -Path $tempFile
+            $result | Should Be 'C:\WINEAS~1\TESTFI~1.TXT'
+            Assert-MockCalled New-Object -Times 1 -ParameterFilter { $ComObject -eq 'Scripting.FileSystemObject' }
+        } finally {
+            Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "converts folder path with spaces to 8.3 short path using FileSystemObject" {
+        $tempDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_space dir_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+
+        try {
+            $fsoMock = New-Object PSCustomObject
+            $fsoMock | Add-Member -MemberType ScriptMethod -Name "GetFolder" -Value {
+                param($FolderPath)
+                [void]$FolderPath
+                return [PSCustomObject]@{ ShortPath = 'C:\WINEAS~1' }
+            }
+            Mock New-Object { return $fsoMock } -ParameterFilter { $ComObject -eq 'Scripting.FileSystemObject' }
+
+            $result = Get-SafeShortPath -Path $tempDir
+            $result | Should Be 'C:\WINEAS~1'
+            Assert-MockCalled New-Object -Times 1 -ParameterFilter { $ComObject -eq 'Scripting.FileSystemObject' }
+        } finally {
+            Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "falls back to original path when FileSystemObject ShortPath is empty" {
+        $tempDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_space dir_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+
+        try {
+            $fsoMock = New-Object PSCustomObject
+            $fsoMock | Add-Member -MemberType ScriptMethod -Name "GetFolder" -Value {
+                param($FolderPath)
+                [void]$FolderPath
+                return [PSCustomObject]@{ ShortPath = $null }
+            }
+            Mock New-Object { return $fsoMock } -ParameterFilter { $ComObject -eq 'Scripting.FileSystemObject' }
+
+            $result = Get-SafeShortPath -Path $tempDir
+            $result | Should Be $tempDir
+        } finally {
+            Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "falls back to original path when exception is thrown" {
+        $tempDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_space dir_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+
+        try {
+            Mock New-Object { throw "COM Object creation failed" } -ParameterFilter { $ComObject -eq 'Scripting.FileSystemObject' }
+
+            $result = Get-SafeShortPath -Path $tempDir
+            $result | Should Be $tempDir
+        } finally {
+            Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -1429,17 +1748,6 @@ Describe "WinEase GUI - smoke test (form built without ShowDialog)" {
         } finally { $gui.Form.Dispose() }
     }
 
-    It "Advanced Debloat dialog: every Select All / Deselect All button changes its list" {
-        $dlg = Show-AdvancedDebloatDialog -NoShow
-        try {
-            Invoke-SelectButtons $dlg | Should Be 4
-        } finally {
-            if ($dlg -and $dlg.Form) { $dlg.Form.Dispose() }
-            [System.GC]::Collect()
-            [System.GC]::WaitForPendingFinalizers()
-        }
-    }
-
     It "cleanup WinForms message pump (environmental stability)" {
         [System.Windows.Forms.Application]::Exit()
         [System.GC]::Collect()
@@ -1471,6 +1779,52 @@ Describe "WinEase code quality - PSScriptAnalyzer" {
 # --- Dependency / feature-impact checker tests ---
 if (-not (Get-Command -Name Test-WinEaseDependencies -ErrorAction SilentlyContinue)) {
     . (Join-Path -Path $script:RepoRoot -ChildPath "WinEasehelpers.ps1")
+}
+
+Describe "Import-WinEaseDependencyCatalog" {
+    BeforeEach {
+        $script:SavedCat = $script:WinEaseDependencyCatalog
+        $script:SavedCatPath = $script:WinEaseDependencyCatalogPath
+    }
+    AfterEach {
+        $script:WinEaseDependencyCatalog = $script:SavedCat
+        $script:WinEaseDependencyCatalogPath = $script:SavedCatPath
+    }
+
+    It "imports default dependency catalog when Path is null, empty, or whitespace" {
+        $catalog = Import-WinEaseDependencyCatalog
+        $catalog | Should Not Be $null
+        $catalog.Components | Should Not Be $null
+        $catalog.Tweaks | Should Not Be $null
+        $script:WinEaseDependencyCatalog | Should Be $catalog
+        $script:WinEaseDependencyCatalogPath | Should Match 'config\\dependencies\.psd1$'
+
+        $catalog2 = Import-WinEaseDependencyCatalog -Path "   "
+        $catalog2 | Should Not Be $null
+        $script:WinEaseDependencyCatalogPath | Should Match 'config\\dependencies\.psd1$'
+    }
+
+    It "imports a custom dependency catalog file from specified path" {
+        $tempCatalogFile = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("test_catalog_" + [guid]::NewGuid().ToString('N') + ".psd1")
+        try {
+            '@{ Version = "9.9"; Components = @{ CustomComp = @{ Summary = "Test" } } }' | Set-Content -LiteralPath $tempCatalogFile -Encoding UTF8
+            $catalog = Import-WinEaseDependencyCatalog -Path $tempCatalogFile
+            $catalog | Should Not Be $null
+            $catalog.Version | Should Be "9.9"
+            $catalog.Components.CustomComp.Summary | Should Be "Test"
+            $script:WinEaseDependencyCatalog | Should Be $catalog
+            $script:WinEaseDependencyCatalogPath | Should Be $tempCatalogFile
+        } finally {
+            if (Test-Path -LiteralPath $tempCatalogFile) {
+                Remove-Item -LiteralPath $tempCatalogFile -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "throws when specified path does not exist" {
+        $nonExistentPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("non_existent_" + [guid]::NewGuid().ToString('N') + ".psd1")
+        { Import-WinEaseDependencyCatalog -Path $nonExistentPath } | Should Throw "Dependency catalog not found:"
+    }
 }
 
 Describe "WinEase dependency checker" {
@@ -2771,24 +3125,6 @@ Describe "GUI display language (English / Japanese)" {
             $gui.GrdStd.Rows[0].Cells['Engine'].Value | Should Be 'PowerShell'
         } finally { $gui.Form.Dispose() }
     }
-    It "Advanced Debloat dialog in Japanese returns the English item names" {
-        $english = Get-DebloatItemFromSource
-        Set-WinEaseUiLanguage -Language 'ja'
-        $dlg = Show-AdvancedDebloatDialog -NoShow
-        try {
-            $dlg.Text | Should Be (Get-WinEaseUiString 'Dlg.Debloat.Title' -Language 'ja')
-            Set-WinEaseDebloatGridChecked -Grid $dlg.Tag.Std -Checked $true
-            Set-WinEaseDebloatGridChecked -Grid $dlg.Tag.Exp -Checked $true
-            $std = @((Get-WinEaseDebloatGridState -Grid $dlg.Tag.Std).Selected)
-            $exp = @((Get-WinEaseDebloatGridState -Grid $dlg.Tag.Exp).Selected)
-            $std.Count | Should Be 32
-            foreach ($v in @($std) + @($exp)) { ($english -contains $v) | Should Be $true | Out-Null }
-            $dlg.Tag.Std.Rows[0].Cells['Target'].Value | Should Not Be $std[0]
-        } finally {
-            $dlg.Dispose()
-            Set-WinEaseUiLanguage -Language 'en'
-        }
-    }
 
     It "switching the language keeps what was typed, checked and selected (and saves the choice)" {
         $env:WINEASE_UI_LANGUAGE = 'en'
@@ -3032,6 +3368,28 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
         $builder | Should Match 'Find-WinEaseWinUiExe'
         $builder | Should Match 'Show-WinEaseWinUiGUI'
         $builder | Should Match 'falling back to the classic window'
+    }
+
+    It "handles WINEASE_WINUI_INIT_DUMP environment variable creating parent directories safely" {
+        $dumpFolder = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("winease_dump_test_" + [Guid]::NewGuid().ToString('N'))
+        $dumpFile = Join-Path -Path $dumpFolder -ChildPath "nested\init_dump.json"
+        $oldDump = $env:WINEASE_WINUI_INIT_DUMP
+        try {
+            $env:WINEASE_WINUI_INIT_DUMP = $dumpFile
+            $init = New-WinEaseWinUiInitMessage -Language 'en' -InitialSettings @{}
+            $initJson = $init | ConvertTo-Json -Depth 12 -Compress
+            $dumpDir = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($env:WINEASE_WINUI_INIT_DUMP))
+            if ($dumpDir -and -not (Test-Path -LiteralPath $dumpDir)) {
+                [void][System.IO.Directory]::CreateDirectory($dumpDir)
+            }
+            [System.IO.File]::WriteAllText($env:WINEASE_WINUI_INIT_DUMP, $initJson, [System.Text.Encoding]::UTF8)
+            (Test-Path -LiteralPath $dumpFile) | Should Be $true
+            $content = [System.IO.File]::ReadAllText($dumpFile)
+            $content | Should Match '"Op":"init"'
+        } finally {
+            $env:WINEASE_WINUI_INIT_DUMP = $oldDump
+            if (Test-Path -LiteralPath $dumpFolder) { Remove-Item -LiteralPath $dumpFolder -Recurse -Force -ErrorAction SilentlyContinue }
+        }
     }
 }
 

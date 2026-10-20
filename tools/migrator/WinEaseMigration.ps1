@@ -1096,16 +1096,11 @@ function Format-WinEaseByteSize {
     return "$Bytes B"
 }
 
-# Export-WinEaseMigrationReport: writes <ReportPath> (dark HTML) and a .json with the same base name.
-# MigrationResult may be the object returned by Start-WinEaseMigrationBackup (UserData / CustomResult /
-# RulesResult / AppInventory) and/or by Start-WinEaseMigrationRestore (Results). Every part is optional.
-function Export-WinEaseMigrationReport {
+function Get-WinEaseMigrationReportData {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [psobject]$MigrationResult,
-        [Parameter(Mandatory = $true)]
-        [string]$ReportPath
+        [psobject]$MigrationResult
     )
     $succeeded = @()    # Area, Item, Detail
     $skippedItems = @() # Item, Reason
@@ -1189,7 +1184,7 @@ function Export-WinEaseMigrationReport {
     }
     $manual += [PSCustomObject]@{ Item = 'Accounts and sign-ins'; Note = 'Sign in again to your Microsoft account, browsers, Steam/Epic/other launchers and any cloud-sync clients. Saved passwords and tokens are not migrated.' }
 
-    $data = [ordered]@{
+    return [ordered]@{
         Generated = (Get-Date).ToString('o')
         Summary   = [ordered]@{ Succeeded = $succeeded.Count; Skipped = $skippedItems.Count; Failed = $failedItems.Count; ManualActions = $manual.Count }
         Success   = [ordered]@{ Files = $files; TotalBytes = $bytes; TotalSize = (Format-WinEaseByteSize -Bytes $bytes); Sha256Verified = $hashOk; Sha256Missing = $hashMissing; Items = @($succeeded) }
@@ -1198,14 +1193,14 @@ function Export-WinEaseMigrationReport {
         Manual    = @($manual)
         Tasks     = @($tasks)
     }
+}
 
-    # --- JSON ---
-    $parent = Split-Path -Parent $ReportPath
-    if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-    $jsonPath = [System.IO.Path]::ChangeExtension($ReportPath, '.json')
-    [System.IO.File]::WriteAllText($jsonPath, ($data | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding $true))
-
-    # --- HTML (dark theme, palette matches lib/WinEaseReport.ps1). Every dynamic value is HTML-encoded. ---
+function ConvertTo-WinEaseMigrationHtml {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Collections.IDictionary]$ReportData
+    )
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine('<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>WinEase Migration Report</title>')
     [void]$sb.AppendLine('<style>')
@@ -1221,10 +1216,11 @@ function Export-WinEaseMigrationReport {
     [void]$sb.AppendLine('code { font-family: Consolas, monospace; background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 4px; color: #38bdf8; }')
     [void]$sb.AppendLine('</style></head><body><div class="wrap">')
     [void]$sb.AppendLine('<h1>WinEase Migration Report</h1>')
-    [void]$sb.AppendLine("<div class=`"sub`">Generated: $(ConvertTo-WinEaseHtmlText $data.Generated)</div>")
+    [void]$sb.AppendLine("<div class=`"sub`">Generated: $(ConvertTo-WinEaseHtmlText $ReportData.Generated)</div>")
 
     [void]$sb.AppendLine('<div class="section-card"><h2>Succeeded</h2>')
-    [void]$sb.AppendLine("<p><span class=`"ok`">$(ConvertTo-WinEaseHtmlText $files) file(s)</span>, $(ConvertTo-WinEaseHtmlText $data.Success.TotalSize) total. SHA-256 recorded for <span class=`"ok`">$hashOk</span> file(s); not recorded for <span class=`"warn`">$hashMissing</span>.</p>")
+    [void]$sb.AppendLine("<p><span class=`"ok`">$(ConvertTo-WinEaseHtmlText $ReportData.Success.Files) file(s)</span>, $(ConvertTo-WinEaseHtmlText $ReportData.Success.TotalSize) total. SHA-256 recorded for <span class=`"ok`">$($ReportData.Success.Sha256Verified)</span> file(s); not recorded for <span class=`"warn`">$($ReportData.Success.Sha256Missing)</span>.</p>")
+    $succeeded = @($ReportData.Success.Items)
     if ($succeeded.Count -gt 0) {
         [void]$sb.AppendLine('<table><tr><th>Area</th><th>Item</th><th>Detail</th></tr>')
         foreach ($i in $succeeded) { [void]$sb.AppendLine("<tr><td>$(ConvertTo-WinEaseHtmlText $i.Area)</td><td>$(ConvertTo-WinEaseHtmlText $i.Item)</td><td>$(ConvertTo-WinEaseHtmlText $i.Detail)</td></tr>") }
@@ -1232,6 +1228,7 @@ function Export-WinEaseMigrationReport {
     }
     [void]$sb.AppendLine('</div>')
 
+    $skippedItems = @($ReportData.Skipped)
     [void]$sb.AppendLine('<div class="section-card"><h2>Skipped</h2>')
     if ($skippedItems.Count -eq 0) { [void]$sb.AppendLine('<p class="muted">Nothing was skipped.</p>') }
     else {
@@ -1241,6 +1238,7 @@ function Export-WinEaseMigrationReport {
     }
     [void]$sb.AppendLine('</div>')
 
+    $failedItems = @($ReportData.Failed)
     [void]$sb.AppendLine('<div class="section-card"><h2>Failed</h2>')
     if ($failedItems.Count -eq 0) { [void]$sb.AppendLine('<p class="ok">No failures.</p>') }
     else {
@@ -1250,208 +1248,38 @@ function Export-WinEaseMigrationReport {
     }
     [void]$sb.AppendLine('</div>')
 
+    $manual = @($ReportData.Manual)
     [void]$sb.AppendLine('<div class="section-card"><h2>Manual actions required</h2>')
     [void]$sb.AppendLine('<table><tr><th>Item</th><th>What to do</th></tr>')
     foreach ($i in $manual) { [void]$sb.AppendLine("<tr><td>$(ConvertTo-WinEaseHtmlText $i.Item)</td><td>$(ConvertTo-WinEaseHtmlText $i.Note)</td></tr>") }
     [void]$sb.AppendLine('</table></div>')
     [void]$sb.AppendLine('</div></body></html>')
-    [System.IO.File]::WriteAllText($ReportPath, $sb.ToString(), (New-Object System.Text.UTF8Encoding $true))
 
-    return [PSCustomObject]@{ HtmlPath = $ReportPath; JsonPath = $jsonPath; Data = [PSCustomObject]$data }
-}
-
-# Compare-WinEaseConfig & Format-WinEaseConfigDiff
-function Resolve-WinEaseConfigForDiff {
-    param($InputConfig, $NameHint)
-    $result = @{ Name = $NameHint; Data = $null }
-    if ($InputConfig -is [string]) {
-        $s = $InputConfig.Trim()
-        if (Test-Path -LiteralPath $s) {
-            try { $raw = [System.IO.File]::ReadAllText($s, [System.Text.Encoding]::UTF8); $parsed = $raw | ConvertFrom-Json; $result.Data = $parsed; $result.Name = [System.IO.Path]::GetFileNameWithoutExtension($s) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-        } elseif ($script:BuiltInPresets -and $script:BuiltInPresets.Contains($s)) {
-            $result.Data = $script:BuiltInPresets[$s]
-            $result.Name = $s
-        } else {
-            $result.Name = $s
-            $result.Data = @{}
-        }
-    } elseif ($InputConfig -is [System.Collections.IDictionary]) {
-        $result.Data = $InputConfig
-        if ($NameHint) { $result.Name = $NameHint }
-    } elseif ($InputConfig.PSObject) {
-        $result.Data = $InputConfig
-        if ($NameHint) { $result.Name = $NameHint }
-    }
-    if ($null -eq $result.Data) { $result.Data = @{} }
-    if (-not $result.Name) { $result.Name = 'Config' }
-    return $result
-}
-
-function Compare-WinEaseConfig {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        $ReferenceConfig,
-        [Parameter(Mandatory = $true)]
-        $DifferenceConfig
-    )
-    $ref = Resolve-WinEaseConfigForDiff -InputConfig $ReferenceConfig -NameHint 'Reference'
-    $diff = Resolve-WinEaseConfigForDiff -InputConfig $DifferenceConfig -NameHint 'Difference'
-
-    $compDiffs = @()
-    $tweakGroupDiffs = @()
-    $tweakSettingDiffs = @()
-
-    $allCompKeys = @()
-    if ($ref.Data -is [System.Collections.IDictionary]) { $allCompKeys += $ref.Data.Keys }
-    elseif ($ref.Data.PSObject) { $allCompKeys += $ref.Data.PSObject.Properties.Name }
-    if ($diff.Data -is [System.Collections.IDictionary]) { $allCompKeys += $diff.Data.Keys }
-    elseif ($diff.Data.PSObject) { $allCompKeys += $diff.Data.PSObject.Properties.Name }
-    $allCompKeys = $allCompKeys | Select-Object -Unique
-    foreach ($k in $allCompKeys) {
-        $rv = $null; $dv = $null
-        if ($ref.Data -is [System.Collections.IDictionary]) { if ($ref.Data.Contains($k)) { $rv = $ref.Data[$k] } } elseif ($ref.Data.PSObject -and $ref.Data.PSObject.Properties[$k]) { $rv = $ref.Data.PSObject.Properties[$k].Value }
-        if ($diff.Data -is [System.Collections.IDictionary]) { if ($diff.Data.Contains($k)) { $dv = $diff.Data[$k] } } elseif ($diff.Data.PSObject -and $diff.Data.PSObject.Properties[$k]) { $dv = $diff.Data.PSObject.Properties[$k].Value }
-        if ($rv -ne $dv) {
-            $compDiffs += [PSCustomObject]@{ Key = $k; Category = 'Component'; ReferenceValue = $rv; DifferenceValue = $dv }
-        }
-    }
-
-    $refTS = $null; $diffTS = $null
-    if ($ref.Data -is [System.Collections.IDictionary] -and $ref.Data.Contains('TweakSettings')) { $refTS = $ref.Data['TweakSettings'] }
-    elseif ($ref.Data.PSObject -and $ref.Data.PSObject.Properties['TweakSettings']) { $refTS = $ref.Data.PSObject.Properties['TweakSettings'].Value }
-    if ($diff.Data -is [System.Collections.IDictionary] -and $diff.Data.Contains('TweakSettings')) { $diffTS = $diff.Data['TweakSettings'] }
-    elseif ($diff.Data.PSObject -and $diff.Data.PSObject.Properties['TweakSettings']) { $diffTS = $diff.Data.PSObject.Properties['TweakSettings'].Value }
-
-    $allTweakKeys = @()
-    if ($refTS -is [System.Collections.IDictionary]) { $allTweakKeys += $refTS.Keys }
-    elseif ($refTS.PSObject) { $allTweakKeys += $refTS.PSObject.Properties.Name }
-    if ($diffTS -is [System.Collections.IDictionary]) { $allTweakKeys += $diffTS.Keys }
-    elseif ($diffTS.PSObject) { $allTweakKeys += $diffTS.PSObject.Properties.Name }
-    $allTweakKeys = $allTweakKeys | Select-Object -Unique
-    foreach ($k in $allTweakKeys) {
-        $rv = $null; $dv = $null
-        if ($refTS -is [System.Collections.IDictionary]) { if ($refTS.Contains($k)) { $rv = $refTS[$k] } } elseif ($refTS.PSObject -and $refTS.PSObject.Properties[$k]) { $rv = $refTS.PSObject.Properties[$k].Value }
-        if ($diffTS -is [System.Collections.IDictionary]) { if ($diffTS.Contains($k)) { $dv = $diffTS[$k] } } elseif ($diffTS.PSObject -and $diffTS.PSObject.Properties[$k]) { $dv = $diffTS.PSObject.Properties[$k].Value }
-        $desc = ''
-        if ($script:AllTweakDefs -and $script:AllTweakDefs.Contains($k)) { $desc = $script:AllTweakDefs[$k].Description }
-        if ($rv -ne $dv) {
-            $tweakSettingDiffs += [PSCustomObject]@{ Key = $k; Category = 'TweakSetting'; Description = $desc; ReferenceValue = $rv; DifferenceValue = $dv }
-        }
-    }
-
-    $refTG = $null; $diffTG = $null
-    if ($ref.Data -is [System.Collections.IDictionary] -and $ref.Data.Contains('TweakGroups')) { $refTG = $ref.Data['TweakGroups'] }
-    elseif ($ref.Data.PSObject -and $ref.Data.PSObject.Properties['TweakGroups']) { $refTG = $ref.Data.PSObject.Properties['TweakGroups'].Value }
-    if ($diff.Data -is [System.Collections.IDictionary] -and $diff.Data.Contains('TweakGroups')) { $diffTG = $diff.Data['TweakGroups'] }
-    elseif ($diff.Data.PSObject -and $diff.Data.PSObject.Properties['TweakGroups']) { $diffTG = $diff.Data.PSObject.Properties['TweakGroups'].Value }
-    $allTGKeys = @()
-    if ($refTG -is [System.Collections.IDictionary]) { $allTGKeys += $refTG.Keys }
-    elseif ($refTG.PSObject) { $allTGKeys += $refTG.PSObject.Properties.Name }
-    if ($diffTG -is [System.Collections.IDictionary]) { $allTGKeys += $diffTG.Keys }
-    elseif ($diffTG.PSObject) { $allTGKeys += $diffTG.PSObject.Properties.Name }
-    $allTGKeys = $allTGKeys | Select-Object -Unique
-    foreach ($k in $allTGKeys) {
-        $rv = $null; $dv = $null
-        if ($refTG -is [System.Collections.IDictionary]) { if ($refTG.Contains($k)) { $rv = $refTG[$k] } } elseif ($refTG.PSObject -and $refTG.PSObject.Properties[$k]) { $rv = $refTG.PSObject.Properties[$k].Value }
-        if ($diffTG -is [System.Collections.IDictionary]) { if ($diffTG.Contains($k)) { $dv = $diffTG[$k] } } elseif ($diffTG.PSObject -and $diffTG.PSObject.Properties[$k]) { $dv = $diffTG.PSObject.Properties[$k].Value }
-        if ($rv -ne $dv) {
-            $tweakGroupDiffs += [PSCustomObject]@{ Key = $k; Category = 'TweakGroup'; ReferenceValue = $rv; DifferenceValue = $dv }
-        }
-    }
-
-    $totalDiff = $compDiffs.Count + $tweakGroupDiffs.Count + $tweakSettingDiffs.Count
-    return [PSCustomObject]@{
-        ReferenceName     = $ref.Name
-        DifferenceName    = $diff.Name
-        ComponentDiffs    = $compDiffs
-        TweakGroupDiffs   = $tweakGroupDiffs
-        TweakSettingDiffs = $tweakSettingDiffs
-        AddedImpacts      = @()
-        RemovedImpacts    = @()
-        TotalDiffCount    = $totalDiff
-    }
-}
-
-function Format-WinEaseConfigDiff {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        [psobject]$DiffResult
-    )
-    $sb = New-Object System.Text.StringBuilder
-    [void]$sb.AppendLine("Config diff: $($DiffResult.ReferenceName) -> $($DiffResult.DifferenceName)")
-    [void]$sb.AppendLine("Total differences: $($DiffResult.TotalDiffCount)")
-    if ($DiffResult.ComponentDiffs.Count -gt 0) {
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('[Components]')
-        foreach ($d in $DiffResult.ComponentDiffs) { [void]$sb.AppendLine("  $($d.Key): $($d.ReferenceValue) -> $($d.DifferenceValue)") }
-    }
-    if ($DiffResult.TweakGroupDiffs.Count -gt 0) {
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('[Tweak Groups]')
-        foreach ($d in $DiffResult.TweakGroupDiffs) { [void]$sb.AppendLine("  $($d.Key): $($d.ReferenceValue) -> $($d.DifferenceValue)") }
-    }
-    if ($DiffResult.TweakSettingDiffs.Count -gt 0) {
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('[Tweak Settings]')
-        foreach ($d in $DiffResult.TweakSettingDiffs) { [void]$sb.AppendLine("  $($d.Key): $($d.ReferenceValue) -> $($d.DifferenceValue)") }
-    }
     return $sb.ToString()
 }
 
-# Test-WinEaseRecoveryReadiness
-function Test-WinEaseRecoveryReadiness {
+# Export-WinEaseMigrationReport: writes <ReportPath> (dark HTML) and a .json with the same base name.
+# MigrationResult may be the object returned by Start-WinEaseMigrationBackup (UserData / CustomResult /
+# RulesResult / AppInventory) and/or by Start-WinEaseMigrationRestore (Results). Every part is optional.
+function Export-WinEaseMigrationReport {
     [CmdletBinding()]
     param(
-        [psobject]$Config
+        [Parameter(Mandatory = $true)]
+        [psobject]$MigrationResult,
+        [Parameter(Mandatory = $true)]
+        [string]$ReportPath
     )
-    $secondaryDrives = @()
-    try {
-        $drives = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue
-        foreach ($d in $drives) {
-            if ($d.Name -eq 'C' -or $d.Name.Length -ne 1) { continue }
-            if ($d.Free -gt 0) {
-                $freeGB = [math]::Round($d.Free / 1GB, 1)
-                $secondaryDrives += "$($d.Name): ($freeGB GB free)"
-            }
-        }
-    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    $data = Get-WinEaseMigrationReportData -MigrationResult $MigrationResult
 
-    $sysRestoreEnabled = $false
-    try {
-        $sr = Get-ComputerRestorePoint -ErrorAction SilentlyContinue
-        if ($sr) { $sysRestoreEnabled = $true }
-    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    # --- JSON ---
+    $parent = Split-Path -Parent $ReportPath
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    $jsonPath = [System.IO.Path]::ChangeExtension($ReportPath, '.json')
+    [System.IO.File]::WriteAllText($jsonPath, ($data | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding $true))
 
-    $winReEnabled = $true
-    if ($Config -and $Config.KeepRecoveryEnv -eq $false) { $winReEnabled = $false }
+    # --- HTML (dark theme, palette matches lib/WinEaseReport.ps1). Every dynamic value is HTML-encoded. ---
+    $html = ConvertTo-WinEaseMigrationHtml -ReportData $data
+    [System.IO.File]::WriteAllText($ReportPath, $html, (New-Object System.Text.UTF8Encoding $true))
 
-    $migrationBackupFound = $false
-    try {
-        $manifestPath = Join-Path -Path (Join-Path -Path $env:USERPROFILE -ChildPath 'Documents\WinEase_workspace') -ChildPath 'migration-manifest.json'
-        if (Test-Path -LiteralPath $manifestPath) { $migrationBackupFound = $true }
-    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-
-    $score = 'Low'
-    if ($secondaryDrives.Count -gt 0 -and $sysRestoreEnabled) { $score = 'High' }
-    elseif ($secondaryDrives.Count -gt 0 -or $sysRestoreEnabled -or $winReEnabled) { $score = 'Medium' }
-
-    $recs = @()
-    if (-not $winReEnabled) {
-        $recs += "The generated ISO will have Windows Recovery Environment (WinRE) removed. Keep the installation USB media as a recovery disk."
-    }
-    if ($secondaryDrives.Count -eq 0 -and -not $migrationBackupFound) {
-        $recs += "No secondary drive or migration backup found. Run WinEase-Migrator.ps1 to back up user data before building."
-    }
-
-    return [PSCustomObject]@{
-        HasSecondaryDrive    = ($secondaryDrives.Count -gt 0)
-        SecondaryDrives     = $secondaryDrives
-        SystemRestoreEnabled = $sysRestoreEnabled
-        WinReEnabledOnTarget = $winReEnabled
-        MigrationBackupFound = $migrationBackupFound
-        ReadinessScore       = $score
-        Recommendations     = $recs
-    }
+    return [PSCustomObject]@{ HtmlPath = $ReportPath; JsonPath = $jsonPath; Data = [PSCustomObject]$data }
 }

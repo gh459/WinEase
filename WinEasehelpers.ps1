@@ -499,6 +499,40 @@ function Get-WinEaseVolumeFreeSpaceGB {
 
 
 # ==============================================================================
+function Test-IsPathPreserved {
+    param(
+        [string]$Path,
+        [System.Collections.Generic.HashSet[string]]$PreservedDirs
+    )
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not $PreservedDirs -or $PreservedDirs.Count -eq 0) {
+        return $false
+    }
+
+    $normPath = try { ConvertTo-WinEaseNormalizedPath -Path $Path } catch { $Path.TrimEnd('\', '/') }
+
+    foreach ($pDir in $PreservedDirs) {
+        if ([string]::IsNullOrWhiteSpace($pDir)) { continue }
+        $normPDir = try { ConvertTo-WinEaseNormalizedPath -Path $pDir } catch { $pDir.TrimEnd('\', '/') }
+
+        if ($normPath -ieq $normPDir) {
+            Write-Warning "Directory '$normPath' is in PreservedMountDirs. Deletion prohibited."
+            return $true
+        }
+        if ($normPDir.StartsWith($normPath + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+            Write-Warning "Directory '$normPath' is a parent of preserved directory '$normPDir'. Deletion prohibited."
+            return $true
+        }
+        if ($normPath.StartsWith($normPDir + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+            Write-Warning "Directory '$normPath' is a descendant of preserved directory '$normPDir'. Deletion prohibited."
+            return $true
+        }
+    }
+
+    return $false
+}
+
+
+# ==============================================================================
 function Test-CanSafelyDeleteDirectory {
     param(
         [string]$Path,
@@ -523,23 +557,8 @@ function Test-CanSafelyDeleteDirectory {
         }
     }
 
-    if ($PreservedDirs) {
-        foreach ($pDir in $PreservedDirs) {
-            if ([string]::IsNullOrWhiteSpace($pDir)) { continue }
-            $normPDir = try { ConvertTo-WinEaseNormalizedPath -Path $pDir } catch { $pDir.TrimEnd('\', '/') }
-            if ($normPath -ieq $normPDir) {
-                Write-Warning "Directory '$normPath' is in PreservedMountDirs. Deletion prohibited."
-                return $false
-            }
-            if ($normPDir.StartsWith($normPath + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
-                Write-Warning "Directory '$normPath' is a parent of preserved directory '$normPDir'. Deletion prohibited."
-                return $false
-            }
-            if ($normPath.StartsWith($normPDir + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
-                Write-Warning "Directory '$normPath' is a descendant of preserved directory '$normPDir'. Deletion prohibited."
-                return $false
-            }
-        }
+    if (Test-IsPathPreserved -Path $normPath -PreservedDirs $PreservedDirs) {
+        return $false
     }
 
     try {
@@ -596,15 +615,8 @@ function Test-CanSafelyDeleteVhdx {
         }
     }
 
-    if ($PreservedDirs) {
-        foreach ($pDir in $PreservedDirs) {
-            if ([string]::IsNullOrWhiteSpace($pDir)) { continue }
-            $normP = try { ConvertTo-WinEaseNormalizedPath -Path $pDir } catch { $pDir.TrimEnd('\', '/') }
-            if ($normVhdx -ieq $normP -or $normVhdx.StartsWith($normP + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
-                Write-Warning "VHDX '$normVhdx' is in or under PreservedMountDirs '$normP'. Deletion prohibited."
-                return $false
-            }
-        }
+    if (Test-IsPathPreserved -Path $normVhdx -PreservedDirs $PreservedDirs) {
+        return $false
     }
 
     return $true
@@ -769,8 +781,8 @@ class BuildContext {
     [bool]$BypassActivationRestrictions
     [bool]$RadicalRAM
     [bool]$AllowPhysicalDebloat
-    [bool]$AdvancedDebloatStandard
-    [bool]$AdvancedDebloatExperimental
+    [string[]]$AdvancedDebloatStandard
+    [string[]]$AdvancedDebloatExperimental
     [hashtable]$ActiveTweakGroups
     [hashtable]$TweakSettings
     [string]$PayloadFormat
@@ -814,8 +826,8 @@ class BuildContext {
         $this.ExportSucceeded = $false
         $this.IsoGenerated = $false
         $this.AllowPhysicalDebloat = $false
-        $this.AdvancedDebloatStandard = $false
-        $this.AdvancedDebloatExperimental = $false
+        $this.AdvancedDebloatStandard = @()
+        $this.AdvancedDebloatExperimental = @()
         $this.RemovedPackagesCount = 0
         $this.WinSxSSavedMB = 0
         $this.WinSxsBeforeMB = 0
@@ -907,8 +919,12 @@ function New-BuildContextFromScriptScope {
     $ctx.BypassActivationRestrictions = $bypassActivationRestrictions
     $ctx.RadicalRAM = $radicalRAM
     $ctx.AllowPhysicalDebloat = if ($null -ne $allowPhysicalDebloat) { [bool]$allowPhysicalDebloat } elseif ($null -ne $script:AllowPhysicalDebloat) { [bool]$script:AllowPhysicalDebloat } else { $false }
-    $ctx.AdvancedDebloatStandard = if ($null -ne $advancedDebloatStandard) { [bool]$advancedDebloatStandard } elseif ($null -ne $script:AdvancedDebloatStandard) { [bool]$script:AdvancedDebloatStandard } else { $false }
-    $ctx.AdvancedDebloatExperimental = if ($null -ne $advancedDebloatExperimental) { [bool]$advancedDebloatExperimental } elseif ($null -ne $script:AdvancedDebloatExperimental) { [bool]$script:AdvancedDebloatExperimental } else { $false }
+    # Item lists (string[]), not flags: keep elements and order; $null/unset becomes an empty list.
+    # Assigned outside an if-expression: its output would unroll an empty array to $null.
+    $advStandardSrc = if ($null -ne $advancedDebloatStandard) { $advancedDebloatStandard } else { $script:AdvancedDebloatStandard }
+    $ctx.AdvancedDebloatStandard = [string[]]@($advStandardSrc | Where-Object { $null -ne $_ })
+    $advExperimentalSrc = if ($null -ne $advancedDebloatExperimental) { $advancedDebloatExperimental } else { $script:AdvancedDebloatExperimental }
+    $ctx.AdvancedDebloatExperimental = [string[]]@($advExperimentalSrc | Where-Object { $null -ne $_ })
     $ctx.ActiveTweakGroups = $script:activeTweakGroups
     $ctx.TweakSettings = if ($null -ne $script:TweakSettings) { $script:TweakSettings } else { [ordered]@{} }
     $ctx.PayloadFormat = $PayloadFormat
@@ -930,45 +946,6 @@ function New-BuildContextFromScriptScope {
     $ctx.ProfSlug = $profSlug
     $ctx.BootWimPath = $bootWimPath
     return $ctx
-}
-
-# Helper: sync BuildContext back to script-scope variables (bridge for incremental migration)
-function Sync-ScriptScopeFromContext {
-    param([BuildContext]$ctx)
-    $script:BaseWorkDir = $ctx.BaseWorkDir
-    $script:BuildId = $ctx.BuildId
-    $script:DiagDir = $ctx.DiagDir
-    $script:DiagnosticData = $ctx.DiagnosticData
-    $script:CurrentPhase = $ctx.CurrentPhase
-    $script:PhaseTimings = $ctx.PhaseTimings
-    $script:PhaseStopwatch = $ctx.PhaseStopwatch
-    $script:BuildSucceeded = $ctx.BuildSucceeded
-    $script:FinalPayloadVerified = $ctx.FinalPayloadVerified
-    $script:VerifiedFinalWimSha256 = $ctx.VerifiedFinalWimSha256
-    $script:IsoPayloadVerified = $ctx.IsoPayloadVerified
-    $script:StreamIntegrityVerified = $ctx.StreamIntegrityVerified
-    $script:StreamIntegrityMethod = $ctx.StreamIntegrityMethod
-    $script:RemovedPackagesCount = $ctx.RemovedPackagesCount
-    $script:WinSxSSavedMB = $ctx.WinSxSSavedMB
-    $script:WinSxsBeforeMB = $ctx.WinSxsBeforeMB
-    $script:WinSxsAfterMB = $ctx.WinSxsAfterMB
-    $script:DismLogPath = $ctx.DismLogPath
-    $script:DefenderExclusionAdded = $ctx.DefenderExclusionAdded
-    $script:HivesLoaded = $ctx.HivesLoaded
-    $script:MountOpened = $ctx.MountOpened
-    $script:DismMountDir = $ctx.DismMountDir
-    $script:ManagedMountDirs = $ctx.ManagedMountDirs
-    $script:AllocatedMountDirs = $ctx.AllocatedMountDirs
-    $script:PreservedMountDirs = $ctx.PreservedMountDirs
-    $script:IsoCreatedSuccessfully = $ctx.IsoCreatedSuccessfully
-    $script:IsoPayloadMatch = $ctx.IsoPayloadMatch
-    $script:ExportSucceeded = $ctx.ExportSucceeded
-    $script:IsoGenerated = $ctx.IsoGenerated
-    $script:AllowPhysicalDebloat = $ctx.AllowPhysicalDebloat
-    $script:AdvancedDebloatStandard = $ctx.AdvancedDebloatStandard
-    $script:AdvancedDebloatExperimental = $ctx.AdvancedDebloatExperimental
-    $script:activeTweakGroups = $ctx.ActiveTweakGroups
-    $script:TweakSettings = $ctx.TweakSettings
 }
 
 # Safe existence probe: Test-Path throws on some access-denied paths (verified),
@@ -2231,4 +2208,204 @@ function Resolve-WinEaseUserConfigPath {
         return $oldPath
     }
     return $newPath
+}
+
+
+# 5. Compare-WinEaseConfig & Format-WinEaseConfigDiff
+function Resolve-WinEaseConfigForDiff {
+    param($InputConfig, $NameHint)
+    $result = @{ Name = $NameHint; Data = $null }
+    if ($InputConfig -is [string]) {
+        $s = $InputConfig.Trim()
+        if (Test-Path -LiteralPath $s) {
+            try { $raw = [System.IO.File]::ReadAllText($s, [System.Text.Encoding]::UTF8); $parsed = $raw | ConvertFrom-Json; $result.Data = $parsed; $result.Name = [System.IO.Path]::GetFileNameWithoutExtension($s) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        } elseif ($script:BuiltInPresets -and $script:BuiltInPresets.Contains($s)) {
+            $result.Data = $script:BuiltInPresets[$s]
+            $result.Name = $s
+        } else {
+            $result.Name = $s
+            $result.Data = @{}
+        }
+    } elseif ($InputConfig -is [System.Collections.IDictionary]) {
+        $result.Data = $InputConfig
+        if ($NameHint) { $result.Name = $NameHint }
+    } elseif ($InputConfig.PSObject) {
+        $result.Data = $InputConfig
+        if ($NameHint) { $result.Name = $NameHint }
+    }
+    if ($null -eq $result.Data) { $result.Data = @{} }
+    if (-not $result.Name) { $result.Name = 'Config' }
+    return $result
+}
+
+function Compare-WinEaseConfig {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $ReferenceConfig,
+        [Parameter(Mandatory = $true)]
+        $DifferenceConfig
+    )
+    $ref = Resolve-WinEaseConfigForDiff -InputConfig $ReferenceConfig -NameHint 'Reference'
+    $diff = Resolve-WinEaseConfigForDiff -InputConfig $DifferenceConfig -NameHint 'Difference'
+
+    $compDiffs = @()
+    $tweakGroupDiffs = @()
+    $tweakSettingDiffs = @()
+
+    # Component diffs
+    $allCompKeys = @()
+    if ($ref.Data -is [System.Collections.IDictionary]) { $allCompKeys += $ref.Data.Keys }
+    elseif ($ref.Data.PSObject) { $allCompKeys += $ref.Data.PSObject.Properties.Name }
+    if ($diff.Data -is [System.Collections.IDictionary]) { $allCompKeys += $diff.Data.Keys }
+    elseif ($diff.Data.PSObject) { $allCompKeys += $diff.Data.PSObject.Properties.Name }
+    $allCompKeys = $allCompKeys | Select-Object -Unique
+    foreach ($k in $allCompKeys) {
+        $rv = $null; $dv = $null
+        if ($ref.Data -is [System.Collections.IDictionary]) { if ($ref.Data.Contains($k)) { $rv = $ref.Data[$k] } } elseif ($ref.Data.PSObject -and $ref.Data.PSObject.Properties[$k]) { $rv = $ref.Data.PSObject.Properties[$k].Value }
+        if ($diff.Data -is [System.Collections.IDictionary]) { if ($diff.Data.Contains($k)) { $dv = $diff.Data[$k] } } elseif ($diff.Data.PSObject -and $diff.Data.PSObject.Properties[$k]) { $dv = $diff.Data.PSObject.Properties[$k].Value }
+        if ($rv -ne $dv) {
+            $compDiffs += [PSCustomObject]@{ Key = $k; Category = 'Component'; ReferenceValue = $rv; DifferenceValue = $dv }
+        }
+    }
+
+    # TweakSettings diffs
+    $refTS = $null; $diffTS = $null
+    if ($ref.Data -is [System.Collections.IDictionary] -and $ref.Data.Contains('TweakSettings')) { $refTS = $ref.Data['TweakSettings'] }
+    elseif ($ref.Data.PSObject -and $ref.Data.PSObject.Properties['TweakSettings']) { $refTS = $ref.Data.PSObject.Properties['TweakSettings'].Value }
+    if ($diff.Data -is [System.Collections.IDictionary] -and $diff.Data.Contains('TweakSettings')) { $diffTS = $diff.Data['TweakSettings'] }
+    elseif ($diff.Data.PSObject -and $diff.Data.PSObject.Properties['TweakSettings']) { $diffTS = $diff.Data.PSObject.Properties['TweakSettings'].Value }
+
+    $allTweakKeys = @()
+    if ($refTS -is [System.Collections.IDictionary]) { $allTweakKeys += $refTS.Keys }
+    elseif ($refTS.PSObject) { $allTweakKeys += $refTS.PSObject.Properties.Name }
+    if ($diffTS -is [System.Collections.IDictionary]) { $allTweakKeys += $diffTS.Keys }
+    elseif ($diffTS.PSObject) { $allTweakKeys += $diffTS.PSObject.Properties.Name }
+    $allTweakKeys = $allTweakKeys | Select-Object -Unique
+    foreach ($k in $allTweakKeys) {
+        $rv = $null; $dv = $null
+        if ($refTS -is [System.Collections.IDictionary]) { if ($refTS.Contains($k)) { $rv = $refTS[$k] } } elseif ($refTS.PSObject -and $refTS.PSObject.Properties[$k]) { $rv = $refTS.PSObject.Properties[$k].Value }
+        if ($diffTS -is [System.Collections.IDictionary]) { if ($diffTS.Contains($k)) { $dv = $diffTS[$k] } } elseif ($diffTS.PSObject -and $diffTS.PSObject.Properties[$k]) { $dv = $diffTS.PSObject.Properties[$k].Value }
+        $desc = ''
+        if ($script:AllTweakDefs -and $script:AllTweakDefs.Contains($k)) { $desc = $script:AllTweakDefs[$k].Description }
+        if ($rv -ne $dv) {
+            $tweakSettingDiffs += [PSCustomObject]@{ Key = $k; Category = 'TweakSetting'; Description = $desc; ReferenceValue = $rv; DifferenceValue = $dv }
+        }
+    }
+
+    # TweakGroups
+    $refTG = $null; $diffTG = $null
+    if ($ref.Data -is [System.Collections.IDictionary] -and $ref.Data.Contains('TweakGroups')) { $refTG = $ref.Data['TweakGroups'] }
+    elseif ($ref.Data.PSObject -and $ref.Data.PSObject.Properties['TweakGroups']) { $refTG = $ref.Data.PSObject.Properties['TweakGroups'].Value }
+    if ($diff.Data -is [System.Collections.IDictionary] -and $diff.Data.Contains('TweakGroups')) { $diffTG = $diff.Data['TweakGroups'] }
+    elseif ($diff.Data.PSObject -and $diff.Data.PSObject.Properties['TweakGroups']) { $diffTG = $diff.Data.PSObject.Properties['TweakGroups'].Value }
+    $allTGKeys = @()
+    if ($refTG -is [System.Collections.IDictionary]) { $allTGKeys += $refTG.Keys }
+    elseif ($refTG.PSObject) { $allTGKeys += $refTG.PSObject.Properties.Name }
+    if ($diffTG -is [System.Collections.IDictionary]) { $allTGKeys += $diffTG.Keys }
+    elseif ($diffTG.PSObject) { $allTGKeys += $diffTG.PSObject.Properties.Name }
+    $allTGKeys = $allTGKeys | Select-Object -Unique
+    foreach ($k in $allTGKeys) {
+        $rv = $null; $dv = $null
+        if ($refTG -is [System.Collections.IDictionary]) { if ($refTG.Contains($k)) { $rv = $refTG[$k] } } elseif ($refTG.PSObject -and $refTG.PSObject.Properties[$k]) { $rv = $refTG.PSObject.Properties[$k].Value }
+        if ($diffTG -is [System.Collections.IDictionary]) { if ($diffTG.Contains($k)) { $dv = $diffTG[$k] } } elseif ($diffTG.PSObject -and $diffTG.PSObject.Properties[$k]) { $dv = $diffTG.PSObject.Properties[$k].Value }
+        if ($rv -ne $dv) {
+            $tweakGroupDiffs += [PSCustomObject]@{ Key = $k; Category = 'TweakGroup'; ReferenceValue = $rv; DifferenceValue = $dv }
+        }
+    }
+
+    $totalDiff = $compDiffs.Count + $tweakGroupDiffs.Count + $tweakSettingDiffs.Count
+    return [PSCustomObject]@{
+        ReferenceName     = $ref.Name
+        DifferenceName    = $diff.Name
+        ComponentDiffs    = $compDiffs
+        TweakGroupDiffs   = $tweakGroupDiffs
+        TweakSettingDiffs = $tweakSettingDiffs
+        AddedImpacts      = @()
+        RemovedImpacts    = @()
+        TotalDiffCount    = $totalDiff
+    }
+}
+
+function Format-WinEaseConfigDiff {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$DiffResult
+    )
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine("Config diff: $($DiffResult.ReferenceName) -> $($DiffResult.DifferenceName)")
+    [void]$sb.AppendLine("Total differences: $($DiffResult.TotalDiffCount)")
+    if ($DiffResult.ComponentDiffs.Count -gt 0) {
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('[Components]')
+        foreach ($d in $DiffResult.ComponentDiffs) { [void]$sb.AppendLine("  $($d.Key): $($d.ReferenceValue) -> $($d.DifferenceValue)") }
+    }
+    if ($DiffResult.TweakGroupDiffs.Count -gt 0) {
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('[Tweak Groups]')
+        foreach ($d in $DiffResult.TweakGroupDiffs) { [void]$sb.AppendLine("  $($d.Key): $($d.ReferenceValue) -> $($d.DifferenceValue)") }
+    }
+    if ($DiffResult.TweakSettingDiffs.Count -gt 0) {
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('[Tweak Settings]')
+        foreach ($d in $DiffResult.TweakSettingDiffs) { [void]$sb.AppendLine("  $($d.Key): $($d.ReferenceValue) -> $($d.DifferenceValue)") }
+    }
+    return $sb.ToString()
+}
+
+# 6. Test-WinEaseRecoveryReadiness
+function Test-WinEaseRecoveryReadiness {
+    [CmdletBinding()]
+    param(
+        [psobject]$Config
+    )
+    $secondaryDrives = @()
+    try {
+        $drives = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue
+        foreach ($d in $drives) {
+            if ($d.Name -eq 'C' -or $d.Name.Length -ne 1) { continue }
+            if ($d.Free -gt 0) {
+                $freeGB = [math]::Round($d.Free / 1GB, 1)
+                $secondaryDrives += "$($d.Name): ($freeGB GB free)"
+            }
+        }
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+
+    $sysRestoreEnabled = $false
+    try {
+        $sr = Get-ComputerRestorePoint -ErrorAction SilentlyContinue
+        if ($sr) { $sysRestoreEnabled = $true }
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+
+    $winReEnabled = $true
+    if ($Config -and $Config.KeepRecoveryEnv -eq $false) { $winReEnabled = $false }
+
+    $migrationBackupFound = $false
+    try {
+        $manifestPath = Join-Path -Path (Join-Path -Path $env:USERPROFILE -ChildPath 'Documents\WinEase_workspace') -ChildPath 'migration-manifest.json'
+        if (Test-Path -LiteralPath $manifestPath) { $migrationBackupFound = $true }
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+
+    $score = 'Low'
+    if ($secondaryDrives.Count -gt 0 -and $sysRestoreEnabled) { $score = 'High' }
+    elseif ($secondaryDrives.Count -gt 0 -or $sysRestoreEnabled -or $winReEnabled) { $score = 'Medium' }
+
+    $recs = @()
+    if (-not $winReEnabled) {
+        $recs += "The generated ISO will have Windows Recovery Environment (WinRE) removed. Keep the installation USB media as a recovery disk."
+    }
+    if ($secondaryDrives.Count -eq 0 -and -not $migrationBackupFound) {
+        $recs += "No secondary drive or migration backup found. Run WinEase-Migrator.ps1 to back up user data before building."
+    }
+
+    return [PSCustomObject]@{
+        HasSecondaryDrive    = ($secondaryDrives.Count -gt 0)
+        SecondaryDrives      = $secondaryDrives
+        SystemRestoreEnabled = $sysRestoreEnabled
+        WinReEnabledOnTarget = $winReEnabled
+        MigrationBackupFound = $migrationBackupFound
+        ReadinessScore       = $score
+        Recommendations     = $recs
+    }
 }

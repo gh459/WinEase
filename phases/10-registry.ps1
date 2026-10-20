@@ -526,11 +526,11 @@ if (Test-TweakEnabled 'TakeOwnershipContextMenu' $false) {
     reg.exe add "HKLM\zSOFTWARE\Classes\*\shell\runas" /f /ve /t REG_SZ /d "Take Ownership" > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Classes\*\shell\runas" /f /v "HasLUAShield" /t REG_SZ /d '""' > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Classes\*\shell\runas" /f /v "NoWorkingDirectory" /t REG_SZ /d '""' > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Classes\*\shell\runas\command" /f /ve /t REG_SZ /d 'cmd.exe /c takeown /f \"%1\" && icacls \"%1\" /grant administrators:F' > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Classes\*\shell\runas\command" /f /ve /t REG_SZ /d 'powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f $p; icacls.exe $p /grant administrators:F }" "%1"' > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Classes\Directory\shell\runas" /f /ve /t REG_SZ /d "Take Ownership" > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Classes\Directory\shell\runas" /f /v "HasLUAShield" /t REG_SZ /d '""' > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Classes\Directory\shell\runas" /f /v "NoWorkingDirectory" /t REG_SZ /d '""' > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Classes\Directory\shell\runas\command" /f /ve /t REG_SZ /d 'cmd.exe /c takeown /f \"%1\" /r /d y && icacls \"%1\" /grant administrators:F /t' > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Classes\Directory\shell\runas\command" /f /ve /t REG_SZ /d 'powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f $p /r /d y; icacls.exe $p /grant administrators:F /t }" "%1"' > $null 2>&1
 }
 
 if (Test-TweakEnabled 'CmdAsAdminContextMenu' $false) {

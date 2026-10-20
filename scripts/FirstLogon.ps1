@@ -179,7 +179,16 @@ $scripts = @(
 							$failCount++;
 							continue;
 						}
-						$actualHash = (Get-FileHash -LiteralPath $scriptPath -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash;
+						$actualHash = try {
+							$fs = [System.IO.File]::OpenRead($scriptPath);
+							$sha = [System.Security.Cryptography.SHA256]::Create();
+							try {
+								[System.BitConverter]::ToString($sha.ComputeHash($fs)).Replace("-", "");
+							} finally {
+								if ($null -ne $sha) { $sha.Dispose(); }
+								if ($null -ne $fs) { $fs.Dispose(); }
+							}
+						} catch { $null };
 						if ($actualHash -ine $expectedHash) {
 							$endDt = Get-Date;
 							$endStr = $endDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
