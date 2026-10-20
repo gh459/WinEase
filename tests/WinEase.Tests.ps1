@@ -398,6 +398,77 @@ Describe "WinEase builder - phase timing telemetry" {
     }
 }
 
+Describe "WinEase helpers - registry hive unmounting (Unmount-RegistryHiveWithRetry)" {
+    BeforeAll {
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+    }
+
+    It "returns true immediately when hive is not mounted (reg query fails)" {
+        $script:unloadCalled = $false
+        function reg.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([string]$subcmd, [string]$key)
+            if ($subcmd -eq 'query') { $global:LASTEXITCODE = 1 }
+            elseif ($subcmd -eq 'unload') {
+                $script:unloadCalled = $true
+                $global:LASTEXITCODE = 0
+            }
+        }
+        Unmount-RegistryHiveWithRetry -Name "zSOFTWARE" -Retries 3 | Should Be $true
+        $script:unloadCalled | Should Be $false
+    }
+
+    It "returns true when hive is mounted and unloads successfully on first attempt" {
+        $script:unloadCalls = 0
+        function reg.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([string]$subcmd, [string]$key)
+            if ($subcmd -eq 'query') { $global:LASTEXITCODE = 0 }
+            elseif ($subcmd -eq 'unload') {
+                $script:unloadCalls++
+                $global:LASTEXITCODE = 0
+            }
+        }
+        Unmount-RegistryHiveWithRetry -Name "zSOFTWARE" -Retries 3 | Should Be $true
+        $script:unloadCalls | Should Be 1
+    }
+
+    It "retries unloading when initial unload attempts fail and succeeds on a later attempt" {
+        $script:unloadAttempts = 0
+        function reg.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([string]$subcmd, [string]$key)
+            if ($subcmd -eq 'query') { $global:LASTEXITCODE = 0 }
+            elseif ($subcmd -eq 'unload') {
+                $script:unloadAttempts++
+                if ($script:unloadAttempts -ge 2) {
+                    $global:LASTEXITCODE = 0
+                } else {
+                    $global:LASTEXITCODE = 1
+                }
+            }
+        }
+        Unmount-RegistryHiveWithRetry -Name "zSOFTWARE" -Retries 3 | Should Be $true
+        $script:unloadAttempts | Should Be 2
+    }
+
+    It "returns false when all retry attempts fail to unload" {
+        $script:unloadAttempts = 0
+        function reg.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([string]$subcmd, [string]$key)
+            if ($subcmd -eq 'query') { $global:LASTEXITCODE = 0 }
+            elseif ($subcmd -eq 'unload') {
+                $script:unloadAttempts++
+                $global:LASTEXITCODE = 1
+            }
+        }
+        Unmount-RegistryHiveWithRetry -Name "zSOFTWARE" -Retries 2 | Should Be $false
+        # Loop runs for $i = 0..Retries (0, 1, 2) = 3 attempts total
+        $script:unloadAttempts | Should Be 3
+    }
+}
+
 Describe "WinEase helpers - atomic file I/O (Write-WinEaseTextFileAtomic)" {
     It "writes text content atomically and cleans temporary files" {
         $tempFile = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_test_atomic_" + [guid]::NewGuid().ToString('N') + ".txt")
