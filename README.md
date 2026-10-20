@@ -171,6 +171,14 @@ By default, aggressive trimming removes the Windows Component Store (WinSxS) and
 
 The resulting minimal OS is **not serviceable via cumulative updates** when WinSxS is stripped. If you require long-term servicing, enable the options to retain updates and Defender.
 
+> **Security options:** every option that disables a Windows protection (Defender,
+> Windows Update, UAC, the blank-password auto-logon, ...) is documented in
+> [`docs/SECURITY_OPTIONS.md`](docs/SECURITY_OPTIONS.md) with its impact and the
+> exact steps to restore the protection. The defaults of those options are
+> conservative: **Defender, Windows Update and the blank-password auto-logon are
+> off unless you ask for them** (the `extreme` preset still asks for them
+> explicitly).
+
 ---
 
 ## **What can be removed?**

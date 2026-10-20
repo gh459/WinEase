@@ -104,14 +104,18 @@ if ($setJapaneseKeyboard -or (Test-TweakEnabled 'SetJapaneseKeyboard' $false)) {
 }
 
 # Setup & Winlogon / Blank Password / Script Execution
-if (Test-TweakEnabled 'ConfigureWinlogon' $true) {
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Lsa" /v "LimitBlankPasswordUse" /t REG_DWORD /d 1 /f > $null 2>&1
+# The network use of a blank password is blocked in every configuration: an empty
+# password must never work over the network.
+reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Lsa" /v "LimitBlankPasswordUse" /t REG_DWORD /d 1 /f > $null 2>&1
+if (Test-TweakEnabled 'ConfigureWinlogon' $false) {
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v "AutoAdminLogon" /t REG_SZ /d "1" /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v "DefaultUserName" /t REG_SZ /d "$UserName" /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /f /v "DefaultPassword" /t REG_SZ /d '""' > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v "ForceAutoLogon" /t REG_SZ /d "1" /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" /v "AllowDomainDelayLock" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v "FilterAdministratorToken" /t REG_DWORD /d 0 /f > $null 2>&1
+} else {
+    Write-Host "Blank-password auto-logon is disabled (ConfigureWinlogon is off)." -ForegroundColor Yellow
 }
 
 # PowerShell Script Execution Policy
@@ -522,11 +526,11 @@ if (Test-TweakEnabled 'TakeOwnershipContextMenu' $false) {
     reg.exe add "HKLM\zSOFTWARE\Classes\*\shell\runas" /f /ve /t REG_SZ /d "Take Ownership" > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Classes\*\shell\runas" /f /v "HasLUAShield" /t REG_SZ /d '""' > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Classes\*\shell\runas" /f /v "NoWorkingDirectory" /t REG_SZ /d '""' > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Classes\*\shell\runas\command" /f /ve /t REG_SZ /d 'cmd.exe /c takeown /f \"%1\" && icacls \"%1\" /grant administrators:F' > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Classes\*\shell\runas\command" /f /ve /t REG_SZ /d 'powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f $p; icacls.exe $p /grant administrators:F }" "%1"' > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Classes\Directory\shell\runas" /f /ve /t REG_SZ /d "Take Ownership" > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Classes\Directory\shell\runas" /f /v "HasLUAShield" /t REG_SZ /d '""' > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Classes\Directory\shell\runas" /f /v "NoWorkingDirectory" /t REG_SZ /d '""' > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Classes\Directory\shell\runas\command" /f /ve /t REG_SZ /d 'cmd.exe /c takeown /f \"%1\" /r /d y && icacls \"%1\" /grant administrators:F /t' > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Classes\Directory\shell\runas\command" /f /ve /t REG_SZ /d 'powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f $p /r /d y; icacls.exe $p /grant administrators:F /t }" "%1"' > $null 2>&1
 }
 
 if (Test-TweakEnabled 'CmdAsAdminContextMenu' $false) {

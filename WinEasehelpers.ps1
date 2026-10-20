@@ -71,12 +71,240 @@ function Get-WinEaseRelativePath {
     return [System.IO.Path]::GetFileName($FullName)
 }
 
+# --- Restore path validation (shared by the PC migration engine) -------------------
+# The restore side of the migration feature reads a manifest that can come from an
+# untrusted source (a backup package, a shared drive, a cloud folder). Every path in
+# that manifest is therefore treated as untrusted input: it is normalized and checked
+# against the allowed root before a single byte is written.
+
+# Normalizes a path for containment comparisons:
+#   - '/' becomes '\'
+#   - the path is made absolute ('..' segments are resolved by GetFullPath)
+#   - the 8.3 short form is resolved to the long form when the path exists, so a
+#     containment check cannot be bypassed by writing the short name
+#   - trailing separators are removed
+# Returns $null when the path cannot be normalized.
+function ConvertTo-WinEaseComparablePath {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+    $clean = $Path.Replace('/', '\')
+    try {
+        $full = [System.IO.Path]::GetFullPath($clean)
+    } catch {
+        Write-Verbose "Ignored: $($_.Exception.Message)"
+        return $null
+    }
+    if ([string]::IsNullOrEmpty($full)) { return $null }
+    $resolved = $full
+    try {
+        $item = Get-Item -LiteralPath $full -Force -ErrorAction Stop
+        if ($item -and -not [string]::IsNullOrEmpty($item.FullName)) { $resolved = $item.FullName }
+    } catch {
+        Write-Verbose "Ignored: $($_.Exception.Message)"
+    }
+    $trimmed = $resolved.TrimEnd('\')
+    if ([string]::IsNullOrEmpty($trimmed)) { return $resolved }
+    # A drive root keeps its separator: "C:" would be resolved against the current
+    # directory of the drive instead of the root itself.
+    if ($trimmed -match '^[A-Za-z]:$') { return $resolved }
+    return $trimmed
+}
+
+# True when the path is an absolute local path: a drive letter with a root ("C:\x")
+# or a UNC share ("\\server\share\x"). A drive-relative ("C:x") or root-relative
+# ("\x") path is not absolute and is refused.
+function Test-WinEaseAbsoluteLocalPath {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    $clean = $Path.Replace('/', '\')
+    if ($clean -match '^[A-Za-z]:\\') { return $true }
+    if ($clean -match '^\\\\[^\\]+\\[^\\]+') { return $true }
+    return $false
+}
+
+# True when one of the existing elements between Root and Path is a symbolic link, a
+# junction or another reparse point. A write through such a link can land outside of
+# the allowed root, so the restore refuses the path instead of following it.
+function Test-WinEasePathHasReparsePoint {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [string]$Root
+    )
+    $p = ConvertTo-WinEaseComparablePath -Path $Path
+    if (-not $p) { return $true }
+    $r = $null
+    if (-not [string]::IsNullOrWhiteSpace($Root)) { $r = ConvertTo-WinEaseComparablePath -Path $Root }
+    if ($r -and -not (Test-WinEasePathWithin -Path $p -Root $r)) { return $true }
+    $current = $p
+    while ($current) {
+        if (Test-Path -LiteralPath $current) {
+            $item = Get-Item -LiteralPath $current -Force -ErrorAction SilentlyContinue
+            if ($item -and ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { return $true }
+        }
+        if ($r -and $current -ieq $r) { break }
+        $parent = Split-Path -Parent $current
+        if (-not $parent -or $parent -ieq $current) { break }
+        $current = $parent
+    }
+    return $false
+}
+
+# Validates a relative path that came from a manifest and returns the absolute path it
+# maps to inside the allowed root.
+#
+# Refused: an empty path, an absolute / drive-relative / UNC / root-relative path, a
+# path with a '..' segment, a path with a wildcard or an invalid character, a path that
+# leaves the root after normalization, and a path that traverses a symbolic link or a
+# junction.
+#
+# Returns @{ IsSafe = $bool; Path = <string>; Reason = <string> }
+function Resolve-WinEaseSafeRelativePath {
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$RelativePath,
+        [Parameter(Mandatory = $true)]
+        [string]$Root,
+        [string]$Label = 'path'
+    )
+    $result = [PSCustomObject]@{ IsSafe = $false; Path = $null; Reason = '' }
+    if ([string]::IsNullOrWhiteSpace($RelativePath)) {
+        $result.Reason = "the $Label is empty"
+        return $result
+    }
+    if ([string]::IsNullOrWhiteSpace($Root)) {
+        $result.Reason = 'the allowed root is empty'
+        return $result
+    }
+    $clean = $RelativePath.Replace('/', '\')
+    if ([System.IO.Path]::IsPathRooted($clean)) {
+        $result.Reason = "the $Label is not relative: '$RelativePath'"
+        return $result
+    }
+    if ($clean -match '[<>:"|?*]' -or $clean -match '[\x00-\x1f]') {
+        $result.Reason = "the $Label contains an invalid character: '$RelativePath'"
+        return $result
+    }
+    $segments = @($clean -split '\\' | Where-Object { $_ -ne '' -and $_ -ne '.' })
+    if ($segments.Count -eq 0) {
+        $result.Reason = "the $Label does not name a file: '$RelativePath'"
+        return $result
+    }
+    foreach ($seg in $segments) {
+        if ($seg -eq '..') {
+            $result.Reason = "the $Label leaves the allowed root ('..'): '$RelativePath'"
+            return $result
+        }
+    }
+    $rootFull = ConvertTo-WinEaseComparablePath -Path $Root
+    if (-not $rootFull) {
+        $result.Reason = "the allowed root cannot be resolved: '$Root'"
+        return $result
+    }
+    $joined = Join-Path -Path $rootFull -ChildPath ($segments -join '\')
+    $full = ConvertTo-WinEaseComparablePath -Path $joined
+    if (-not $full) {
+        $result.Reason = "the $Label cannot be resolved: '$RelativePath'"
+        return $result
+    }
+    if (-not (Test-WinEasePathWithin -Path $full -Root $rootFull)) {
+        $result.Reason = "the $Label leaves the allowed root '$Root': '$RelativePath'"
+        return $result
+    }
+    if (Test-WinEasePathHasReparsePoint -Path $full -Root $rootFull) {
+        $result.Reason = "the $Label traverses a symbolic link or junction: '$RelativePath'"
+        return $result
+    }
+    $result.IsSafe = $true
+    $result.Path = $full
+    return $result
+}
+
+# Validates an absolute restore destination against the roots the caller allows.
+#
+# Refused: a relative or drive-relative path, a path with a wildcard or an invalid
+# character, a path outside every allowed root, and a path that traverses a symbolic
+# link or a junction.
+#
+# Returns @{ IsSafe = $bool; Path = <string>; Reason = <string> }
+function Resolve-WinEaseRestoreTarget {
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$AllowedRoots
+    )
+    $result = [PSCustomObject]@{ IsSafe = $false; Path = $null; Reason = '' }
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        $result.Reason = 'the restore target is empty'
+        return $result
+    }
+    $clean = $Path.Replace('/', '\')
+    if (-not (Test-WinEaseAbsoluteLocalPath -Path $clean)) {
+        $result.Reason = "the restore target is not an absolute path: '$Path'"
+        return $result
+    }
+    $pathRoot = [System.IO.Path]::GetPathRoot($clean)
+    $rest = if ($pathRoot -and $clean.Length -gt $pathRoot.Length) { $clean.Substring($pathRoot.Length) } else { '' }
+    if ($rest -match '[<>:"|?*]' -or $rest -match '[\x00-\x1f]') {
+        $result.Reason = "the restore target contains an invalid character: '$Path'"
+        return $result
+    }
+    $full = ConvertTo-WinEaseComparablePath -Path $clean
+    if (-not $full) {
+        $result.Reason = "the restore target cannot be resolved: '$Path'"
+        return $result
+    }
+    $roots = @($AllowedRoots | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($roots.Count -eq 0) {
+        $result.Reason = 'no restore target was allowed for this restore'
+        return $result
+    }
+    $matchedRoot = $null
+    foreach ($r in $roots) {
+        $rootFull = ConvertTo-WinEaseComparablePath -Path $r
+        if (-not $rootFull) { continue }
+        if (Test-WinEasePathWithin -Path $full -Root $rootFull) { $matchedRoot = $rootFull; break }
+    }
+    if (-not $matchedRoot) {
+        $result.Reason = "the restore target '$Path' is outside the allowed locations ($($roots -join ', '))"
+        return $result
+    }
+    if (Test-WinEasePathHasReparsePoint -Path $full -Root $matchedRoot) {
+        $result.Reason = "the restore target traverses a symbolic link or junction: '$Path'"
+        return $result
+    }
+    $result.IsSafe = $true
+    $result.Path = $full
+    return $result
+}
+
 
 function Test-IsNtfsVolume {
     param([string]$Path)
     try {
         if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
         $root = [System.IO.Path]::GetPathRoot($Path)
+        if (-not $root -and $Path -match '^[a-zA-Z]:') { $root = $Path.Substring(0, 2) + '\' }
         if (-not $root) { return $false }
         try {
             $drive = New-Object System.IO.DriveInfo($root)
@@ -272,6 +500,50 @@ function Get-WinEaseVolumeFreeSpaceGB {
 
 
 # ==============================================================================
+function Test-IsPathPreserved {
+    param(
+        [string]$Path,
+        [System.Collections.Generic.HashSet[string]]$PreservedDirs
+    )
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not $PreservedDirs -or $PreservedDirs.Count -eq 0) {
+        return $false
+    }
+
+    $normPath = try { ConvertTo-WinEaseNormalizedPath -Path $Path } catch { $Path.TrimEnd('\', '/') }
+    # Pre-compute trailing slash path for case-insensitive parent boundary comparisons
+    $normPathWithSlash = $normPath + '\'
+
+    foreach ($pDir in $PreservedDirs) {
+        if ([string]::IsNullOrWhiteSpace($pDir)) { continue }
+
+        # Canonicalize pDir with ConvertTo-WinEaseNormalizedPath to ensure consistent drive path normalization
+        $normPDir = try { ConvertTo-WinEaseNormalizedPath -Path $pDir } catch { $pDir.TrimEnd('\', '/') }
+
+        # Case-insensitive exact match
+        if ($normPath -ieq $normPDir) {
+            Write-Warning "Directory '$normPath' is in PreservedMountDirs. Deletion prohibited."
+            return $true
+        }
+
+        # Case-insensitive parent check: is $normPath a parent of preserved directory $normPDir?
+        if ($normPDir.StartsWith($normPathWithSlash, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Write-Warning "Directory '$normPath' is a parent of preserved directory '$normPDir'. Deletion prohibited."
+            return $true
+        }
+
+        # Case-insensitive descendant check: is $normPath a descendant of preserved directory $normPDir?
+        $normPDirWithSlash = $normPDir + '\'
+        if ($normPath.StartsWith($normPDirWithSlash, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Write-Warning "Directory '$normPath' is a descendant of preserved directory '$normPDir'. Deletion prohibited."
+            return $true
+        }
+    }
+
+    return $false
+}
+
+
+# ==============================================================================
 function Test-CanSafelyDeleteDirectory {
     param(
         [string]$Path,
@@ -296,23 +568,8 @@ function Test-CanSafelyDeleteDirectory {
         }
     }
 
-    if ($PreservedDirs) {
-        foreach ($pDir in $PreservedDirs) {
-            if ([string]::IsNullOrWhiteSpace($pDir)) { continue }
-            $normPDir = try { ConvertTo-WinEaseNormalizedPath -Path $pDir } catch { $pDir.TrimEnd('\', '/') }
-            if ($normPath -ieq $normPDir) {
-                Write-Warning "Directory '$normPath' is in PreservedMountDirs. Deletion prohibited."
-                return $false
-            }
-            if ($normPDir.StartsWith($normPath + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
-                Write-Warning "Directory '$normPath' is a parent of preserved directory '$normPDir'. Deletion prohibited."
-                return $false
-            }
-            if ($normPath.StartsWith($normPDir + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
-                Write-Warning "Directory '$normPath' is a descendant of preserved directory '$normPDir'. Deletion prohibited."
-                return $false
-            }
-        }
+    if (Test-IsPathPreserved -Path $normPath -PreservedDirs $PreservedDirs) {
+        return $false
     }
 
     try {
@@ -369,15 +626,8 @@ function Test-CanSafelyDeleteVhdx {
         }
     }
 
-    if ($PreservedDirs) {
-        foreach ($pDir in $PreservedDirs) {
-            if ([string]::IsNullOrWhiteSpace($pDir)) { continue }
-            $normP = try { ConvertTo-WinEaseNormalizedPath -Path $pDir } catch { $pDir.TrimEnd('\', '/') }
-            if ($normVhdx -ieq $normP -or $normVhdx.StartsWith($normP + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
-                Write-Warning "VHDX '$normVhdx' is in or under PreservedMountDirs '$normP'. Deletion prohibited."
-                return $false
-            }
-        }
+    if (Test-IsPathPreserved -Path $normVhdx -PreservedDirs $PreservedDirs) {
+        return $false
     }
 
     return $true
@@ -520,6 +770,7 @@ class BuildContext {
     [bool]$KeepBasicApps
     [bool]$KeepSearchIndex
     [bool]$KeepXboxServices
+    [bool]$RemoveAppxBloatware
     [bool]$KeepAudioTweaks
     [bool]$UseVHDX
     [bool]$RemoveLegacyFOD
@@ -657,6 +908,7 @@ function New-BuildContextFromScriptScope {
     $ctx.KeepBasicApps = $keepBasicApps
     $ctx.KeepSearchIndex = $keepSearchIndex
     $ctx.KeepXboxServices = $keepXboxServices
+    $ctx.RemoveAppxBloatware = $removeAppxBloatware
     $ctx.KeepAudioTweaks = $keepAudioTweaks
     $ctx.UseVHDX = $useVHDX
     $ctx.RemoveLegacyFOD = $removeLegacyFOD
@@ -705,45 +957,6 @@ function New-BuildContextFromScriptScope {
     $ctx.ProfSlug = $profSlug
     $ctx.BootWimPath = $bootWimPath
     return $ctx
-}
-
-# Helper: sync BuildContext back to script-scope variables (bridge for incremental migration)
-function Sync-ScriptScopeFromContext {
-    param([BuildContext]$ctx)
-    $script:BaseWorkDir = $ctx.BaseWorkDir
-    $script:BuildId = $ctx.BuildId
-    $script:DiagDir = $ctx.DiagDir
-    $script:DiagnosticData = $ctx.DiagnosticData
-    $script:CurrentPhase = $ctx.CurrentPhase
-    $script:PhaseTimings = $ctx.PhaseTimings
-    $script:PhaseStopwatch = $ctx.PhaseStopwatch
-    $script:BuildSucceeded = $ctx.BuildSucceeded
-    $script:FinalPayloadVerified = $ctx.FinalPayloadVerified
-    $script:VerifiedFinalWimSha256 = $ctx.VerifiedFinalWimSha256
-    $script:IsoPayloadVerified = $ctx.IsoPayloadVerified
-    $script:StreamIntegrityVerified = $ctx.StreamIntegrityVerified
-    $script:StreamIntegrityMethod = $ctx.StreamIntegrityMethod
-    $script:RemovedPackagesCount = $ctx.RemovedPackagesCount
-    $script:WinSxSSavedMB = $ctx.WinSxSSavedMB
-    $script:WinSxsBeforeMB = $ctx.WinSxsBeforeMB
-    $script:WinSxsAfterMB = $ctx.WinSxsAfterMB
-    $script:DismLogPath = $ctx.DismLogPath
-    $script:DefenderExclusionAdded = $ctx.DefenderExclusionAdded
-    $script:HivesLoaded = $ctx.HivesLoaded
-    $script:MountOpened = $ctx.MountOpened
-    $script:DismMountDir = $ctx.DismMountDir
-    $script:ManagedMountDirs = $ctx.ManagedMountDirs
-    $script:AllocatedMountDirs = $ctx.AllocatedMountDirs
-    $script:PreservedMountDirs = $ctx.PreservedMountDirs
-    $script:IsoCreatedSuccessfully = $ctx.IsoCreatedSuccessfully
-    $script:IsoPayloadMatch = $ctx.IsoPayloadMatch
-    $script:ExportSucceeded = $ctx.ExportSucceeded
-    $script:IsoGenerated = $ctx.IsoGenerated
-    $script:AllowPhysicalDebloat = $ctx.AllowPhysicalDebloat
-    $script:AdvancedDebloatStandard = [string[]]@($ctx.AdvancedDebloatStandard | Where-Object { $null -ne $_ })
-    $script:AdvancedDebloatExperimental = [string[]]@($ctx.AdvancedDebloatExperimental | Where-Object { $null -ne $_ })
-    $script:activeTweakGroups = $ctx.ActiveTweakGroups
-    $script:TweakSettings = $ctx.TweakSettings
 }
 
 # Safe existence probe: Test-Path throws on some access-denied paths (verified),
@@ -2006,4 +2219,204 @@ function Resolve-WinEaseUserConfigPath {
         return $oldPath
     }
     return $newPath
+}
+
+
+# 5. Compare-WinEaseConfig & Format-WinEaseConfigDiff
+function Resolve-WinEaseConfigForDiff {
+    param($InputConfig, $NameHint)
+    $result = @{ Name = $NameHint; Data = $null }
+    if ($InputConfig -is [string]) {
+        $s = $InputConfig.Trim()
+        if (Test-Path -LiteralPath $s) {
+            try { $raw = [System.IO.File]::ReadAllText($s, [System.Text.Encoding]::UTF8); $parsed = $raw | ConvertFrom-Json; $result.Data = $parsed; $result.Name = [System.IO.Path]::GetFileNameWithoutExtension($s) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        } elseif ($script:BuiltInPresets -and $script:BuiltInPresets.Contains($s)) {
+            $result.Data = $script:BuiltInPresets[$s]
+            $result.Name = $s
+        } else {
+            $result.Name = $s
+            $result.Data = @{}
+        }
+    } elseif ($InputConfig -is [System.Collections.IDictionary]) {
+        $result.Data = $InputConfig
+        if ($NameHint) { $result.Name = $NameHint }
+    } elseif ($InputConfig.PSObject) {
+        $result.Data = $InputConfig
+        if ($NameHint) { $result.Name = $NameHint }
+    }
+    if ($null -eq $result.Data) { $result.Data = @{} }
+    if (-not $result.Name) { $result.Name = 'Config' }
+    return $result
+}
+
+function Compare-WinEaseConfig {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $ReferenceConfig,
+        [Parameter(Mandatory = $true)]
+        $DifferenceConfig
+    )
+    $ref = Resolve-WinEaseConfigForDiff -InputConfig $ReferenceConfig -NameHint 'Reference'
+    $diff = Resolve-WinEaseConfigForDiff -InputConfig $DifferenceConfig -NameHint 'Difference'
+
+    $compDiffs = @()
+    $tweakGroupDiffs = @()
+    $tweakSettingDiffs = @()
+
+    # Component diffs
+    $allCompKeys = @()
+    if ($ref.Data -is [System.Collections.IDictionary]) { $allCompKeys += $ref.Data.Keys }
+    elseif ($ref.Data.PSObject) { $allCompKeys += $ref.Data.PSObject.Properties.Name }
+    if ($diff.Data -is [System.Collections.IDictionary]) { $allCompKeys += $diff.Data.Keys }
+    elseif ($diff.Data.PSObject) { $allCompKeys += $diff.Data.PSObject.Properties.Name }
+    $allCompKeys = $allCompKeys | Select-Object -Unique
+    foreach ($k in $allCompKeys) {
+        $rv = $null; $dv = $null
+        if ($ref.Data -is [System.Collections.IDictionary]) { if ($ref.Data.Contains($k)) { $rv = $ref.Data[$k] } } elseif ($ref.Data.PSObject -and $ref.Data.PSObject.Properties[$k]) { $rv = $ref.Data.PSObject.Properties[$k].Value }
+        if ($diff.Data -is [System.Collections.IDictionary]) { if ($diff.Data.Contains($k)) { $dv = $diff.Data[$k] } } elseif ($diff.Data.PSObject -and $diff.Data.PSObject.Properties[$k]) { $dv = $diff.Data.PSObject.Properties[$k].Value }
+        if ($rv -ne $dv) {
+            $compDiffs += [PSCustomObject]@{ Key = $k; Category = 'Component'; ReferenceValue = $rv; DifferenceValue = $dv }
+        }
+    }
+
+    # TweakSettings diffs
+    $refTS = $null; $diffTS = $null
+    if ($ref.Data -is [System.Collections.IDictionary] -and $ref.Data.Contains('TweakSettings')) { $refTS = $ref.Data['TweakSettings'] }
+    elseif ($ref.Data.PSObject -and $ref.Data.PSObject.Properties['TweakSettings']) { $refTS = $ref.Data.PSObject.Properties['TweakSettings'].Value }
+    if ($diff.Data -is [System.Collections.IDictionary] -and $diff.Data.Contains('TweakSettings')) { $diffTS = $diff.Data['TweakSettings'] }
+    elseif ($diff.Data.PSObject -and $diff.Data.PSObject.Properties['TweakSettings']) { $diffTS = $diff.Data.PSObject.Properties['TweakSettings'].Value }
+
+    $allTweakKeys = @()
+    if ($refTS -is [System.Collections.IDictionary]) { $allTweakKeys += $refTS.Keys }
+    elseif ($refTS.PSObject) { $allTweakKeys += $refTS.PSObject.Properties.Name }
+    if ($diffTS -is [System.Collections.IDictionary]) { $allTweakKeys += $diffTS.Keys }
+    elseif ($diffTS.PSObject) { $allTweakKeys += $diffTS.PSObject.Properties.Name }
+    $allTweakKeys = $allTweakKeys | Select-Object -Unique
+    foreach ($k in $allTweakKeys) {
+        $rv = $null; $dv = $null
+        if ($refTS -is [System.Collections.IDictionary]) { if ($refTS.Contains($k)) { $rv = $refTS[$k] } } elseif ($refTS.PSObject -and $refTS.PSObject.Properties[$k]) { $rv = $refTS.PSObject.Properties[$k].Value }
+        if ($diffTS -is [System.Collections.IDictionary]) { if ($diffTS.Contains($k)) { $dv = $diffTS[$k] } } elseif ($diffTS.PSObject -and $diffTS.PSObject.Properties[$k]) { $dv = $diffTS.PSObject.Properties[$k].Value }
+        $desc = ''
+        if ($script:AllTweakDefs -and $script:AllTweakDefs.Contains($k)) { $desc = $script:AllTweakDefs[$k].Description }
+        if ($rv -ne $dv) {
+            $tweakSettingDiffs += [PSCustomObject]@{ Key = $k; Category = 'TweakSetting'; Description = $desc; ReferenceValue = $rv; DifferenceValue = $dv }
+        }
+    }
+
+    # TweakGroups
+    $refTG = $null; $diffTG = $null
+    if ($ref.Data -is [System.Collections.IDictionary] -and $ref.Data.Contains('TweakGroups')) { $refTG = $ref.Data['TweakGroups'] }
+    elseif ($ref.Data.PSObject -and $ref.Data.PSObject.Properties['TweakGroups']) { $refTG = $ref.Data.PSObject.Properties['TweakGroups'].Value }
+    if ($diff.Data -is [System.Collections.IDictionary] -and $diff.Data.Contains('TweakGroups')) { $diffTG = $diff.Data['TweakGroups'] }
+    elseif ($diff.Data.PSObject -and $diff.Data.PSObject.Properties['TweakGroups']) { $diffTG = $diff.Data.PSObject.Properties['TweakGroups'].Value }
+    $allTGKeys = @()
+    if ($refTG -is [System.Collections.IDictionary]) { $allTGKeys += $refTG.Keys }
+    elseif ($refTG.PSObject) { $allTGKeys += $refTG.PSObject.Properties.Name }
+    if ($diffTG -is [System.Collections.IDictionary]) { $allTGKeys += $diffTG.Keys }
+    elseif ($diffTG.PSObject) { $allTGKeys += $diffTG.PSObject.Properties.Name }
+    $allTGKeys = $allTGKeys | Select-Object -Unique
+    foreach ($k in $allTGKeys) {
+        $rv = $null; $dv = $null
+        if ($refTG -is [System.Collections.IDictionary]) { if ($refTG.Contains($k)) { $rv = $refTG[$k] } } elseif ($refTG.PSObject -and $refTG.PSObject.Properties[$k]) { $rv = $refTG.PSObject.Properties[$k].Value }
+        if ($diffTG -is [System.Collections.IDictionary]) { if ($diffTG.Contains($k)) { $dv = $diffTG[$k] } } elseif ($diffTG.PSObject -and $diffTG.PSObject.Properties[$k]) { $dv = $diffTG.PSObject.Properties[$k].Value }
+        if ($rv -ne $dv) {
+            $tweakGroupDiffs += [PSCustomObject]@{ Key = $k; Category = 'TweakGroup'; ReferenceValue = $rv; DifferenceValue = $dv }
+        }
+    }
+
+    $totalDiff = $compDiffs.Count + $tweakGroupDiffs.Count + $tweakSettingDiffs.Count
+    return [PSCustomObject]@{
+        ReferenceName     = $ref.Name
+        DifferenceName    = $diff.Name
+        ComponentDiffs    = $compDiffs
+        TweakGroupDiffs   = $tweakGroupDiffs
+        TweakSettingDiffs = $tweakSettingDiffs
+        AddedImpacts      = @()
+        RemovedImpacts    = @()
+        TotalDiffCount    = $totalDiff
+    }
+}
+
+function Format-WinEaseConfigDiff {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$DiffResult
+    )
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine("Config diff: $($DiffResult.ReferenceName) -> $($DiffResult.DifferenceName)")
+    [void]$sb.AppendLine("Total differences: $($DiffResult.TotalDiffCount)")
+    if ($DiffResult.ComponentDiffs.Count -gt 0) {
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('[Components]')
+        foreach ($d in $DiffResult.ComponentDiffs) { [void]$sb.AppendLine("  $($d.Key): $($d.ReferenceValue) -> $($d.DifferenceValue)") }
+    }
+    if ($DiffResult.TweakGroupDiffs.Count -gt 0) {
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('[Tweak Groups]')
+        foreach ($d in $DiffResult.TweakGroupDiffs) { [void]$sb.AppendLine("  $($d.Key): $($d.ReferenceValue) -> $($d.DifferenceValue)") }
+    }
+    if ($DiffResult.TweakSettingDiffs.Count -gt 0) {
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('[Tweak Settings]')
+        foreach ($d in $DiffResult.TweakSettingDiffs) { [void]$sb.AppendLine("  $($d.Key): $($d.ReferenceValue) -> $($d.DifferenceValue)") }
+    }
+    return $sb.ToString()
+}
+
+# 6. Test-WinEaseRecoveryReadiness
+function Test-WinEaseRecoveryReadiness {
+    [CmdletBinding()]
+    param(
+        [psobject]$Config
+    )
+    $secondaryDrives = @()
+    try {
+        $drives = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue
+        foreach ($d in $drives) {
+            if ($d.Name -eq 'C' -or $d.Name.Length -ne 1) { continue }
+            if ($d.Free -gt 0) {
+                $freeGB = [math]::Round($d.Free / 1GB, 1)
+                $secondaryDrives += "$($d.Name): ($freeGB GB free)"
+            }
+        }
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+
+    $sysRestoreEnabled = $false
+    try {
+        $sr = Get-ComputerRestorePoint -ErrorAction SilentlyContinue
+        if ($sr) { $sysRestoreEnabled = $true }
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+
+    $winReEnabled = $true
+    if ($Config -and $Config.KeepRecoveryEnv -eq $false) { $winReEnabled = $false }
+
+    $migrationBackupFound = $false
+    try {
+        $manifestPath = Join-Path -Path (Join-Path -Path $env:USERPROFILE -ChildPath 'Documents\WinEase_workspace') -ChildPath 'migration-manifest.json'
+        if (Test-Path -LiteralPath $manifestPath) { $migrationBackupFound = $true }
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+
+    $score = 'Low'
+    if ($secondaryDrives.Count -gt 0 -and $sysRestoreEnabled) { $score = 'High' }
+    elseif ($secondaryDrives.Count -gt 0 -or $sysRestoreEnabled -or $winReEnabled) { $score = 'Medium' }
+
+    $recs = @()
+    if (-not $winReEnabled) {
+        $recs += "The generated ISO will have Windows Recovery Environment (WinRE) removed. Keep the installation USB media as a recovery disk."
+    }
+    if ($secondaryDrives.Count -eq 0 -and -not $migrationBackupFound) {
+        $recs += "No secondary drive or migration backup found. Run WinEase-Migrator.ps1 to back up user data before building."
+    }
+
+    return [PSCustomObject]@{
+        HasSecondaryDrive    = ($secondaryDrives.Count -gt 0)
+        SecondaryDrives      = $secondaryDrives
+        SystemRestoreEnabled = $sysRestoreEnabled
+        WinReEnabledOnTarget = $winReEnabled
+        MigrationBackupFound = $migrationBackupFound
+        ReadinessScore       = $score
+        Recommendations     = $recs
+    }
 }

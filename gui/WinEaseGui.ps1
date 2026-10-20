@@ -886,143 +886,6 @@ function Get-WinEaseCheckedItems {
     return ,$sel
 }
 
-# =========================================================================
-# Advanced Debloat dialog (standalone; -NoShow returns the built dialog for tests)
-# =========================================================================
-function Show-AdvancedDebloatDialog {
-    param(
-        [hashtable]$InitialSettings = @{},
-        [string]$UiFontName = "Segoe UI",
-        [switch]$NoShow
-    )
-
-    # The two debloat lists are defined once at script level
-    # ($script:WinEaseDebloatStandardItems / $script:WinEaseDebloatExperimentalItems) and
-    # used by both this dialog and the Advanced Debloat tab. They used to be duplicated
-    # here, and the copies had drifted apart (the dialog listed 43 experimental items
-    # while the tab listed 30), so some options were only reachable from one of the two.
-    $stdItems = $script:WinEaseDebloatStandardItems
-    $expItems = $script:WinEaseDebloatExperimentalItems
-    $engineDefs = Get-WinEaseDebloatEngineDefs
-    $engineSel = @{}
-    if ($InitialSettings -and $InitialSettings.DebloatEngineSelection) {
-        $rawEngine = $InitialSettings.DebloatEngineSelection
-        if ($rawEngine -is [System.Collections.IDictionary]) {
-            foreach ($k in $rawEngine.Keys) { $engineSel[[string]$k] = [string]$rawEngine[$k] }
-        } else {
-            foreach ($p in $rawEngine.PSObject.Properties) { $engineSel[[string]$p.Name] = [string]$p.Value }
-        }
-    }
-
-    $dlgBack = $script:WinEaseGuiColors.DialogAlt
-    $dlgFore = $script:WinEaseGuiColors.Text
-    $listFont = New-Object System.Drawing.Font($UiFontName, 9)
-
-    $dlg = New-WinEaseForm -Text (Get-WinEaseUiString 'Dlg.Debloat.Title') -Width 700 -Height 620 -FixedDialog -NoMaximize -NoMinimize -BackColor $dlgBack
-
-    $tabControl = New-WinEaseTabControl -X 10 -Y 10 -Width 665 -Height 480 -Parent $dlg
-
-    # Global engine switch: applies one engine to every target that supports it
-    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Debloat.Engine.All') -X 10 -Y 495 -Width 135 -Height 20 `
-        -ForeColor $dlgFore -Font (New-Object System.Drawing.Font($UiFontName, 9)) -Parent $dlg)
-    $cmbAllEngine = New-WinEaseComboBox -Items @('PowerShell', 'Rust') -DropList -SelectedIndex 0 `
-        -X 150 -Y 492 -Width 115 -Height 24 -BackColor $script:WinEaseGuiColors.Input -ForeColor $dlgFore -Parent $dlg
-
-    # Standard tab
-    $tabStd = New-WinEaseTabPage -Text (Get-WinEaseUiString 'Dlg.Debloat.TabStandard') -TabControl $tabControl -BackColor $dlgBack
-    $preStd = @()
-    if ($InitialSettings -and $InitialSettings.AdvancedDebloatStandard) { $preStd = @($InitialSettings.AdvancedDebloatStandard) }
-    $grdStd = New-WinEaseDebloatGrid -Items $stdItems -Selected $preStd -EngineDefs $engineDefs `
-        -EngineSelection $engineSel -X 10 -Y 10 -Width 640 -Height 380 -Font $listFont -Parent $tabStd
-    $onSelectStd = {
-        $t = $this.Tag
-        Set-WinEaseDebloatGridChecked -Grid $t.Grid -Checked $t.Checked
-    }
-    $onClearStd = {
-        $t = $this.Tag
-        Set-WinEaseDebloatGridChecked -Grid $t.Grid -Checked $t.Checked
-    }
-    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.SelectAll') -X 10 -Y 395 -Width 100 -Height 28 -ForeColor $dlgFore -Parent $tabStd `
-        -Tag @{ Grid = $grdStd; Checked = $true } -OnClick $onSelectStd)
-    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.DeselectAll') -X 115 -Y 395 -Width 100 -Height 28 -ForeColor $dlgFore -Parent $tabStd `
-        -Tag @{ Grid = $grdStd; Checked = $false } -OnClick $onClearStd)
-
-    # Experimental tab
-    $tabExp = New-WinEaseTabPage -Text (Get-WinEaseUiString 'Dlg.Debloat.TabExperimental') -TabControl $tabControl -BackColor $dlgBack
-    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Dlg.Debloat.Warning') -X 10 -Y 5 -Width 640 -Height 20 `
-        -ForeColor $script:WinEaseGuiColors.Danger -Font (New-Object System.Drawing.Font($UiFontName, 9, [System.Drawing.FontStyle]::Bold)) -Parent $tabExp)
-    $preExp = @()
-    if ($InitialSettings -and $InitialSettings.AdvancedDebloatExperimental) { $preExp = @($InitialSettings.AdvancedDebloatExperimental) }
-    $grdExp = New-WinEaseDebloatGrid -Items $expItems -Selected $preExp -EngineDefs $engineDefs `
-        -EngineSelection $engineSel -X 10 -Y 30 -Width 640 -Height 365 -Font $listFont -Parent $tabExp
-    $onSelectExp = {
-        $t = $this.Tag
-        Set-WinEaseDebloatGridChecked -Grid $t.Grid -Checked $t.Checked
-    }
-    $onClearExp = {
-        $t = $this.Tag
-        Set-WinEaseDebloatGridChecked -Grid $t.Grid -Checked $t.Checked
-    }
-    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.SelectAll') -X 10 -Y 400 -Width 100 -Height 28 -ForeColor $dlgFore -Parent $tabExp `
-        -Tag @{ Grid = $grdExp; Checked = $true } -OnClick $onSelectExp)
-    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.DeselectAll') -X 115 -Y 400 -Width 100 -Height 28 -ForeColor $dlgFore -Parent $tabExp `
-        -Tag @{ Grid = $grdExp; Checked = $false } -OnClick $onClearExp)
-
-    # Both grids travel on the dialog's Tag for the Preview / OK handlers
-    $dlg.Tag = @{ Std = $grdStd; Exp = $grdExp; Engine = $cmbAllEngine }
-
-    $cmbAllEngine.Add_SelectedIndexChanged({
-        $engine = [string]$this.SelectedItem
-        if (-not $engine) { return }
-        $t = $this.FindForm().Tag
-        if (-not $t) { return }
-        Set-WinEaseDebloatEngineForAll -Grids @($t.Std, $t.Exp) -Engine $engine
-    })
-
-    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.Preview') -X 10 -Y 500 -Width 100 -Height 30 -ForeColor $dlgFore -Parent $dlg -OnClick {
-        $t = $this.FindForm().Tag
-        $stdState = Get-WinEaseDebloatGridState -Grid $t.Std
-        $expState = Get-WinEaseDebloatGridState -Grid $t.Exp
-        $stdSel = @($stdState.Selected)
-        $expSel = @($expState.Selected)
-        $msg = (Get-WinEaseUiString 'Dlg.Debloat.Preview.Selected' -Format $stdSel.Count, $expSel.Count) + "`n`n"
-        $msg += (Get-WinEaseUiString 'Dlg.Debloat.Preview.Standard' -Format $stdSel.Count) + "`n"
-        foreach ($s in $stdSel) { $msg += "  - $(Get-WinEaseDebloatItemText -Item $s)`n" }
-        $msg += "`n" + (Get-WinEaseUiString 'Dlg.Debloat.Preview.Experimental' -Format $expSel.Count) + "`n"
-        foreach ($s in $expSel) { $msg += "  - $(Get-WinEaseDebloatItemText -Item $s)`n" }
-        if ($expSel.Count -gt 0) {
-            $msg += "`n" + (Get-WinEaseUiString 'Dlg.Debloat.Preview.ExperimentalWarning')
-        }
-        Show-WinEaseGuiMessage -Text $msg -Title (Get-WinEaseUiString 'Dlg.Debloat.Preview.Title') -Kind Info
-    })
-
-    # OK / Cancel
-    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.OK') -X 480 -Y 500 -Width 90 -Height 30 -BackColor $script:WinEaseGuiColors.Primary -Parent $dlg -OnClick {
-        $f = $this.FindForm()
-        $stdState = Get-WinEaseDebloatGridState -Grid $f.Tag.Std
-        $expState = Get-WinEaseDebloatGridState -Grid $f.Tag.Exp
-        $script:advDebloatStd = @($stdState.Selected)
-        $script:advDebloatExp = @($expState.Selected)
-        $script:advDebloatEngines = $stdState.Engines
-        foreach ($k in $expState.Engines.Keys) { $script:advDebloatEngines[$k] = $expState.Engines[$k] }
-        $f.DialogResult = [System.Windows.Forms.DialogResult]::OK
-        $f.Close()
-    })
-    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.Cancel') -X 575 -Y 500 -Width 90 -Height 30 -ForeColor $dlgFore -Parent $dlg -OnClick {
-        $f = $this.FindForm()
-        $f.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
-        $f.Close()
-    })
-
-    if ($NoShow) { return $dlg }
-
-    $dlg.TopMost = $true
-    $result = $dlg.ShowDialog()
-    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
-        return @{ Success = $true; StandardSelected = $script:advDebloatStd; ExperimentalSelected = $script:advDebloatExp; EngineSelection = $script:advDebloatEngines }
-    }
-    return @{ Success = $false; StandardSelected = @(); ExperimentalSelected = @(); EngineSelection = @{} }
-}
 
 # =========================================================================
 # Main window helpers (all take the GUI context stored on the form's Tag)
@@ -1319,6 +1182,11 @@ function Invoke-WinEaseGuiMigrationJob {
     $o = Invoke-WinEaseGuiBackgroundJob -Button $Button -Form $Form -ArgumentList $RepoRoot, $Script, $Arguments -ScriptBlock {
         param($repoRoot, $inner, $jobArgs)
         Set-Location -LiteralPath $repoRoot
+        # The migration engine uses the shared helpers (relative paths, path boundaries,
+        # the restore path validation). A job starts with an empty session state, so
+        # both files are loaded here.
+        $helpers = Join-Path $repoRoot 'WinEasehelpers.ps1'
+        if (Test-Path -LiteralPath $helpers) { . $helpers }
         . (Join-Path $repoRoot 'tools\migrator\WinEaseMigration.ps1')
         & ([scriptblock]::Create($inner)) $jobArgs
     }
@@ -1888,6 +1756,11 @@ function New-WinEaseMigrationActionsGroup {
             $f = $btn.FindForm()
             $g = $f.Tag
             $ra = @{ BackupRoot = (Get-WinEaseGuiMigrationRoot -Gui $g); ConflictPolicy = (Get-WinEaseGuiConflictPolicy -Gui $g) }
+            # The custom paths of the backup are only restored to the locations that are
+            # listed in the custom path box: the manifest alone never decides where a
+            # file is written to.
+            $allowed = @($g.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            if ($allowed.Count -gt 0) { $ra['AllowedCustomPaths'] = $allowed }
             if ($retry) { $ra['RetryFailedOnly'] = $true }
             $o = Invoke-WinEaseGuiMigrationJob -Button $btn -Form $f -RepoRoot $script:WinEaseGuiRepoRoot -Arguments $ra -Script 'param($a) Start-WinEaseMigrationRestore @a'
             $msg = Get-WinEaseUiString 'Mig.Restore.Done'
@@ -1909,36 +1782,43 @@ function New-WinEaseMigrationCustomPathsGroup {
     $gui.CustomPaths = $txtCustomPaths
 
     [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Mig.Button.BackupCustom') -X 590 -Y 42 -Width 160 -Height 32 -Parent $grpCustom -OnClick {
-        $f = $this.FindForm()
+        $btn = $this
+        $f = $btn.FindForm()
         $g = $f.Tag
-        try {
-            $result = Invoke-WinEaseGuiBusy -Button $this -Form $f -ArgumentList $g -Action {
-                param($gui)
-                $root = Get-WinEaseGuiMigrationRoot -Gui $gui
-                $paths = @($gui.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-                if ($paths.Count -eq 0) { throw (Get-WinEaseUiString 'Mig.Custom.NoPaths') }
-                Backup-WinEaseCustomPaths -Paths $paths -BackupRoot $root
-            }
-            $msg = Get-WinEaseUiString 'Mig.Custom.BackupDone' -Format $result.CopiedFiles, $result.FailedFiles.Count
+        $paths = @($g.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        if ($paths.Count -eq 0) {
+            Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Mig.Custom.NoPaths') -Title (Get-WinEaseUiString 'Mig.Button.BackupCustom') -Kind Warning
+            return
+        }
+        $ca = @{ Paths = $paths; BackupRoot = (Get-WinEaseGuiMigrationRoot -Gui $g) }
+        $o = Invoke-WinEaseGuiMigrationJob -Button $btn -Form $f -RepoRoot $script:WinEaseGuiRepoRoot -Arguments $ca -Script 'param($a) Backup-WinEaseCustomPaths @a'
+        if ($o.Result) {
+            $msg = Get-WinEaseUiString 'Mig.Custom.BackupDone' -Format $o.Result.CopiedFiles, @($o.Result.FailedFiles).Count
             Show-WinEaseGuiMessage -Text $msg -Title (Get-WinEaseUiString 'Mig.Button.BackupCustom') -Kind Info
-            if ($g.MigStatus) { $g.MigStatus.Text = Get-WinEaseUiString 'Mig.Custom.BackupStatus' -Format $result.CopiedFiles }
-        } catch {
-            Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'Mig.Button.BackupCustom') -Kind Error
+            if ($g.MigStatus) { $g.MigStatus.Text = Get-WinEaseUiString 'Mig.Custom.BackupStatus' -Format $o.Result.CopiedFiles }
+        } else {
+            Show-WinEaseGuiJobOutcome -Outcome $o -Title (Get-WinEaseUiString 'Mig.Button.BackupCustom') -SuccessMessage (Get-WinEaseUiString 'Mig.Custom.BackupDone' -Format 0, 0)
         }
     })
     [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Mig.Button.RestoreCustom') -X 590 -Y 82 -Width 160 -Height 32 -Parent $grpCustom -OnClick {
-        $f = $this.FindForm()
+        $btn = $this
+        $f = $btn.FindForm()
         $g = $f.Tag
-        try {
-            $result = Invoke-WinEaseGuiBusy -Button $this -Form $f -ArgumentList $g -Action {
-                param($gui)
-                Restore-WinEaseCustomPaths -BackupRoot (Get-WinEaseGuiMigrationRoot -Gui $gui) -ConflictPolicy (Get-WinEaseGuiConflictPolicy -Gui $gui)
-            }
-            $msg = Get-WinEaseUiString 'Mig.Custom.RestoreDone' -Format $result.RestoredFiles, $result.FailedFiles.Count
+        # The custom paths are restored to the locations that are listed here: the
+        # manifest alone never decides where a file is written to.
+        $paths = @($g.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        if ($paths.Count -eq 0) {
+            Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Mig.Custom.NoPaths') -Title (Get-WinEaseUiString 'Mig.Button.RestoreCustom') -Kind Warning
+            return
+        }
+        $ra = @{ BackupRoot = (Get-WinEaseGuiMigrationRoot -Gui $g); ConflictPolicy = (Get-WinEaseGuiConflictPolicy -Gui $g); AllowedSourcePaths = $paths }
+        $o = Invoke-WinEaseGuiMigrationJob -Button $btn -Form $f -RepoRoot $script:WinEaseGuiRepoRoot -Arguments $ra -Script 'param($a) Restore-WinEaseCustomPaths @a'
+        if ($o.Result) {
+            $msg = Get-WinEaseUiString 'Mig.Custom.RestoreDone' -Format $o.Result.RestoredFiles, @($o.Result.FailedFiles).Count
             Show-WinEaseGuiMessage -Text $msg -Title (Get-WinEaseUiString 'Mig.Button.RestoreCustom') -Kind Info
-            if ($g.MigStatus) { $g.MigStatus.Text = Get-WinEaseUiString 'Mig.Custom.RestoreStatus' -Format $result.RestoredFiles }
-        } catch {
-            Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'Mig.Button.RestoreCustom') -Kind Error
+            if ($g.MigStatus) { $g.MigStatus.Text = Get-WinEaseUiString 'Mig.Custom.RestoreStatus' -Format $o.Result.RestoredFiles }
+        } else {
+            Show-WinEaseGuiJobOutcome -Outcome $o -Title (Get-WinEaseUiString 'Mig.Button.RestoreCustom') -SuccessMessage (Get-WinEaseUiString 'Mig.Custom.RestoreDone' -Format 0, 0)
         }
     })
 }

@@ -375,12 +375,27 @@ function Backup-WinEaseUserData {
     foreach ($cat in $FolderMap.Keys) {
         $srcPath = $FolderMap[$cat]
         if (-not (Test-Path -LiteralPath $srcPath)) { continue }
+        # The category is a single directory name below the backup root. A category that
+        # carries a traversal must not be able to write outside the backup directory.
+        $catCheck = Resolve-WinEaseSafeRelativePath -RelativePath ([string]$cat) -Root $BackupRoot -Label 'category'
+        if (-not $catCheck.IsSafe) {
+            $failed += [PSCustomObject]@{ Path = [string]$cat; Error = "Refused: $($catCheck.Reason)" }
+            Write-Verbose "Ignored: $($catCheck.Reason)"
+            continue
+        }
+        $catRoot = $catCheck.Path
         try {
             $items = Get-ChildItem -LiteralPath $srcPath -Recurse -File -ErrorAction SilentlyContinue
         } catch { $items = @() }
         foreach ($it in $items) {
             $rel = Get-WinEaseRelativePath -BasePath $srcPath -FullName $it.FullName
-            $destPath = Join-Path -Path (Join-Path -Path $BackupRoot -ChildPath $cat) -ChildPath $rel
+            $destCheck = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $catRoot -Label 'backup path'
+            if (-not $destCheck.IsSafe) {
+                $failed += [PSCustomObject]@{ Path = $it.FullName; Error = "Refused: $($destCheck.Reason)" }
+                Write-Verbose "Ignored: $($destCheck.Reason)"
+                continue
+            }
+            $destPath = $destCheck.Path
             $destDir = Split-Path -Parent $destPath
             if ($DryRun) { $copied++; $totalBytes += $it.Length; continue }
             try {
@@ -440,30 +455,53 @@ function Restore-WinEaseUserData {
     if (Test-Path -LiteralPath $manifestPath) {
         try { $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json; $entries = $m.Entries } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
-    # Custom paths have their own restore (Restore-WinEaseCustomPaths); an optional category filter narrows the rest
-    $entries = @($entries | Where-Object { $_.Category -ne 'CustomPath' })
+    # Custom paths have their own restore (Restore-WinEaseCustomPaths); an optional category filter narrows the rest.
+    # A manifest without entries must not produce an empty entry: an empty relative path
+    # would resolve to the backup root itself and copy the whole backup into the profile.
+    $entries = @($entries | Where-Object { $_ -and $_.Category -ne 'CustomPath' })
     if ($Categories) { $entries = @($entries | Where-Object { $Categories -contains $_.Category }) }
     foreach ($entry in $entries) {
-        $srcPath = Join-Path -Path $BackupRoot -ChildPath $entry.RelativePath
-        if ($entry.Category) { $srcPath = Join-Path -Path (Join-Path -Path $BackupRoot -ChildPath $entry.Category) -ChildPath $entry.RelativePath }
+        $rel = [string]$entry.RelativePath
+        $cat = [string]$entry.Category
+        # The category is a single directory name below the backup root and the relative
+        # path is relative to it. Both come from the manifest, which is not trusted: a
+        # traversal in either of them must not reach outside the backup directory.
+        $catCheck = Resolve-WinEaseSafeRelativePath -RelativePath $cat -Root $BackupRoot -Label 'category'
+        if (-not $catCheck.IsSafe) {
+            $failed += [PSCustomObject]@{ Path = $cat; Error = "Refused: $($catCheck.Reason)" }
+            Write-Verbose "Ignored: $($catCheck.Reason)"
+            continue
+        }
+        $srcCheck = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $catCheck.Path -Label 'backup path'
+        if (-not $srcCheck.IsSafe) {
+            $failed += [PSCustomObject]@{ Path = $rel; Error = "Refused: $($srcCheck.Reason)" }
+            Write-Verbose "Ignored: $($srcCheck.Reason)"
+            continue
+        }
+        $srcPath = $srcCheck.Path
         # Actually backup stores under BackupRoot\<Category>\<rel>; handle both
         if (-not (Test-Path -LiteralPath $srcPath)) {
             # try BackupRoot\<rel>
-            $srcPath2 = Join-Path -Path $BackupRoot -ChildPath $entry.RelativePath
-            if (Test-Path -LiteralPath $srcPath2) { $srcPath = $srcPath2 }
+            $fallback = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $BackupRoot -Label 'backup path'
+            if ($fallback.IsSafe -and (Test-Path -LiteralPath $fallback.Path)) { $srcPath = $fallback.Path }
         }
-        if (-not (Test-Path -LiteralPath $srcPath)) { $failed += [PSCustomObject]@{ Path = $entry.RelativePath; Error = 'Backup file missing' }; continue }
+        if (-not (Test-Path -LiteralPath $srcPath)) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Backup file missing' }; continue }
         # verify hash
         if ($VerifyHashBeforeRestore -and $entry.Sha256) {
             try {
                 $h = (Get-FileHash -LiteralPath $srcPath -Algorithm SHA256).Hash
-                if ($h -ne $entry.Sha256) { $failed += [PSCustomObject]@{ Path = $entry.RelativePath; Error = 'Hash mismatch (corrupt)' }; continue }
+                if ($h -ne $entry.Sha256) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Hash mismatch (corrupt)' }; continue }
             } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         }
-        $destPath = $entry.RelativePath
-        # dest is relative to user profile home? We'll restore under USERPROFILE
-        $destPath = Join-Path -Path $env:USERPROFILE -ChildPath $entry.RelativePath
-        # but category-based: if RelativePath doesn't include category, prepend? Keep as-is per manifest
+        # The restore target is relative to the user profile home. The relative path is
+        # validated again for that root: it must not leave the profile.
+        $destCheck = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $env:USERPROFILE -Label 'restore path'
+        if (-not $destCheck.IsSafe) {
+            $failed += [PSCustomObject]@{ Path = $rel; Error = "Refused: $($destCheck.Reason)" }
+            Write-Verbose "Ignored: $($destCheck.Reason)"
+            continue
+        }
+        $destPath = $destCheck.Path
         if ($DryRun) { $restored++; continue }
         try {
             $destDir = Split-Path -Parent $destPath
@@ -481,7 +519,7 @@ function Restore-WinEaseUserData {
             Copy-Item -LiteralPath $srcPath -Destination $destPath -Force
             $restored++
         } catch {
-            $failed += [PSCustomObject]@{ Path = $entry.RelativePath; Error = $_.Exception.Message }
+            $failed += [PSCustomObject]@{ Path = $rel; Error = $_.Exception.Message }
             Write-Verbose "Ignored: $($_.Exception.Message)"
         }
     }
@@ -731,7 +769,8 @@ function Start-WinEaseMigrationRestore {
         [switch]$RetryFailedOnly,
         [ValidateSet('Skip','BackupExisting','OverwriteIfNewer','Overwrite')]
         [string]$ConflictPolicy = 'BackupExisting',
-        [switch]$DryRun
+        [switch]$DryRun,
+        [string[]]$AllowedCustomPaths = @()
     )
     $statePath = Join-Path -Path $BackupRoot -ChildPath 'restore-state.json'
     $state = [ordered]@{}
@@ -804,8 +843,16 @@ function Start-WinEaseMigrationRestore {
                     }
                 }
                 'Custom' {
-                    $detail = Restore-WinEaseCustomPaths -BackupRoot $BackupRoot -ConflictPolicy $ConflictPolicy -SourcePath $t.Target -DryRun:$DryRun
-                    if (@($detail.FailedFiles).Count -gt 0) { $status = 'Failed' }
+                    # The custom paths are only restored to the locations the caller
+                    # allowed for this restore. Without an allow list nothing is written:
+                    # the manifest alone never decides where a file goes.
+                    if (@($AllowedCustomPaths).Count -eq 0) {
+                        $status = 'Skipped'
+                        $detail = 'No restore target was allowed for the custom paths (pass the paths to restore to).'
+                    } else {
+                        $detail = Restore-WinEaseCustomPaths -BackupRoot $BackupRoot -ConflictPolicy $ConflictPolicy -SourcePath $t.Target -AllowedSourcePaths $AllowedCustomPaths -DryRun:$DryRun
+                        if (@($detail.FailedFiles).Count -gt 0) { $status = 'Failed' }
+                    }
                 }
                 default {
                     if ($t.Target) {
@@ -922,6 +969,11 @@ function Backup-WinEaseCustomPaths {
 }
 
 # Restore-WinEaseCustomPaths: restore arbitrary files/folders from backup
+#
+# The restore target is NOT taken from the manifest alone: the manifest is untrusted
+# input, so the caller has to name the locations this restore is allowed to write to
+# (-AllowedSourcePaths). Without an allow list the restore either uses the explicit
+# -DefaultRestoreRoot or refuses to write at all.
 function Restore-WinEaseCustomPaths {
     [CmdletBinding()]
     param(
@@ -931,7 +983,9 @@ function Restore-WinEaseCustomPaths {
         [string]$ConflictPolicy = 'BackupExisting',
         [switch]$VerifyHashBeforeRestore,
         [switch]$DryRun,
-        [string]$SourcePath
+        [string]$SourcePath,
+        [string[]]$AllowedSourcePaths = @(),
+        [string]$DefaultRestoreRoot = ''
     )
     if (-not $PSBoundParameters.ContainsKey('VerifyHashBeforeRestore')) { $VerifyHashBeforeRestore = $true }
     $restored = 0
@@ -952,21 +1006,63 @@ function Restore-WinEaseCustomPaths {
     }
 
     foreach ($entry in $entries) {
-        $srcPath = Join-Path -Path $customRoot -ChildPath $entry.RelativePath
-        if (-not (Test-Path -LiteralPath $srcPath)) { $failed += [PSCustomObject]@{ Path = $entry.RelativePath; Error = 'Backup file missing' }; continue }
+        $rel = [string]$entry.RelativePath
+        # The backup copy must stay inside the backup directory.
+        $srcCheck = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $customRoot -Label 'backup path'
+        if (-not $srcCheck.IsSafe) {
+            $failed += [PSCustomObject]@{ Path = $rel; Error = "Refused: $($srcCheck.Reason)" }
+            Write-Verbose "Ignored: $($srcCheck.Reason)"
+            continue
+        }
+        $srcPath = $srcCheck.Path
+        if (-not (Test-Path -LiteralPath $srcPath)) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Backup file missing' }; continue }
         if ($VerifyHashBeforeRestore -and $entry.Sha256) {
             try {
                 $h = (Get-FileHash -LiteralPath $srcPath -Algorithm SHA256).Hash
-                if ($h -ne $entry.Sha256) { $failed += [PSCustomObject]@{ Path = $entry.RelativePath; Error = 'Hash mismatch (corrupt)' }; continue }
+                if ($h -ne $entry.Sha256) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Hash mismatch (corrupt)' }; continue }
             } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         }
-        $destPath = $entry.SourcePath
-        if ([string]::IsNullOrWhiteSpace($destPath)) { $destPath = Join-Path -Path $env:USERPROFILE -ChildPath $entry.RelativePath }
+        # Restore target: the location the file came from is only a proposal. It is used
+        # when the caller allowed that location for this restore.
+        $destPath = $null
+        if (@($AllowedSourcePaths).Count -gt 0) {
+            $candidate = [string]$entry.SourcePath
+            if ([string]::IsNullOrWhiteSpace($candidate)) {
+                $failed += [PSCustomObject]@{ Path = $rel; Error = 'Refused: the manifest entry has no source path' }
+                Write-Verbose "Ignored: the manifest entry has no source path"
+                continue
+            }
+            $target = Resolve-WinEaseRestoreTarget -Path $candidate -AllowedRoots $AllowedSourcePaths
+            if (-not $target.IsSafe) {
+                $failed += [PSCustomObject]@{ Path = $rel; Error = "Refused: $($target.Reason)" }
+                Write-Verbose "Ignored: $($target.Reason)"
+                continue
+            }
+            $destPath = $target.Path
+        } elseif (-not [string]::IsNullOrWhiteSpace($DefaultRestoreRoot)) {
+            $target = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $DefaultRestoreRoot -Label 'restore path'
+            if (-not $target.IsSafe) {
+                $failed += [PSCustomObject]@{ Path = $rel; Error = "Refused: $($target.Reason)" }
+                Write-Verbose "Ignored: $($target.Reason)"
+                continue
+            }
+            $destPath = $target.Path
+        } else {
+            $failed += [PSCustomObject]@{ Path = $rel; Error = 'Refused: no restore target was allowed for this restore' }
+            Write-Verbose "Ignored: no restore target was allowed for this restore"
+            continue
+        }
         if ($DryRun) { $restored++; continue }
         try {
-            $destDir = Split-Path -Parent $destPath
-            if (-not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
-            if (Test-Path -LiteralPath $destPath) {
+            # A backed up folder is restored into the folder itself (the file name of the
+            # backup copy differs from the name of the destination), a backed up file is
+            # restored onto the file.
+            $destIsFolder = ($rel -match '[\\/]') -and (-not (Test-Path -LiteralPath $destPath -PathType Leaf))
+            $destDir = if ($destIsFolder) { $destPath } else { Split-Path -Parent $destPath }
+            if (-not [string]::IsNullOrWhiteSpace($destDir) -and -not (Test-Path -LiteralPath $destDir)) {
+                New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+            }
+            if (-not $destIsFolder -and (Test-Path -LiteralPath $destPath)) {
                 if ($ConflictPolicy -eq 'Skip') { $skipped++; continue }
                 elseif ($ConflictPolicy -eq 'BackupExisting') {
                     Copy-Item -LiteralPath $destPath -Destination "$destPath.WinEase.bak" -Force
@@ -979,7 +1075,7 @@ function Restore-WinEaseCustomPaths {
             Copy-Item -LiteralPath $srcPath -Destination $destPath -Force
             $restored++
         } catch {
-            $failed += [PSCustomObject]@{ Path = $entry.RelativePath; Error = $_.Exception.Message }
+            $failed += [PSCustomObject]@{ Path = $rel; Error = $_.Exception.Message }
             Write-Verbose "Ignored: $($_.Exception.Message)"
         }
     }
@@ -1000,16 +1096,11 @@ function Format-WinEaseByteSize {
     return "$Bytes B"
 }
 
-# Export-WinEaseMigrationReport: writes <ReportPath> (dark HTML) and a .json with the same base name.
-# MigrationResult may be the object returned by Start-WinEaseMigrationBackup (UserData / CustomResult /
-# RulesResult / AppInventory) and/or by Start-WinEaseMigrationRestore (Results). Every part is optional.
-function Export-WinEaseMigrationReport {
+function Get-WinEaseMigrationReportData {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [psobject]$MigrationResult,
-        [Parameter(Mandatory = $true)]
-        [string]$ReportPath
+        [psobject]$MigrationResult
     )
     $succeeded = @()    # Area, Item, Detail
     $skippedItems = @() # Item, Reason
@@ -1093,7 +1184,7 @@ function Export-WinEaseMigrationReport {
     }
     $manual += [PSCustomObject]@{ Item = 'Accounts and sign-ins'; Note = 'Sign in again to your Microsoft account, browsers, Steam/Epic/other launchers and any cloud-sync clients. Saved passwords and tokens are not migrated.' }
 
-    $data = [ordered]@{
+    return [ordered]@{
         Generated = (Get-Date).ToString('o')
         Summary   = [ordered]@{ Succeeded = $succeeded.Count; Skipped = $skippedItems.Count; Failed = $failedItems.Count; ManualActions = $manual.Count }
         Success   = [ordered]@{ Files = $files; TotalBytes = $bytes; TotalSize = (Format-WinEaseByteSize -Bytes $bytes); Sha256Verified = $hashOk; Sha256Missing = $hashMissing; Items = @($succeeded) }
@@ -1102,14 +1193,14 @@ function Export-WinEaseMigrationReport {
         Manual    = @($manual)
         Tasks     = @($tasks)
     }
+}
 
-    # --- JSON ---
-    $parent = Split-Path -Parent $ReportPath
-    if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-    $jsonPath = [System.IO.Path]::ChangeExtension($ReportPath, '.json')
-    [System.IO.File]::WriteAllText($jsonPath, ($data | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding $true))
-
-    # --- HTML (dark theme, palette matches lib/WinEaseReport.ps1). Every dynamic value is HTML-encoded. ---
+function ConvertTo-WinEaseMigrationHtml {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Collections.IDictionary]$ReportData
+    )
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine('<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>WinEase Migration Report</title>')
     [void]$sb.AppendLine('<style>')
@@ -1125,10 +1216,11 @@ function Export-WinEaseMigrationReport {
     [void]$sb.AppendLine('code { font-family: Consolas, monospace; background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 4px; color: #38bdf8; }')
     [void]$sb.AppendLine('</style></head><body><div class="wrap">')
     [void]$sb.AppendLine('<h1>WinEase Migration Report</h1>')
-    [void]$sb.AppendLine("<div class=`"sub`">Generated: $(ConvertTo-WinEaseHtmlText $data.Generated)</div>")
+    [void]$sb.AppendLine("<div class=`"sub`">Generated: $(ConvertTo-WinEaseHtmlText $ReportData.Generated)</div>")
 
     [void]$sb.AppendLine('<div class="section-card"><h2>Succeeded</h2>')
-    [void]$sb.AppendLine("<p><span class=`"ok`">$(ConvertTo-WinEaseHtmlText $files) file(s)</span>, $(ConvertTo-WinEaseHtmlText $data.Success.TotalSize) total. SHA-256 recorded for <span class=`"ok`">$hashOk</span> file(s); not recorded for <span class=`"warn`">$hashMissing</span>.</p>")
+    [void]$sb.AppendLine("<p><span class=`"ok`">$(ConvertTo-WinEaseHtmlText $ReportData.Success.Files) file(s)</span>, $(ConvertTo-WinEaseHtmlText $ReportData.Success.TotalSize) total. SHA-256 recorded for <span class=`"ok`">$($ReportData.Success.Sha256Verified)</span> file(s); not recorded for <span class=`"warn`">$($ReportData.Success.Sha256Missing)</span>.</p>")
+    $succeeded = @($ReportData.Success.Items)
     if ($succeeded.Count -gt 0) {
         [void]$sb.AppendLine('<table><tr><th>Area</th><th>Item</th><th>Detail</th></tr>')
         foreach ($i in $succeeded) { [void]$sb.AppendLine("<tr><td>$(ConvertTo-WinEaseHtmlText $i.Area)</td><td>$(ConvertTo-WinEaseHtmlText $i.Item)</td><td>$(ConvertTo-WinEaseHtmlText $i.Detail)</td></tr>") }
@@ -1136,6 +1228,7 @@ function Export-WinEaseMigrationReport {
     }
     [void]$sb.AppendLine('</div>')
 
+    $skippedItems = @($ReportData.Skipped)
     [void]$sb.AppendLine('<div class="section-card"><h2>Skipped</h2>')
     if ($skippedItems.Count -eq 0) { [void]$sb.AppendLine('<p class="muted">Nothing was skipped.</p>') }
     else {
@@ -1145,6 +1238,7 @@ function Export-WinEaseMigrationReport {
     }
     [void]$sb.AppendLine('</div>')
 
+    $failedItems = @($ReportData.Failed)
     [void]$sb.AppendLine('<div class="section-card"><h2>Failed</h2>')
     if ($failedItems.Count -eq 0) { [void]$sb.AppendLine('<p class="ok">No failures.</p>') }
     else {
@@ -1154,208 +1248,38 @@ function Export-WinEaseMigrationReport {
     }
     [void]$sb.AppendLine('</div>')
 
+    $manual = @($ReportData.Manual)
     [void]$sb.AppendLine('<div class="section-card"><h2>Manual actions required</h2>')
     [void]$sb.AppendLine('<table><tr><th>Item</th><th>What to do</th></tr>')
     foreach ($i in $manual) { [void]$sb.AppendLine("<tr><td>$(ConvertTo-WinEaseHtmlText $i.Item)</td><td>$(ConvertTo-WinEaseHtmlText $i.Note)</td></tr>") }
     [void]$sb.AppendLine('</table></div>')
     [void]$sb.AppendLine('</div></body></html>')
-    [System.IO.File]::WriteAllText($ReportPath, $sb.ToString(), (New-Object System.Text.UTF8Encoding $true))
 
-    return [PSCustomObject]@{ HtmlPath = $ReportPath; JsonPath = $jsonPath; Data = [PSCustomObject]$data }
-}
-
-# Compare-WinEaseConfig & Format-WinEaseConfigDiff
-function Resolve-WinEaseConfigForDiff {
-    param($InputConfig, $NameHint)
-    $result = @{ Name = $NameHint; Data = $null }
-    if ($InputConfig -is [string]) {
-        $s = $InputConfig.Trim()
-        if (Test-Path -LiteralPath $s) {
-            try { $raw = [System.IO.File]::ReadAllText($s, [System.Text.Encoding]::UTF8); $parsed = $raw | ConvertFrom-Json; $result.Data = $parsed; $result.Name = [System.IO.Path]::GetFileNameWithoutExtension($s) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-        } elseif ($script:BuiltInPresets -and $script:BuiltInPresets.Contains($s)) {
-            $result.Data = $script:BuiltInPresets[$s]
-            $result.Name = $s
-        } else {
-            $result.Name = $s
-            $result.Data = @{}
-        }
-    } elseif ($InputConfig -is [System.Collections.IDictionary]) {
-        $result.Data = $InputConfig
-        if ($NameHint) { $result.Name = $NameHint }
-    } elseif ($InputConfig.PSObject) {
-        $result.Data = $InputConfig
-        if ($NameHint) { $result.Name = $NameHint }
-    }
-    if ($null -eq $result.Data) { $result.Data = @{} }
-    if (-not $result.Name) { $result.Name = 'Config' }
-    return $result
-}
-
-function Compare-WinEaseConfig {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        $ReferenceConfig,
-        [Parameter(Mandatory = $true)]
-        $DifferenceConfig
-    )
-    $ref = Resolve-WinEaseConfigForDiff -InputConfig $ReferenceConfig -NameHint 'Reference'
-    $diff = Resolve-WinEaseConfigForDiff -InputConfig $DifferenceConfig -NameHint 'Difference'
-
-    $compDiffs = @()
-    $tweakGroupDiffs = @()
-    $tweakSettingDiffs = @()
-
-    $allCompKeys = @()
-    if ($ref.Data -is [System.Collections.IDictionary]) { $allCompKeys += $ref.Data.Keys }
-    elseif ($ref.Data.PSObject) { $allCompKeys += $ref.Data.PSObject.Properties.Name }
-    if ($diff.Data -is [System.Collections.IDictionary]) { $allCompKeys += $diff.Data.Keys }
-    elseif ($diff.Data.PSObject) { $allCompKeys += $diff.Data.PSObject.Properties.Name }
-    $allCompKeys = $allCompKeys | Select-Object -Unique
-    foreach ($k in $allCompKeys) {
-        $rv = $null; $dv = $null
-        if ($ref.Data -is [System.Collections.IDictionary]) { if ($ref.Data.Contains($k)) { $rv = $ref.Data[$k] } } elseif ($ref.Data.PSObject -and $ref.Data.PSObject.Properties[$k]) { $rv = $ref.Data.PSObject.Properties[$k].Value }
-        if ($diff.Data -is [System.Collections.IDictionary]) { if ($diff.Data.Contains($k)) { $dv = $diff.Data[$k] } } elseif ($diff.Data.PSObject -and $diff.Data.PSObject.Properties[$k]) { $dv = $diff.Data.PSObject.Properties[$k].Value }
-        if ($rv -ne $dv) {
-            $compDiffs += [PSCustomObject]@{ Key = $k; Category = 'Component'; ReferenceValue = $rv; DifferenceValue = $dv }
-        }
-    }
-
-    $refTS = $null; $diffTS = $null
-    if ($ref.Data -is [System.Collections.IDictionary] -and $ref.Data.Contains('TweakSettings')) { $refTS = $ref.Data['TweakSettings'] }
-    elseif ($ref.Data.PSObject -and $ref.Data.PSObject.Properties['TweakSettings']) { $refTS = $ref.Data.PSObject.Properties['TweakSettings'].Value }
-    if ($diff.Data -is [System.Collections.IDictionary] -and $diff.Data.Contains('TweakSettings')) { $diffTS = $diff.Data['TweakSettings'] }
-    elseif ($diff.Data.PSObject -and $diff.Data.PSObject.Properties['TweakSettings']) { $diffTS = $diff.Data.PSObject.Properties['TweakSettings'].Value }
-
-    $allTweakKeys = @()
-    if ($refTS -is [System.Collections.IDictionary]) { $allTweakKeys += $refTS.Keys }
-    elseif ($refTS.PSObject) { $allTweakKeys += $refTS.PSObject.Properties.Name }
-    if ($diffTS -is [System.Collections.IDictionary]) { $allTweakKeys += $diffTS.Keys }
-    elseif ($diffTS.PSObject) { $allTweakKeys += $diffTS.PSObject.Properties.Name }
-    $allTweakKeys = $allTweakKeys | Select-Object -Unique
-    foreach ($k in $allTweakKeys) {
-        $rv = $null; $dv = $null
-        if ($refTS -is [System.Collections.IDictionary]) { if ($refTS.Contains($k)) { $rv = $refTS[$k] } } elseif ($refTS.PSObject -and $refTS.PSObject.Properties[$k]) { $rv = $refTS.PSObject.Properties[$k].Value }
-        if ($diffTS -is [System.Collections.IDictionary]) { if ($diffTS.Contains($k)) { $dv = $diffTS[$k] } } elseif ($diffTS.PSObject -and $diffTS.PSObject.Properties[$k]) { $dv = $diffTS.PSObject.Properties[$k].Value }
-        $desc = ''
-        if ($script:AllTweakDefs -and $script:AllTweakDefs.Contains($k)) { $desc = $script:AllTweakDefs[$k].Description }
-        if ($rv -ne $dv) {
-            $tweakSettingDiffs += [PSCustomObject]@{ Key = $k; Category = 'TweakSetting'; Description = $desc; ReferenceValue = $rv; DifferenceValue = $dv }
-        }
-    }
-
-    $refTG = $null; $diffTG = $null
-    if ($ref.Data -is [System.Collections.IDictionary] -and $ref.Data.Contains('TweakGroups')) { $refTG = $ref.Data['TweakGroups'] }
-    elseif ($ref.Data.PSObject -and $ref.Data.PSObject.Properties['TweakGroups']) { $refTG = $ref.Data.PSObject.Properties['TweakGroups'].Value }
-    if ($diff.Data -is [System.Collections.IDictionary] -and $diff.Data.Contains('TweakGroups')) { $diffTG = $diff.Data['TweakGroups'] }
-    elseif ($diff.Data.PSObject -and $diff.Data.PSObject.Properties['TweakGroups']) { $diffTG = $diff.Data.PSObject.Properties['TweakGroups'].Value }
-    $allTGKeys = @()
-    if ($refTG -is [System.Collections.IDictionary]) { $allTGKeys += $refTG.Keys }
-    elseif ($refTG.PSObject) { $allTGKeys += $refTG.PSObject.Properties.Name }
-    if ($diffTG -is [System.Collections.IDictionary]) { $allTGKeys += $diffTG.Keys }
-    elseif ($diffTG.PSObject) { $allTGKeys += $diffTG.PSObject.Properties.Name }
-    $allTGKeys = $allTGKeys | Select-Object -Unique
-    foreach ($k in $allTGKeys) {
-        $rv = $null; $dv = $null
-        if ($refTG -is [System.Collections.IDictionary]) { if ($refTG.Contains($k)) { $rv = $refTG[$k] } } elseif ($refTG.PSObject -and $refTG.PSObject.Properties[$k]) { $rv = $refTG.PSObject.Properties[$k].Value }
-        if ($diffTG -is [System.Collections.IDictionary]) { if ($diffTG.Contains($k)) { $dv = $diffTG[$k] } } elseif ($diffTG.PSObject -and $diffTG.PSObject.Properties[$k]) { $dv = $diffTG.PSObject.Properties[$k].Value }
-        if ($rv -ne $dv) {
-            $tweakGroupDiffs += [PSCustomObject]@{ Key = $k; Category = 'TweakGroup'; ReferenceValue = $rv; DifferenceValue = $dv }
-        }
-    }
-
-    $totalDiff = $compDiffs.Count + $tweakGroupDiffs.Count + $tweakSettingDiffs.Count
-    return [PSCustomObject]@{
-        ReferenceName     = $ref.Name
-        DifferenceName    = $diff.Name
-        ComponentDiffs    = $compDiffs
-        TweakGroupDiffs   = $tweakGroupDiffs
-        TweakSettingDiffs = $tweakSettingDiffs
-        AddedImpacts      = @()
-        RemovedImpacts    = @()
-        TotalDiffCount    = $totalDiff
-    }
-}
-
-function Format-WinEaseConfigDiff {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        [psobject]$DiffResult
-    )
-    $sb = New-Object System.Text.StringBuilder
-    [void]$sb.AppendLine("Config diff: $($DiffResult.ReferenceName) -> $($DiffResult.DifferenceName)")
-    [void]$sb.AppendLine("Total differences: $($DiffResult.TotalDiffCount)")
-    if ($DiffResult.ComponentDiffs.Count -gt 0) {
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('[Components]')
-        foreach ($d in $DiffResult.ComponentDiffs) { [void]$sb.AppendLine("  $($d.Key): $($d.ReferenceValue) -> $($d.DifferenceValue)") }
-    }
-    if ($DiffResult.TweakGroupDiffs.Count -gt 0) {
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('[Tweak Groups]')
-        foreach ($d in $DiffResult.TweakGroupDiffs) { [void]$sb.AppendLine("  $($d.Key): $($d.ReferenceValue) -> $($d.DifferenceValue)") }
-    }
-    if ($DiffResult.TweakSettingDiffs.Count -gt 0) {
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('[Tweak Settings]')
-        foreach ($d in $DiffResult.TweakSettingDiffs) { [void]$sb.AppendLine("  $($d.Key): $($d.ReferenceValue) -> $($d.DifferenceValue)") }
-    }
     return $sb.ToString()
 }
 
-# Test-WinEaseRecoveryReadiness
-function Test-WinEaseRecoveryReadiness {
+# Export-WinEaseMigrationReport: writes <ReportPath> (dark HTML) and a .json with the same base name.
+# MigrationResult may be the object returned by Start-WinEaseMigrationBackup (UserData / CustomResult /
+# RulesResult / AppInventory) and/or by Start-WinEaseMigrationRestore (Results). Every part is optional.
+function Export-WinEaseMigrationReport {
     [CmdletBinding()]
     param(
-        [psobject]$Config
+        [Parameter(Mandatory = $true)]
+        [psobject]$MigrationResult,
+        [Parameter(Mandatory = $true)]
+        [string]$ReportPath
     )
-    $secondaryDrives = @()
-    try {
-        $drives = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue
-        foreach ($d in $drives) {
-            if ($d.Name -eq 'C' -or $d.Name.Length -ne 1) { continue }
-            if ($d.Free -gt 0) {
-                $freeGB = [math]::Round($d.Free / 1GB, 1)
-                $secondaryDrives += "$($d.Name): ($freeGB GB free)"
-            }
-        }
-    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    $data = Get-WinEaseMigrationReportData -MigrationResult $MigrationResult
 
-    $sysRestoreEnabled = $false
-    try {
-        $sr = Get-ComputerRestorePoint -ErrorAction SilentlyContinue
-        if ($sr) { $sysRestoreEnabled = $true }
-    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    # --- JSON ---
+    $parent = Split-Path -Parent $ReportPath
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    $jsonPath = [System.IO.Path]::ChangeExtension($ReportPath, '.json')
+    [System.IO.File]::WriteAllText($jsonPath, ($data | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding $true))
 
-    $winReEnabled = $true
-    if ($Config -and $Config.KeepRecoveryEnv -eq $false) { $winReEnabled = $false }
+    # --- HTML (dark theme, palette matches lib/WinEaseReport.ps1). Every dynamic value is HTML-encoded. ---
+    $html = ConvertTo-WinEaseMigrationHtml -ReportData $data
+    [System.IO.File]::WriteAllText($ReportPath, $html, (New-Object System.Text.UTF8Encoding $true))
 
-    $migrationBackupFound = $false
-    try {
-        $manifestPath = Join-Path -Path (Join-Path -Path $env:USERPROFILE -ChildPath 'Documents\WinEase_workspace') -ChildPath 'migration-manifest.json'
-        if (Test-Path -LiteralPath $manifestPath) { $migrationBackupFound = $true }
-    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-
-    $score = 'Low'
-    if ($secondaryDrives.Count -gt 0 -and $sysRestoreEnabled) { $score = 'High' }
-    elseif ($secondaryDrives.Count -gt 0 -or $sysRestoreEnabled -or $winReEnabled) { $score = 'Medium' }
-
-    $recs = @()
-    if (-not $winReEnabled) {
-        $recs += "The generated ISO will have Windows Recovery Environment (WinRE) removed. Keep the installation USB media as a recovery disk."
-    }
-    if ($secondaryDrives.Count -eq 0 -and -not $migrationBackupFound) {
-        $recs += "No secondary drive or migration backup found. Run WinEase-Migrator.ps1 to back up user data before building."
-    }
-
-    return [PSCustomObject]@{
-        HasSecondaryDrive    = ($secondaryDrives.Count -gt 0)
-        SecondaryDrives     = $secondaryDrives
-        SystemRestoreEnabled = $sysRestoreEnabled
-        WinReEnabledOnTarget = $winReEnabled
-        MigrationBackupFound = $migrationBackupFound
-        ReadinessScore       = $score
-        Recommendations     = $recs
-    }
+    return [PSCustomObject]@{ HtmlPath = $ReportPath; JsonPath = $jsonPath; Data = [PSCustomObject]$data }
 }
