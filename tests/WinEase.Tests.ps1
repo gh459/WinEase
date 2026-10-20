@@ -602,6 +602,22 @@ Describe "WinEase helpers - Path and Directory Safety Guards" {
         $baseDir = "C:\TestFolder\BaseWork"
         Test-CanSafelyDeleteDirectory -Path $baseDir -ExpectedBaseDir $baseDir | Should Be $false
     }
+
+    It "Test-WinEasePathExistsSafe returns true for existing directory and file" {
+        Test-WinEasePathExistsSafe -Path $script:RepoRoot | Should Be $true
+        Test-WinEasePathExistsSafe -Path $helpersPath | Should Be $true
+    }
+
+    It "Test-WinEasePathExistsSafe returns false for null, empty, whitespace, and non-existent path" {
+        Test-WinEasePathExistsSafe -Path $null | Should Be $false
+        Test-WinEasePathExistsSafe -Path "" | Should Be $false
+        Test-WinEasePathExistsSafe -Path "   " | Should Be $false
+        Test-WinEasePathExistsSafe -Path (Join-Path $script:RepoRoot "non_existent_file_xyz_12345.tmp") | Should Be $false
+    }
+
+    It "Test-WinEasePathExistsSafe returns false when an exception occurs on invalid path" {
+        Test-WinEasePathExistsSafe -Path "::invalid_path::\0\*\?\<\>" | Should Be $false
+    }
 }
 
 Describe "WinEase helpers - Statistical Analysis and Benchmark Comparison" {
