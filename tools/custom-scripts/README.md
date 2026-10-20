@@ -10,7 +10,7 @@ To ensure minimum necessary privileges (Principle of Least Privilege), scripts a
 - **Location**: Put scripts into `tools/custom-scripts/FirstLogon/` (scripts placed directly in `tools/custom-scripts/` are still treated as FirstLogon).
 - **Timing**: Executed sequentially at first logon via `FirstLogon.ps1` with **Full Administrator Privileges**.
 - **Use for**: System-level drivers, Windows services, scheduled tasks, firewall rules, machine-wide software installation.
-- **Log**: `C:\ProgramData\nano11\Logs\custom-scripts.log`.
+- **Log**: `C:\ProgramData\WinEase\Logs\custom-scripts.log`.
 
 ### 2. Standard User Context (`tools/custom-scripts/UserOnce/`)
 - **Location**: Put scripts inside `tools/custom-scripts/UserOnce/` (the older `tools/custom-scripts/user/` folder is still treated as UserOnce).

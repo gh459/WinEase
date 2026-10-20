@@ -9,18 +9,18 @@ build_diagnostics/
 *.iso.sha256
 
 # Workspace artifacts (kept out of VCS; workspace lives outside this folder by default)
-nano11_workspace/
+WinEase_workspace/
 
 # Local GUI helpers that may contain machine-specific paths
 *.local.ps1
 
-# Rust build artifacts (nano11-physical-debloat); build with: cargo build --release
-tools/nano11-physical-debloat/target/
+# Rust build artifacts (winease-physical-debloat); build with: cargo build --release
+tools/winease-physical-debloat/target/
 
 # Regenerated on every build (template: templates/report.html)
-nano11_report.html
+WinEase_report.html
 
 # WinUI 3 window build output (build with: gui\winuiuild.ps1)
 gui/winui/bin/
-gui/winui/Nano11Gui/bin/
-gui/winui/Nano11Gui/obj/
+gui/winui/WinEaseGui/bin/
+gui/winui/WinEaseGui/obj/

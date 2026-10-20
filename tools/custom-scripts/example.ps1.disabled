@@ -5,7 +5,7 @@
 Write-Host "[custom-scripts] example ran at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 
 # Example: defer heavy work to the background so first logon stays responsive
-Start-Job -Name "nano11-CustomExample" -ScriptBlock {
+Start-Job -Name "WinEase-CustomExample" -ScriptBlock {
     try {
         # Add your customization here, e.g.:
         # & winget install --id SomePublisher.Example -e --silent

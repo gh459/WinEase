@@ -1,5 +1,5 @@
 ﻿# Phase 4: 04-mount-baseline
-# Extracted from nano11builder.ps1
+# Extracted from WinEasebuilder.ps1
 # Dot-sourced by the main orchestrator
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', 'sourceWimSize', Justification = 'Read by later phases or New-BuildContextFromScriptScope in the shared builder scope')]
 param()
@@ -12,7 +12,7 @@ Write-Host "     This is expected Windows DISM behavior. Please DO NOT close thi
 Set-ItemOwnershipAndAccess -Path $destWim
 try { Set-ItemProperty -LiteralPath $destWim -Name IsReadOnly -Value $false -ErrorAction Stop } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
-$mountResult = Invoke-Nano11ImageMount -ImageFile $destWim -ImageIndex $index -Retries 3
+$mountResult = Invoke-WinEaseImageMount -ImageFile $destWim -ImageIndex $index -Retries 3
 $scratchDir = $mountResult.MountDir
 $script:DismMountDir = $scratchDir
 $script:MountOpened = $true

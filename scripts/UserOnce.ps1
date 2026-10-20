@@ -11,7 +11,7 @@
   $userCustomDir = 'C:\Windows\Setup\Scripts\UserCustom';
   $userLogFile = "$env:TEMP\UserOnce-custom.log";
 
-  function Redact-Nano11UserSecret {
+  function Redact-WinEaseUserSecret {
     param([string]$Text)
     if ([string]::IsNullOrEmpty($Text)) { return $Text; }
     $masked = $Text -replace '(?i)(password|secret|token|apikey|key)\s*[:=]\s*[^\s]+', '$1: [REDACTED]';
@@ -22,7 +22,7 @@
   function Write-UserScriptLog {
     param([string]$Message)
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff";
-    $cleanMsg = Redact-Nano11UserSecret -Text $Message;
+    $cleanMsg = Redact-WinEaseUserSecret -Text $Message;
     $line = "[$ts] $cleanMsg";
     try {
       [System.IO.File]::AppendAllText($userLogFile, "$line`r`n", [System.Text.Encoding]::UTF8);
@@ -125,7 +125,7 @@
             $errLines = ($output | Out-String).Trim();
             if (-not [string]::IsNullOrWhiteSpace($errLines)) {
               $lastLine = ($errLines -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Last 1);
-              $errDetail = "Process exited with code $exitCode (Output: $(Redact-Nano11UserSecret -Text $lastLine))";
+              $errDetail = "Process exited with code $exitCode (Output: $(Redact-WinEaseUserSecret -Text $lastLine))";
             } else {
               $errDetail = "Process exited with non-zero exit code: $exitCode";
             }
@@ -133,7 +133,7 @@
         } catch {
           $isSuccess = $false;
           $exitCode = if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) { $LASTEXITCODE } else { -1 };
-          $errDetail = "Execution exception (Code $exitCode): $(Redact-Nano11UserSecret -Text $_.Exception.Message)";
+          $errDetail = "Execution exception (Code $exitCode): $(Redact-WinEaseUserSecret -Text $_.Exception.Message)";
         } finally {
           $ErrorActionPreference = $prevEap;
         }

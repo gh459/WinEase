@@ -1,10 +1,10 @@
 ﻿# Phase 14: 14-bootwim
-# Extracted from nano11builder.ps1
+# Extracted from WinEasebuilder.ps1
 # Dot-sourced by the main orchestrator
 
 
 # 14. Shrink and modify boot.wim (Setup bypasses & dynamic index handling)
-$bootWimPath = Join-Path -Path "$nano11Dir\sources" -ChildPath "boot.wim"
+$bootWimPath = Join-Path -Path "$WinEaseDir\sources" -ChildPath "boot.wim"
 if (-not (Test-Path -LiteralPath $bootWimPath)) {
     $sourceBootWim = Join-Path -Path "$DriveLetter\sources" -ChildPath "boot.wim"
     if (Test-Path -LiteralPath $sourceBootWim) {
@@ -34,7 +34,7 @@ if (Test-Path -LiteralPath $bootWimPath) {
 
     foreach ($bIndex in $indicesToPatch) {
         Write-Host "  - Applying Setup & Hardware requirement bypasses to boot.wim Index $bIndex..." -ForegroundColor Cyan
-        $bMountResult = Invoke-Nano11ImageMount -ImageFile $bootWimPath -ImageIndex $bIndex -Retries 3
+        $bMountResult = Invoke-WinEaseImageMount -ImageFile $bootWimPath -ImageIndex $bIndex -Retries 3
         $scratchDir = $bMountResult.MountDir
         $script:DismMountDir = $scratchDir
         $script:MountOpened = $true

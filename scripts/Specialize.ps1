@@ -1,4 +1,4 @@
-﻿$markerDir = "C:\ProgramData\nano11";
+﻿$markerDir = "C:\ProgramData\WinEase";
 if (-not (Test-Path -LiteralPath $markerDir)) { New-Item -ItemType Directory -Force -Path $markerDir -ErrorAction SilentlyContinue | Out-Null; }
 Remove-Item -LiteralPath "$markerDir\specialize.succeeded", "$markerDir\specialize.failed" -Force -ErrorAction SilentlyContinue;
 Set-Content -LiteralPath "$markerDir\specialize.started" -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding ascii -ErrorAction SilentlyContinue;
@@ -35,12 +35,12 @@ Set-Content -LiteralPath "$markerDir\specialize.started" -Value (Get-Date -Forma
     try { Disable-MMAgent -MemoryCompression -ErrorAction SilentlyContinue; } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
   }
 
-  Set-Content -LiteralPath "C:\ProgramData\nano11\specialize.succeeded" -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding ascii -ErrorAction SilentlyContinue;
+  Set-Content -LiteralPath "C:\ProgramData\WinEase\specialize.succeeded" -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding ascii -ErrorAction SilentlyContinue;
 } catch {
   $err = "$($_ | Out-String)";
-  Remove-Item -LiteralPath "C:\ProgramData\nano11\specialize.succeeded" -Force -ErrorAction SilentlyContinue;
-  Set-Content -LiteralPath "C:\ProgramData\nano11\specialize.failed" -Value $err -Encoding ascii -ErrorAction SilentlyContinue;
+  Remove-Item -LiteralPath "C:\ProgramData\WinEase\specialize.succeeded" -Force -ErrorAction SilentlyContinue;
+  Set-Content -LiteralPath "C:\ProgramData\WinEase\specialize.failed" -Value $err -Encoding ascii -ErrorAction SilentlyContinue;
   exit 1;
 } } *>&1 >> "C:\Windows\Setup\Scripts\Specialize.log";
-if (Test-Path -LiteralPath "C:\ProgramData\nano11\specialize.failed") { exit 1; }
+if (Test-Path -LiteralPath "C:\ProgramData\WinEase\specialize.failed") { exit 1; }
 exit 0;

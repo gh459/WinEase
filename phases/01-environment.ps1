@@ -1,5 +1,5 @@
 ﻿# Phase 1: 01-environment
-# Extracted from nano11builder.ps1
+# Extracted from WinEasebuilder.ps1
 # Dot-sourced by the main orchestrator
 
 
@@ -33,7 +33,7 @@
         Write-Host "             DISM $dismVerStr is the official matching native servicing engine." -ForegroundColor DarkCyan
     }
 
-    # Determine Working Directory (Defaults to user's Documents folder: Documents\nano11_workspace)
+    # Determine Working Directory (Defaults to user's Documents folder: Documents\WinEase_workspace)
     if ($WorkDir) {
         if (-not (Test-Path -LiteralPath $WorkDir)) {
             New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
@@ -43,7 +43,7 @@
             Write-Host "Warning: Specified WorkDir '$baseWorkDir' is not on an NTFS volume. DISM requires NTFS for junction and reparse points." -ForegroundColor Yellow
             $altDrive = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Free -gt 30GB -and (Test-IsNtfsVolume $_.Root) } | Sort-Object Free -Descending | Select-Object -First 1
             if ($altDrive) {
-                $baseWorkDir = Join-Path -Path $altDrive.Root.TrimEnd('\') -ChildPath "nano11_workspace"
+                $baseWorkDir = Join-Path -Path $altDrive.Root.TrimEnd('\') -ChildPath "WinEase_workspace"
                 Write-Host "Redirecting workspace to NTFS drive: $baseWorkDir" -ForegroundColor Green
                 New-Item -ItemType Directory -Force -Path $baseWorkDir | Out-Null
             }
@@ -51,7 +51,7 @@
     } else {
         $docsDir = [Environment]::GetFolderPath('MyDocuments')
         if (-not $docsDir) { $docsDir = Join-Path -Path $env:USERPROFILE -ChildPath "Documents" }
-        $defaultWorkDir = if ($docsDir) { Join-Path -Path $docsDir -ChildPath "nano11_workspace" } else { Join-Path -Path $env:SystemDrive -ChildPath "nano11_workspace" }
+        $defaultWorkDir = if ($docsDir) { Join-Path -Path $docsDir -ChildPath "WinEase_workspace" } else { Join-Path -Path $env:SystemDrive -ChildPath "WinEase_workspace" }
         $baseWorkDir = $defaultWorkDir
         if (-not (Test-Path -LiteralPath $baseWorkDir)) {
             New-Item -ItemType Directory -Force -Path $baseWorkDir | Out-Null
@@ -60,7 +60,7 @@
             Write-Host "Warning: Documents directory '$baseWorkDir' is not on an NTFS volume." -ForegroundColor Yellow
             $altDrive = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Free -gt 30GB -and (Test-IsNtfsVolume $_.Root) } | Sort-Object Free -Descending | Select-Object -First 1
             if ($altDrive) {
-                $baseWorkDir = Join-Path -Path $altDrive.Root.TrimEnd('\') -ChildPath "nano11_workspace"
+                $baseWorkDir = Join-Path -Path $altDrive.Root.TrimEnd('\') -ChildPath "WinEase_workspace"
                 Write-Host "Redirecting workspace to NTFS drive: $baseWorkDir" -ForegroundColor Green
                 New-Item -ItemType Directory -Force -Path $baseWorkDir | Out-Null
             }
@@ -77,7 +77,7 @@
                 Write-Host "Warning: Low disk space on workspace drive $workDriveLetter ($freeGB GB free, 25 GB recommended)." -ForegroundColor Yellow
                 $altNtfs = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Free -gt 30GB -and (Test-IsNtfsVolume $_.Root) } | Sort-Object Free -Descending | Select-Object -First 1
                 if ($altNtfs) {
-                    $baseWorkDir = Join-Path -Path $altNtfs.Root.TrimEnd('\') -ChildPath "nano11_workspace"
+                    $baseWorkDir = Join-Path -Path $altNtfs.Root.TrimEnd('\') -ChildPath "WinEase_workspace"
                     Write-Host "Redirected workspace to volume with sufficient space ($([math]::Round($altNtfs.Free / 1GB, 1)) GB free): $baseWorkDir" -ForegroundColor Green
                     New-Item -ItemType Directory -Force -Path $baseWorkDir | Out-Null
                 }
@@ -87,24 +87,24 @@
 
     $WorkDir = $baseWorkDir
     $script:BaseWorkDir = $baseWorkDir
-    $nano11Dir = Join-Path -Path $baseWorkDir -ChildPath "build"
+    $WinEaseDir = Join-Path -Path $baseWorkDir -ChildPath "build"
     $vhdxMountDir = Join-Path -Path $baseWorkDir -ChildPath "scratchdir"
     $scratchDir = if ($UseVHDX) { Join-Path -Path $vhdxMountDir -ChildPath "mount" } else { $vhdxMountDir }
     $script:BaseWorkDir = $baseWorkDir
     $script:VhdxMountDir = $vhdxMountDir
     $script:DismMountDir = $scratchDir
     [void]$script:ManagedMountDirs.Add(
-        (ConvertTo-Nano11NormalizedPath -Path $scratchDir)
+        (ConvertTo-WinEaseNormalizedPath -Path $scratchDir)
     )
     [void]$script:ManagedMountDirs.Add(
-        (ConvertTo-Nano11NormalizedPath -Path $vhdxMountDir)
+        (ConvertTo-WinEaseNormalizedPath -Path $vhdxMountDir)
     )
-    $vhdxPath = Join-Path -Path $baseWorkDir -ChildPath "nano11_scratch.vhdx"
+    $vhdxPath = Join-Path -Path $baseWorkDir -ChildPath "WinEase_scratch.vhdx"
     $isVhdxMounted = $false
     Write-Host "Working Directory: $baseWorkDir" -ForegroundColor Cyan
 
     # A3: Host environment stability diagnostics (root-cause aid for WIM 577 / hash-jitter builds)
-    Invoke-Nano11HostHealthCheck -WorkspaceDir $baseWorkDir
+    Invoke-WinEaseHostHealthCheck -WorkspaceDir $baseWorkDir
 
     # Temporarily exclude workspace from Windows Defender real-time scanning to accelerate DISM operations
     try {
@@ -114,8 +114,8 @@
 
     # 1. Resolve any lingering DISM mounts associated with our workspace or candidate WIMs
     $managedWims = @(
-        (Join-Path -Path $nano11Dir -ChildPath "sources\install.wim"),
-        (Join-Path -Path $nano11Dir -ChildPath "sources\boot.wim")
+        (Join-Path -Path $WinEaseDir -ChildPath "sources\install.wim"),
+        (Join-Path -Path $WinEaseDir -ChildPath "sources\boot.wim")
     )
     Clear-DismMountConflicts -TargetMountDir $scratchDir
     if ($vhdxMountDir -ne $scratchDir) {
@@ -129,7 +129,7 @@
     if (Test-Path -LiteralPath $vhdxPath) {
         try {
             $dpDetachScript = "select vdisk file=`"$vhdxPath`"`r`ndetach vdisk`r`n"
-            $dpDetachFile = Join-Path -Path $env:TEMP -ChildPath "nano11_dp_clean_$([System.IO.Path]::GetRandomFileName()).txt"
+            $dpDetachFile = Join-Path -Path $env:TEMP -ChildPath "WinEase_dp_clean_$([System.IO.Path]::GetRandomFileName()).txt"
             $dpDetachScript | Set-Content -LiteralPath $dpDetachFile -Encoding ascii
             & diskpart.exe /s $dpDetachFile > $null 2>&1
             Remove-Item -LiteralPath $dpDetachFile -Force -ErrorAction SilentlyContinue
@@ -149,12 +149,12 @@
     }
 
     # 3. Safely reset build directory and scratch directory (Empty guaranteed)
-    if (Test-Path -LiteralPath $nano11Dir) {
+    if (Test-Path -LiteralPath $WinEaseDir) {
         Write-Host "Cleaning up previous build directory..." -ForegroundColor Yellow
         [GC]::Collect()
         [GC]::WaitForPendingFinalizers()
         try {
-            Reset-DirectoryWithRobocopy -Path $nano11Dir
+            Reset-DirectoryWithRobocopy -Path $WinEaseDir
         } catch {
             Write-Warning "Reset of build directory encountered locked files: $($_.Exception.Message)"
             Write-Host "Triggering forced DISM recovery for managed WIM files..." -ForegroundColor Yellow
@@ -164,7 +164,7 @@
             [GC]::Collect()
             [GC]::WaitForPendingFinalizers()
             Start-Sleep -Seconds 1
-            Reset-DirectoryWithRobocopy -Path $nano11Dir
+            Reset-DirectoryWithRobocopy -Path $WinEaseDir
         }
     }
     if (Test-Path -LiteralPath $vhdxMountDir) {
@@ -183,7 +183,7 @@
             Reset-DirectoryWithRobocopy -Path $vhdxMountDir
         }
     }
-    New-Item -ItemType Directory -Force -Path (Join-Path -Path $nano11Dir -ChildPath "sources") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path -Path $WinEaseDir -ChildPath "sources") | Out-Null
     if (-not (Test-Path -LiteralPath $vhdxMountDir)) {
         New-Item -ItemType Directory -Force -Path $vhdxMountDir | Out-Null
     }
@@ -199,10 +199,10 @@ attach vdisk
 clean
 convert gpt
 create partition primary
-format fs=ntfs quick label="nano11_scratch"
+format fs=ntfs quick label="WinEase_scratch"
 assign mount="$vhdxMountDir"
 "@
-            $dpAttachFile = Join-Path -Path $env:TEMP -ChildPath "nano11_dp_attach_$([System.IO.Path]::GetRandomFileName()).txt"
+            $dpAttachFile = Join-Path -Path $env:TEMP -ChildPath "WinEase_dp_attach_$([System.IO.Path]::GetRandomFileName()).txt"
             $dpAttachScript | Set-Content -LiteralPath $dpAttachFile -Encoding ascii
             & diskpart.exe /s $dpAttachFile > $null 2>&1
             Remove-Item -LiteralPath $dpAttachFile -Force -ErrorAction SilentlyContinue

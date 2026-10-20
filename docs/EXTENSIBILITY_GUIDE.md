@@ -1,14 +1,14 @@
 English: this file / 日本語版: [EXTENSIBILITY_GUIDE.ja.md](EXTENSIBILITY_GUIDE.ja.md)
 
-# nano11 Extensibility Guide
+# WinEase Extensibility Guide
 
-How to add your own settings, scripts and backup targets without editing nano11's code.
+How to add your own settings, scripts and backup targets without editing WinEase's code.
 
 - **Part 1: Beginner quick start** - things you can do by adding a few lines to a file
 - **Part 2: Reference** - folder layout, custom scripts, error handling, safe verification
 
 The files you edit live in `config/user/`; custom scripts live in `tools/custom-scripts/<Stage>/`.
-All of them are optional. Without them nano11 runs normally.
+All of them are optional. Without them WinEase runs normally.
 
 ---
 
@@ -38,7 +38,7 @@ Example: turn off the Sticky Keys confirmation shown when Shift is pressed five 
    )
    ```
 
-3. Save, then start the GUI with `nano11-GUI.bat`.
+3. Save, then start the GUI with `WinEase-GUI.bat`.
 4. Because `Category = 'UI'`, the checkbox appears at the bottom of tab **5. UI & Shell**.
    Categories other than `Security` / `Privacy` / `Performance` / `UI` (for example `System`, `Gaming`, `UserCustom`) appear on tab **9. User Tweaks**.
 5. Tick it and build; Phase 10 (registry) writes the value into the image.
@@ -76,7 +76,7 @@ To change a service start type use `@{ Type = 'Service'; Name = 'ServiceName'; V
 
 ## 2. Add a game-save folder the migrator does not know
 
-The PC migration tool (`tools/migrator/Nano11-Migrator.ps1`) supports about 30 games and apps out of the box (`tools/migrator/migration-rules.psd1`).
+The PC migration tool (`tools/migrator/WinEase-Migrator.ps1`) supports about 30 games and apps out of the box (`tools/migrator/migration-rules.psd1`).
 You can add your own.
 
 ### Steps
@@ -103,17 +103,17 @@ You can add your own.
 3. Check that the rule is recognized:
 
    ```powershell
-   .\tools\migrator\Nano11-Migrator.ps1 -Mode ListRules
+   .\tools\migrator\WinEase-Migrator.ps1 -Mode ListRules
    ```
 
 4. Estimate the size and try a backup without writing anything (`D:\backup` is an example):
 
    ```powershell
-   .\tools\migrator\Nano11-Migrator.ps1 -Mode Estimate -PackagePath D:\backup -RuleIds MyCustomGame
-   .\tools\migrator\Nano11-Migrator.ps1 -Mode Backup -PackagePath D:\backup -RuleIds MyCustomGame -DryRun
+   .\tools\migrator\WinEase-Migrator.ps1 -Mode Estimate -PackagePath D:\backup -RuleIds MyCustomGame
+   .\tools\migrator\WinEase-Migrator.ps1 -Mode Backup -PackagePath D:\backup -RuleIds MyCustomGame -DryRun
    ```
 
-   If it looks right, run it again without `-DryRun`. You can also use tab **8. Migration & Backup** of the build GUI, or the wizard that opens when you start Nano11-Migrator without arguments.
+   If it looks right, run it again without `-DryRun`. You can also use tab **8. Migration & Backup** of the build GUI, or the wizard that opens when you start WinEase-Migrator without arguments.
 
 ### Fields
 
@@ -136,34 +136,34 @@ Files that look like passwords or tokens are excluded automatically by default.
 ## 1. Folder layout and file roles
 
 ```text
-nano11-main/
-├── nano11builder.ps1      Main script: parameters, configuration, calls the phases
-├── nano11helpers.ps1      Small shared functions (path validation, config file lookup, ...)
+WinEase-main/
+├── WinEasebuilder.ps1      Main script: parameters, configuration, calls the phases
+├── WinEasehelpers.ps1      Small shared functions (path validation, config file lookup, ...)
 ├── lib/                   Function libraries loaded by the builder
 ├── phases/                Build steps (01-18)
-├── gui/Nano11Gui.ps1      WinForms GUI
+├── gui/WinEaseGui.ps1      WinForms GUI
 ├── config/                Configuration files
 ├── scripts/               Setup scripts embedded into the image
 ├── tools/                 Helper tools and custom scripts
 ├── profiles/              Saved profiles (JSON)
 ├── templates/report.html  Report template
-└── tests/nano11.Tests.ps1 Pester tests
+└── tests/WinEase.Tests.ps1 Pester tests
 ```
 
-`nano11builder.ps1` **dot-sources** `phases/*.ps1` and `lib/*.ps1` and shares variables in script scope.
+`WinEasebuilder.ps1` **dot-sources** `phases/*.ps1` and `lib/*.ps1` and shares variables in script scope.
 Load any new file the same way (turning it into a module would hide those variables).
 
 ### lib/
 
 | File | Role |
 | :--- | :--- |
-| `Nano11Mount.ps1` | DISM mount discovery/cleanup, mount directories, offline registry |
-| `Nano11FileSystem.ps1` | Directory safety checks, ownership and ACLs, robust deletion, free space |
-| `Nano11Wim.ps1` | WIM export, fingerprinting, repair |
-| `Nano11Report.ps1` | HTML report (`nano11_report.html`) |
-| `Nano11Resume.ps1` | `-ResumeIsoOnly` and per-phase checkpoints |
-| `Nano11SelfTest.ps1` | `-TestSelf` diagnostics (loaded only for `-TestSelf`) |
-| `Nano11Extensions.ps1` | Extension engine (user settings, custom scripts, config diff, recovery readiness) |
+| `WinEaseMount.ps1` | DISM mount discovery/cleanup, mount directories, offline registry |
+| `WinEaseFileSystem.ps1` | Directory safety checks, ownership and ACLs, robust deletion, free space |
+| `WinEaseWim.ps1` | WIM export, fingerprinting, repair |
+| `WinEaseReport.ps1` | HTML report (`WinEase_report.html`) |
+| `WinEaseResume.ps1` | `-ResumeIsoOnly` and per-phase checkpoints |
+| `WinEaseSelfTest.ps1` | `-TestSelf` diagnostics (loaded only for `-TestSelf`) |
+| `WinEaseExtensions.ps1` | Extension engine (user settings, custom scripts, config diff, recovery readiness) |
 
 ### phases/
 
@@ -195,7 +195,7 @@ Load any new file the same way (turning it into a module would hide those variab
 | :--- | :--- |
 | `tweaks.psd1` | The **single source of truth** for every switch and component. The GUI, profiles and CLI are generated from it |
 | `dependencies.psd1` | Dependency/impact catalog (used to detect Conflicts, Impacts, Unknowns) |
-| `nano11.config.schema.json` | JSON schema for profiles |
+| `WinEase.config.schema.json` | JSON schema for profiles |
 | `user/user-tweaks.psd1` | Your tweaks, presets and custom scripts |
 | `user/user-migration-rules.psd1` | Your migration rules |
 
@@ -205,15 +205,15 @@ An old `user-*.psd1` directly under `config/` is still read, with a warning, whe
 
 | File | Role |
 | :--- | :--- |
-| `gui/Nano11Gui.ps1` | The GUI, split into one function per tab, plus shared control parts |
-| `tools/migrator/Nano11-Migrator.ps1` | PC migration/backup tool (CLI and GUI wizard) |
-| `tools/migrator/Nano11Migration.ps1` | Migration engine (backup, restore, app inventory, report) |
+| `gui/WinEaseGui.ps1` | The GUI, split into one function per tab, plus shared control parts |
+| `tools/migrator/WinEase-Migrator.ps1` | PC migration/backup tool (CLI and GUI wizard) |
+| `tools/migrator/WinEaseMigration.ps1` | Migration engine (backup, restore, app inventory, report) |
 | `tools/migrator/migration-rules.psd1` | Standard migration rules |
 | `tools/custom-scripts/<Stage>/` | Custom script folders (next section) |
-| `tools/nano11-physical-debloat/` | Rust tool for physical deletion |
-| `tools/Measure-Nano11GuestBaseline.ps1` / `tools/Compare-Nano11Benchmarks.ps1` | Post-install measurement and comparison |
+| `tools/winease-physical-debloat/` | Rust tool for physical deletion |
+| `tools/Measure-WinEaseGuestBaseline.ps1` / `tools/Compare-WinEaseBenchmarks.ps1` | Post-install measurement and comparison |
 
-GUI tab **8. Migration & Backup** loads `tools/migrator/Nano11Migration.ps1` the first time it is opened (the builder itself does not load the migration engine).
+GUI tab **8. Migration & Backup** loads `tools/migrator/WinEaseMigration.ps1` the first time it is opened (the builder itself does not load the migration engine).
 With `-IncludeMigrationAssistant` the migrator and its rules are bundled into the ISO under `Windows\Setup\Scripts\Migration` (no personal data included).
 
 ## 2. The four custom-script stages
@@ -227,33 +227,33 @@ Put `.ps1` files in `tools/custom-scripts/<Stage>/` and they are found automatic
 | `FirstLogon` | At first logon after installation | Administrator |
 | `UserOnce` | After the user profile is initialized | Standard user |
 
-For `PreBuild` and `OfflineImage` the builder calls the script directly with `-Nano11Context`.
-`FirstLogon` and `UserOnce` scripts are not run at build time; they are copied into the image under `Windows\Setup\Scripts\Custom\...` and run after installation (log: `C:\ProgramData\nano11\Logs\custom-scripts.log`; `UserOnce`: `%TEMP%\UserOnce-custom.log`).
+For `PreBuild` and `OfflineImage` the builder calls the script directly with `-WinEaseContext`.
+`FirstLogon` and `UserOnce` scripts are not run at build time; they are copied into the image under `Windows\Setup\Scripts\Custom\...` and run after installation (log: `C:\ProgramData\WinEase\Logs\custom-scripts.log`; `UserOnce`: `%TEMP%\UserOnce-custom.log`).
 `FirstLogon` / `UserOnce` also accept `.bat` / `.cmd` / `.reg` (see `tools/custom-scripts/README.md`).
 
 ### Script template
 
 ```powershell
-# @Nano11-Id: MyScript
-# @Nano11-Stage: PreBuild
-# @Nano11-Order: 100
-# @Nano11-OnError: Warn
-# @Nano11-Description: What it does
-param($Nano11Context)
-Write-Host "ScratchDir: $($Nano11Context.ScratchDir)"
+# @WinEase-Id: MyScript
+# @WinEase-Stage: PreBuild
+# @WinEase-Order: 100
+# @WinEase-OnError: Warn
+# @WinEase-Description: What it does
+param($WinEaseContext)
+Write-Host "ScratchDir: $($WinEaseContext.ScratchDir)"
 ```
 
-Metadata comments in the first 30 lines: `# @Nano11-Id` / `Stage` / `Order` / `Condition` / `OnError` / `Description`.
+Metadata comments in the first 30 lines: `# @WinEase-Id` / `Stage` / `Order` / `Condition` / `OnError` / `Description`.
 Scripts run by ascending `Order`, then by file name. Set `Condition` to a setting key to run only when it is enabled.
 
-### `$Nano11Context`
+### `$WinEaseContext`
 
 A hashtable passed to `PreBuild` / `OfflineImage` scripts.
 
 | Stage | Contents |
 | :--- | :--- |
 | `PreBuild` | `Config` (current configuration), `ScriptRoot` (repository folder) |
-| `OfflineImage` | `ScratchDir` (root of the mounted image), `Nano11Dir`, `Config` |
+| `OfflineImage` | `ScratchDir` (root of the mounted image), `WinEaseDir`, `Config` |
 
 `FirstLogon` / `UserOnce` scripts get no context; they simply run on the installed PC.
 
@@ -265,8 +265,8 @@ In Phase 10 the builder loads the image's registry as `HKLM\zSYSTEM`, `HKLM\zSOF
 - **When an `OfflineImage` script runs, these hives are no longer loaded.** To touch the registry, load the hive yourself and always unload it afterwards:
 
   ```powershell
-  param($Nano11Context)
-  $hive = Join-Path $Nano11Context.ScratchDir 'Users\Default\ntuser.dat'
+  param($WinEaseContext)
+  $hive = Join-Path $WinEaseContext.ScratchDir 'Users\Default\ntuser.dat'
   & reg.exe load HKLM\zMyNtuser $hive
   try {
       & reg.exe add 'HKLM\zMyNtuser\Software\MyApp' /v Enabled /t REG_DWORD /d 1 /f
@@ -282,7 +282,7 @@ In Phase 10 the builder loads the image's registry as `HKLM\zSYSTEM`, `HKLM\zSOF
 
 ### `OnError`
 
-Set it in a `CustomScripts` entry or with `# @Nano11-OnError:`. Default `Warn`.
+Set it in a `CustomScripts` entry or with `# @WinEase-OnError:`. Default `Warn`.
 
 | Value | Behavior |
 | :--- | :--- |
@@ -313,31 +313,31 @@ Before a real build (tens of minutes, needs administrator rights and disk space)
 1. **Syntax and self-test** - writes nothing to disk, needs no ISO:
 
    ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\nano11builder.ps1 -TestSelf
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\WinEasebuilder.ps1 -TestSelf
    ```
 
 2. **DryRun** - resolves and prints configuration, paths and detected custom scripts without touching disks or images. `PreBuild` / `OfflineImage` scripts are not executed:
 
    ```powershell
-   .\nano11builder.ps1 -NonInteractive -Profile balanced -DryRun
+   .\WinEasebuilder.ps1 -NonInteractive -Profile balanced -DryRun
    ```
 
 3. **Strict dependency check** - stops on any Conflict or Unknown:
 
    ```powershell
-   .\nano11builder.ps1 -NonInteractive -Profile balanced -DryRun -StrictDependencyCheck
+   .\WinEasebuilder.ps1 -NonInteractive -Profile balanced -DryRun -StrictDependencyCheck
    ```
 
 4. **Compare with a preset** - prints how the current configuration differs from a preset (name or JSON path) and exits without building:
 
    ```powershell
-   .\nano11builder.ps1 -Profile balanced -ComparePreset extreme
+   .\WinEasebuilder.ps1 -Profile balanced -ComparePreset extreme
    ```
 
 5. **Pester tests** - checks the repository rules (syntax, zero PSScriptAnalyzer warnings, GUI wiring, ...):
 
    ```powershell
-   Invoke-Pester -Script .\tests\nano11.Tests.ps1
+   Invoke-Pester -Script .\tests\WinEase.Tests.ps1
    ```
 
 6. **Migrator** - run `-Mode Estimate` (size estimate) and `-DryRun` (no writes) first.

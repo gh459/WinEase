@@ -1,5 +1,5 @@
 ﻿# Phase 6: 06-fod
-# Extracted from nano11builder.ps1
+# Extracted from WinEasebuilder.ps1
 # Dot-sourced by the main orchestrator
 
 
@@ -199,6 +199,6 @@ foreach ($packageIdentity in $packagesToRemove) {
 }
 
 # M2: User extension actions (FOD)
-if (Get-Command -Name Invoke-Nano11UserExtensionActions -ErrorAction SilentlyContinue) {
-    try { Invoke-Nano11UserExtensionActions -PhaseType FOD -ScratchDir $scratchDir -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+if (Get-Command -Name Invoke-WinEaseUserExtensionActions -ErrorAction SilentlyContinue) {
+    try { Invoke-WinEaseUserExtensionActions -PhaseType FOD -ScratchDir $scratchDir -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }

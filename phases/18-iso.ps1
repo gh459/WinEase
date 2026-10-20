@@ -1,5 +1,5 @@
 ﻿# Phase 18: 18-iso
-# Extracted from nano11builder.ps1
+# Extracted from WinEasebuilder.ps1
 # Dot-sourced by the main orchestrator
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', 'isoCreatedSuccessfully', Justification = 'Read by later phases or New-BuildContextFromScriptScope in the shared builder scope')]
 param()
@@ -14,9 +14,9 @@ $isoTimestamp = (Get-Date).ToString("yyyyMMdd_HHmm")
 if ($OutputIsoName) {
     $isoFileName = if ($OutputIsoName.EndsWith('.iso', [System.StringComparison]::OrdinalIgnoreCase)) { $OutputIsoName } else { "$OutputIsoName.iso" }
 } elseif ($TimestampIso) {
-    $isoFileName = "nano11_${profSlug}_${isoTimestamp}.iso"
+    $isoFileName = "WinEase_${profSlug}_${isoTimestamp}.iso"
 } else {
-    $isoFileName = "nano11.iso"
+    $isoFileName = "WinEase.iso"
 }
 $outputIso = Join-Path -Path $scriptDir -ChildPath $isoFileName
 
@@ -24,15 +24,15 @@ $outputIso = Join-Path -Path $scriptDir -ChildPath $isoFileName
 
 # Resolve etfsboot.com (BIOS boot sector)
 $etfsBootCandidates = @(
-    (Join-Path -Path "$nano11Dir\boot" -ChildPath "etfsboot.com"),
+    (Join-Path -Path "$WinEaseDir\boot" -ChildPath "etfsboot.com"),
     (Join-Path -Path "$DriveLetter\boot" -ChildPath "etfsboot.com")
 )
 $etfsBoot = $null
 foreach ($c in $etfsBootCandidates) {
     if (Test-Path -LiteralPath $c) {
-        $localEtfs = Join-Path -Path "$nano11Dir\boot" -ChildPath "etfsboot.com"
+        $localEtfs = Join-Path -Path "$WinEaseDir\boot" -ChildPath "etfsboot.com"
         if (-not (Test-Path -LiteralPath $localEtfs)) {
-            New-Item -ItemType Directory -Force -Path "$nano11Dir\boot" -ErrorAction SilentlyContinue | Out-Null
+            New-Item -ItemType Directory -Force -Path "$WinEaseDir\boot" -ErrorAction SilentlyContinue | Out-Null
             Copy-Item -LiteralPath $c -Destination $localEtfs -Force -ErrorAction SilentlyContinue
         }
         if (Test-Path -LiteralPath $localEtfs) {
@@ -44,19 +44,19 @@ foreach ($c in $etfsBootCandidates) {
 
 # Resolve efisys.bin (UEFI boot sector) across candidate paths
 $efiSysCandidates = @(
-    (Join-Path -Path "$nano11Dir\efi\microsoft\boot" -ChildPath "efisys.bin"),
-    (Join-Path -Path "$nano11Dir\efi\microsoft\boot" -ChildPath "efisys_noprompt.bin"),
+    (Join-Path -Path "$WinEaseDir\efi\microsoft\boot" -ChildPath "efisys.bin"),
+    (Join-Path -Path "$WinEaseDir\efi\microsoft\boot" -ChildPath "efisys_noprompt.bin"),
     (Join-Path -Path "$DriveLetter\efi\microsoft\boot" -ChildPath "efisys.bin"),
     (Join-Path -Path "$DriveLetter\efi\microsoft\boot" -ChildPath "efisys_noprompt.bin"),
-    (Join-Path -Path "$nano11Dir\efi\boot" -ChildPath "efisys.bin"),
+    (Join-Path -Path "$WinEaseDir\efi\boot" -ChildPath "efisys.bin"),
     (Join-Path -Path "$DriveLetter\efi\boot" -ChildPath "efisys.bin")
 )
 $efiSys = $null
 foreach ($c in $efiSysCandidates) {
     if (Test-Path -LiteralPath $c) {
-        $localEfiSys = Join-Path -Path "$nano11Dir\efi\microsoft\boot" -ChildPath "efisys.bin"
+        $localEfiSys = Join-Path -Path "$WinEaseDir\efi\microsoft\boot" -ChildPath "efisys.bin"
         if (-not (Test-Path -LiteralPath $localEfiSys)) {
-            New-Item -ItemType Directory -Force -Path "$nano11Dir\efi\microsoft\boot" -ErrorAction SilentlyContinue | Out-Null
+            New-Item -ItemType Directory -Force -Path "$WinEaseDir\efi\microsoft\boot" -ErrorAction SilentlyContinue | Out-Null
             Copy-Item -LiteralPath $c -Destination $localEfiSys -Force -ErrorAction SilentlyContinue
         }
         if (Test-Path -LiteralPath $localEfiSys) {
@@ -91,12 +91,12 @@ if ($uefiOnly -and $efiSysSafe) {
 } else {
     $script:DiagnosticData.FailurePhase = "Phase 18: Boot Sector Verification"
     $script:DiagnosticData.FailureMessage = "Missing required boot sector files (etfsboot.com / efisys.bin). Output ISO would not be bootable."
-    Write-Nano11DiagnosticReport "Missing boot files"
+    Write-WinEaseDiagnosticReport "Missing boot files"
     throw "Phase 18: Missing required boot sector files. Aborting build to prevent generating unbootable media."
 }
 
 # Temporary ISO generation & payload verification (Rules 11, 12, 13, 14, 20)
-$tempIsoFileName = "nano11_temp_${profSlug}_$($script:BuildId).iso"
+$tempIsoFileName = "WinEase_temp_${profSlug}_$($script:BuildId).iso"
 $tempOutputIso = Join-Path -Path $scriptDir -ChildPath $tempIsoFileName
 $expectedPayloadFile = if ($exportESDMode) { "install.esd" } elseif ($splitWIMMode) { "install.swm" } else { "install.wim" }
 
@@ -111,11 +111,11 @@ while (-not $isoCreationSuccess -and $isoAttempt -lt $maxIsoAttempts) {
     }
 
     # Standard clean UDF ISO mastering without -o (avoids memory-stressing MD5 deduplication hash table)
-    $oscdimgArgs = @("-m", "-u2", "-udfver102", "-lnano11")
+    $oscdimgArgs = @("-m", "-u2", "-udfver102", "-lWinEase")
     if ($bootData) {
         $oscdimgArgs += "-bootdata:$bootData"
     }
-    $oscdimgArgs += $nano11Dir
+    $oscdimgArgs += $WinEaseDir
     $oscdimgArgs += $tempOutputIso
 
     $oscdCmdStr = "$oscdimgExe $($oscdimgArgs -join ' ')"
@@ -205,17 +205,17 @@ if (-not $isoCreationSuccess) {
     $script:DiagnosticData.IsoGenerated = $false
     $script:DiagnosticData.FailurePhase = "Phase 18: ISO Generation"
     $script:DiagnosticData.FailureMessage = "Failed to generate a verified bootable ISO after $maxIsoAttempts attempts."
-    Write-Nano11DiagnosticReport "ISO generation failed"
+    Write-WinEaseDiagnosticReport "ISO generation failed"
     throw "CRITICAL ERROR: Failed to create valid bootable ISO after $maxIsoAttempts attempts."
 }
 
 # Promote temporary ISO to official output ISO with rollback protection (Rule 12)
-[void](Invoke-Nano11PromoteTemporaryIso -TempIsoPath $tempOutputIso -TargetIsoPath $outputIso -BuildId $script:BuildId)
+[void](Invoke-WinEasePromoteTemporaryIso -TempIsoPath $tempOutputIso -TargetIsoPath $outputIso -BuildId $script:BuildId)
 
 # 3-Generation Retention Rotation for ISOs matching this profile (when TimestampIso is used)
 if ($TimestampIso) {
     try {
-        $existingProfileIsos = Get-ChildItem -Path $scriptDir -Filter "nano11_${profSlug}_*.iso" -File -ErrorAction SilentlyContinue |
+        $existingProfileIsos = Get-ChildItem -Path $scriptDir -Filter "WinEase_${profSlug}_*.iso" -File -ErrorAction SilentlyContinue |
             Sort-Object LastWriteTime -Descending
         if ($existingProfileIsos.Count -gt 3) {
             $isosToRemove = $existingProfileIsos | Select-Object -Skip 3
@@ -246,9 +246,9 @@ $sha256 = (Get-FileHash -LiteralPath $outputIso -Algorithm SHA256).Hash
 try {
     $reportOutputDir = Split-Path -Path $outputIso -Parent
     if (-not $reportOutputDir) { $reportOutputDir = $PSScriptRoot }
-    $reportPath = Join-Path -Path $reportOutputDir -ChildPath "nano11_report.html"
+    $reportPath = Join-Path -Path $reportOutputDir -ChildPath "WinEase_report.html"
     $reportData = @{
-        Title             = "nano11 Master Build Report - $selectedProfile"
+        Title             = "WinEase Master Build Report - $selectedProfile"
         Timestamp         = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
         Profile           = $selectedProfile
         Architecture      = $architecture
@@ -271,9 +271,9 @@ try {
     if ($activePayloadPath -and (Test-Path -LiteralPath $activePayloadPath)) {
         try { $finalPayloadBytes = (Get-Item -LiteralPath $activePayloadPath).Length } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
-    $benchPath = Join-Path -Path $reportOutputDir -ChildPath "nano11_guest_benchmark.json"
+    $benchPath = Join-Path -Path $reportOutputDir -ChildPath "WinEase_guest_benchmark.json"
     if (-not (Test-Path -LiteralPath $benchPath)) {
-        $benchPath = Join-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -ChildPath "nano11_guest_benchmark.json"
+        $benchPath = Join-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -ChildPath "WinEase_guest_benchmark.json"
     }
     $guestBench = $null
     if (Test-Path -LiteralPath $benchPath) {
@@ -290,13 +290,13 @@ try {
     $reportData['WinSxSAfterMB']        = if ($script:WinSxsAfterMB) { $script:WinSxsAfterMB } else { 0 }
     $reportData['PhaseTimings']        = if ($script:PhaseTimings) { $script:PhaseTimings } else { @{} }
     $depResult = $null
-    try { $depResult = Test-Nano11Dependencies -Config $resolvedConfig } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    try { $depResult = Test-WinEaseDependencies -Config $resolvedConfig } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     $reportData['DependencyResult'] = $depResult
     # G5: persist phase timings for next-run build time estimation.
     # (Phase 18 is still running here; the orchestrator re-persists the complete table
-    # via Exit-Phase + Save-Nano11PhaseTimings immediately after this script returns.)
-    Save-Nano11PhaseTimings
-    Export-Nano11HtmlReport -OutputPath $reportPath -BuildInfo $reportData
+    # via Exit-Phase + Save-WinEasePhaseTimings immediately after this script returns.)
+    Save-WinEasePhaseTimings
+    Export-WinEaseHtmlReport -OutputPath $reportPath -BuildInfo $reportData
     Write-Host "Visual Build Report generated: $reportPath" -ForegroundColor Cyan
 } catch {
     Write-Warning "Could not export visual build report: $_"
@@ -306,10 +306,10 @@ try {
 $script:BuildSucceeded = $true
 $script:DiagnosticData.BuildSucceeded = $true
 $isoCreatedSuccessfully = $true
-Write-Nano11DiagnosticReport "Build succeeded"
+Write-WinEaseDiagnosticReport "Build succeeded"
 
 # F2: final checkpoint marking the build as fully complete
-Save-Nano11Checkpoint -CompletedPhase 18
+Save-WinEaseCheckpoint -CompletedPhase 18
 
 # F1: Automatic workspace cleanup on successful build (preserves build\sources\install.wim for -ResumeIsoOnly)
 Write-Host "Cleaning up transient verification artifacts from successful build..." -ForegroundColor Cyan
@@ -325,7 +325,7 @@ try {
             $full = $_.FullName
             if ($full -eq $scratchDir -or $full -eq $vhdxMountDir) { return }
             $sw = [System.Diagnostics.Stopwatch]::StartNew()
-            if (Remove-Nano11TreeRobust -Path $full -SafetyRoot $baseWorkDir) {
+            if (Remove-WinEaseTreeRobust -Path $full -SafetyRoot $baseWorkDir) {
                 $sw.Stop()
                 $cleanedCount++
                 Write-Host "  - Removed transient: $(Split-Path -Leaf $full) ($([math]::Round($sw.Elapsed.TotalSeconds,1))s)" -ForegroundColor DarkGray
@@ -356,13 +356,13 @@ if ($GUI -and $script:BuildSucceeded -and (Test-Path -LiteralPath $outputIso)) {
     $isoLenGB = [math]::Round((Get-Item -LiteralPath $outputIso).Length / 1GB, 2)
     $elapsedSec = if ($buildStopwatch) { [math]::Round($buildStopwatch.Elapsed.TotalSeconds, 1) } else { 0 }
     $elapsedStr = if ($elapsedSec -gt 0) { "$elapsedSec 秒" } else { "完了" }
-    $dialogMsg = "nano11 ISO ビルドが正常に完了しました！`n`n" +
+    $dialogMsg = "WinEase ISO ビルドが正常に完了しました！`n`n" +
                  "■ 出力先: $outputIso`n" +
                  "■ サイズ: $isoLenGB GB`n" +
                  "■ SHA256: $sha256`n" +
                  "■ 所要時間: $elapsedStr`n`n" +
                  "ISO が保存されたフォルダーを開きますか？"
-    $res = [System.Windows.Forms.MessageBox]::Show($dialogMsg, "nano11 ビルド完了", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Information)
+    $res = [System.Windows.Forms.MessageBox]::Show($dialogMsg, "WinEase ビルド完了", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Information)
     if ($res -eq [System.Windows.Forms.DialogResult]::Yes) {
         Invoke-Item -LiteralPath (Split-Path -Path $outputIso -Parent)
     }

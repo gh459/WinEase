@@ -1,5 +1,5 @@
 ﻿# Phase 5: 05-appx
-# Extracted from nano11builder.ps1
+# Extracted from WinEasebuilder.ps1
 # Dot-sourced by the main orchestrator
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'scratchPath', Justification = 'Positional runspace argument of $folderCleanupScript supplied by the caller')]
 param()
@@ -168,7 +168,7 @@ foreach ($package in $successfullyRemovedPackages) {
 if ($parallelism -le 1 -or $folderPaths.Count -le 1) {
     foreach ($fp in $folderPaths) {
         if (Test-Path -LiteralPath $fp) {
-            Remove-Nano11TreeRobust -Path $fp -SafetyRoot $scratchDir
+            Remove-WinEaseTreeRobust -Path $fp -SafetyRoot $scratchDir
         }
     }
 } else {
@@ -177,7 +177,7 @@ if ($parallelism -le 1 -or $folderPaths.Count -le 1) {
     $runspacePool.Open()
     $jobs = [System.Collections.Generic.List[object]]::new()
     foreach ($fp in $folderPaths) {
-        if (-not (Test-Nano11PathWithin -Path $fp -Root $scratchDir)) {
+        if (-not (Test-WinEasePathWithin -Path $fp -Root $scratchDir)) {
             Write-Warning "  - Skipping parallel cleanup of '$fp': path is outside the working directory."
             continue
         }
@@ -204,7 +204,7 @@ if ($parallelism -le 1 -or $folderPaths.Count -le 1) {
     # Verify + sequential fallback for any survivors
     foreach ($fp in $folderPaths) {
         if (Test-Path -LiteralPath $fp) {
-            Remove-Nano11TreeRobust -Path $fp -SafetyRoot $scratchDir
+            Remove-WinEaseTreeRobust -Path $fp -SafetyRoot $scratchDir
         }
     }
 }
@@ -215,6 +215,6 @@ Write-Host "Disabling Recall and modern AI optional features..." -ForegroundColo
 & dism.exe /English "/image:$scratchDir" /Disable-Feature /FeatureName:Windows-Recall-Optional-Package /Remove > $null 2>&1
 
 # M2: User extension actions (Appx)
-if (Get-Command -Name Invoke-Nano11UserExtensionActions -ErrorAction SilentlyContinue) {
-    try { Invoke-Nano11UserExtensionActions -PhaseType Appx -ScratchDir $scratchDir -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+if (Get-Command -Name Invoke-WinEaseUserExtensionActions -ErrorAction SilentlyContinue) {
+    try { Invoke-WinEaseUserExtensionActions -PhaseType Appx -ScratchDir $scratchDir -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }

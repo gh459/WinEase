@@ -2,7 +2,7 @@
 .SYNOPSIS
     Winhance Windows 10/11 Customization and Optimization Script (Offline-Integrated Slim Edition)
 .DESCRIPTION
-    All static HKLM, HKCU, and Default User optimizations are pre-baked offline directly into the WIM image by nano11builder.ps1.
+    All static HKLM, HKCU, and Default User optimizations are pre-baked offline directly into the WIM image by WinEasebuilder.ps1.
     This runtime wrapper handles active power scheme configuration and logs completion.
 #>
 param(
@@ -53,7 +53,7 @@ if ($UserCustomizations) {
         Write-Log "Power plan activation handled with fallback: $_" "WARNING"
     }
 
-    Write-Log "All system tweaks and service configurations pre-applied offline by nano11builder." "SUCCESS"
+    Write-Log "All system tweaks and service configurations pre-applied offline by WinEasebuilder." "SUCCESS"
     Write-Log "Winhance System Optimization Completed Successfully" "SUCCESS"
     exit 0
 }

@@ -1,14 +1,14 @@
 ﻿# Phase 3: 03-staging
-# Extracted from nano11builder.ps1
+# Extracted from WinEasebuilder.ps1
 # Dot-sourced by the main orchestrator
 
 
-Write-Host "Copying Windows installation files to $nano11Dir..." -ForegroundColor Green
+Write-Host "Copying Windows installation files to $WinEaseDir..." -ForegroundColor Green
 $sourcePath = $DriveLetter.TrimEnd('\') + "\"
 $copySuccess = $false
 # If converting from install.esd, exclude both install.esd and install.wim from initial robocopy
 # so we don't spend unnecessary minutes duplicating multi-gigabyte source archives.
-$robocopyArgs = @("$sourcePath", "$nano11Dir", "/E", "/XJ", "/MT:16", "/J", "/R:1", "/W:1", "/NP", "/NFL", "/NDL", "/NJH", "/NJS")
+$robocopyArgs = @("$sourcePath", "$WinEaseDir", "/E", "/XJ", "/MT:16", "/J", "/R:1", "/W:1", "/NP", "/NFL", "/NDL", "/NJH", "/NJS")
 if (-not $hasSourceWim -and $hasSourceEsd) {
     $robocopyArgs += @("/XF", "install.esd", "install.wim")
 } elseif (-not $hasSourceWim) {
@@ -23,7 +23,7 @@ try {
 
 if (-not $copySuccess) {
     Write-Host "Robocopy completed or unavailable, ensuring files via Copy-Item..." -ForegroundColor Yellow
-    Copy-Item -Path "$sourcePath*" -Destination $nano11Dir -Recurse -Force | Out-Null
+    Copy-Item -Path "$sourcePath*" -Destination $WinEaseDir -Recurse -Force | Out-Null
 }
 
 # Ensure install.wim exists in destination; if not copied by robocopy, copy directly or decompress from install.esd
@@ -86,10 +86,10 @@ if (-not (Test-Path -LiteralPath $destWim) -or ((Get-Item -LiteralPath $destWim)
 
 # Explicitly ensure critical boot files exist in target image
 $criticalBootFiles = @(
-    @{ Src = (Join-Path -Path $sourcePath -ChildPath "boot\etfsboot.com"); Dest = (Join-Path -Path $nano11Dir -ChildPath "boot\etfsboot.com"); Dir = (Join-Path -Path $nano11Dir -ChildPath "boot") },
-    @{ Src = (Join-Path -Path $sourcePath -ChildPath "efi\microsoft\boot\efisys.bin"); Dest = (Join-Path -Path $nano11Dir -ChildPath "efi\microsoft\boot\efisys.bin"); Dir = (Join-Path -Path $nano11Dir -ChildPath "efi\microsoft\boot") },
-    @{ Src = (Join-Path -Path $sourcePath -ChildPath "efi\microsoft\boot\efisys_noprompt.bin"); Dest = (Join-Path -Path $nano11Dir -ChildPath "efi\microsoft\boot\efisys_noprompt.bin"); Dir = (Join-Path -Path $nano11Dir -ChildPath "efi\microsoft\boot") },
-    @{ Src = (Join-Path -Path $sourcePath -ChildPath "sources\boot.wim"); Dest = (Join-Path -Path $nano11Dir -ChildPath "sources\boot.wim"); Dir = (Join-Path -Path $nano11Dir -ChildPath "sources") }
+    @{ Src = (Join-Path -Path $sourcePath -ChildPath "boot\etfsboot.com"); Dest = (Join-Path -Path $WinEaseDir -ChildPath "boot\etfsboot.com"); Dir = (Join-Path -Path $WinEaseDir -ChildPath "boot") },
+    @{ Src = (Join-Path -Path $sourcePath -ChildPath "efi\microsoft\boot\efisys.bin"); Dest = (Join-Path -Path $WinEaseDir -ChildPath "efi\microsoft\boot\efisys.bin"); Dir = (Join-Path -Path $WinEaseDir -ChildPath "efi\microsoft\boot") },
+    @{ Src = (Join-Path -Path $sourcePath -ChildPath "efi\microsoft\boot\efisys_noprompt.bin"); Dest = (Join-Path -Path $WinEaseDir -ChildPath "efi\microsoft\boot\efisys_noprompt.bin"); Dir = (Join-Path -Path $WinEaseDir -ChildPath "efi\microsoft\boot") },
+    @{ Src = (Join-Path -Path $sourcePath -ChildPath "sources\boot.wim"); Dest = (Join-Path -Path $WinEaseDir -ChildPath "sources\boot.wim"); Dir = (Join-Path -Path $WinEaseDir -ChildPath "sources") }
 )
 foreach ($cbf in $criticalBootFiles) {
     if ((Test-Path -LiteralPath $cbf.Src) -and (-not (Test-Path -LiteralPath $cbf.Dest))) {
@@ -100,7 +100,7 @@ foreach ($cbf in $criticalBootFiles) {
 
 # Configure sources\ei.cfg for universal edition selection without forcing product key prompt
 if (-not $SkipEiCfg) {
-    $eiCfgPath = Join-Path -Path "$nano11Dir\sources" -ChildPath "ei.cfg"
+    $eiCfgPath = Join-Path -Path "$WinEaseDir\sources" -ChildPath "ei.cfg"
     if (-not (Test-Path -LiteralPath $eiCfgPath)) {
         "[Channel]`r`n_Default`r`n[VL]`r`n0`r`n" | Set-Content -LiteralPath $eiCfgPath -Encoding ascii -Force
         Write-Host "Created sources\ei.cfg for universal edition selection." -ForegroundColor Green
@@ -114,8 +114,8 @@ if (-not $SkipEiCfg) {
 
 
 # Remove ESD from copy if it exists to avoid duplication
-if (Test-Path -LiteralPath "$nano11Dir\sources\install.esd") {
-    Remove-Item -LiteralPath "$nano11Dir\sources\install.esd" -Force -ErrorAction SilentlyContinue
+if (Test-Path -LiteralPath "$WinEaseDir\sources\install.esd") {
+    Remove-Item -LiteralPath "$WinEaseDir\sources\install.esd" -Force -ErrorAction SilentlyContinue
 }
 
 # Image Information and Index Selection
@@ -161,7 +161,7 @@ if ($targetEditionName) {
 
 # sources\PID.txt: the Pro generic key only matches a Pro image. The exported install.wim contains
 # just the selected edition, so a Pro key with e.g. a Home image makes Windows Setup fail.
-$pidTxtPath = Join-Path -Path "$nano11Dir\sources" -ChildPath "PID.txt"
+$pidTxtPath = Join-Path -Path "$WinEaseDir\sources" -ChildPath "PID.txt"
 $isProEdition = ($targetEditionName -match '\bPro\b') -and ($targetEditionName -notmatch 'Workstation|Education|\bN\b')
 if ((-not $SkipEiCfg) -and $isProEdition) {
     if (-not (Test-Path -LiteralPath $pidTxtPath)) {

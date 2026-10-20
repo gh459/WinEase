@@ -1,4 +1,4 @@
-# **nano11 🔬**
+# **WinEase 🔬**
 
 A PowerShell script to build a heavily trimmed-down, lightning-fast Windows 11 image.
 
@@ -10,9 +10,9 @@ A PowerShell script to build a heavily trimmed-down, lightning-fast Windows 11 i
 
 ## **Introduction**
 
-Introducing **nano11 builder**, a powerful PowerShell script that creates an ultra-minimal Windows 11 image!
+Introducing **WinEase builder**, a powerful PowerShell script that creates an ultra-minimal Windows 11 image!
 
-The goal of nano11 is to automate the creation of a streamlined Windows 11 image. The script uses native DISM capabilities and official deployment tools (`oscdimg.exe`) to create a bootable ISO with no third-party binary dependencies. An included unattended answer file bypasses Microsoft Account requirements during setup, enables automatic local administrator logon, enables CompactOS compression, and configures a clean, bloatware-free desktop.
+The goal of WinEase is to automate the creation of a streamlined Windows 11 image. The script uses native DISM capabilities and official deployment tools (`oscdimg.exe`) to create a bootable ISO with no third-party binary dependencies. An included unattended answer file bypasses Microsoft Account requirements during setup, enables automatic local administrator logon, enables CompactOS compression, and configures a clean, bloatware-free desktop.
 
 ---
 
@@ -33,8 +33,8 @@ The goal of nano11 is to automate the creation of a streamlined Windows 11 image
 - **💽 High-Speed VHDX Scratch Disk Engine (`-UseVHDX` / `-FastVHDX`)**:
   - Dynamically mounts an expandable 30 GB VHDX volume as the DISM scratch directory, eliminating host NTFS fragmentation and accelerating image unpacking and exporting.
 - **📊 Visual HTML Build Report & Test Suite**:
-  - Automatically exports a dark-themed visual report (`nano11_report.html`) summarizing baseline vs optimized WIM sizes, saved GB, compression percentage, and feature status.
-  - Includes built-in self-test diagnostics (`-TestSelf`) and a complete Pester test suite (`tests/nano11.Tests.ps1`).
+  - Automatically exports a dark-themed visual report (`WinEase_report.html`) summarizing baseline vs optimized WIM sizes, saved GB, compression percentage, and feature status.
+  - Includes built-in self-test diagnostics (`-TestSelf`) and a complete Pester test suite (`tests/WinEase.Tests.ps1`).
 - **📁 Custom Post-Install Scripts Hook**:
   - Place custom `.ps1`, `.bat`, or `.reg` files in `tools/custom-scripts/` to have them automatically extracted and executed sequentially during post-install first logon.
 - **🌐 Universal Language Independence (PR #6 by Tinnitus97)**:
@@ -141,7 +141,7 @@ The goal of nano11 is to automate the creation of a streamlined Windows 11 image
   - **Phone Link / CrossDevice Background Host Disabled**: Suppresses `PhoneExperienceHost.exe` background runtime (`EnableMmx = 0`, `AllowCrossDeviceExperience = 0`).
   - **UWP RuntimeBroker Instances Controlled**: Denies global background app access (`GlobalUserDisabled = 1`, `LetAppsRunInBackground = 2`), preventing Store apps from spawning multiple `RuntimeBroker.exe` child processes while maintaining 100% WinRT compatibility.
 - **🐧 WSL2 & Virtualization Support (Issue #5)**:
-  - Optional `-EnableWSL` flag pre-enables `VirtualMachinePlatform` and `Microsoft-Windows-Subsystem-Linux` before WinSxS stripping, allowing full WSL2, Docker, and Linux containers on a lightweight nano11 installation.
+  - Optional `-EnableWSL` flag pre-enables `VirtualMachinePlatform` and `Microsoft-Windows-Subsystem-Linux` before WinSxS stripping, allowing full WSL2, Docker, and Linux containers on a lightweight WinEase installation.
 - **💾 Custom Working Directory Support (Issues #27, #23)**:
   - Use `-WorkDir <Path>` to specify another partition (e.g. `D:\Build`) for extracting and building images, completely preventing DISM crashes (`0xc1510115`) caused by low C: drive SSD space.
   - Automatically selects an alternate drive with ample free space if C: has less than 25 GB.
@@ -210,15 +210,15 @@ The resulting minimal OS is **not serviceable via cumulative updates** when WinS
 ### **2. Running the Builder**
 
 #### **Option A: Graphical User Interface (GUI - Recommended)**
-Simply double-click **`nano11-GUI.bat`** (or run `.\nano11builder.ps1 -GUI` as Administrator).  
+Simply double-click **`WinEase-GUI.bat`** (or run `.\WinEasebuilder.ps1 -GUI` as Administrator).  
 
-The settings window is a **WinUI 3** app (`gui/winui`, Windows App SDK, follows the Windows light/dark theme with Mica). It is built once with the .NET 8 SDK; `nano11-GUI.bat` does this automatically on first launch when `dotnet` is installed, or run it yourself:
+The settings window is a **WinUI 3** app (`gui/winui`, Windows App SDK, follows the Windows light/dark theme with Mica). It is built once with the .NET 8 SDK; `WinEase-GUI.bat` does this automatically on first launch when `dotnet` is installed, or run it yourself:
 
 ```powershell
-.\gui\winui\build.ps1            # publishes gui\winui\bin\Nano11Gui.exe (self-contained, x64 or arm64)
+.\gui\winui\build.ps1            # publishes gui\winui\bin\WinEaseGui.exe (self-contained, x64 or arm64)
 ```
 
-When `Nano11Gui.exe` is not built, or with `-ClassicGui`, the builder shows the classic WinForms window (`gui/Nano11Gui.ps1`) with the same features. The WinUI window runs as a separate process and talks to the builder over its standard input/output (one JSON message per line, see `gui/Nano11WinUiHost.ps1`), so presets, the dependency check, Preset Diff and the migration engine still run in PowerShell.
+When `WinEaseGui.exe` is not built, or with `-ClassicGui`, the builder shows the classic WinForms window (`gui/WinEaseGui.ps1`) with the same features. The WinUI window runs as a separate process and talks to the builder over its standard input/output (one JSON message per line, see `gui/WinEaseWinUiHost.ps1`), so presets, the dependency check, Preset Diff and the migration engine still run in PowerShell.
 
 The GUI allows you to:
 - Select an auto-detected installation media drive or browse directly to an official Windows 11 `.iso` file.
@@ -229,30 +229,30 @@ The GUI allows you to:
 - Toggle **High-Speed VHDX Scratch Disk** (`-UseVHDX`) to eliminate host fragmentation.
 - Open **Tab 8 "Migration & Backup"** to check recovery readiness, export an app inventory, estimate and run a backup/restore of personal folders, game saves and app settings, verify a backup (SHA-256), retry only failed restore tasks, diff any preset against the current window ("Preset Diff"), and switch on **Include Migration Assistant (PC-to-PC transfer tools)** (`-IncludeMigrationAssistant`). It also shows how many user extensions were loaded and any load errors. The migration engine is loaded the first time the tab is opened.
 - Open **Tab 9 "User Tweaks"** to see your own switches from `config/user/user-tweaks.psd1` whose category is not Security / Privacy / Performance / UI (those appear on tabs 2-5).
-- Pick the display language (**English / 日本語**) in the header. The window is rebuilt with everything you entered kept, and the choice is saved in `%LOCALAPPDATA%\nano11\gui-settings.json`. Without a saved choice the OS display language is used (Japanese → 日本語, otherwise English). `-UiLanguage en|ja` overrides it for one run, also for `tools/migrator/Nano11-Migrator.ps1`. It only changes what is shown: settings, Advanced Debloat item names passed to the build, logs and reports stay English. The texts live in `config/ui-strings/en.json` and `ja.json` (UTF-8).
-- Click **Start nano11 Build** to launch the build process!
+- Pick the display language (**English / 日本語**) in the header. The window is rebuilt with everything you entered kept, and the choice is saved in `%LOCALAPPDATA%\WinEase\gui-settings.json`. Without a saved choice the OS display language is used (Japanese → 日本語, otherwise English). `-UiLanguage en|ja` overrides it for one run, also for `tools/migrator/WinEase-Migrator.ps1`. It only changes what is shown: settings, Advanced Debloat item names passed to the build, logs and reports stay English. The texts live in `config/ui-strings/en.json` and `ja.json` (UTF-8).
+- Click **Start WinEase Build** to launch the build process!
 
 #### **Option B: Interactive Console**
 1. Open PowerShell as **Administrator**.
 2. Navigate to the repository directory:
    ```powershell
-   cd <path to your nano11-main folder>
+   cd <path to your WinEase-main folder>
    ```
-3. Launch `nano11builder.ps1`:
+3. Launch `WinEasebuilder.ps1`:
    ```powershell
-   .\nano11builder.ps1
+   .\WinEasebuilder.ps1
    ```
 4. Choose a profile preset from the quick selector menu (`[1] Extreme`, `[2] Balanced`, `[3] Handheld Gaming`, `[4] VM Developer`, `[5] Audio DAW`, `[6] FAT32 Split-WIM`, `[7] Launch GUI`, `[8] Custom`), or customize settings step-by-step.
-5. Once `nano11.iso` is generated, follow the [Installation & Setup Guide](#️-installation--setup-guide-zero-click-automated-installation) below.
+5. Once `WinEase.iso` is generated, follow the [Installation & Setup Guide](#️-installation--setup-guide-zero-click-automated-installation) below.
 
 #### **PC Migration Tool (`tools/migrator`)**
-`tools/migrator/Nano11-Migrator.ps1` backs up and restores personal folders, game saves and app settings between PCs. It is separate from the ISO build. With no `-Mode` it opens a two-tab wizard (Backup / Restore); with `-Mode` it runs on the command line:
+`tools/migrator/WinEase-Migrator.ps1` backs up and restores personal folders, game saves and app settings between PCs. It is separate from the ISO build. With no `-Mode` it opens a two-tab wizard (Backup / Restore); with `-Mode` it runs on the command line:
 ```powershell
-.\tools\migrator\Nano11-Migrator.ps1 -Mode ListRules
-.\tools\migrator\Nano11-Migrator.ps1 -Mode Estimate -PackagePath D:\backup -RuleIds MyCustomGame
-.\tools\migrator\Nano11-Migrator.ps1 -Mode Backup   -PackagePath D:\backup -UserFolders Documents,Desktop -DryRun
-.\tools\migrator\Nano11-Migrator.ps1 -Mode Verify   -PackagePath D:\backup
-.\tools\migrator\Nano11-Migrator.ps1 -Mode Restore  -PackagePath D:\backup -RetryFailedOnly
+.\tools\migrator\WinEase-Migrator.ps1 -Mode ListRules
+.\tools\migrator\WinEase-Migrator.ps1 -Mode Estimate -PackagePath D:\backup -RuleIds MyCustomGame
+.\tools\migrator\WinEase-Migrator.ps1 -Mode Backup   -PackagePath D:\backup -UserFolders Documents,Desktop -DryRun
+.\tools\migrator\WinEase-Migrator.ps1 -Mode Verify   -PackagePath D:\backup
+.\tools\migrator\WinEase-Migrator.ps1 -Mode Restore  -PackagePath D:\backup -RetryFailedOnly
 ```
 Modes: `ExportApps`, `Backup`, `Restore`, `Verify`, `Estimate` (plus the older `ListRules` and `RecoveryCheck`). Credential and token files are excluded unless `-IncludeSecrets` is given. Standard rules live in `tools/migrator/migration-rules.psd1`; add your own game saves and app settings in `config/user/user-migration-rules.psd1` (see [docs/EXTENSIBILITY_GUIDE.md](docs/EXTENSIBILITY_GUIDE.md) (English) / [docs/EXTENSIBILITY_GUIDE.ja.md](docs/EXTENSIBILITY_GUIDE.ja.md) (Japanese)).
 
@@ -260,30 +260,30 @@ Modes: `ExportApps`, `Backup`, `Restore`, `Verify`, `Estimate` (plus the older `
 You can run the builder completely unattended with built-in presets and modular optimization flags:
 ```powershell
 # 1-Click build with built-in profile preset:
-.\nano11builder.ps1 -NonInteractive -Profile "extreme"
+.\WinEasebuilder.ps1 -NonInteractive -Profile "extreme"
 
 # High-performance gaming build with aggressive CPU boost, mode-2 FSE & low latency:
-.\nano11builder.ps1 -NonInteractive -Profile "extreme" -MMCSSGaming -NvidiaLowLatency -DisableFSE -NoKernelPaging
+.\WinEasebuilder.ps1 -NonInteractive -Profile "extreme" -MMCSSGaming -NvidiaLowLatency -DisableFSE -NoKernelPaging
 
 # Build for Handheld Gaming (ROG Ally, Steam Deck, Legion Go):
-.\nano11builder.ps1 -NonInteractive -Profile "handheld" -HibernateMode Reduced -CrashDumpMode Small
+.\WinEasebuilder.ps1 -NonInteractive -Profile "handheld" -HibernateMode Reduced -CrashDumpMode Small
 
 # Build for VM & Developer Workstations (WSL2, Hyper-V):
-.\nano11builder.ps1 -NonInteractive -Profile "vm"
+.\WinEasebuilder.ps1 -NonInteractive -Profile "vm"
 
 # Pro audio production build with DAW MMCSS prioritization and USB suspend disabled:
-.\nano11builder.ps1 -NonInteractive -Profile "audio" -DAWMode -DisableUSBSuspend
+.\WinEasebuilder.ps1 -NonInteractive -Profile "audio" -DAWMode -DisableUSBSuspend
 
 # Fast build with /Compress:fast, dynamic VHDX scratch disk and pure UEFI boot:
-.\nano11builder.ps1 -NonInteractive -Profile "extreme" -UseVHDX -FastExport -UefiOnly
+.\WinEasebuilder.ps1 -NonInteractive -Profile "extreme" -UseVHDX -FastExport -UefiOnly
 
 # Run built-in self-test diagnostics without needing an ISO:
-.\nano11builder.ps1 -TestSelf
+.\WinEasebuilder.ps1 -TestSelf
 
 # Fast-track Phase 14-18 (boot.wim patch + ISO mastering) from the payload already
 # verified by the previous run - rebuilds the ISO in minutes without re-running the
 # 15-minute debloat pipeline (recovers a failed final ISO generation):
-.\nano11builder.ps1 -ResumeIsoOnly
+.\WinEasebuilder.ps1 -ResumeIsoOnly
 
 # Host environment stability diagnostics run automatically at every build start
 # (RAM capacity, free space, SMART health - helps diagnose WIM 577 / hash-jitter).
@@ -294,7 +294,7 @@ You can run the builder completely unattended with built-in presets and modular 
 | :--- | :--- |
 | `-GUI` (alias: `-UI`) | Launches the dark-themed Graphical User Interface frontend |
 | `-UiLanguage <en\|ja>` | Display language of the GUI windows (display only). Default: the language saved by the GUI, else the OS display language |
-| `-ClassicGui` | With `-GUI`: show the classic WinForms window even when the WinUI 3 window (`gui/winui/bin/Nano11Gui.exe`) is built |
+| `-ClassicGui` | With `-GUI`: show the classic WinForms window even when the WinUI 3 window (`gui/winui/bin/WinEaseGui.exe`) is built |
 | `-Profile <extreme\|balanced\|fat32\|handheld\|vm\|audio>` (alias: `-Preset`) | Applies an in-memory configuration preset (Built-in: zero external JSON dependency) |
 | `-UseVHDX` (alias: `-FastVHDX`) | Dynamically mounts an expandable 30 GB VHDX volume as the DISM scratch directory, eliminating host fragmentation and accelerating build times |
 | `-DryRun` (supports `-WhatIf`) | Resolves and verifies configuration, options, and paths without modifying disks or servicing images |
@@ -355,13 +355,13 @@ You can run the builder completely unattended with built-in presets and modular 
 > [!TIP]
 > **CLI Option Priority Guarantee**: Specified CLI switches are strictly honored immediately. When running interactively, options already provided via CLI parameters are automatically applied and their prompts are skipped (preventing accidental overrides by pressing Enter). In unattended mode (`-NonInteractive`), all options execute deterministically without any prompt hangs.
 
-When finished, your bootable ISO will be generated in the script directory as `nano11.iso` with SHA256 verification hash displayed!
+When finished, your bootable ISO will be generated in the script directory as `WinEase.iso` with SHA256 verification hash displayed!
 
 ---
 
 ## 🛠️ Installation & Setup Guide (Zero-Click Automated Installation)
 
-nano11 creates an ultra-minimal, high-performance Windows 11 installation by stripping redundant cloud bloatware, telemetry, and Microsoft Account requirements.
+WinEase creates an ultra-minimal, high-performance Windows 11 installation by stripping redundant cloud bloatware, telemetry, and Microsoft Account requirements.
 
 ### ⚡ Zero-Click Fully Automated Installation (Default: Fully Automated, No Shift+F10 Required)
 In this version, setup completion flags (`ChildCompletion\setup.exe = 3`, `SetupType = 0`, `SystemSetupInProgress = 0`, `OOBEInProgress = 0`, etc.) are pre-configured across the `specialize` pass of `autounattend.xml`, offline registry hives, and `SetupComplete.cmd` / `FirstLogon.ps1`.
@@ -374,7 +374,7 @@ As a result, **the installation proceeds 100% automatically (zero-click) from in
 In the rare event that setup pauses with "Windows could not complete the installation" (e.g., when installing manually without the answer file or in legacy environments), you can reach the desktop in under one minute using the following steps:
 
 #### **1. Boot & Standard Installation from ISO**
-- Flash the generated `nano11.iso` to a USB drive using Rufus or Ventoy (or mount it in a virtual machine) and boot your PC.
+- Flash the generated `WinEase.iso` to a USB drive using Rufus or Ventoy (or mount it in a virtual machine) and boot your PC.
 - `autounattend.xml` will automatically handle disk partitioning, CompactOS compression, and file expansion.
 
 #### **2. If an Error Dialog Appears**
@@ -417,7 +417,7 @@ Use either method below (GUI or single-line command) to update the registry:
 
 ## 🎬 Original Video Demo by NTDEV
 
-[![Here's how to use nano11 builder](https://img.youtube.com/vi/YIOesMc50Dw/maxresdefault.jpg)](https://www.youtube.com/watch?v=YIOesMc50Dw)
+[![Here's how to use WinEase builder](https://img.youtube.com/vi/YIOesMc50Dw/maxresdefault.jpg)](https://www.youtube.com/watch?v=YIOesMc50Dw)
 
 ---
 
@@ -431,7 +431,7 @@ This working copy carries the following changes on top of the upstream fork:
 - **CrossDeviceResume.exe enforcement**: online FirstLogon block that kills the resume host and re-asserts the IFEO debugger redirect (the executable ships inside the protected `MicrosoftWindows.Client.CBS` shell package on 26H2, so neutralization - not deletion - is the correct approach).
 - **Build reliability**: `-ResumeIsoOnly` fast re-ISO mode, extended Phase 18 verification retry cooldown, and automatic host-environment health diagnostics (RAM / free space / SMART) at every build start - aimed at the Oct 16 failure pattern (DISM 577 transient corruption + final ISO payload hash mismatch on a flaky host).
 - **Repository hygiene**: `LICENSE` (MIT) restored, `tools/custom-scripts/` skeleton added, log rotation now also prunes stale `build_diagnostics` runs, and the repo is version-controlled with git.
-- **Module extraction (F8)**: pure utility helpers (`ConvertTo-Nano11NormalizedPath`, `Test-Nano11PathWithin`, `Test-IsNtfsVolume`, `Test-IsSafePathToDelete`, `New-Nano11BuildId`) moved to `nano11helpers.ps1` and dot-sourced at startup, reducing the main script size and improving maintainability.
+- **Module extraction (F8)**: pure utility helpers (`ConvertTo-WinEaseNormalizedPath`, `Test-WinEasePathWithin`, `Test-IsNtfsVolume`, `Test-IsSafePathToDelete`, `New-WinEaseBuildId`) moved to `WinEasehelpers.ps1` and dot-sourced at startup, reducing the main script size and improving maintainability.
 - **ARM64 (F9)**: boot.wim architecture sanity check added to Phase 14 (warns on arch mismatch); UEFI-only bootdata already used for ARM64 targets. Verification on real ARM64 hardware/VM is recommended (not yet performed in this environment).
 
 ## 📝 Local Fork Revision Notes (2026-10-19)
@@ -439,15 +439,15 @@ This working copy carries the following changes on top of the upstream fork:
 - **GUI settings now actually reach the build**: 24 tweak switches whose names did not match what Phase 10 read (or had no implementation), 7 variable-backed toggles such as `RadicalRAM` (previously always off), and 15 Advanced Debloat Standard items that were silently skipped are now wired through, implemented, or removed from the GUI. Older profiles using legacy key names keep working through aliases.
 - **Select All / Clear All buttons fixed and extended**: the buttons on tabs 2-5 did nothing; they now work, and the Advanced Debloat tab got them too.
 - **Single source of truth for settings**: every tweak and component setting lives in `config/tweaks.psd1`; the GUI, profiles and CLI switches are generated from it so names can no longer drift apart.
-- **GUI split out**: the WinForms GUI moved to `gui/Nano11Gui.ps1` with shared control helpers (about 1,200 lines out of `nano11builder.ps1`).
+- **GUI split out**: the WinForms GUI moved to `gui/WinEaseGui.ps1` with shared control helpers (about 1,200 lines out of `WinEasebuilder.ps1`).
 - **Safer AppX folder cleanup**: no more recursive `takeown /R` / `icacls /T`; junctions are removed as links so deletion never follows them out of the image.
-- **Benchmark tooling**: `tools/Measure-Nano11GuestBaseline.ps1` and `tools/Compare-Nano11Benchmarks.ps1` measure and compare installed-system footprint, idle load and boot time.
+- **Benchmark tooling**: `tools/Measure-WinEaseGuestBaseline.ps1` and `tools/Compare-WinEaseBenchmarks.ps1` measure and compare installed-system footprint, idle load and boot time.
 - **Code hygiene**: `PSScriptAnalyzerSettings.psd1` added; the codebase reports zero Error/Warning findings and the Pester suite (64 tests) enforces it.
 - **Toggle-state loading fixed**: GUI initialization called `ContainsKey` on `[ordered]@{}` (not implemented in Windows PowerShell 5.1), which logged 122 method-not-found errors per launch and left the per-tweak values saved in profiles unapplied; the GUI loader and Phase 10's `Test-TweakEnabled` now use `Contains`.
-- **Build verification (2026-10-19)**: a full GUI-driven run completed the pipeline with "Build succeeded and safety checks passed" and produced `nano11.iso` (7,888,314,368 bytes).
+- **Build verification (2026-10-19)**: a full GUI-driven run completed the pipeline with "Build succeeded and safety checks passed" and produced `WinEase.iso` (7,888,314,368 bytes).
 - **Dependency & impact checker (M1)**: `config/dependencies.psd1` catalog (174 entries) with Conflicts/Impacts/Unknowns detection. GUI "Check Dependencies" button, `-StrictDependencyCheck` CLI switch, HTML report section.
-- **User extensibility engine (M2)**: `config/user/user-tweaks.psd1` + `lib/Nano11Extensions.ps1` (6 functions). User tweaks/presets/custom scripts integrated into GUI, CLI, profiles. GUI Tab 8 "Migration & Backup".
-- **PC migration & backup engine (M3)**: `tools/migrator/migration-rules.psd1` (15 game + 16 app rules) + `tools/migrator/Nano11Migration.ps1` (13 functions). Custom file/folder backup preserving directory structure. `tools/migrator/Nano11-Migrator.ps1` standalone CLI/GUI wizard.
+- **User extensibility engine (M2)**: `config/user/user-tweaks.psd1` + `lib/WinEaseExtensions.ps1` (6 functions). User tweaks/presets/custom scripts integrated into GUI, CLI, profiles. GUI Tab 8 "Migration & Backup".
+- **PC migration & backup engine (M3)**: `tools/migrator/migration-rules.psd1` (15 game + 16 app rules) + `tools/migrator/WinEaseMigration.ps1` (13 functions). Custom file/folder backup preserving directory structure. `tools/migrator/WinEase-Migrator.ps1` standalone CLI/GUI wizard.
 - **Extensibility guide (M4)**: `docs/EXTENSIBILITY_GUIDE.md` (English) and `docs/EXTENSIBILITY_GUIDE.ja.md` (Japanese).
 
 ---
@@ -455,39 +455,39 @@ This working copy carries the following changes on top of the upstream fork:
 ## 📁 Repository Structure
 
 ```
-nano11-main/
-├── nano11builder.ps1          # Main orchestrator (params, options, try/catch)
-├── nano11helpers.ps1          # Pure utility helpers (dot-sourced at startup)
+WinEase-main/
+├── WinEasebuilder.ps1          # Main orchestrator (params, options, try/catch)
+├── WinEasehelpers.ps1          # Pure utility helpers (dot-sourced at startup)
 ├── lib/                       # Builder function libraries (dot-sourced into the builder's scope)
-│   ├── Nano11Mount.ps1        # DISM mount discovery/cleanup, mount directories, offline hives
-│   ├── Nano11FileSystem.ps1   # Directory safety checks, ownership/ACL, robust deletion, capacity
-│   ├── Nano11Wim.ps1          # Native WIM export, fingerprinting and repair
-│   ├── Nano11Report.ps1       # HTML build report (nano11_report.html)
-│   ├── Nano11Resume.ps1       # Resume-ISO mode and phase checkpoints
-│   ├── Nano11SelfTest.ps1     # Self-test suite (loaded only for -TestSelf)
-│   └── Nano11Extensions.ps1   # User extensibility engine (user tweaks, presets, custom scripts, config diff, recovery readiness)
+│   ├── WinEaseMount.ps1        # DISM mount discovery/cleanup, mount directories, offline hives
+│   ├── WinEaseFileSystem.ps1   # Directory safety checks, ownership/ACL, robust deletion, capacity
+│   ├── WinEaseWim.ps1          # Native WIM export, fingerprinting and repair
+│   ├── WinEaseReport.ps1       # HTML build report (WinEase_report.html)
+│   ├── WinEaseResume.ps1       # Resume-ISO mode and phase checkpoints
+│   ├── WinEaseSelfTest.ps1     # Self-test suite (loaded only for -TestSelf)
+│   └── WinEaseExtensions.ps1   # User extensibility engine (user tweaks, presets, custom scripts, config diff, recovery readiness)
 ├── gui/
-│   ├── Nano11Gui.ps1          # Classic WinForms GUI, one function per tab (loaded only for -GUI / menu [7]); the migrator window reuses its parts
-│   ├── Nano11WinUiHost.ps1    # Starts the WinUI 3 window and answers its requests (JSON lines over stdin/stdout)
+│   ├── WinEaseGui.ps1          # Classic WinForms GUI, one function per tab (loaded only for -GUI / menu [7]); the migrator window reuses its parts
+│   ├── WinEaseWinUiHost.ps1    # Starts the WinUI 3 window and answers its requests (JSON lines over stdin/stdout)
 │   └── winui/                 # WinUI 3 window (C#, Windows App SDK); build.ps1 publishes it to winui/bin
 ├── phases/                    # 18 build phases (dot-sourced by orchestrator)
 │   └── 01-environment.ps1 ... 18-iso.ps1   # 09 has two files: 09-physical-debloat.ps1 and 09-winsxs.ps1
 ├── config/
 │   ├── tweaks.psd1            # Single source of truth for every tweak/component setting and CLI switch pair
 │   ├── dependencies.psd1      # Dependency & feature-impact catalog (conflicts, impacts, unknowns)
-│   ├── nano11.config.schema.json  # JSON Schema for profile validation
+│   ├── WinEase.config.schema.json  # JSON Schema for profile validation
 │   └── user/                  # User-edited files (all optional)
 │       ├── user-tweaks.psd1          # User-defined tweaks, presets and custom scripts
 │       └── user-migration-rules.psd1 # User-defined migration rules
 ├── tools/                     # Optional tooling
 │   ├── migrator/              # PC migration tool, separate from the ISO build (bundled into the ISO with -IncludeMigrationAssistant)
-│   │   ├── Nano11-Migrator.ps1    # Standalone migration & backup tool (CLI modes + two-tab GUI wizard)
-│   │   ├── Nano11Migration.ps1    # Migration engine (backup, restore, verify, app inventory, report)
+│   │   ├── WinEase-Migrator.ps1    # Standalone migration & backup tool (CLI modes + two-tab GUI wizard)
+│   │   ├── WinEaseMigration.ps1    # Migration engine (backup, restore, verify, app inventory, report)
 │   │   └── migration-rules.psd1   # Standard migration rules (game saves, app configs)
 │   ├── custom-scripts/        # User scripts by stage: PreBuild/ OfflineImage/ FirstLogon/ UserOnce/ (see its README.md)
-│   ├── nano11-physical-debloat/   # Rust tool for Advanced Debloat physical deletion
-│   ├── Measure-Nano11GuestBaseline.ps1  # In-guest footprint / idle load / boot-time measurement
-│   └── Compare-Nano11Benchmarks.ps1     # Multi-run benchmark statistical comparison
+│   ├── winease-physical-debloat/   # Rust tool for Advanced Debloat physical deletion
+│   ├── Measure-WinEaseGuestBaseline.ps1  # In-guest footprint / idle load / boot-time measurement
+│   └── Compare-WinEaseBenchmarks.ps1     # Multi-run benchmark statistical comparison
 ├── scripts/                   # Embedded setup scripts (injected into autounattend.xml)
 │   ├── Specialize.ps1
 │   ├── FirstLogon.ps1
@@ -502,10 +502,10 @@ nano11-main/
 │   ├── EXTENSIBILITY_GUIDE.ja.md # Same guide in Japanese
 │   └── dev/SESSION_BRIEFS.md  # Work briefs used for the S1-S12 fix sessions
 ├── tests/
-│   └── nano11.Tests.ps1       # Pester test suite
+│   └── WinEase.Tests.ps1       # Pester test suite
 ├── .github/workflows/ci.yml   # CI workflow
 ├── autounattend.xml           # Unattended setup template (scripts injected at build time)
-├── nano11-GUI.bat             # GUI launcher
+├── WinEase-GUI.bat             # GUI launcher
 ├── oscdimg.exe                # Bundled ISO mastering tool
 ├── PSScriptAnalyzerSettings.psd1  # Linter configuration
 ├── LICENSE                    # MIT License

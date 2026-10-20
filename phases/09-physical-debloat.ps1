@@ -5,9 +5,9 @@
 Write-Host "Configuring physical debloat (experimental)..." -ForegroundColor Cyan
 
 # Resolve paths
-$rustBinary = Join-Path -Path $scriptDir -ChildPath "tools\nano11-physical-debloat\target\release\nano11-physical-debloat.exe"
+$rustBinary = Join-Path -Path $scriptDir -ChildPath "tools\winease-physical-debloat\target\release\winease-physical-debloat.exe"
 if (-not (Test-Path -LiteralPath $rustBinary)) {
-    $rustBinary = Join-Path -Path $scriptDir -ChildPath "tools\nano11-physical-debloat\target\debug\nano11-physical-debloat.exe"
+    $rustBinary = Join-Path -Path $scriptDir -ChildPath "tools\winease-physical-debloat\target\debug\winease-physical-debloat.exe"
 }
 
 $hasStandardItems = $script:advancedDebloatStandard -and $script:advancedDebloatStandard.Count -gt 0
@@ -46,10 +46,10 @@ if ([string]::IsNullOrWhiteSpace("$scratchDir")) {
             if ($script:BaseWorkDir) { $physWorkspaceRoots += "$($script:BaseWorkDir)" }
             if ($script:MountAllocationRoot) { $physWorkspaceRoots += "$($script:MountAllocationRoot)" }
             if ($baseWorkDir) { $physWorkspaceRoots += "$baseWorkDir" }
-            if ($physWorkspaceRoots.Count -gt 0 -and (Get-Command -Name 'Test-Nano11PathWithin' -ErrorAction SilentlyContinue)) {
+            if ($physWorkspaceRoots.Count -gt 0 -and (Get-Command -Name 'Test-WinEasePathWithin' -ErrorAction SilentlyContinue)) {
                 $physInside = $false
                 foreach ($physRoot in $physWorkspaceRoots) {
-                    if (Test-Nano11PathWithin -Path $physMountFull -Root $physRoot) { $physInside = $true; break }
+                    if (Test-WinEasePathWithin -Path $physMountFull -Root $physRoot) { $physInside = $true; break }
                 }
                 if (-not $physInside) {
                     $physMountError = "scratchDir is outside the workspace/mount roots ($($physWorkspaceRoots -join ', '))"
@@ -78,7 +78,7 @@ if ($safeDebloatMode) { $physWinSxSBlockReason = 'Safe Debloat Mode (component-s
 elseif (($physTargetBuild -ge 26100) -and (-not $ForceWinSxSCleanup)) { $physWinSxSBlockReason = "build $physTargetBuild (24H2+) checkpoint-LCU corruption protection (0x80070570)" }
 
 # --- DISM helpers for Standard items (servicing-stack removal, no raw file deletion) ---
-function Invoke-Nano11DebloatFeatureRemoval {
+function Invoke-WinEaseDebloatFeatureRemoval {
     param([string[]]$FeatureNames)
     foreach ($feature in $FeatureNames) {
         if ($isDryRunMode) { Write-Host "    [DRY] Would disable feature: $feature (/Remove)" -ForegroundColor Yellow; continue }
@@ -90,7 +90,7 @@ function Invoke-Nano11DebloatFeatureRemoval {
     }
 }
 
-function Invoke-Nano11DebloatCapabilityRemoval {
+function Invoke-WinEaseDebloatCapabilityRemoval {
     param([string[]]$NamePatterns)
     $capLines = & dism.exe /English "/image:$scratchDir" /Get-Capabilities /Format:Table 2>&1
     $installed = @($capLines | ForEach-Object {
@@ -264,46 +264,46 @@ if ($hasStandardItems) {
             $handled = $true
         }
         elseif ($item -match 'Windows Sandbox') {
-            Invoke-Nano11DebloatFeatureRemoval -FeatureNames @('Containers-DisposableClientVM')
+            Invoke-WinEaseDebloatFeatureRemoval -FeatureNames @('Containers-DisposableClientVM')
             $handled = $true
         }
         elseif ($item -match 'WSL / VM Platform') {
             if ($wslSupport) { Write-Host "    [SKIP] WSL support is enabled for this build; WSL / VM Platform kept" -ForegroundColor Yellow }
-            else { Invoke-Nano11DebloatFeatureRemoval -FeatureNames @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform') }
+            else { Invoke-WinEaseDebloatFeatureRemoval -FeatureNames @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform') }
             $handled = $true
         }
         elseif ($item -match '\.NET Framework 3\.5') {
-            Invoke-Nano11DebloatFeatureRemoval -FeatureNames @('NetFx3')
+            Invoke-WinEaseDebloatFeatureRemoval -FeatureNames @('NetFx3')
             $handled = $true
         }
         elseif ($item -match 'PowerShell ISE') {
-            Invoke-Nano11DebloatCapabilityRemoval -NamePatterns @('Microsoft.Windows.PowerShell.ISE~*')
+            Invoke-WinEaseDebloatCapabilityRemoval -NamePatterns @('Microsoft.Windows.PowerShell.ISE~*')
             $handled = $true
         }
         elseif ($item -match 'Steps Recorder') {
-            Invoke-Nano11DebloatCapabilityRemoval -NamePatterns @('App.StepsRecorder~*')
+            Invoke-WinEaseDebloatCapabilityRemoval -NamePatterns @('App.StepsRecorder~*')
             $handled = $true
         }
         elseif ($item -match 'Telnet/TFTP') {
-            Invoke-Nano11DebloatFeatureRemoval -FeatureNames @('TelnetClient', 'TFTP')
+            Invoke-WinEaseDebloatFeatureRemoval -FeatureNames @('TelnetClient', 'TFTP')
             $handled = $true
         }
         elseif ($item -match 'SNMP') {
-            Invoke-Nano11DebloatCapabilityRemoval -NamePatterns @('SNMP.Client~*', 'WMI-SNMP-Provider.Client~*')
+            Invoke-WinEaseDebloatCapabilityRemoval -NamePatterns @('SNMP.Client~*', 'WMI-SNMP-Provider.Client~*')
             $handled = $true
         }
         elseif ($item -match 'Identity Foundation') {
-            Invoke-Nano11DebloatFeatureRemoval -FeatureNames @('Windows-Identity-Foundation')
+            Invoke-WinEaseDebloatFeatureRemoval -FeatureNames @('Windows-Identity-Foundation')
             $handled = $true
         }
         elseif ($item -match 'Fax service') {
-            Invoke-Nano11DebloatFeatureRemoval -FeatureNames @('FaxServicesClientPackage')
-            Invoke-Nano11DebloatCapabilityRemoval -NamePatterns @('Print.Fax.Scan~*')
+            Invoke-WinEaseDebloatFeatureRemoval -FeatureNames @('FaxServicesClientPackage')
+            Invoke-WinEaseDebloatCapabilityRemoval -NamePatterns @('Print.Fax.Scan~*')
             $handled = $true
         }
         elseif ($item -match 'XPS Viewer') {
-            Invoke-Nano11DebloatCapabilityRemoval -NamePatterns @('XPS.Viewer~*')
-            Invoke-Nano11DebloatFeatureRemoval -FeatureNames @('Printing-XPSServices-Features')
+            Invoke-WinEaseDebloatCapabilityRemoval -NamePatterns @('XPS.Viewer~*')
+            Invoke-WinEaseDebloatFeatureRemoval -FeatureNames @('Printing-XPSServices-Features')
             $handled = $true
         }
         elseif ($item -match 'help files') {
@@ -502,8 +502,8 @@ if ($hasExperimentalItems -and $script:advancedDebloatExperimental.Count -gt 0) 
     $configPath = Join-Path -Path $logDir -ChildPath "experimental-debloat.json"
     $configJson = $configObj | ConvertTo-Json -Depth 3
 
-    if (Get-Command -Name 'Write-Nano11TextFileAtomic' -ErrorAction SilentlyContinue) {
-        Write-Nano11TextFileAtomic -Path $configPath -Content $configJson | Out-Null
+    if (Get-Command -Name 'Write-WinEaseTextFileAtomic' -ErrorAction SilentlyContinue) {
+        Write-WinEaseTextFileAtomic -Path $configPath -Content $configJson | Out-Null
     } else {
         [System.IO.File]::WriteAllText($configPath, $configJson, [System.Text.Encoding]::UTF8)
     }
@@ -557,8 +557,8 @@ if ($hasExperimentalItems -and $script:advancedDebloatExperimental.Count -gt 0) 
     }
     $logText = $logLines -join [System.Environment]::NewLine
 
-    if (Get-Command -Name 'Write-Nano11TextFileAtomic' -ErrorAction SilentlyContinue) {
-        Write-Nano11TextFileAtomic -Path $physLogPath -Content $logText | Out-Null
+    if (Get-Command -Name 'Write-WinEaseTextFileAtomic' -ErrorAction SilentlyContinue) {
+        Write-WinEaseTextFileAtomic -Path $physLogPath -Content $logText | Out-Null
     } else {
         try { [System.IO.File]::WriteAllText($physLogPath, $logText, [System.Text.Encoding]::UTF8) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }

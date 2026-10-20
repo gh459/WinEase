@@ -1,5 +1,5 @@
 ﻿# Phase 17: 17-oscdimg
-# Extracted from nano11builder.ps1
+# Extracted from WinEasebuilder.ps1
 # Dot-sourced by the main orchestrator
 
 
@@ -7,7 +7,7 @@
 $oscdimgCandidates = @(
     (Join-Path -Path $scriptDir -ChildPath "oscdimg.exe"),
     (Join-Path -Path (Get-Location).Path -ChildPath "oscdimg.exe"),
-    (Join-Path -Path "$env:USERPROFILE\Downloads\nano11-main" -ChildPath "oscdimg.exe"),
+    (Join-Path -Path "$env:USERPROFILE\Downloads\WinEase-main" -ChildPath "oscdimg.exe"),
     "${env:ProgramFiles(x86)}\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe",
     "${env:ProgramFiles(x86)}\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\arm64\Oscdimg\oscdimg.exe",
     "$env:ProgramFiles\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe",
@@ -38,8 +38,8 @@ if (-not $oscdimgExe) {
     Write-Host "Downloading oscdimg.exe..." -ForegroundColor Cyan
 
     $mirrors = @(
-        "https://raw.githubusercontent.com/gh459/nano11/main/oscdimg.exe",
-        "https://github.com/gh459/nano11/raw/main/oscdimg.exe",
+        "https://raw.githubusercontent.com/gh459/WinEase/main/oscdimg.exe",
+        "https://github.com/gh459/WinEase/raw/main/oscdimg.exe",
         "https://msdl.microsoft.com/download/symbols/oscdimg.exe/3D44737265000/oscdimg.exe"
     )
 
@@ -76,7 +76,7 @@ try {
                 $wc = New-Object System.Net.WebClient
                 $wc.Headers.Add("Host", "raw.githubusercontent.com")
                 $wc.Headers.Add("User-Agent", "Mozilla/5.0")
-                $wc.DownloadFile("https://$($dnsEntry.IP4Address)/gh459/nano11/main/oscdimg.exe", $tempOscdPath)
+                $wc.DownloadFile("https://$($dnsEntry.IP4Address)/gh459/WinEase/main/oscdimg.exe", $tempOscdPath)
                 if ((Test-Path -LiteralPath $tempOscdPath) -and (Test-OscdimgIntegrity -OscdimgPath $tempOscdPath)) {
                     Move-Item -LiteralPath $tempOscdPath -Destination $targetOscdPath -Force
                     $oscdimgExe = $targetOscdPath
@@ -94,6 +94,6 @@ try {
 if (-not $oscdimgExe) {
     $script:DiagnosticData.FailurePhase = "Phase 17: Locate or Verify oscdimg.exe"
     $script:DiagnosticData.FailureMessage = "Failed to locate or download an Authenticode-verified oscdimg.exe."
-    Write-Nano11DiagnosticReport "Missing oscdimg"
+    Write-WinEaseDiagnosticReport "Missing oscdimg"
     throw "Phase 17: No Authenticode-verified oscdimg.exe available. Cannot proceed with bootable ISO generation."
 }

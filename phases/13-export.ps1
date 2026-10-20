@@ -1,11 +1,11 @@
 ﻿# Phase 13: 13-export
-# Extracted from nano11builder.ps1
+# Extracted from WinEasebuilder.ps1
 # Dot-sourced by the main orchestrator
 
 
 # 13. Export modified image
-$finalEsd = Join-Path -Path "$nano11Dir\sources" -ChildPath "install.esd"
-$tempWim  = Join-Path -Path "$nano11Dir\sources" -ChildPath "install_export.wim"
+$finalEsd = Join-Path -Path "$WinEaseDir\sources" -ChildPath "install.esd"
+$tempWim  = Join-Path -Path "$WinEaseDir\sources" -ChildPath "install_export.wim"
 $exportScratch = Join-Path -Path $baseWorkDir -ChildPath "dism_export_scratch"
 
 # Clean up any leftover temporary/broken export files and scratch dir
@@ -91,7 +91,7 @@ if (-not $exportSuccess) {
     $script:DiagnosticData.ExportSucceeded = $false
     $script:DiagnosticData.FailurePhase = "Phase 13: Export Image"
     $script:DiagnosticData.FailureMessage = "Export-Image with /CheckIntegrity failed under all compression modes. Retaining original pre-export WIM for diagnosis."
-    Write-Nano11DiagnosticReport "Export failed"
+    Write-WinEaseDiagnosticReport "Export failed"
     throw "Phase 13: Export-Image with /CheckIntegrity failed under all compression modes. Halting build to preserve pre-export WIM."
 }
 

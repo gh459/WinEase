@@ -1,14 +1,14 @@
 English: [EXTENSIBILITY_GUIDE.md](EXTENSIBILITY_GUIDE.md) / 日本語版: このファイル
 
-# nano11 拡張ガイド
+# WinEase 拡張ガイド
 
-nano11 本体のコードを書き換えずに、自分用の設定・スクリプト・バックアップ対象を足すためのガイドです。
+WinEase 本体のコードを書き換えずに、自分用の設定・スクリプト・バックアップ対象を足すためのガイドです。
 
 - **第1部 初心者向けクイックスタート** … ファイルに数行足すだけでできること
 - **第2部 リファレンス** … フォルダ構成、カスタムスクリプトの仕組み、エラー時の扱い、安全な動作確認
 
 ユーザーが編集するファイルは `config/user/` に、カスタムスクリプトは `tools/custom-scripts/<Stage>/` にまとまっています。
-どれも省略可能です。無ければ nano11 は拡張なしで普通に動きます。
+どれも省略可能です。無ければ WinEase は拡張なしで普通に動きます。
 
 ---
 
@@ -38,7 +38,7 @@ nano11 本体のコードを書き換えずに、自分用の設定・スクリ�
    )
    ```
 
-3. 保存して、`nano11-GUI.bat` で GUI を起動します。
+3. 保存して、`WinEase-GUI.bat` で GUI を起動します。
 4. `Category = 'UI'` なので **5. UI & Shell** タブの一番下にチェックボックスが増えています。
    `Security` / `Privacy` / `Performance` 以外のカテゴリ(`System`、`Gaming`、`UserCustom` など)にした場合は **9. User Tweaks** タブに出ます。
 5. チェックを入れてビルドすると、フェーズ10(レジストリ)でその設定がイメージに書き込まれます。
@@ -76,7 +76,7 @@ nano11 本体のコードを書き換えずに、自分用の設定・スクリ�
 
 ## ② 標準で対応していないゲームのセーブフォルダを移行対象に足す
 
-PC 移行ツール(`tools/migrator/Nano11-Migrator.ps1`)は、標準で約30種類のゲームとアプリの設定に対応しています(`tools/migrator/migration-rules.psd1`)。
+PC 移行ツール(`tools/migrator/WinEase-Migrator.ps1`)は、標準で約30種類のゲームとアプリの設定に対応しています(`tools/migrator/migration-rules.psd1`)。
 載っていないゲームは自分で足せます。
 
 ### 手順
@@ -103,17 +103,17 @@ PC 移行ツール(`tools/migrator/Nano11-Migrator.ps1`)は、標準で約30種�
 3. 保存したら、ルールが認識されているか確認します。
 
    ```powershell
-   .\tools\migrator\Nano11-Migrator.ps1 -Mode ListRules
+   .\tools\migrator\WinEase-Migrator.ps1 -Mode ListRules
    ```
 
 4. まず容量の見積もりと、書き込みなしの試し実行をします(`D:\backup` は例です)。
 
    ```powershell
-   .\tools\migrator\Nano11-Migrator.ps1 -Mode Estimate -PackagePath D:\backup -RuleIds MyCustomGame
-   .\tools\migrator\Nano11-Migrator.ps1 -Mode Backup -PackagePath D:\backup -RuleIds MyCustomGame -DryRun
+   .\tools\migrator\WinEase-Migrator.ps1 -Mode Estimate -PackagePath D:\backup -RuleIds MyCustomGame
+   .\tools\migrator\WinEase-Migrator.ps1 -Mode Backup -PackagePath D:\backup -RuleIds MyCustomGame -DryRun
    ```
 
-   問題なければ `-DryRun` を外して実行します。GUI で行うときは、ビルド用 GUI の **8. Migration & Backup** タブか、引数なしで起動した Nano11-Migrator のウィンドウから選べます。
+   問題なければ `-DryRun` を外して実行します。GUI で行うときは、ビルド用 GUI の **8. Migration & Backup** タブか、引数なしで起動した WinEase-Migrator のウィンドウから選べます。
 
 ### 各項目の意味
 
@@ -136,34 +136,34 @@ PC 移行ツール(`tools/migrator/Nano11-Migrator.ps1`)は、標準で約30種�
 ## ① フォルダ構成と各ファイルの担当
 
 ```text
-nano11-main/
-├── nano11builder.ps1      メイン。引数の定義、設定の組み立て、フェーズの呼び出し
-├── nano11helpers.ps1      共通の小さな関数(パス検証、設定ファイルの場所の解決など)
+WinEase-main/
+├── WinEasebuilder.ps1      メイン。引数の定義、設定の組み立て、フェーズの呼び出し
+├── WinEasehelpers.ps1      共通の小さな関数(パス検証、設定ファイルの場所の解決など)
 ├── lib/                   ビルダーが読み込む関数群
 ├── phases/                ビルドの各工程(01〜18)
-├── gui/Nano11Gui.ps1      WinForms の GUI
+├── gui/WinEaseGui.ps1      WinForms の GUI
 ├── config/                設定ファイル
 ├── scripts/               イメージに埋め込むセットアップ用スクリプト
 ├── tools/                 補助ツールとカスタムスクリプト
 ├── profiles/              保存したプロファイル(JSON)
 ├── templates/report.html  レポートの雛形
-└── tests/nano11.Tests.ps1 Pester テスト
+└── tests/WinEase.Tests.ps1 Pester テスト
 ```
 
-`nano11builder.ps1` は `phases/*.ps1` と `lib/*.ps1` を**ドットソース**で読み込み、変数をスクリプトスコープで共有します。
+`WinEasebuilder.ps1` は `phases/*.ps1` と `lib/*.ps1` を**ドットソース**で読み込み、変数をスクリプトスコープで共有します。
 ファイルを足すときも同じ方法で読み込んでください(モジュール化すると変数が見えなくなります)。
 
 ### lib/
 
 | ファイル | 担当 |
 | :--- | :--- |
-| `Nano11Mount.ps1` | DISM のマウント確認とクリーンアップ、マウント用フォルダ、オフラインレジストリ |
-| `Nano11FileSystem.ps1` | フォルダの安全確認、所有権と ACL、強制削除、空き容量 |
-| `Nano11Wim.ps1` | WIM の書き出し、フィンガープリント、修復 |
-| `Nano11Report.ps1` | HTML レポート(`nano11_report.html`) |
-| `Nano11Resume.ps1` | `-ResumeIsoOnly` と工程ごとのチェックポイント |
-| `Nano11SelfTest.ps1` | `-TestSelf` の自己診断(`-TestSelf` のときだけ読み込む) |
-| `Nano11Extensions.ps1` | 拡張エンジン(ユーザー設定の読み込みと実行、カスタムスクリプト、設定比較、復旧準備チェック) |
+| `WinEaseMount.ps1` | DISM のマウント確認とクリーンアップ、マウント用フォルダ、オフラインレジストリ |
+| `WinEaseFileSystem.ps1` | フォルダの安全確認、所有権と ACL、強制削除、空き容量 |
+| `WinEaseWim.ps1` | WIM の書き出し、フィンガープリント、修復 |
+| `WinEaseReport.ps1` | HTML レポート(`WinEase_report.html`) |
+| `WinEaseResume.ps1` | `-ResumeIsoOnly` と工程ごとのチェックポイント |
+| `WinEaseSelfTest.ps1` | `-TestSelf` の自己診断(`-TestSelf` のときだけ読み込む) |
+| `WinEaseExtensions.ps1` | 拡張エンジン(ユーザー設定の読み込みと実行、カスタムスクリプト、設定比較、復旧準備チェック) |
 
 ### phases/
 
@@ -195,7 +195,7 @@ nano11-main/
 | :--- | :--- |
 | `tweaks.psd1` | すべての設定スイッチとコンポーネントの**唯一の定義元**。GUI、プロファイル、CLI はここから作られる |
 | `dependencies.psd1` | 設定の依存関係・影響のカタログ(競合、影響、不明の判定に使う) |
-| `nano11.config.schema.json` | プロファイルの JSON スキーマ |
+| `WinEase.config.schema.json` | プロファイルの JSON スキーマ |
 | `user/user-tweaks.psd1` | ユーザー独自の設定、プリセット、カスタムスクリプト |
 | `user/user-migration-rules.psd1` | ユーザー独自の移行ルール |
 
@@ -205,15 +205,15 @@ nano11-main/
 
 | ファイル | 担当 |
 | :--- | :--- |
-| `gui/Nano11Gui.ps1` | GUI 本体。タブごとの関数に分かれ、ボタンやテキストボックスなどの共通部品も持つ |
-| `tools/migrator/Nano11-Migrator.ps1` | PC 移行・バックアップツール(CLI と GUI ウィザード) |
-| `tools/migrator/Nano11Migration.ps1` | 移行エンジン(バックアップ、復元、アプリ一覧、レポート) |
+| `gui/WinEaseGui.ps1` | GUI 本体。タブごとの関数に分かれ、ボタンやテキストボックスなどの共通部品も持つ |
+| `tools/migrator/WinEase-Migrator.ps1` | PC 移行・バックアップツール(CLI と GUI ウィザード) |
+| `tools/migrator/WinEaseMigration.ps1` | 移行エンジン(バックアップ、復元、アプリ一覧、レポート) |
 | `tools/migrator/migration-rules.psd1` | 標準の移行ルール |
 | `tools/custom-scripts/<Stage>/` | カスタムスクリプトの置き場(次項) |
-| `tools/nano11-physical-debloat/` | 物理削除用の Rust ツール |
-| `tools/Measure-Nano11GuestBaseline.ps1` / `tools/Compare-Nano11Benchmarks.ps1` | インストール後の計測と比較 |
+| `tools/winease-physical-debloat/` | 物理削除用の Rust ツール |
+| `tools/Measure-WinEaseGuestBaseline.ps1` / `tools/Compare-WinEaseBenchmarks.ps1` | インストール後の計測と比較 |
 
-GUI の **8. Migration & Backup** タブは、最初に開いたときに `tools/migrator/Nano11Migration.ps1` を読み込みます(ビルダー本体は移行エンジンを読み込みません)。
+GUI の **8. Migration & Backup** タブは、最初に開いたときに `tools/migrator/WinEaseMigration.ps1` を読み込みます(ビルダー本体は移行エンジンを読み込みません)。
 `-IncludeMigrationAssistant` を付けると、移行ツールとルールが ISO の `Windows\Setup\Scripts\Migration` に同梱されます(個人データは含みません)。
 
 ## ② カスタムスクリプトの4ステージ
@@ -227,33 +227,33 @@ GUI の **8. Migration & Backup** タブは、最初に開いたときに `tools
 | `FirstLogon` | インストール後の初回ログオン時 | 管理者 |
 | `UserOnce` | ユーザープロファイルが初期化された後 | 標準ユーザー |
 
-`PreBuild` と `OfflineImage` は、ビルダーがスクリプトを `-Nano11Context` 付きで直接呼び出します。
-`FirstLogon` と `UserOnce` はビルド時には実行されず、イメージの `Windows\Setup\Scripts\Custom\...` にコピーされてインストール後に動きます(ログは `C:\ProgramData\nano11\Logs\custom-scripts.log`、`UserOnce` は `%TEMP%\UserOnce-custom.log`)。
+`PreBuild` と `OfflineImage` は、ビルダーがスクリプトを `-WinEaseContext` 付きで直接呼び出します。
+`FirstLogon` と `UserOnce` はビルド時には実行されず、イメージの `Windows\Setup\Scripts\Custom\...` にコピーされてインストール後に動きます(ログは `C:\ProgramData\WinEase\Logs\custom-scripts.log`、`UserOnce` は `%TEMP%\UserOnce-custom.log`)。
 `FirstLogon` / `UserOnce` には `.bat` / `.cmd` / `.reg` も置けます(詳しくは `tools/custom-scripts/README.md`)。
 
 ### スクリプトのひな形
 
 ```powershell
-# @Nano11-Id: MyScript
-# @Nano11-Stage: PreBuild
-# @Nano11-Order: 100
-# @Nano11-OnError: Warn
-# @Nano11-Description: 説明
-param($Nano11Context)
-Write-Host "ScratchDir: $($Nano11Context.ScratchDir)"
+# @WinEase-Id: MyScript
+# @WinEase-Stage: PreBuild
+# @WinEase-Order: 100
+# @WinEase-OnError: Warn
+# @WinEase-Description: 説明
+param($WinEaseContext)
+Write-Host "ScratchDir: $($WinEaseContext.ScratchDir)"
 ```
 
-先頭30行のコメントに `# @Nano11-Id` / `Stage` / `Order` / `Condition` / `OnError` / `Description` を書けます。
+先頭30行のコメントに `# @WinEase-Id` / `Stage` / `Order` / `Condition` / `OnError` / `Description` を書けます。
 `Order` の小さい順、同じ値ならファイル名順に実行します。`Condition` に設定キー名を書くと、その設定が有効なときだけ実行します。
 
-### 渡される `$Nano11Context`
+### 渡される `$WinEaseContext`
 
 `PreBuild` / `OfflineImage` のスクリプトに、ハッシュテーブルで渡されます。
 
 | ステージ | 中身 |
 | :--- | :--- |
 | `PreBuild` | `Config`(現在の設定)、`ScriptRoot`(リポジトリのフォルダ) |
-| `OfflineImage` | `ScratchDir`(マウントしたイメージのルート)、`Nano11Dir`、`Config` |
+| `OfflineImage` | `ScratchDir`(マウントしたイメージのルート)、`WinEaseDir`、`Config` |
 
 `FirstLogon` / `UserOnce` のスクリプトには渡されません(インストール後の PC 上で普通に実行されます)。
 
@@ -266,8 +266,8 @@ Write-Host "ScratchDir: $($Nano11Context.ScratchDir)"
 - **`OfflineImage` ステージのスクリプトが動く時点では、これらはもう読み込まれていません。** レジストリを触りたいときは、スクリプト自身で読み込んで、終わったら必ず外してください。
 
   ```powershell
-  param($Nano11Context)
-  $hive = Join-Path $Nano11Context.ScratchDir 'Users\Default\ntuser.dat'
+  param($WinEaseContext)
+  $hive = Join-Path $WinEaseContext.ScratchDir 'Users\Default\ntuser.dat'
   & reg.exe load HKLM\zMyNtuser $hive
   try {
       & reg.exe add 'HKLM\zMyNtuser\Software\MyApp' /v Enabled /t REG_DWORD /d 1 /f
@@ -283,7 +283,7 @@ Write-Host "ScratchDir: $($Nano11Context.ScratchDir)"
 
 ### `OnError`
 
-`CustomScripts` の項目か `# @Nano11-OnError:` で指定します。省略時は `Warn` です。
+`CustomScripts` の項目か `# @WinEase-OnError:` で指定します。省略時は `Warn` です。
 
 | 値 | 動作 |
 | :--- | :--- |
@@ -314,31 +314,31 @@ Write-Host "ScratchDir: $($Nano11Context.ScratchDir)"
 1. **構文と自己診断**: ディスクに何も書き込まず、ISO も不要です。
 
    ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\nano11builder.ps1 -TestSelf
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\WinEasebuilder.ps1 -TestSelf
    ```
 
 2. **DryRun**: 設定、パス、カスタムスクリプトの検出を解決して表示だけします。ディスクやイメージには変更を加えません。`PreBuild` / `OfflineImage` のスクリプトは実行されません。
 
    ```powershell
-   .\nano11builder.ps1 -NonInteractive -Profile balanced -DryRun
+   .\WinEasebuilder.ps1 -NonInteractive -Profile balanced -DryRun
    ```
 
 3. **依存関係の厳格チェック**: 競合や不明があればビルドを止めます。
 
    ```powershell
-   .\nano11builder.ps1 -NonInteractive -Profile balanced -DryRun -StrictDependencyCheck
+   .\WinEasebuilder.ps1 -NonInteractive -Profile balanced -DryRun -StrictDependencyCheck
    ```
 
 4. **プリセットとの差分確認**: 現在の設定が別のプリセット(名前か JSON のパス)とどう違うかを表示して、そのまま終了します。ビルドはしません。
 
    ```powershell
-   .\nano11builder.ps1 -Profile balanced -ComparePreset extreme
+   .\WinEasebuilder.ps1 -Profile balanced -ComparePreset extreme
    ```
 
 5. **Pester テスト**: リポジトリのルールを守っているか(構文、PSScriptAnalyzer の警告 0 件、GUI の配線など)を確認します。
 
    ```powershell
-   Invoke-Pester -Script .\tests\nano11.Tests.ps1
+   Invoke-Pester -Script .\tests\WinEase.Tests.ps1
    ```
 
 6. **移行ツール**: `-Mode Estimate`(容量の見積もり)と `-DryRun`(書き込みなしの試し実行)を先に実行します。

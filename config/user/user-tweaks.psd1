@@ -1,6 +1,6 @@
-# user-tweaks.psd1 - User-defined tweaks, presets and custom scripts for nano11.
+# user-tweaks.psd1 - User-defined tweaks, presets and custom scripts for WinEase.
 #
-# This file is OPTIONAL. If it does not exist, nano11 runs normally without user extensions.
+# This file is OPTIONAL. If it does not exist, WinEase runs normally without user extensions.
 # Users can add their own options here without editing config/tweaks.psd1.
 #
 # SchemaVersion: '1.0'

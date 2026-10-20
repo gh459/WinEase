@@ -1,4 +1,4 @@
-# migration-rules.psd1 - Standard PC migration rules for nano11 (games + app configs + custom paths)
+# migration-rules.psd1 - Standard PC migration rules for WinEase (games + app configs + custom paths)
 @{
     SchemaVersion = '1.0'
 

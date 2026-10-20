@@ -1,18 +1,18 @@
 ﻿# Phase 15: 15-verify
-# Extracted from nano11builder.ps1
+# Extracted from WinEasebuilder.ps1
 # Dot-sourced by the main orchestrator
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', 'activePayloadName', Justification = 'Read by later phases or New-BuildContextFromScriptScope in the shared builder scope')]
 param()
 
 
 # 15. Verify final installation payload
-$wimCheck = Join-Path -Path "$nano11Dir\sources" -ChildPath "install.wim"
+$wimCheck = Join-Path -Path "$WinEaseDir\sources" -ChildPath "install.wim"
 
 if (-not (Test-Path -LiteralPath $wimCheck) -or ((Get-Item -LiteralPath $wimCheck).Length -lt 500MB)) {
     $script:DiagnosticData.FailurePhase = "Phase 15: Payload Verification"
-    $script:DiagnosticData.FailureMessage = "No valid install.wim found in $nano11Dir\sources"
-    Write-Nano11DiagnosticReport "Missing install.wim"
-    throw "CRITICAL ERROR: No valid installation payload (install.wim) found in $nano11Dir\sources!"
+    $script:DiagnosticData.FailureMessage = "No valid install.wim found in $WinEaseDir\sources"
+    Write-WinEaseDiagnosticReport "Missing install.wim"
+    throw "CRITICAL ERROR: No valid installation payload (install.wim) found in $WinEaseDir\sources!"
 }
 
 $wimSizeGB = [math]::Round((Get-Item -LiteralPath $wimCheck).Length / 1GB, 2)
@@ -25,7 +25,7 @@ $verifyScratch = Join-Path -Path $baseWorkDir -ChildPath "deep_apply_scratch_$($
 $verifyLog = Join-Path -Path $script:DiagDir -ChildPath "dism_deep_apply.log"
 $verifyReport = Join-Path -Path $script:DiagDir -ChildPath "final_apply_report.txt"
 
-$metaCapInfo = Test-Nano11MetadataAndCapacity `
+$metaCapInfo = Test-WinEaseMetadataAndCapacity `
     -WimPath $wimCheck `
     -ExpectedEdition $targetEditionName `
     -ExpectedArch $architecture `
@@ -85,7 +85,7 @@ while (-not $applySuccess -and $currentAttempt -lt $maxApplyAttempts) {
     Write-Warning "DISM /Apply-Image /Verify returned ExitCode: $applyExit on attempt $currentAttempt."
 
     # Parse failed files from DISM log
-    $failedFiles = Get-Nano11DeepApplyFailedFiles -LogPath $verifyLog -ApplyDir $verifyApply
+    $failedFiles = Get-WinEaseDeepApplyFailedFiles -LogPath $verifyLog -ApplyDir $verifyApply
     Write-Host "  Detected $($failedFiles.Count) failing file path(s) in DISM log:" -ForegroundColor Yellow
     foreach ($ff in $failedFiles) {
         Write-Host "    - $ff" -ForegroundColor Yellow
@@ -108,7 +108,7 @@ while (-not $applySuccess -and $currentAttempt -lt $maxApplyAttempts) {
 
     foreach ($ff in $failedFiles) {
         Write-Host "  Investigating file integrity in WIM: $ff..." -ForegroundColor Cyan
-        $fp = Get-Nano11WimFileFingerprint -WimPath $wimCheck -Index 1 -ImagePath $ff -WorkDir $baseWorkDir
+        $fp = Get-WinEaseWimFileFingerprint -WimPath $wimCheck -Index 1 -ImagePath $ff -WorkDir $baseWorkDir
         if ($fp -and $fp.StableRead -and $fp.Signature -eq 'Valid') {
             # File inside WIM is stable and digitally valid. DISM hit transient decompression glitch in RAM/cache.
             Write-Host "    [TRANSIENT] $ff stream in WIM is valid (SHA1: $($fp.Sha1), Sig: $($fp.Signature)). DISM hit transient decompression glitch." -ForegroundColor Yellow
@@ -116,7 +116,7 @@ while (-not $applySuccess -and $currentAttempt -lt $maxApplyAttempts) {
         } else {
             # Stream inside WIM is corrupted or invalid. Find a clean replacement and repair.
             Write-Host "    [CORRUPTED] $ff stream in WIM is invalid or modified. Searching reference media for clean original..." -ForegroundColor Red
-            $goodCopy = Find-Nano11ReferenceWimFile -ImagePath $ff -References $refList -WorkDir $baseWorkDir
+            $goodCopy = Find-WinEaseReferenceWimFile -ImagePath $ff -References $refList -WorkDir $baseWorkDir
             if ($goodCopy) {
                 Write-Host "    [FOUND] Clean replacement found in $($goodCopy.Source) (SHA1: $($goodCopy.Sha1))" -ForegroundColor Green
                 $repairs.Add([PSCustomObject]@{
@@ -136,7 +136,7 @@ while (-not $applySuccess -and $currentAttempt -lt $maxApplyAttempts) {
         Write-Host "Self-Healing: Repairing $($repairs.Count) corrupted stream(s) in install.wim..." -ForegroundColor Green
         try {
             $repairCompMode = if ($fastExport) { '/Compress:fast' } else { '/Compress:max' }
-            Repair-Nano11WimFiles -WimPath $wimCheck -Repairs $repairs -WorkDir $baseWorkDir -CompressMode $repairCompMode -LogPath (Join-Path -Path $script:DiagDir -ChildPath "dism_repair_export.log")
+            Repair-WinEaseWimFiles -WimPath $wimCheck -Repairs $repairs -WorkDir $baseWorkDir -CompressMode $repairCompMode -LogPath (Join-Path -Path $script:DiagDir -ChildPath "dism_repair_export.log")
             Write-Host "  Self-Healing repair and re-export succeeded! Re-running verification..." -ForegroundColor Green
         } catch {
             Write-Error "Self-Healing repair failed: $_"
@@ -161,7 +161,7 @@ if (-not $applySuccess) {
     $script:DiagnosticData.FinalPayloadVerified = $false
     $script:DiagnosticData.FailurePhase = "Phase 15: Deep Apply Verification"
     $script:DiagnosticData.FailureMessage = "DISM /Apply-Image /CheckIntegrity /Verify failed with ExitCode: $applyExit after $maxApplyAttempts attempts. Verification directory and logs preserved."
-    Write-Nano11DiagnosticReport "Deep apply failed"
+    Write-WinEaseDiagnosticReport "Deep apply failed"
     throw "CRITICAL ERROR: install.wim failed deep apply verification (ExitCode: $applyExit). This payload would cause Windows Setup to fail with 0x80070570. Halting build to preserve evidence."
 }
 
@@ -268,20 +268,20 @@ if ($removeDefender) {
 # Clean up verification scratch on success (robust delete: expanded images contain
 # >260-char paths and TrustedInstaller/RX-only ACLs that plain Remove-Item cannot delete)
 $verifyApplySw = [System.Diagnostics.Stopwatch]::StartNew()
-if (Remove-Nano11TreeRobust -Path $verifyApply -SafetyRoot $baseWorkDir) {
+if (Remove-WinEaseTreeRobust -Path $verifyApply -SafetyRoot $baseWorkDir) {
     $verifyApplySw.Stop()
     Write-Host "  - Deep-apply verification directory removed ($([math]::Round($verifyApplySw.Elapsed.TotalSeconds,1))s)." -ForegroundColor DarkGray
 } else {
     Write-Warning "Deep-apply verification directory could not be fully removed: $verifyApply (later cleanup will retry)"
 }
-[void](Remove-Nano11TreeRobust -Path $verifyScratch -SafetyRoot $baseWorkDir)
+[void](Remove-WinEaseTreeRobust -Path $verifyScratch -SafetyRoot $baseWorkDir)
 
 $activePayloadPath = $wimCheck
 $activePayloadName = "install.wim"
 
 if ($exportESDMode) {
     Write-Host "Converting verified install.wim to ultra-compressed install.esd (/Compress:recovery /CheckIntegrity)..." -ForegroundColor Cyan
-    $esdOutPath = Join-Path -Path "$nano11Dir\sources" -ChildPath "install.esd"
+    $esdOutPath = Join-Path -Path "$WinEaseDir\sources" -ChildPath "install.esd"
     & dism.exe /English /Export-Image "/SourceImageFile:$wimCheck" /SourceIndex:1 "/DestinationImageFile:$esdOutPath" /Compress:recovery /CheckIntegrity "/LogPath:$dismExportLog"
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $esdOutPath)) {
         throw "CRITICAL ERROR: Failed to convert verified install.wim to install.esd (ExitCode: $LASTEXITCODE)."
@@ -294,7 +294,7 @@ if ($exportESDMode) {
     Write-Host "  [PASS] Converted to install.esd (SHA256: $script:VerifiedFinalWimSha256)" -ForegroundColor Green
 } elseif ($splitWIMMode) {
     Write-Host "Splitting verified install.wim into FAT32-compatible install.swm chunks (3800 MB /CheckIntegrity)..." -ForegroundColor Cyan
-    $swmOutPath = Join-Path -Path "$nano11Dir\sources" -ChildPath "install.swm"
+    $swmOutPath = Join-Path -Path "$WinEaseDir\sources" -ChildPath "install.swm"
     & dism.exe /English /Split-Image "/ImageFile:$wimCheck" "/SWMFile:$swmOutPath" /FileSize:3800 /CheckIntegrity "/LogPath:$dismExportLog"
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $swmOutPath)) {
         throw "CRITICAL ERROR: Failed to split verified install.wim into install.swm (ExitCode: $LASTEXITCODE)."
@@ -330,7 +330,7 @@ Write-Host "  - Payload SHA256:          $script:VerifiedFinalWimSha256" -Foregr
 Write-Host "  - ISO Payload Match:       PENDING (Phase 18)" -ForegroundColor Yellow
 Write-Host "  - Overall Build Status:    PENDING (Phase 18)" -ForegroundColor Yellow
 
-$wimSummaryPath = Join-Path -Path "$nano11Dir\sources" -ChildPath "wim-verification-summary.txt"
+$wimSummaryPath = Join-Path -Path "$WinEaseDir\sources" -ChildPath "wim-verification-summary.txt"
 $finalPayloadSizeGB = [math]::Round((Get-Item -LiteralPath $activePayloadPath).Length / 1GB, 2)
 $wimSummaryLines = @(
     "=== Final Payload Verification Summary ===",

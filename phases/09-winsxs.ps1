@@ -1,5 +1,5 @@
 ﻿# Phase 9: 09-winsxs
-# Extracted from nano11builder.ps1
+# Extracted from WinEasebuilder.ps1
 # Dot-sourced by the main orchestrator
 
 

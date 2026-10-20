@@ -1,6 +1,6 @@
-﻿# nano11 dependency catalog - single source of truth for deletion/optimization impact analysis.
+﻿# WinEase dependency catalog - single source of truth for deletion/optimization impact analysis.
 #
-# Consumed by Test-Nano11Dependencies (nano11helpers.ps1). Each entry describes one
+# Consumed by Test-WinEaseDependencies (WinEasehelpers.ps1). Each entry describes one
 # deletion/disabling toggle:
 #   TriggerValue     value that means "removed / disabled" (for AdvancedDebloat items the
 #                    trigger is "present in the selected list")

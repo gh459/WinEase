@@ -1,5 +1,5 @@
 ﻿# Phase 2: 02-source-media
-# Extracted from nano11builder.ps1
+# Extracted from WinEasebuilder.ps1
 # Dot-sourced by the main orchestrator
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', 'destWim', Justification = 'Read by later phases or New-BuildContextFromScriptScope in the shared builder scope')]
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', 'hasSourceWim', Justification = 'Read by later phases or New-BuildContextFromScriptScope in the shared builder scope')]
@@ -45,7 +45,7 @@ function Find-AndMountHealthyWindowsIso {
     foreach ($p in $searchPaths) {
         if (-not (Test-Path -LiteralPath $p)) { continue }
         $candidateIsos += Get-ChildItem -Path $p -Filter "*.iso" -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Length -gt 4GB -and ($_.Name -like "*26300*" -or $_.Name -like "*Win11*" -or $_.Name -like "*Windows11*") -and $_.Name -notlike "*nano11*" }
+            Where-Object { $_.Length -gt 4GB -and ($_.Name -like "*26300*" -or $_.Name -like "*Win11*" -or $_.Name -like "*Windows11*") -and $_.Name -notlike "*WinEase*" }
     }
     # Sort: Prioritize 26300 (26H2) official ISO first, then by size
     $sortedIsos = $candidateIsos | Sort-Object { if ($_.Name -like "*26300*") { 0 } else { 1 } }, Length -Descending
@@ -194,13 +194,13 @@ if (-not $DriveLetter) {
 # Check for install.wim or install.esd
 $sourceWim = Join-Path -Path "$DriveLetter\sources" -ChildPath "install.wim"
 $sourceEsd = Join-Path -Path "$DriveLetter\sources" -ChildPath "install.esd"
-$destWim = Join-Path -Path "$nano11Dir\sources" -ChildPath "install.wim"
+$destWim = Join-Path -Path "$WinEaseDir\sources" -ChildPath "install.wim"
 
 $hasSourceWim = (Test-Path -LiteralPath $sourceWim) -and ((Get-Item -LiteralPath $sourceWim).Length -gt 1GB)
 $hasSourceEsd = (Test-Path -LiteralPath $sourceEsd) -and ((Get-Item -LiteralPath $sourceEsd).Length -gt 1GB)
 
 # Ensure destination sources directory exists prior to file operations
-$destSourcesDir = Join-Path -Path $nano11Dir -ChildPath "sources"
+$destSourcesDir = Join-Path -Path $WinEaseDir -ChildPath "sources"
 New-Item -ItemType Directory -Force -Path $destSourcesDir | Out-Null
 
 # Note: there is no media cache. Phase 1 always empties the build directory, and a previous build's

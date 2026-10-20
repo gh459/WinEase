@@ -1,5 +1,5 @@
 try {
-	$initMarkerDir = "C:\ProgramData\nano11";
+	$initMarkerDir = "C:\ProgramData\WinEase";
 	if (Test-Path -LiteralPath $initMarkerDir) {
 		Remove-Item -LiteralPath "$initMarkerDir\firstlogon.done", "$initMarkerDir\firstlogon_script.failed" -Force -ErrorAction SilentlyContinue;
 	}
@@ -70,13 +70,13 @@ $scripts = @(
 	{
 		# Custom Post-Install User Scripts Execution Hook (from tools/custom-scripts/)
 		$customDir = "C:\Windows\Setup\Scripts\Custom";
-		$customLogDir = "C:\ProgramData\nano11\Logs";
+		$customLogDir = "C:\ProgramData\WinEase\Logs";
 		$customLogFiles = @(
 			"$customDir\custom-scripts.log",
 			"$customLogDir\custom-scripts.log"
 		);
 
-		function Redact-Nano11Secret {
+		function Redact-WinEaseSecret {
 			param([string]$Text)
 			if ([string]::IsNullOrEmpty($Text)) { return $Text; }
 			$masked = $Text -replace '(?i)(password|secret|token|apikey|key)\s*[:=]\s*[^\s]+', '$1: [REDACTED]';
@@ -87,7 +87,7 @@ $scripts = @(
 		function Write-CustomScriptLog {
 			param([string]$Message)
 			$ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff";
-			$cleanMsg = Redact-Nano11Secret -Text $Message;
+			$cleanMsg = Redact-WinEaseSecret -Text $Message;
 			$line = "[$ts] $cleanMsg";
 			foreach ($logPath in $customLogFiles) {
 				try {
@@ -212,7 +212,7 @@ $scripts = @(
 							$errLines = ($output | Out-String).Trim();
 							if (-not [string]::IsNullOrWhiteSpace($errLines)) {
 								$lastLine = ($errLines -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Last 1);
-								$errDetail = "Process exited with code $exitCode (Output: $(Redact-Nano11Secret -Text $lastLine))";
+								$errDetail = "Process exited with code $exitCode (Output: $(Redact-WinEaseSecret -Text $lastLine))";
 							} else {
 								$errDetail = "Process exited with non-zero exit code: $exitCode";
 							}
@@ -220,7 +220,7 @@ $scripts = @(
 					} catch {
 						$isSuccess = $false;
 						$exitCode = if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) { $LASTEXITCODE } else { -1 };
-						$errDetail = "Execution exception (Code $exitCode): $(Redact-Nano11Secret -Text $_.Exception.Message)";
+						$errDetail = "Execution exception (Code $exitCode): $(Redact-WinEaseSecret -Text $_.Exception.Message)";
 					} finally {
 						$ErrorActionPreference = $prevEap;
 					}
@@ -288,7 +288,7 @@ $scripts = @(
 			$bootEvent = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Diagnostics-Performance/Operational'; Id=100} -MaxEvents 1 -ErrorAction SilentlyContinue;
 			if ($bootEvent -and $bootEvent.Properties -and $bootEvent.Properties.Count -gt 5) {
 				$bootMs = $bootEvent.Properties[5].Value;
-				$statsDir = "C:\ProgramData\nano11";
+				$statsDir = "C:\ProgramData\WinEase";
 				if (-not (Test-Path $statsDir)) { New-Item -ItemType Directory -Force -Path $statsDir | Out-Null; }
 				"{0},{1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $bootMs | Add-Content "$statsDir\boot-stats.csv";
 			}
@@ -425,7 +425,7 @@ $scripts = @(
 	{
 		# Signal FirstLogon completion and restore persistent AutoLogon security
 		try {
-			$markerDir = "C:\ProgramData\nano11";
+			$markerDir = "C:\ProgramData\WinEase";
 			if (-not (Test-Path $markerDir)) { New-Item -ItemType Directory -Force -Path $markerDir | Out-Null; }
 			Set-Content -LiteralPath "$markerDir\firstlogon.done" -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding ascii;
 
@@ -451,20 +451,20 @@ $scripts = @(
     $complete += $increment;
   }
   if ($flErrors.Count -gt 0) {
-    Remove-Item -LiteralPath "C:\ProgramData\nano11\firstlogon.done" -Force -ErrorAction SilentlyContinue;
-    Set-Content -LiteralPath "C:\ProgramData\nano11\firstlogon_script.failed" -Value ($flErrors -join "`r`n") -Encoding UTF8 -ErrorAction SilentlyContinue;
+    Remove-Item -LiteralPath "C:\ProgramData\WinEase\firstlogon.done" -Force -ErrorAction SilentlyContinue;
+    Set-Content -LiteralPath "C:\ProgramData\WinEase\firstlogon_script.failed" -Value ($flErrors -join "`r`n") -Encoding UTF8 -ErrorAction SilentlyContinue;
     exit 1;
   } else {
-    Remove-Item -LiteralPath "C:\ProgramData\nano11\firstlogon_script.failed" -Force -ErrorAction SilentlyContinue;
-    if (-not (Test-Path -LiteralPath "C:\ProgramData\nano11\firstlogon.done")) {
-      Set-Content -LiteralPath "C:\ProgramData\nano11\firstlogon.done" -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding UTF8 -ErrorAction SilentlyContinue;
+    Remove-Item -LiteralPath "C:\ProgramData\WinEase\firstlogon_script.failed" -Force -ErrorAction SilentlyContinue;
+    if (-not (Test-Path -LiteralPath "C:\ProgramData\WinEase\firstlogon.done")) {
+      Set-Content -LiteralPath "C:\ProgramData\WinEase\firstlogon.done" -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding UTF8 -ErrorAction SilentlyContinue;
     }
     exit 0;
   }
-} *>&1 >> "C:\ProgramData\nano11\Logs\firstlogon-child.log";
-if (-not $? -or (Test-Path -LiteralPath "C:\ProgramData\nano11\firstlogon_script.failed")) {
+} *>&1 >> "C:\ProgramData\WinEase\Logs\firstlogon-child.log";
+if (-not $? -or (Test-Path -LiteralPath "C:\ProgramData\WinEase\firstlogon_script.failed")) {
   exit 1;
 } else {
-  Remove-Item -LiteralPath "C:\ProgramData\nano11\firstlogon_script.failed" -Force -ErrorAction SilentlyContinue;
+  Remove-Item -LiteralPath "C:\ProgramData\WinEase\firstlogon_script.failed" -Force -ErrorAction SilentlyContinue;
   exit 0;
 }

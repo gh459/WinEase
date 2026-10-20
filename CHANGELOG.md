@@ -1,7 +1,7 @@
 # Changelog
 
 All notable changes to this fork are documented here. Versions follow the upstream
-nano11 scheme; entries below are local-fork additions on top of upstream 2.1.
+WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
 ## Unreleased (local fork, 2026-10-19)
 
@@ -65,7 +65,7 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
     definitions carried different defaults and the winner depended on the order in
     which the builder applied them. The **Components** entries were removed and the
     **Tweaks** entries kept, because the presets, the GUI tabs and the
-    `Sync-Nano11TweakVariables` mapping all use the Tweak side.
+    `Sync-WinEaseTweakVariables` mapping all use the Tweak side.
   - `RemoveLegacyFOD` and `TrimWallpapers` carried a different default in the
     component definition (`Default`) than in its GUI entry (`Gui.Default`), so the
     CLI and the GUI started from a different state. The **component `Default`**
@@ -115,7 +115,7 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
   - The desktop "Toggle Windows Defender" tools disabled `Sense` but never re-enabled
     it, and the Atlas/ReviOS variant did not touch `WdNisSvc` / `Sense` at all.
     Both are now symmetric.
-- `tools/nano11-physical-debloat` enabled `SeTakeOwnershipPrivilege` but never took
+- `tools/winease-physical-debloat` enabled `SeTakeOwnershipPrivilege` but never took
   ownership, so TrustedInstaller-owned component files failed to delete, and the
   per-file errors inside `delete_directory` were discarded with `let _ =`. The tool
   now calls `SetNamedSecurityInfoW` to take ownership before deleting and reports
@@ -133,10 +133,10 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
 - WinUI 3 settings window (`gui/winui`, C# / Windows App SDK 2.5, unpackaged and
   self-contained): navigation pane with the same nine pages, settings cards, Mica, system
   light/dark theme, English / Japanese from the same `config/ui-strings` tables.
-  `nano11builder.ps1 -GUI` uses it when `gui/winui/bin/Nano11Gui.exe` is built
-  (`gui/winui/build.ps1`, run automatically by `nano11-GUI.bat` when `dotnet` is present)
+  `WinEasebuilder.ps1 -GUI` uses it when `gui/winui/bin/WinEaseGui.exe` is built
+  (`gui/winui/build.ps1`, run automatically by `WinEase-GUI.bat` when `dotnet` is present)
   and falls back to the WinForms window otherwise or with the new `-ClassicGui` switch.
-  `gui/Nano11WinUiHost.ps1` serves the window's requests (sources, dependency check, Preset
+  `gui/WinEaseWinUiHost.ps1` serves the window's requests (sources, dependency check, Preset
   Diff, recovery readiness, migration engine, language) inside the builder process, one JSON
   message per line over stdin/stdout. The window asks for the physical debloat consent itself.
 - `config/tweaks.psd1`: single source of truth for every tweak and component setting
@@ -146,27 +146,27 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
 - Per-tweak `TweakSettings` block in profiles (`profiles/*.json`) - every switch can be
   turned on/off individually. Legacy key names (`BypassRequirements`, `DisableTelemetry`,
   `DisableSearchIndex`, `DAWMode`) are still accepted as aliases.
-- `gui/Nano11Gui.ps1`: the WinForms GUI moved out of `nano11builder.ps1` (loaded only for
-  `-GUI` / menu option `[7]`), built from shared control helpers (`New-Nano11Button`,
-  `New-Nano11ToggleTab`, `Add-Nano11SelectButtons`, ...).
+- `gui/WinEaseGui.ps1`: the WinForms GUI moved out of `WinEasebuilder.ps1` (loaded only for
+  `-GUI` / menu option `[7]`), built from shared control helpers (`New-WinEaseButton`,
+  `New-WinEaseToggleTab`, `Add-WinEaseSelectButtons`, ...).
 - **Select All / Clear All** buttons on the Standard and Experimental lists of the
   Advanced Debloat tab. Select All on the Experimental list asks for confirmation.
-- `tools/Measure-Nano11GuestBaseline.ps1` (in-guest disk / RAM / CPU / boot-time /
-  functionality measurement, JSON output) and `tools/Compare-Nano11Benchmarks.ps1`
+- `tools/Measure-WinEaseGuestBaseline.ps1` (in-guest disk / RAM / CPU / boot-time /
+  functionality measurement, JSON output) and `tools/Compare-WinEaseBenchmarks.ps1`
   (multi-run statistical comparison: mean, median, StdDev, IQR, % improvement).
 - `config/dependencies.psd1`: dependency & feature-impact catalog (174 entries across
   Components, Tweaks and Advanced Debloat). Surfaces Conflicts, Impacts and Unknowns
   (fail-safe: unregistered items become Unknown). GUI "Check Dependencies" button,
   `-StrictDependencyCheck` CLI switch and an HTML report section.
-- `lib/Nano11Extensions.ps1`: user extensibility engine (Import-Nano11UserExtensions,
-  Invoke-Nano11UserExtensionActions, Get-Nano11CustomScriptMetadata,
-  Invoke-Nano11CustomScriptsStage, Compare-Nano11Config, Format-Nano11ConfigDiff,
-  Test-Nano11RecoveryReadiness). User tweaks, presets and custom scripts come from
+- `lib/WinEaseExtensions.ps1`: user extensibility engine (Import-WinEaseUserExtensions,
+  Invoke-WinEaseUserExtensionActions, Get-WinEaseCustomScriptMetadata,
+  Invoke-WinEaseCustomScriptsStage, Compare-WinEaseConfig, Format-WinEaseConfigDiff,
+  Test-WinEaseRecoveryReadiness). User tweaks, presets and custom scripts come from
   `config/user/user-tweaks.psd1`.
-- PC migration & backup engine `tools/migrator/Nano11Migration.ps1` with the standard
+- PC migration & backup engine `tools/migrator/WinEaseMigration.ps1` with the standard
   rules in `tools/migrator/migration-rules.psd1` (15 game + 16 app rules) and the user
   template `config/user/user-migration-rules.psd1`.
-- `tools/migrator/Nano11-Migrator.ps1`: standalone migrator. CLI modes ExportApps,
+- `tools/migrator/WinEase-Migrator.ps1`: standalone migrator. CLI modes ExportApps,
   Backup, Restore, Verify (SHA-256 against `migration-manifest.json`), Estimate, plus the
   older ListRules and RecoveryCheck; `-PackagePath` (alias `-BackupRoot`), `-UserFolders`,
   `-CustomPaths`, `-RuleIds`, `-ConflictPolicy`, `-IncludeSecrets`, `-RetryFailedOnly`,
@@ -181,7 +181,7 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
   dynamic values are HTML-encoded.
 - `-ComparePreset <name|JSON path>`: shows the difference between the current
   configuration and a preset, then exits with code 0 without any build or disk work.
-- Recovery readiness check (`Test-Nano11RecoveryReadiness`, advisory) and the PreBuild
+- Recovery readiness check (`Test-WinEaseRecoveryReadiness`, advisory) and the PreBuild
   custom-script stage now run in the builder right after the dependency check.
 - `-IncludeMigrationAssistant` now does something: Phase 11 copies the migrator, engine
   and rule files to `Windows\Setup\Scripts\Migration` and adds a public-desktop
@@ -195,15 +195,15 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
   (System / Gaming / UserCustom ...), a "Preset Diff" dialog that compares any preset or the
   current window settings, and a User Extensions card on Tab 8 (counts, load errors, a
   button that opens the extensibility guide).
-- `Resolve-Nano11UserConfigPath` and `Get-Nano11CustomScriptFiles`: one place that decides
+- `Resolve-WinEaseUserConfigPath` and `Get-WinEaseCustomScriptFiles`: one place that decides
   where user config files and custom scripts live.
 - Custom scripts run per stage from `tools/custom-scripts/<Stage>/` (PreBuild,
   OfflineImage, FirstLogon, UserOnce; each folder has a `.gitkeep`). PreBuild and
-  OfflineImage scripts get a `$Nano11Context`; FirstLogon and UserOnce scripts are copied
+  OfflineImage scripts get a `$WinEaseContext`; FirstLogon and UserOnce scripts are copied
   into the image and checked against a SHA-256 manifest at first logon.
 - `docs/EXTENSIBILITY_GUIDE.md` (English) and `docs/EXTENSIBILITY_GUIDE.ja.md` (Japanese): guide with a quick start (user tweak, user
   migration rule) and a reference (file roles, the four custom-script stages,
-  `$Nano11Context`, offline hives, `OnError`, safe verification).
+  `$WinEaseContext`, offline hives, `OnError`, safe verification).
 - `PSScriptAnalyzerSettings.psd1` plus a Pester test that requires zero Error/Warning
   findings. The Pester suite covers GUI wiring, single-source settings, a GUI smoke test
   that clicks every Select All / Clear All button, and a Describe block per S1-S11 theme.
@@ -212,7 +212,7 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
 ### Changed
 - AppX leftover folder cleanup no longer runs recursive `takeown /R` / `icacls /T`; it
   removes reparse points (junctions) as links first so deletion never follows them out
-  of the image (`Remove-Nano11TreeRobust`). Folder cleanup still runs on
+  of the image (`Remove-WinEaseTreeRobust`). Folder cleanup still runs on
   `-AppxParallelism` (1-8, default 4) RunspacePool workers; DISM removal stays sequential.
   The parallel path now also checks that each folder is inside the scratch directory and
   names failed folders in the log.
@@ -226,7 +226,7 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
 - Custom scripts (S9): `tools/custom-scripts/<Stage>/` is the single layout. Files directly
   in `tools/custom-scripts/` are still treated as FirstLogon and `user/` as UserOnce.
 - OfflineImage custom scripts now run at the end of Phase 11 (before FirstLogon / UserOnce
-  staging) with `ScratchDir`, `Nano11Dir` and `Config`; they used to run right after AppX
+  staging) with `ScratchDir`, `WinEaseDir` and `Config`; they used to run right after AppX
   removal.
 - Dependency check: `RemoveDrivers` is Unknown (its safety depends on the target PC),
   `AllowPhysicalDebloat` is registered, `NoHypervisor` lists VBS among its impacts, and an
@@ -234,25 +234,25 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
   `Impact` is reported as an Impact).
 - Migration backup: a `BackupRoot` inside a folder being backed up is rejected. The rule
   backup result now carries `CloudSaveNotices`, `SkipReasons`, `SecretExcludedFiles` and
-  `BackedUpRules`. `Restore-Nano11UserData` gained `-Categories` and
-  `Restore-Nano11CustomPaths` gained `-SourcePath`; CustomPath entries are no longer
+  `BackedUpRules`. `Restore-WinEaseUserData` gained `-Categories` and
+  `Restore-WinEaseCustomPaths` gained `-SourcePath`; CustomPath entries are no longer
   restored by the user-data path. The default backup folder moved out of Documents.
-- GUI structure (S10): `Show-Nano11GUI` is split into one function per tab; colours live in
-  `$script:Nano11GuiColors`; OK message boxes go through `Show-Nano11GuiMessage`; background
-  work goes through `Invoke-Nano11GuiBusy` / `Invoke-Nano11GuiBackgroundJob`; the default
-  backup folder is defined once (`Get-Nano11DefaultMigrationBackupPath`); new form, combo box,
+- GUI structure (S10): `Show-WinEaseGUI` is split into one function per tab; colours live in
+  `$script:WinEaseGuiColors`; OK message boxes go through `Show-WinEaseGuiMessage`; background
+  work goes through `Invoke-WinEaseGuiBusy` / `Invoke-WinEaseGuiBackgroundJob`; the default
+  backup folder is defined once (`Get-WinEaseDefaultMigrationBackupPath`); new form, combo box,
   tab control and text box parts. The migrator window is built from these shared parts
   (the control tree is identical to before). Controls, positions and handlers are unchanged.
-- Builder structure (S11): `Invoke-Nano11SelfTest` is split into one small function per
+- Builder structure (S11): `Invoke-WinEaseSelfTest` is split into one small function per
   check (output and exit code unchanged); `OutputType` declared on helpers flagged by
   PSScriptAnalyzer.
 - Code hygiene (no behaviour change): empty `catch {}` blocks now log via `Write-Verbose`,
   `$null` moved to the left of comparisons, positional parameters named, unused variables
   removed, trailing whitespace stripped.
-- The regenerated `nano11_report.html` is no longer tracked by git.
+- The regenerated `WinEase_report.html` is no longer tracked by git.
 
 ### Fixed
-- `Import-Nano11UserExtensions -PresetsOnly` (the builder's second call) wiped the user's
+- `Import-WinEaseUserExtensions -PresetsOnly` (the builder's second call) wiped the user's
   tweaks and custom scripts; the collections are now reset only when they are reloaded.
   The extension and migration libraries are no longer dot-sourced twice.
 - GUI **Select All / Clear All** buttons on tabs 2-5 did nothing (the click handler
@@ -288,8 +288,8 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
 
 ### Notes
 - Full end-to-end build re-verified on 2026-10-19 (GUI-driven): the complete pipeline finished
-  with "Build succeeded and safety checks passed" and produced `nano11.iso` (7,888,314,368
-  bytes); `nano11_report.html` was refreshed from the same run.
+  with "Build succeeded and safety checks passed" and produced `WinEase.iso` (7,888,314,368
+  bytes); `WinEase_report.html` was refreshed from the same run.
 
 ## Earlier (local fork, 2026-10-17)
 
@@ -303,7 +303,7 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
   `/StartComponentCleanup` (and `/ResetBase`) on Windows 11 24H2+ (26100+), overriding
   the safety block. Experimental; deep-apply verification and ISO payload hash check
   act as safety net.
-- `tests/nano11.Tests.ps1`: Pester suite covering AST syntax, unattend schema,
+- `tests/WinEase.Tests.ps1`: Pester suite covering AST syntax, unattend schema,
   profile preset integrity, AppX wildcard safety, IME decoupling filter logic,
   language detection, path-safety guards, and end-to-end `-TestSelf` / `-DryRun`.
 - `tools/custom-scripts/` skeleton with README and a disabled example script.
@@ -350,7 +350,7 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
   TrustedInstaller, Administrators granted RX only), and the old
   `-ErrorAction SilentlyContinue` calls swallowed it - two runs leaked ~41 GB of
   `deep_apply_verification_*` directories (~135k files each). New
-  `Remove-Nano11TreeRobust` helper prunes reparse points first (applied-image
+  `Remove-WinEaseTreeRobust` helper prunes reparse points first (applied-image
   junctions such as `Users\All Users` point at host paths like `C:\ProgramData`),
   then deletes via `robocopy /MIR /XJ /B` (backup mode bypasses the DACL) with
   `rd /s /q` plus a takeown/icacls tier as fallback. Empirically verified against
@@ -391,8 +391,8 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
   were never repaired and the mirror pass stayed blocked behind the link-free gate.
   Verified counter-evidence: plain `takeown /f` succeeds, and `icacls` reports "Access
   is denied" while still exiting 0 (exit-code checks cannot detect it either). Repair is
-  now done in-process: `Enable-Nano11TokenPrivileges` enables SeTakeOwnership /
-  SeRestore / SeBackup on the PowerShell token (P/Invoke), and `Repair-Nano11DeniedAcl`
+  now done in-process: `Enable-WinEaseTokenPrivileges` enables SeTakeOwnership /
+  SeRestore / SeBackup on the PowerShell token (P/Invoke), and `Repair-WinEaseDeniedAcl`
   takes ownership for Administrators, strips explicit Deny ACEs aimed at them and adds
   an inheritable FullControl grant via `Set-Acl` (real catchable exceptions; fresh
   descriptor fallback when the DACL is unreadable). Repair failures are recorded and

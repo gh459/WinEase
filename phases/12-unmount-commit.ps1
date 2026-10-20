@@ -1,5 +1,5 @@
 ﻿# Phase 12: 12-unmount-commit
-# Extracted from nano11builder.ps1
+# Extracted from WinEasebuilder.ps1
 # Dot-sourced by the main orchestrator
 
 

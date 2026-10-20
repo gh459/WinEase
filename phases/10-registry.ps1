@@ -1,5 +1,5 @@
 # Phase 10: Registry Hive Loading, Hardware Bypasses & Granular Tweaks
-# Dot-sourced by the main orchestrator (nano11builder.ps1)
+# Dot-sourced by the main orchestrator (WinEasebuilder.ps1)
 
 Write-Host "Loading offline registry hives..." -ForegroundColor Cyan
 $systemHive    = "$scratchDir\Windows\System32\config\SYSTEM"
@@ -666,7 +666,7 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
         '\Registry\Machine\zSYSTEM\ControlSet001\Services\SgrmAgent [1 17]',
         '\Registry\Machine\zSOFTWARE\Microsoft\Windows Defender\Features [1 17]'
     )
-    $reginiFile = Join-Path -Path $env:TEMP -ChildPath "nano11_regini_$([System.IO.Path]::GetRandomFileName()).txt"
+    $reginiFile = Join-Path -Path $env:TEMP -ChildPath "WinEase_regini_$([System.IO.Path]::GetRandomFileName()).txt"
     [System.IO.File]::WriteAllLines($reginiFile, $reginiLines, [System.Text.Encoding]::ASCII)
     & regini.exe $reginiFile > $null 2>&1
     Remove-Item -LiteralPath $reginiFile -Force -ErrorAction SilentlyContinue
@@ -737,7 +737,7 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
 }
 
 # ============================================================================
-# GUI tweak toggles (keys match $script:AllTweakDefs in nano11builder.ps1)
+# GUI tweak toggles (keys match $script:AllTweakDefs in WinEasebuilder.ps1)
 # ============================================================================
 if (Test-TweakEnabled 'BypassNetworkRequirement' $true) {
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v "BypassNRO" /t REG_DWORD /d 1 /f > $null 2>&1
@@ -840,17 +840,17 @@ if ($bypassActivationRestrictions -or (Test-TweakEnabled 'BypassActivationRestri
 }
 
 # OEM Information Branding
-reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation" /v "Manufacturer" /t REG_SZ /d "nano11 Project" /f > $null 2>&1
-reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation" /v "SupportURL" /t REG_SZ /d "https://github.com/gh459/nano11" /f > $null 2>&1
+reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation" /v "Manufacturer" /t REG_SZ /d "WinEase Project" /f > $null 2>&1
+reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation" /v "SupportURL" /t REG_SZ /d "https://github.com/gh459/WinEase" /f > $null 2>&1
 
 Write-Host "Registry tweaks applied successfully." -ForegroundColor Green
 
 # ==============================================================================
-# Helper Function: Save-Nano11UnattendXml
+# Helper Function: Save-WinEaseUnattendXml
 # Strictly writes XmlDocument to disk with a single UTF-8 BOM, validates bytes,
 # verifies via XmlDocument.Load, and checks pass attribute integrity.
 # ==============================================================================
-function Save-Nano11UnattendXml {
+function Save-WinEaseUnattendXml {
     param(
         [Parameter(Mandatory=$true)]
         [System.Xml.XmlDocument]$XmlDocument,
@@ -913,6 +913,6 @@ function Save-Nano11UnattendXml {
 }
 
 # M2: User extension actions (Registry)
-if (Get-Command -Name Invoke-Nano11UserExtensionActions -ErrorAction SilentlyContinue) {
-    try { Invoke-Nano11UserExtensionActions -PhaseType Registry -ScratchDir $scratchDir -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+if (Get-Command -Name Invoke-WinEaseUserExtensionActions -ErrorAction SilentlyContinue) {
+    try { Invoke-WinEaseUserExtensionActions -PhaseType Registry -ScratchDir $scratchDir -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }

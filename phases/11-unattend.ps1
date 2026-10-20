@@ -1,5 +1,5 @@
 ﻿# Phase 11: 11-unattend
-# Extracted from nano11builder.ps1
+# Extracted from WinEasebuilder.ps1
 # Dot-sourced by the main orchestrator
 
 # Helper function to evaluate individual toggle settings.
@@ -37,7 +37,7 @@ $unattendSource = Join-Path -Path $scriptDir -ChildPath "autounattend.xml"
 # Self-healing if autounattend.xml was not downloaded with script
 if (-not (Test-Path -LiteralPath $unattendSource)) {
     Write-Host "autounattend.xml not found locally. Attempting to download from repository..." -ForegroundColor Yellow
-    $unattendUrl = "https://raw.githubusercontent.com/gh459/nano11/main/autounattend.xml"
+    $unattendUrl = "https://raw.githubusercontent.com/gh459/WinEase/main/autounattend.xml"
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Invoke-WebRequest -Uri $unattendUrl -OutFile $unattendSource -UseBasicParsing -ErrorAction Stop
@@ -63,7 +63,7 @@ if (Test-Path -LiteralPath $unattendSource) {
     $xmlContent = $xmlContent -replace '(?s)<RunSynchronousCommand[^>]*>\s*<Order>\d+</Order>\s*<Path>[^<]*ChildCompletion[^<]*</Path>\s*</RunSynchronousCommand>', ''
     $xmlContent = $xmlContent -replace '(?s)\t*\{\s*#[^\r\n]*Zero-Click Setup Completion[^\}]*\}\s*;\r?\n', ''
     # Dynamically parameterize ComputerName and UserName
-    $xmlContent = $xmlContent -replace '<ComputerName>nano11</ComputerName>', "<ComputerName>$ComputerName</ComputerName>"
+    $xmlContent = $xmlContent -replace '<ComputerName>WinEase</ComputerName>', "<ComputerName>$ComputerName</ComputerName>"
     $xmlContent = $xmlContent -replace '<Username>User</Username>', "<Username>$UserName</Username>"
     $xmlContent = $xmlContent -replace '<Name>User</Name>', "<Name>$UserName</Name>"
     $xmlContent = $xmlContent -replace '<DisplayName>User</DisplayName>', "<DisplayName>$UserName</DisplayName>"
@@ -195,19 +195,19 @@ if (Test-Path -LiteralPath $unattendSource) {
         throw "XML DOM architecture normalization and validation failed: $_"
     }
 
-    # Save canonical unattend XML directly via Save-Nano11UnattendXml (No double BOM, verified UTF-8)
-    $isoRootUnattend = Join-Path -Path $nano11Dir -ChildPath "autounattend.xml"
-    Save-Nano11UnattendXml -XmlDocument $xmlDoc -DestinationPath $isoRootUnattend
+    # Save canonical unattend XML directly via Save-WinEaseUnattendXml (No double BOM, verified UTF-8)
+    $isoRootUnattend = Join-Path -Path $WinEaseDir -ChildPath "autounattend.xml"
+    Save-WinEaseUnattendXml -XmlDocument $xmlDoc -DestinationPath $isoRootUnattend
 
     $sysprepDir = Join-Path -Path $scratchDir -ChildPath "Windows\System32\Sysprep"
     if (Test-Path -LiteralPath $sysprepDir) {
-        Save-Nano11UnattendXml -XmlDocument $xmlDoc -DestinationPath (Join-Path -Path $sysprepDir -ChildPath "autounattend.xml")
+        Save-WinEaseUnattendXml -XmlDocument $xmlDoc -DestinationPath (Join-Path -Path $sysprepDir -ChildPath "autounattend.xml")
     }
     $pantherDir = Join-Path -Path $scratchDir -ChildPath "Windows\Panther"
     if (-not (Test-Path -LiteralPath $pantherDir)) {
         New-Item -Path $pantherDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
     }
-    Save-Nano11UnattendXml -XmlDocument $xmlDoc -DestinationPath (Join-Path -Path $pantherDir -ChildPath "unattend.xml")
+    Save-WinEaseUnattendXml -XmlDocument $xmlDoc -DestinationPath (Join-Path -Path $pantherDir -ChildPath "unattend.xml")
 
     # 6. Pre-extract all 5 embedded setup scripts directly into mounted image ($scratchDir)
     Write-Host "Pre-extracting embedded setup scripts directly into mounted image ($scratchDir)..." -ForegroundColor Cyan
@@ -231,7 +231,7 @@ if (Test-Path -LiteralPath $unattendSource) {
             throw "Pre-extraction security violation: Path traversal '..' detected in target path: $targetRaw"
         }
         $targetImageFile = [System.IO.Path]::GetFullPath((Join-Path -Path $scratchFullRoot -ChildPath $relPath))
-        if (-not (Test-Nano11PathWithin -Path $targetImageFile -Root $scratchFullRoot)) {
+        if (-not (Test-WinEasePathWithin -Path $targetImageFile -Root $scratchFullRoot)) {
             throw "Pre-extraction security violation: Target path '$targetImageFile' escapes mount root '$scratchFullRoot'"
         }
 
@@ -283,7 +283,7 @@ if (Test-Path -LiteralPath $unattendSource) {
     $helperScripts = [ordered]@{
         "ExtractUnattend.ps1" = @'
 # ExtractUnattend.ps1 - Fallback dynamic script extractor from unattend.xml
-$markerDir = "C:\ProgramData\nano11"
+$markerDir = "C:\ProgramData\WinEase"
 if (-not (Test-Path -LiteralPath $markerDir)) {
     New-Item -ItemType Directory -Force -Path $markerDir -ErrorAction SilentlyContinue | Out-Null
 }
@@ -400,7 +400,7 @@ try {
 
         "ApplyDefaultUser.ps1" = @'
 # ApplyDefaultUser.ps1 - Safely load HKU\DefaultUser, apply DefaultUser.ps1, unload hive
-$markerDir = "C:\ProgramData\nano11"
+$markerDir = "C:\ProgramData\WinEase"
 if (-not (Test-Path -LiteralPath $markerDir)) {
     New-Item -ItemType Directory -Force -Path $markerDir -ErrorAction SilentlyContinue | Out-Null
 }
@@ -507,7 +507,7 @@ if ($hasError) {
 
         "RunFirstLogon.ps1" = @'
 # RunFirstLogon.ps1 - Unified FirstLogon single entry point
-$markerDir = "C:\ProgramData\nano11"
+$markerDir = "C:\ProgramData\WinEase"
 if (-not (Test-Path -LiteralPath $markerDir)) {
     New-Item -ItemType Directory -Force -Path $markerDir -ErrorAction SilentlyContinue | Out-Null
 }
@@ -713,14 +713,14 @@ try {
 }
 '@
 
-        "nano11-oobe-autologon-repair.ps1" = @'
-# nano11-oobe-autologon-repair.ps1
+        "WinEase-oobe-autologon-repair.ps1" = @'
+# WinEase-oobe-autologon-repair.ps1
 # Re-assert the Winlogon auto-logon target for the OOBE -> first user session transition.
 # msoobe rewrites these values to the temporary defaultuser0 account at the end of OOBE,
 # which makes the transition logon fail (1326) and stalls setup on the "Just a moment..." screen.
 # Runs from SetupComplete.cmd as the LAST writer before the transition logon is attempted.
 $ErrorActionPreference = 'SilentlyContinue'
-$user = '__NANO11_USERNAME__'
+$user = '__WINEASE_USERNAME__'
 $key  = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
 
 Set-ItemProperty -LiteralPath $key -Name 'AutoAdminLogon'  -Value '1'    -Type String -Force
@@ -746,17 +746,17 @@ $check = Get-ItemProperty -LiteralPath $key
 Write-Output ("[OOBE-AutoLogon] verified: AutoAdminLogon=" + $check.AutoAdminLogon + " DefaultUserName=" + $check.DefaultUserName + " ForceAutoLogon=" + $check.ForceAutoLogon)
 '@
 
-        "nano11-transition-watchdog.ps1" = @'
-# nano11-transition-watchdog.ps1
+        "WinEase-transition-watchdog.ps1" = @'
+# WinEase-transition-watchdog.ps1
 # One-shot safety net for the first-boot OOBE -> user session transition.
 # If no interactive user session appears while auto-logon is still armed, trigger exactly
 # one recovery reboot so the boot-time auto-logon (proven path) can complete the transition.
 $ErrorActionPreference = 'SilentlyContinue'
-$markerDir = 'C:\ProgramData\nano11'
+$markerDir = 'C:\ProgramData\WinEase'
 $logDir    = "$markerDir\Logs"
 $logFile   = "$logDir\transition-watchdog.log"
 $guardFile = "$markerDir\watchdog.rebooted"
-$taskName  = 'nano11-TransitionWatchdog'
+$taskName  = 'WinEase-TransitionWatchdog'
 $winlogon  = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
 
 if (-not (Test-Path -LiteralPath $logDir)) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
@@ -829,7 +829,7 @@ exit 0
     }
 
     # Inject the configured account name into the OOBE transition repair helper
-    $helperScripts['nano11-oobe-autologon-repair.ps1'] = $helperScripts['nano11-oobe-autologon-repair.ps1'].Replace('__NANO11_USERNAME__', $UserName)
+    $helperScripts['WinEase-oobe-autologon-repair.ps1'] = $helperScripts['WinEase-oobe-autologon-repair.ps1'].Replace('__WINEASE_USERNAME__', $UserName)
 
     foreach ($hName in $helperScripts.Keys) {
         $hContent = $helperScripts[$hName]
@@ -855,12 +855,12 @@ exit 0
     $setupCompleteLines = @(
         "@echo off",
         "setlocal enabledelayedexpansion",
-        "if not exist `"%SystemDrive%\ProgramData\nano11`" mkdir `"%SystemDrive%\ProgramData\nano11`"",
-        "set `"LOGFILE=%SystemDrive%\ProgramData\nano11\setupcomplete.log`"",
+        "if not exist `"%SystemDrive%\ProgramData\WinEase`" mkdir `"%SystemDrive%\ProgramData\WinEase`"",
+        "set `"LOGFILE=%SystemDrive%\ProgramData\WinEase\setupcomplete.log`"",
         "rem Purge any stale markers from prior runs to prevent false-positive contamination",
-        "if exist `"%SystemDrive%\ProgramData\nano11\setupcomplete.succeeded`" del /f /q `"%SystemDrive%\ProgramData\nano11\setupcomplete.succeeded`" 2>nul",
-        "if exist `"%SystemDrive%\ProgramData\nano11\setupcomplete.failed`" del /f /q `"%SystemDrive%\ProgramData\nano11\setupcomplete.failed`" 2>nul",
-        "echo %DATE% %TIME% SetupComplete Started > `"%SystemDrive%\ProgramData\nano11\setupcomplete.started`"",
+        "if exist `"%SystemDrive%\ProgramData\WinEase\setupcomplete.succeeded`" del /f /q `"%SystemDrive%\ProgramData\WinEase\setupcomplete.succeeded`" 2>nul",
+        "if exist `"%SystemDrive%\ProgramData\WinEase\setupcomplete.failed`" del /f /q `"%SystemDrive%\ProgramData\WinEase\setupcomplete.failed`" 2>nul",
+        "echo %DATE% %TIME% SetupComplete Started > `"%SystemDrive%\ProgramData\WinEase\setupcomplete.started`"",
         "echo [%DATE% %TIME%] ===== SetupComplete.cmd execution started ===== >> `"!LOGFILE!`"",
         "set `"SC_FAIL_COUNT=0`""
     )
@@ -968,21 +968,21 @@ exit 0
     #  - Arm a one-shot watchdog that reboots exactly once if no interactive session appears.
     $setupCompleteLines += @(
         "rem --- Stage 5: OOBE->user transition auto-logon repair and one-shot watchdog ---",
-        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%SystemDrive%\Windows\Setup\Scripts\nano11-oobe-autologon-repair.ps1`" >> `"!LOGFILE!`" 2>&1",
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%SystemDrive%\Windows\Setup\Scripts\WinEase-oobe-autologon-repair.ps1`" >> `"!LOGFILE!`" 2>&1",
         "if !errorlevel! neq 0 echo [%DATE% %TIME%] [WARN] OOBE auto-logon repair returned error code !errorlevel! >> `"!LOGFILE!`"",
-        "schtasks.exe /create /f /tn `"nano11-TransitionWatchdog`" /sc onstart /delay 0003:00 /ru SYSTEM /tr `"powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File %SystemDrive%\Windows\Setup\Scripts\nano11-transition-watchdog.ps1`" >> `"!LOGFILE!`" 2>&1",
+        "schtasks.exe /create /f /tn `"WinEase-TransitionWatchdog`" /sc onstart /delay 0003:00 /ru SYSTEM /tr `"powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File %SystemDrive%\Windows\Setup\Scripts\WinEase-transition-watchdog.ps1`" >> `"!LOGFILE!`" 2>&1",
         "if !errorlevel! neq 0 echo [%DATE% %TIME%] [WARN] Transition watchdog task creation failed with code !errorlevel! >> `"!LOGFILE!`"",
-        "schtasks.exe /run /tn `"nano11-TransitionWatchdog`" >> `"!LOGFILE!`" 2>&1"
+        "schtasks.exe /run /tn `"WinEase-TransitionWatchdog`" >> `"!LOGFILE!`" 2>&1"
     )
     $setupCompleteLines += @(
         "if !SC_FAIL_COUNT! equ 0 (",
-        "    if exist `"%SystemDrive%\ProgramData\nano11\setupcomplete.failed`" del /f /q `"%SystemDrive%\ProgramData\nano11\setupcomplete.failed`" 2>nul",
-        "    echo %DATE% %TIME% SetupComplete Succeeded > `"%SystemDrive%\ProgramData\nano11\setupcomplete.succeeded`"",
+        "    if exist `"%SystemDrive%\ProgramData\WinEase\setupcomplete.failed`" del /f /q `"%SystemDrive%\ProgramData\WinEase\setupcomplete.failed`" 2>nul",
+        "    echo %DATE% %TIME% SetupComplete Succeeded > `"%SystemDrive%\ProgramData\WinEase\setupcomplete.succeeded`"",
         "    echo [%DATE% %TIME%] ===== SetupComplete finished successfully with 0 errors ===== >> `"!LOGFILE!`"",
         "    exit /b 0",
         ") else (",
-        "    if exist `"%SystemDrive%\ProgramData\nano11\setupcomplete.succeeded`" del /f /q `"%SystemDrive%\ProgramData\nano11\setupcomplete.succeeded`" 2>nul",
-        "    echo %DATE% %TIME% SetupComplete Completed with !SC_FAIL_COUNT! errors > `"%SystemDrive%\ProgramData\nano11\setupcomplete.failed`"",
+        "    if exist `"%SystemDrive%\ProgramData\WinEase\setupcomplete.succeeded`" del /f /q `"%SystemDrive%\ProgramData\WinEase\setupcomplete.succeeded`" 2>nul",
+        "    echo %DATE% %TIME% SetupComplete Completed with !SC_FAIL_COUNT! errors > `"%SystemDrive%\ProgramData\WinEase\setupcomplete.failed`"",
         "    echo [%DATE% %TIME%] ===== SetupComplete failed with !SC_FAIL_COUNT! errors ===== >> `"!LOGFILE!`"",
         "    exit /b 1",
         ")"
@@ -994,14 +994,14 @@ exit 0
     $repoWingetJson = Join-Path -Path $scriptDir -ChildPath "tools\winget-packages.json"
     if (Test-Path -LiteralPath $repoWingetJson) {
         Copy-Item -LiteralPath $repoWingetJson -Destination (Join-Path -Path $setupScriptsDir -ChildPath "winget-packages.json") -Force -ErrorAction SilentlyContinue
-        Copy-Item -LiteralPath $repoWingetJson -Destination (Join-Path -Path $nano11Dir -ChildPath "sources\winget-packages.json") -Force -ErrorAction SilentlyContinue
+        Copy-Item -LiteralPath $repoWingetJson -Destination (Join-Path -Path $WinEaseDir -ChildPath "sources\winget-packages.json") -Force -ErrorAction SilentlyContinue
         Write-Host "  - Bundled winget-packages.json for post-setup automated app installation" -ForegroundColor Green
     }
 
     # $OEM$ Custom Hardware Driver Injection (-InjectDrivers)
     if ($InjectDrivers -and (Test-Path -LiteralPath $InjectDrivers)) {
         Write-Host "Injecting custom hardware drivers from $InjectDrivers..." -ForegroundColor Cyan
-        $destDriversDir = Join-Path -Path $nano11Dir -ChildPath "sources\`$OEM`$\`$1\Drivers"
+        $destDriversDir = Join-Path -Path $WinEaseDir -ChildPath "sources\`$OEM`$\`$1\Drivers"
         New-Item -ItemType Directory -Force -Path $destDriversDir | Out-Null
         Copy-Item -Path "$InjectDrivers\*" -Destination $destDriversDir -Recurse -Force -ErrorAction SilentlyContinue
         Write-Host "  - Drivers staged in sources\`$OEM`$\`$1\Drivers" -ForegroundColor Green
@@ -1076,9 +1076,9 @@ exit 0
         Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "hibernate-mode.flag") -Value $HibernateMode -Encoding ascii -Force
     }
 
-    # Save build traceability manifest (nano11-build-info.json)
+    # Save build traceability manifest (WinEase-build-info.json)
     $buildInfoObj = [ordered]@{
-        BuilderVersion        = $script:Nano11Version
+        BuilderVersion        = $script:WinEaseVersion
         BuildUtc              = [DateTime]::UtcNow.ToString("o")
         Profile               = $selectedProfile
         Architecture          = $architecture
@@ -1101,8 +1101,8 @@ exit 0
         PayloadFormat         = if ($exportESDMode) { "ESD" } elseif ($splitWIMMode) { "SWM" } else { "WIM" }
     }
     $buildInfoJson = $buildInfoObj | ConvertTo-Json -Depth 4
-    $buildInfoJson | Set-Content -LiteralPath (Join-Path -Path $nano11Dir -ChildPath "nano11-build-info.json") -Encoding utf8
-    $buildInfoJson | Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "nano11-build-info.json") -Encoding utf8
+    $buildInfoJson | Set-Content -LiteralPath (Join-Path -Path $WinEaseDir -ChildPath "WinEase-build-info.json") -Encoding utf8
+    $buildInfoJson | Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "WinEase-build-info.json") -Encoding utf8
 }
 
 # Bundle Custom Post-Install Scripts if provided in tools\custom-scripts (FirstLogon\ and the older top-level files
@@ -1112,12 +1112,12 @@ if (Test-Path -LiteralPath $customScriptsDir) {
     $targetCustomDir = Join-Path -Path $scratchDir -ChildPath "Windows\Setup\Scripts\Custom"
     New-Item -Path $targetCustomDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
     $customManifest = [ordered]@{}
-    foreach ($f in @(Get-Nano11CustomScriptFiles -RepoRoot $scriptDir -Stage 'FirstLogon' -IncludeLegacy)) {
+    foreach ($f in @(Get-WinEaseCustomScriptFiles -RepoRoot $scriptDir -Stage 'FirstLogon' -IncludeLegacy)) {
         Copy-Item -LiteralPath $f.FullName -Destination $targetCustomDir -Force -ErrorAction SilentlyContinue
         $hash = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash
         $customManifest[$f.Name] = $hash
     }
-    $userFiles = @(Get-Nano11CustomScriptFiles -RepoRoot $scriptDir -Stage 'UserOnce' -IncludeLegacy)
+    $userFiles = @(Get-WinEaseCustomScriptFiles -RepoRoot $scriptDir -Stage 'UserOnce' -IncludeLegacy)
     if ($userFiles.Count -gt 0) {
         $targetUserDir = Join-Path -Path $scratchDir -ChildPath "Windows\Setup\Scripts\UserCustom"
         New-Item -Path $targetUserDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
@@ -1130,8 +1130,8 @@ if (Test-Path -LiteralPath $customScriptsDir) {
     if ($customManifest.Count -gt 0) {
         $manifestPath = Join-Path -Path $scratchDir -ChildPath "Windows\Setup\Scripts\custom-scripts-manifest.json"
         $manifestJson = $customManifest | ConvertTo-Json -Depth 2
-        if (Get-Command -Name "Write-Nano11TextFileAtomic" -ErrorAction SilentlyContinue) {
-            Write-Nano11TextFileAtomic -Path $manifestPath -Content $manifestJson | Out-Null
+        if (Get-Command -Name "Write-WinEaseTextFileAtomic" -ErrorAction SilentlyContinue) {
+            Write-WinEaseTextFileAtomic -Path $manifestPath -Content $manifestJson | Out-Null
         } else {
             [System.IO.File]::WriteAllText($manifestPath, $manifestJson, [System.Text.Encoding]::UTF8)
         }
@@ -1139,7 +1139,7 @@ if (Test-Path -LiteralPath $customScriptsDir) {
     Write-Host "  - Bundled custom post-install scripts ($($customManifest.Count) files) with SHA256 manifest to Windows\Setup\Scripts\Custom" -ForegroundColor Green
 }
 
-# Deploy Zero-Footprint Browser Grabber and Nano11 Control Center to Public Desktop & Setup Tools
+# Deploy Zero-Footprint Browser Grabber and WinEase Control Center to Public Desktop & Setup Tools
 $pubDesktop = Join-Path -Path $scratchDir -ChildPath "Users\Public\Desktop"
 $setupTools = Join-Path -Path $scratchDir -ChildPath "Windows\Setup\Tools"
 New-Item -Path $pubDesktop -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
@@ -1156,7 +1156,7 @@ $ErrorActionPreference = 'Stop'
 
 Clear-Host
 Write-Host "=========================================================" -ForegroundColor Cyan
-Write-Host "               nano11 Browser Installer" -ForegroundColor Cyan
+Write-Host "               WinEase Browser Installer" -ForegroundColor Cyan
 Write-Host "=========================================================" -ForegroundColor Cyan
 Write-Host "Edge was removed for minimal footprint. Select a browser" -ForegroundColor Gray
 Write-Host "to download and install directly from its official CDN:" -ForegroundColor Gray
@@ -1172,7 +1172,7 @@ Write-Host "=========================================================" -Foregrou
 $choice = Read-Host "Select option [1-5, 0]"
 if (-not $choice -or $choice.Trim() -eq '0') { exit }
 
-$tempDir = Join-Path -Path $env:TEMP -ChildPath "nano11_browser_$([System.IO.Path]::GetRandomFileName())"
+$tempDir = Join-Path -Path $env:TEMP -ChildPath "WinEase_browser_$([System.IO.Path]::GetRandomFileName())"
 New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 
 try {
@@ -1237,7 +1237,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Install-Browser.ps
 $controlCenterContent = @'
 @echo off
 setlocal enabledelayedexpansion
-title nano11 Control Center
+title WinEase Control Center
 
 :: Elevate with UAC administrator privileges if not already elevated
 net session >nul 2>&1
@@ -1249,7 +1249,7 @@ if %errorlevel% neq 0 (
 :MENU
 cls
 echo ========================================================
-echo                 nano11 Control Center
+echo                 WinEase Control Center
 echo ========================================================
 echo   [1] Toggle Windows Defender (Enable / Disable)
 echo   [2] Toggle Windows Update   (Enable / Disable)
@@ -1388,8 +1388,8 @@ if (-not $NoPostInstallAssets) {
     # Keep maintenance tools safely in Windows\Setup\Tools (do not pollute Public Desktop)
     $browserPs1Content | Set-Content -LiteralPath (Join-Path -Path $setupTools -ChildPath "Install-Browser.ps1") -Encoding utf8
     $browserCmdContent | Set-Content -LiteralPath (Join-Path -Path $setupTools -ChildPath "Install-Browser.cmd") -Encoding ascii
-    $controlCenterContent | Set-Content -LiteralPath (Join-Path -Path $setupTools -ChildPath "Nano11 Control Center.bat") -Encoding ascii
-    Write-Host "  - Staged Browser Grabber and Nano11 Control Center to Windows\Setup\Tools" -ForegroundColor Green
+    $controlCenterContent | Set-Content -LiteralPath (Join-Path -Path $setupTools -ChildPath "WinEase Control Center.bat") -Encoding ascii
+    Write-Host "  - Staged Browser Grabber and WinEase Control Center to Windows\Setup\Tools" -ForegroundColor Green
 
     $atlasDir = Join-Path -Path $setupTools -ChildPath "Atlas-ReviOS Tools"
     if (-not (Test-Path -LiteralPath $atlasDir)) {
@@ -1543,7 +1543,7 @@ pause
 setlocal
 title Windows Activation Status
 echo ========================================================
-echo   nano11 Tool: Windows Activation Status & Helper
+echo   WinEase Tool: Windows Activation Status & Helper
 echo ========================================================
 echo Checking Windows license status...
 cscript.exe //nologo %SystemRoot%\System32\slmgr.vbs /dli
@@ -1565,7 +1565,7 @@ pause
     Write-Host "  - Staged Atlas-ReviOS maintenance tools to Windows\Setup\Tools\Atlas-ReviOS Tools" -ForegroundColor Green
 
     # Ensure Public Desktop is clean of tools folders
-    $cleanItems = @("Atlas-ReviOS Tools", "Install-Browser.cmd", "Install-Browser.ps1", "Nano11 Control Center.bat", "Nano11 Control Center.cmd")
+    $cleanItems = @("Atlas-ReviOS Tools", "Install-Browser.cmd", "Install-Browser.ps1", "WinEase Control Center.bat", "WinEase Control Center.cmd")
     foreach ($ci in $cleanItems) {
         $ciPath = Join-Path -Path $pubDesktop -ChildPath $ci
         if (Test-Path -LiteralPath $ciPath) {
@@ -1644,21 +1644,21 @@ $script:WinSxsAfterMB  = & $parseSizeHelper $script:WinsxsAfterRaw
 $script:WinSxsSavedMB  = if ($script:WinSxsBeforeMB -gt 0 -and $script:WinSxsAfterMB -gt 0) { [math]::Max(0, [math]::Round($script:WinSxsBeforeMB - $script:WinSxsAfterMB, 1)) } else { 0 }
 
 # M2: User extension actions (SetupScripts)
-if (Get-Command -Name Invoke-Nano11UserExtensionActions -ErrorAction SilentlyContinue) {
-    try { Invoke-Nano11UserExtensionActions -PhaseType SetupScripts -ScratchDir $scratchDir -DryRun:$DryRun -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+if (Get-Command -Name Invoke-WinEaseUserExtensionActions -ErrorAction SilentlyContinue) {
+    try { Invoke-WinEaseUserExtensionActions -PhaseType SetupScripts -ScratchDir $scratchDir -DryRun:$DryRun -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
 # M2: Custom scripts (OfflineImage stage) - runs after the registry/unattend work, before FirstLogon/UserOnce staging
-if (Get-Command -Name Invoke-Nano11CustomScriptsStage -ErrorAction SilentlyContinue) {
-    try { Invoke-Nano11CustomScriptsStage -Stage 'OfflineImage' -Context @{ ScratchDir = $scratchDir; Nano11Dir = $nano11Dir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+if (Get-Command -Name Invoke-WinEaseCustomScriptsStage -ErrorAction SilentlyContinue) {
+    try { Invoke-WinEaseCustomScriptsStage -Stage 'OfflineImage' -Context @{ ScratchDir = $scratchDir; WinEaseDir = $WinEaseDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
 # M2: Custom scripts (FirstLogon & UserOnce stages -> copy to offline image)
 $customFirstLogonDir = Join-Path -Path $scratchDir -ChildPath 'Windows\Setup\Scripts\Custom\FirstLogon'
 $customUserOnceDir = Join-Path -Path $scratchDir -ChildPath 'Windows\Setup\Scripts\Custom\UserOnce'
 Write-Verbose "Custom dirs: $customFirstLogonDir, $customUserOnceDir"
-if (Get-Command -Name Invoke-Nano11CustomScriptsStage -ErrorAction SilentlyContinue) {
+if (Get-Command -Name Invoke-WinEaseCustomScriptsStage -ErrorAction SilentlyContinue) {
     try {
-        Invoke-Nano11CustomScriptsStage -Stage 'FirstLogon' -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null
-        Invoke-Nano11CustomScriptsStage -Stage 'UserOnce' -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null
+        Invoke-WinEaseCustomScriptsStage -Stage 'FirstLogon' -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null
+        Invoke-WinEaseCustomScriptsStage -Stage 'UserOnce' -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null
     } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
 
@@ -1709,8 +1709,8 @@ try {
 if ($includeMigrationAssistant -eq $true) {
     try {
         $migrationFiles = @(
-            'tools\migrator\Nano11-Migrator.ps1',
-            'tools\migrator\Nano11Migration.ps1',
+            'tools\migrator\WinEase-Migrator.ps1',
+            'tools\migrator\WinEaseMigration.ps1',
             'tools\migrator\migration-rules.psd1',
             'config\user\user-migration-rules.psd1'
         )
@@ -1719,7 +1719,7 @@ if ($includeMigrationAssistant -eq $true) {
         $migrationLauncherPath = Join-Path -Path $migrationDesktopDir -ChildPath 'Launch-MigrationAssistant.cmd'
         $migrationLauncherLines = @(
             '@echo off',
-            'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Windows\Setup\Scripts\Migration\Nano11-Migrator.ps1" -GUI'
+            'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Windows\Setup\Scripts\Migration\WinEase-Migrator.ps1" -GUI'
         )
         if ($DryRun) {
             Write-Host "  [DryRun] Would copy Migration Assistant files to $migrationDestDir" -ForegroundColor DarkYellow
@@ -1730,7 +1730,7 @@ if ($includeMigrationAssistant -eq $true) {
             New-Item -ItemType Directory -Path $migrationDesktopDir -Force | Out-Null
             foreach ($mf in $migrationFiles) {
                 $mfSrc = Join-Path -Path $scriptDir -ChildPath $mf
-                if ((Split-Path -Path $mf -Leaf) -eq 'user-migration-rules.psd1') { $mfSrc = Resolve-Nano11UserConfigPath -RepoRoot $scriptDir -Name 'user-migration-rules.psd1' }
+                if ((Split-Path -Path $mf -Leaf) -eq 'user-migration-rules.psd1') { $mfSrc = Resolve-WinEaseUserConfigPath -RepoRoot $scriptDir -Name 'user-migration-rules.psd1' }
                 if (Test-Path -LiteralPath $mfSrc) {
                     Copy-Item -LiteralPath $mfSrc -Destination (Join-Path -Path $migrationDestDir -ChildPath (Split-Path -Path $mf -Leaf)) -Force
                 } else {

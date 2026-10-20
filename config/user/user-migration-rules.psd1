@@ -1,4 +1,4 @@
-# user-migration-rules.psd1 - User-defined migration rules for nano11
+# user-migration-rules.psd1 - User-defined migration rules for WinEase
 @{
     SchemaVersion = '1.0'
 

@@ -1,17 +1,17 @@
 ﻿# Phase 16: 16-iso-cleanup
-# Extracted from nano11builder.ps1
+# Extracted from WinEasebuilder.ps1
 # Dot-sourced by the main orchestrator
 
 
 # 16. Final cleanup of ISO root and sources
 Write-Host "Performing final cleanup of ISO root..." -ForegroundColor Cyan
-$keepList = @("boot", "efi", "sources", "bootmgr", "bootmgr.efi", "bootmgfw.efi", "setup.exe", "autounattend.xml", "nano11-build-info.json")
-Get-ChildItem -Path $nano11Dir | Where-Object { $_.Name -notin $keepList } | ForEach-Object {
+$keepList = @("boot", "efi", "sources", "bootmgr", "bootmgr.efi", "bootmgfw.efi", "setup.exe", "autounattend.xml", "WinEase-build-info.json")
+Get-ChildItem -Path $WinEaseDir | Where-Object { $_.Name -notin $keepList } | ForEach-Object {
     Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 # Clean leftover build diagnostics and setup logs inside sources
-$sourcesDir = Join-Path -Path $nano11Dir -ChildPath "sources"
+$sourcesDir = Join-Path -Path $WinEaseDir -ChildPath "sources"
 if (Test-Path -LiteralPath $sourcesDir) {
     Remove-Item -Path "$sourcesDir\setupcore.log" -Force -ErrorAction SilentlyContinue
     Remove-Item -Path "$sourcesDir\*.diagerr" -Force -ErrorAction SilentlyContinue
