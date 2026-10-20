@@ -19,36 +19,42 @@ if ($removeLegacyFOD) {
     & dism.exe /English "/image:$scratchDir" /Disable-Feature /Remove /FeatureName:SMB1Protocol > $null 2>&1
     Write-Host "  - Legacy capabilities (VBScript, ISE, WMP, SMB1) removed." -ForegroundColor Green
 }
-$packagePatterns = @(
-    "Microsoft-Windows-InternetExplorer-Optional-Package~",
-    "Microsoft-Windows-MediaPlayer-Package~",
-    "Microsoft-Windows-WordPad-FoD-Package~",
-    "Microsoft-Windows-StepsRecorder-Package~",
-    "Microsoft-Windows-MSPaint-FoD-Package~",
-    "Microsoft-Windows-SnippingTool-FoD-Package~",
-    "Microsoft-Windows-TabletPCMath-Package~",
-    "Microsoft-Windows-Xps-Xps-Viewer-Opt-Package~",
-    "Microsoft-Windows-PowerShell-ISE-FOD-Package~",
-    "OpenSSH-Client-Package~",
-    "Microsoft-Windows-Search-Engine-Client-Package~",
-    "Microsoft-Windows-Kernel-LA57-FoD-Package~",
-    "Microsoft-Windows-Hello-Face-Package~",
-    "Microsoft-Windows-Hello-BioEnrollment-Package~",
-    "Microsoft-Windows-BitLocker-DriveEncryption-FVE-Package~",
-    "Microsoft-Windows-TPM-WMI-Provider-Package~",
-    "Microsoft-Windows-Narrator-App-Package~",
-    "Microsoft-Windows-Magnifier-App-Package~",
-    "Microsoft-Windows-Printing-PMCPPC-FoD-Package~",
-    "Microsoft-Windows-WebcamExperience-Package~",
-    "Microsoft-Media-MPEG2-Decoder-Package~",
-    "Microsoft-Windows-Wallpaper-Content-Extended-FoD-Package~",
+# FoD / optional-feature package patterns, each bound to an individual option.
+# The polarity is uniform: the option is ON -> the package is removed, OFF -> the package
+# is kept. Before this mapping every pattern below was removed on every build, so a user
+# could not keep any of these features.
+$packagePatterns = @()
 
-    # Foreign language font packages (preserves Latin, system, and Japanese Jpan fonts)
-    "Microsoft-Windows-LanguageFeatures-Fonts-Hans-Package~",
-    "Microsoft-Windows-LanguageFeatures-Fonts-Hant-Package~",
-    "Microsoft-Windows-LanguageFeatures-Fonts-Kore-Package~",
-    "Microsoft-Windows-LanguageFeatures-Fonts-Thai-Package~",
-    "Microsoft-Windows-LanguageFeatures-Fonts-Deva-Package~",
+# Map: option key -> package patterns. The map lives in config\schema.psd1 (Targets), so
+# the schema is the single source of truth for what an option removes.
+$packageOptionMap = [ordered]@{}
+foreach ($targetKey in @($script:WinEaseSettingsDef.Targets.Keys)) {
+    $packageOptionMap[$targetKey] = @($script:WinEaseSettingsDef.Targets[$targetKey].FoDPackages)
+}
+
+foreach ($optKey in $packageOptionMap.Keys) {
+    # The option itself, or an Advanced Debloat target that implies it (the Option field of
+    # config\schema.psd1 -> DebloatEngines). The target selection is the second way to ask
+    # for the same work, not a second implementation of it.
+    $optionOn = (Test-TweakEnabled $optKey $false)
+    if (-not $optionOn -and (Get-Command -Name Test-WinEaseDebloatOptionEnabled -ErrorAction SilentlyContinue)) {
+        $optionOn = Test-WinEaseDebloatOptionEnabled -Option $optKey
+    }
+    if ($optionOn) {
+        $packagePatterns += $packageOptionMap[$optKey]
+    }
+}
+
+# Foreign language font packages (preserves Latin, system, and Japanese Jpan fonts).
+# These are bound to the font options: keepExtraFonts keeps the extra international fonts,
+# keepAsianIME keeps the Asian IME related packages.
+if (-not $keepExtraFonts) {
+    $packagePatterns += @(
+        "Microsoft-Windows-LanguageFeatures-Fonts-Hans-Package~",
+        "Microsoft-Windows-LanguageFeatures-Fonts-Hant-Package~",
+        "Microsoft-Windows-LanguageFeatures-Fonts-Kore-Package~",
+        "Microsoft-Windows-LanguageFeatures-Fonts-Thai-Package~",
+        "Microsoft-Windows-LanguageFeatures-Fonts-Deva-Package~",
     "Microsoft-Windows-LanguageFeatures-Fonts-Syrc-Package~",
     "Microsoft-Windows-LanguageFeatures-Fonts-Cher-Package~",
     "Microsoft-Windows-LanguageFeatures-Fonts-Ethi-Package~",
@@ -61,52 +67,41 @@ $packagePatterns = @(
     "Microsoft-Windows-LanguageFeatures-Fonts-Taml-Package~",
     "Microsoft-Windows-LanguageFeatures-Fonts-Telu-Package~",
     "Microsoft-Windows-LanguageFeatures-Fonts-Hebr-Package~",
-    "Microsoft-Windows-LanguageFeatures-Fonts-Arab-Package~",
+    "Microsoft-Windows-LanguageFeatures-Fonts-Arab-Package~"
+    )
+}
 
-    # Additional obsolete/unneeded optional FOD packages
-    "Microsoft-Windows-WMIC-FoD-Package~",
-    "Microsoft-Windows-Printing-WFS-FoD-Package~",
-    "Microsoft-Windows-WirelessDisplay-FOD-Package~",
-    "Microsoft-Windows-SNMP-Client-Package~",
-    "Telnet-Client-Package~",
-    "SimpleTCP-Client-Package~",
-    "Microsoft-Windows-RDC-Package~",
-    "Microsoft-Windows-Fax-Client-Package~",
-    "Microsoft-Windows-Recall-FoD-Package~",
-    "Microsoft-Windows-User-Experience-Virtualization-Package~",
-    "Microsoft-Windows-Device-Management-Enterprise-Package~",
-    "Microsoft-Windows-Notepad-FoD-Package~",
-    "Microsoft-Windows-Paint-FoD-Package~",
-    "Microsoft-Windows-MathRecognizer-Package~",
-
-    # Decoupled Asian/Foreign Language Cleanup:
-    # Always remove foreign Asian IMEs and heavy foreign Speech, Text-to-Speech, OCR, and Handwriting packages.
-    # These packages take gigabytes of space and are completely unused in Japanese (ja-JP) or English (en-US) installations.
-    "*IME-ko-kr*",
-    "*IME-zh-cn*",
-    "*IME-zh-tw*",
-    "*IME-zh-hk*",
-    "Microsoft-Windows-LanguageFeatures-Speech-zh-*",
-    "Microsoft-Windows-LanguageFeatures-Speech-ko-*",
-    "Microsoft-Windows-LanguageFeatures-Speech-de-*",
-    "Microsoft-Windows-LanguageFeatures-Speech-fr-*",
-    "Microsoft-Windows-LanguageFeatures-Speech-es-*",
-    "Microsoft-Windows-LanguageFeatures-Speech-it-*",
-    "Microsoft-Windows-LanguageFeatures-Speech-pt-*",
-    "Microsoft-Windows-LanguageFeatures-Speech-ru-*",
-    "Microsoft-Windows-LanguageFeatures-TextToSpeech-zh-*",
-    "Microsoft-Windows-LanguageFeatures-TextToSpeech-ko-*",
-    "Microsoft-Windows-LanguageFeatures-TextToSpeech-de-*",
-    "Microsoft-Windows-LanguageFeatures-TextToSpeech-fr-*",
-    "Microsoft-Windows-LanguageFeatures-TextToSpeech-es-*",
-    "Microsoft-Windows-LanguageFeatures-TextToSpeech-it-*",
-    "Microsoft-Windows-LanguageFeatures-TextToSpeech-pt-*",
-    "Microsoft-Windows-LanguageFeatures-TextToSpeech-ru-*",
-    "Microsoft-Windows-LanguageFeatures-Handwriting-zh-*",
-    "Microsoft-Windows-LanguageFeatures-Handwriting-ko-*",
-    "Microsoft-Windows-LanguageFeatures-OCR-zh-*",
-    "Microsoft-Windows-LanguageFeatures-OCR-ko-*"
-)
+# Foreign Speech / Text-to-Speech / Handwriting / OCR packages for non-target languages.
+# These are bound to the Asian-IME option: with keepAsianIME the foreign language IME and
+# language-feature packages are kept, otherwise they are removed.
+if (-not $keepAsianIME) {
+    $packagePatterns += @(
+        "*IME-ko-kr*",
+        "*IME-zh-cn*",
+        "*IME-zh-tw*",
+        "*IME-zh-hk*",
+        "Microsoft-Windows-LanguageFeatures-Speech-zh-*",
+        "Microsoft-Windows-LanguageFeatures-Speech-ko-*",
+        "Microsoft-Windows-LanguageFeatures-Speech-de-*",
+        "Microsoft-Windows-LanguageFeatures-Speech-fr-*",
+        "Microsoft-Windows-LanguageFeatures-Speech-es-*",
+        "Microsoft-Windows-LanguageFeatures-Speech-it-*",
+        "Microsoft-Windows-LanguageFeatures-Speech-pt-*",
+        "Microsoft-Windows-LanguageFeatures-Speech-ru-*",
+        "Microsoft-Windows-LanguageFeatures-TextToSpeech-zh-*",
+        "Microsoft-Windows-LanguageFeatures-TextToSpeech-ko-*",
+        "Microsoft-Windows-LanguageFeatures-TextToSpeech-de-*",
+        "Microsoft-Windows-LanguageFeatures-TextToSpeech-fr-*",
+        "Microsoft-Windows-LanguageFeatures-TextToSpeech-es-*",
+        "Microsoft-Windows-LanguageFeatures-TextToSpeech-it-*",
+        "Microsoft-Windows-LanguageFeatures-TextToSpeech-pt-*",
+        "Microsoft-Windows-LanguageFeatures-TextToSpeech-ru-*",
+        "Microsoft-Windows-LanguageFeatures-Handwriting-zh-*",
+        "Microsoft-Windows-LanguageFeatures-Handwriting-ko-*",
+        "Microsoft-Windows-LanguageFeatures-OCR-zh-*",
+        "Microsoft-Windows-LanguageFeatures-OCR-ko-*"
+    )
+}
 
 if (-not $keepAsianIME) {
     $packagePatterns += @(
@@ -196,6 +191,13 @@ foreach ($packagePattern in $packagePatterns) {
 foreach ($packageIdentity in $packagesToRemove) {
     Write-Host "  - Removing package: $packageIdentity"
     & dism.exe /English "/image:$scratchDir" /Remove-Package "/PackageName:$packageIdentity" > $null 2>&1
+}
+
+# The Advanced Debloat targets this phase owns (config\schema.psd1 -> DebloatEngines):
+# the optional features and the installed capabilities that the FoD packages belong to.
+# They are removed here, so phase 09 does not remove them a second time.
+if (Get-Command -Name Invoke-WinEaseDebloatTargets -ErrorAction SilentlyContinue) {
+    Invoke-WinEaseDebloatTargets -Phase '06-fod'
 }
 
 # M2: User extension actions (FOD)

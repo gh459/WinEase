@@ -785,7 +785,13 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
     {
         targets.push(DeletionTarget {
             name: "Hyper-V",
-            files: vec![],
+            files: vec![
+                "Windows\\System32\\vmms.exe",
+                "Windows\\System32\\vmwp.exe",
+                "Windows\\System32\\vmcompute.exe",
+                "Windows\\System32\\drivers\\hvservice.sys",
+                "Windows\\System32\\drivers\\vhdmp.sys",
+            ],
             dirs: vec![],
         });
     }
@@ -811,7 +817,10 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
     {
         targets.push(DeletionTarget {
             name: "Firewall",
-            files: vec![],
+            files: vec![
+                "Windows\\System32\\mpssvc.dll",
+                "Windows\\System32\\drivers\\mpsdrv.sys",
+            ],
             dirs: vec![],
         });
     }
@@ -824,7 +833,11 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
     {
         targets.push(DeletionTarget {
             name: "Bluetooth",
-            files: vec![],
+            files: vec![
+                "Windows\\System32\\bthserv.dll",
+                "Windows\\System32\\drivers\\bthport.sys",
+                "Windows\\System32\\drivers\\bthusb.sys",
+            ],
             dirs: vec![],
         });
     }
@@ -837,8 +850,13 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
     {
         targets.push(DeletionTarget {
             name: "Spooler",
-            files: vec![],
-            dirs: vec![],
+            files: vec![
+                "Windows\\System32\\spoolsv.exe",
+                "Windows\\System32\\printui.exe",
+                "Windows\\System32\\localspl.dll",
+                "Windows\\System32\\win32spl.dll",
+            ],
+            dirs: vec!["Windows\\System32\\spool"],
         });
     }
 
@@ -879,7 +897,33 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
     {
         targets.push(DeletionTarget {
             name: "BitLocker",
-            files: vec![],
+            files: vec![
+                "Windows\\System32\\manage-bde.exe",
+                "Windows\\System32\\bdeunlock.exe",
+                "Windows\\System32\\BitLockerWizard.exe",
+                "Windows\\System32\\BitLockerWizardElev.exe",
+                "Windows\\System32\\fveapi.dll",
+                "Windows\\System32\\bdesvc.dll",
+            ],
+            dirs: vec![],
+        });
+    }
+
+    if config
+        .experimental
+        .get("physical_accessibility")
+        .copied()
+        .unwrap_or(false)
+    {
+        targets.push(DeletionTarget {
+            name: "Accessibility",
+            files: vec![
+                "Windows\\System32\\osk.exe",
+                "Windows\\System32\\Narrator.exe",
+                "Windows\\System32\\Magnify.exe",
+                "Windows\\System32\\utilman.exe",
+                "Windows\\System32\\atbroker.exe",
+            ],
             dirs: vec![],
         });
     }
@@ -892,8 +936,12 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
     {
         targets.push(DeletionTarget {
             name: "Sandbox",
-            files: vec![],
-            dirs: vec![],
+            files: vec![
+                "Windows\\System32\\WindowsSandbox.exe",
+                "Windows\\System32\\WindowsSandboxClient.exe",
+                "Windows\\System32\\WindowsSandboxServer.exe",
+            ],
+            dirs: vec!["Windows\\System32\\Containers\\DisposableClientVM"],
         });
     }
 
@@ -905,7 +953,30 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
     {
         targets.push(DeletionTarget {
             name: "WSL",
-            files: vec![],
+            files: vec![
+                "Windows\\System32\\wsl.exe",
+                "Windows\\System32\\wslconfig.exe",
+                "Windows\\System32\\wslg.exe",
+            ],
+            dirs: vec!["Windows\\System32\\lxss"],
+        });
+    }
+
+    if config
+        .experimental
+        .get("physical_rdp")
+        .copied()
+        .unwrap_or(false)
+    {
+        targets.push(DeletionTarget {
+            name: "Remote Desktop",
+            files: vec![
+                "Windows\\System32\\mstsc.exe",
+                "Windows\\System32\\mstscax.dll",
+                "Windows\\System32\\termsrv.dll",
+                "Windows\\System32\\rdpclip.exe",
+                "Windows\\System32\\rfxvmt.dll",
+            ],
             dirs: vec![],
         });
     }
@@ -1199,5 +1270,95 @@ mod tests {
         assert!(KNOWN_EXPERIMENTAL_KEYS.len() >= 30);
         assert!(KNOWN_EXPERIMENTAL_KEYS.contains(&"physical_edge"));
         assert!(KNOWN_EXPERIMENTAL_KEYS.contains(&"physical_defender"));
+    }
+
+    /// Every experimental target that physically removes a Windows component must name
+    /// the files or directories it removes. A target with an empty list is a no-op that
+    /// silently does nothing, which is exactly how the nine unimplemented targets
+    /// (hyperv, firewall, bluetooth, spooler, bitlocker, accessibility, sandbox, wsl,
+    /// rdp) behaved before.
+    #[test]
+    fn test_every_experimental_target_has_a_non_empty_definition() {
+        // Build a config that enables every known experimental key.
+        let mut experimental = std::collections::HashMap::new();
+        for key in KNOWN_EXPERIMENTAL_KEYS {
+            experimental.insert(key.to_string(), true);
+        }
+        let config = DebloatConfig {
+            dry_run: true,
+            mount_path: "C:\\nonexistent-mount".to_string(),
+            log_path: String::new(),
+            confirm_offline_image: false,
+            experimental,
+        };
+
+        let targets = get_targets(&config);
+        assert!(
+            !targets.is_empty(),
+            "get_targets returned no targets for a fully enabled config"
+        );
+        for target in &targets {
+            assert!(
+                !target.files.is_empty() || !target.dirs.is_empty(),
+                "experimental target '{}' has an empty file and directory list, so it \
+                 would silently do nothing",
+                target.name
+            );
+        }
+    }
+
+    /// The nine targets that were previously empty must now delete real binaries.
+    #[test]
+    fn test_previously_unimplemented_targets_delete_real_files() {
+        let mut experimental = std::collections::HashMap::new();
+        for key in [
+            "physical_hyperv",
+            "physical_firewall",
+            "physical_bluetooth",
+            "physical_spooler",
+            "physical_bitlocker",
+            "physical_accessibility",
+            "physical_sandbox",
+            "physical_wsl",
+            "physical_rdp",
+        ] {
+            experimental.insert(key.to_string(), true);
+        }
+        let config = DebloatConfig {
+            dry_run: true,
+            mount_path: "C:\\nonexistent-mount".to_string(),
+            log_path: String::new(),
+            confirm_offline_image: false,
+            experimental,
+        };
+
+        let targets = get_targets(&config);
+        let expected = [
+            "physical_hyperv",
+            "physical_firewall",
+            "physical_bluetooth",
+            "physical_spooler",
+            "physical_bitlocker",
+            "physical_accessibility",
+            "physical_sandbox",
+            "physical_wsl",
+            "physical_rdp",
+        ];
+        for key in expected {
+            let target = targets
+                .iter()
+                .find(|t| {
+                    t.files
+                        .iter()
+                        .chain(t.dirs.iter())
+                        .any(|p| p.starts_with("Windows\\System32"))
+                })
+                .unwrap_or_else(|| panic!("no System32 target produced for {}", key));
+            assert!(
+                !target.files.is_empty() || !target.dirs.is_empty(),
+                "target for {} is still empty",
+                key
+            );
+        }
     }
 }

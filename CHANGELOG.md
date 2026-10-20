@@ -10,9 +10,118 @@ The M1-M4 feature work and the S1-S12 follow-up sessions (design review against
 subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
 `docs/dev/SESSION_BRIEFS.md`.
 
+### Removed
+- `PowerPreset` and `CpuBoostMode` were removed. Both were never implemented: they
+  selected a value from a `$script:PowerPresets` table that no phase ever read, and
+  the only trace of them on the installed system was a `power-preset.flag` file
+  that nothing consumed. `HibernateMode` (`Off` / `Reduced` / `Keep`) is now the
+  single switch for hibernation, and it is actually applied: phase 11 stages the
+  mode in `hibernate-mode.flag` and `scripts/FirstLogon.ps1` turns hibernation
+  off (`Off`), turns fast startup off while keeping hibernation (`Reduced`), or
+  leaves the power configuration alone (`Keep`). The phase 09 "Remove
+  hiberfil.sys" item used to point at `FirstLogon.ps1`, which did not handle
+  hibernation at all, so `hiberfil.sys` was never removed; it is now.
+- The unreferenced first-logon flags were cleaned up. `radical-ram.flag`,
+  `keep-xbox.flag`, `keep-basic-apps.flag`, `keep-windows-update.flag`,
+  `gpu-latency.flag` and `no-postinstall-assets.flag` were written into the image
+  but never read, because each of those options is already applied offline (phase
+  05 removes the AppX packages, phase 10 sets the service Start values and the GPU
+  scheduler mode). Every flag that phase 11 stages is now read by a post-install
+  script, and every flag a post-install script reads is staged by phase 11.
+
 ### Fixed
+- The nine experimental physical-deletion targets that were registered but had an
+  empty target list are now implemented. Selecting "Physical: Hyper-V", "Windows
+  Firewall", "Bluetooth stack", "Print Spooler", "BitLocker", "Accessibility
+  tools", "Windows Sandbox", "WSL / VM Platform" or "Remote Desktop host" in the
+  Advanced Debloat tab previously did nothing at all:
+  | Target | Files removed from the mounted image |
+  |---|---|
+  | `physical_hyperv` | `vmms.exe`, `vmwp.exe`, `vmcompute.exe`, `drivers\hvservice.sys`, `drivers\vhdmp.sys` |
+  | `physical_firewall` | `mpssvc.dll`, `drivers\mpsdrv.sys` |
+  | `physical_bluetooth` | `bthserv.dll`, `drivers\bthport.sys`, `drivers\bthusb.sys` |
+  | `physical_spooler` | `spoolsv.exe`, `printui.exe`, `localspl.dll`, `win32spl.dll`, `spool\` |
+  | `physical_bitlocker` | `manage-bde.exe`, `bdeunlock.exe`, `BitLockerWizard.exe`, `BitLockerWizardElev.exe`, `fveapi.dll`, `bdesvc.dll` |
+  | `physical_accessibility` | `osk.exe`, `Narrator.exe`, `Magnify.exe`, `utilman.exe`, `atbroker.exe` |
+  | `physical_sandbox` | `WindowsSandbox.exe`, `WindowsSandboxClient.exe`, `WindowsSandboxServer.exe`, `Containers\DisposableClientVM` |
+  | `physical_wsl` | `wsl.exe`, `wslconfig.exe`, `wslg.exe`, `lxss` |
+  | `physical_rdp` | `mstsc.exe`, `mstscax.dll`, `termsrv.dll`, `rdpclip.exe`, `rfxvmt.dll` |
+  The deletion method was chosen after measuring the real image: the System32
+  binaries are hard links into their WinSxS package, and deleting the System32
+  link removes the shared MFT record, so the file disappears from the image
+  completely. Removing all nine groups from a mounted copy of the official ISO
+  (29 files and 3 directories) committed cleanly and passed
+  `DISM /Apply-Image /CheckIntegrity /Verify` with exit code 0, which is the same
+  gate phase 15 uses. Two new Rust unit tests assert that no experimental target
+  has an empty definition, so a silently ineffective target cannot come back.
+- The labels of the two targets that the Rust engine really removes were wrong:
+  they said "OOBE-safe: retained" and "~0MB" although the Rust engine deletes
+  the binaries. The labels, the Japanese translations and the dependency catalog
+  now describe what actually happens.
+- Post-install steps that ran unconditionally on every installed system are now
+  bound to individual options. Phase 11 stages a flag only when the matching
+  option is enabled, and the post-install scripts act on that flag:
+  - `Compact.exe /CompactOS:always` -> `EnableCompactOS`
+  - `fsutil behavior set disablelastaccess` / `8dot3name set 1` ->
+    `EnableNtfs8dot3Disable`
+  - the Ultimate Performance power plan -> `EnableUltimatePerformancePower`
+  - the PCI Message Signaled Interrupts scan -> `EnableMsiMode`
+  - the IFEO block for the on-screen keyboard, Narrator and Magnifier ->
+    `DisableAccessibilityTools` (now off by default, so the accessibility tools
+    keep working unless the user asks for them to be blocked)
+  - killing `SearchHost` -> `DisableWindowsSearchProcess`
+  - killing `CrossDeviceResume` -> `DisableCrossDevice`
+  - `Disable-ComputerRestore` -> `DisableComputerRestore`
+  - `SearchboxTaskbarMode = 0` used to be an unconditional side effect of
+    disabling the search service; it now follows `HideSearchBox` on its own.
+- The custom FirstLogon scripts that are registered in `autounattend.xml` were
+  never written to disk: the document was saved early in phase 11, and the
+  `FirstLogonCommands` nodes that were added afterwards only existed in the
+  in-memory DOM, so the custom commands were silently dropped. The document is
+  now saved again to all three destinations (ISO root, `Sysprep`, `Panther`)
+  after the nodes are added.
+- Removals that ran unconditionally on every build could not be turned off. The
+  polarity is now uniform for the new removal options: `OFF` (the default for a
+  removal option that a user is expected to keep) means the component is left
+  alone, `ON` means it is removed. Each previously unconditional removal is now
+  bound to its own option in `config\schema.psd1`:
+  - Phase 08: the build-time cache cleanup (`Windows\Temp`, `Prefetch`, `Panther`,
+    event logs, `Minidump`, `SoftwareDistribution\Download`, `LogFiles`,
+    `Downloaded Program Files`) -> `RemoveOfflineCacheFiles`; `Windows\Help` ->
+    `RemoveHelpFiles`; the Edge browser and its update/core folders -> `RemoveEdge`
+    (the WebView2 runtime is still kept for OOBE); the Windows Backup app and its
+    `AppListBackup` scheduled task -> `RemoveWindowsBackup`; the residual
+    `WindowsBackupApp` / `Client.WebExperience` SystemApps staging folders ->
+    `RemoveWindowsBackup` / `RemoveWebExperienceHost`.
+  - Phase 05: the unconditional `Recall` / `Windows-Recall-Optional-Package`
+    feature removal -> `RemoveRecall`.
+  - Phase 06: the unconditional optional-feature (FoD) package removals ->
+    one option each (`RemoveInternetExplorer`, `RemoveWordPad`,
+    `RemoveStepsRecorder`, `RemoveSnippingTool`, `RemovePaint`, `RemoveXpsViewer`,
+    `RemovePowerShellISE`, `RemoveOpenSSHClient`, `RemoveHelloFace`,
+    `RemoveBitLockerFeature`, `RemoveNarratorApp`, `RemoveMagnifierApp`,
+    `RemoveMediaPlayerFeature`, `RemoveTabletPCMath`, `RemoveWebcamExperience`,
+    `RemoveWallpaperContent`, `RemoveSearchEngineClient`,
+    `RemovePrintingManagement`, `RemoveMpeg2Decoder`, `RemoveWmic`,
+    `RemoveWirelessDisplay`, `RemoveSnmpClient`, `RemoveTelnetClient`,
+    `RemoveSimpleTcpClient`, `RemoveRdc`, `RemoveFaxClient`,
+    `RemoveUserExperienceVirt`, `RemoveDeviceManagementEnt`, `RemoveNotepad`,
+    `RemoveMathRecognizer`, `RemovePrintingWfs`, `RemoveKernelLA57`,
+    `RemoveTpmWmiProvider`). The foreign-language font packages now follow
+    `KeepExtraFonts` and the foreign Asian IME / Speech / TTS / Handwriting / OCR
+    packages follow `KeepAsianIME`, instead of being removed unconditionally.
+- `config/dependencies.psd1` did not parse as a PowerShell data file: the
+  `NoHypervisor` key was defined three times, twice inside the same hashtable, so
+  `Import-PowerShellDataFile` failed. The duplicate is resolved by keeping one
+  entry per section (the component "toggle" placeholder and the detailed tweak
+  entry are separate), and the missing dependency records for the toggles and
+  removal options were added.
+- Two new Pester checks keep this from coming back: every post-install script
+  that removes a file, stops a service, kills a process or changes a setting
+  must sit behind a `.flag` guard, and phase 11 must stage a flag for every
+  post-install option.
 - GUI switches that had no effect, and settings that could not be turned off. The
-  settings tables in `config\tweaks.psd1` are the single source of truth, but
+  settings tables in `config\schema.psd1` are the single source of truth, but
   several options were never wired to the phases that implement them:
   - `AtlasReviOSMode` (GUI "AtlasOS & ReviOS Low-Latency Kernel Tuning") was read
     by no phase at all, so the checkbox did nothing. It is now the umbrella switch
@@ -27,7 +136,7 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
     PowerMizer performance-mode values and the per-processor DPC policy in
     `phases/10-registry.ps1`.
   - Fourteen phase branches read setting keys that were never declared in
-    `config\tweaks.psd1` (`ConfigureWinlogon`, `EnableScripts`, `DisableWindowsAI`,
+    `config\schema.psd1` (`ConfigureWinlogon`, `EnableScripts`, `DisableWindowsAI`,
     `DisableDeliveryOptimization`, `ServiceTrim`, `DisablePowerThrottling`,
     `EnableHAGS`, `NtfsDisable8dot3`, `ThreadDpcEnable`, `NetworkTuning`,
     `DisableIdleMaintenance`, `SvcHostConsolidation`, `HideSearchBox`,
@@ -130,6 +239,53 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
   mutually exclusive.
 
 ### Added
+- **One master schema.** The old config/tweaks.psd1 became `config/schema.psd1`: it is the
+  single source of truth for every option, the CLI bindings, the Advanced Debloat targets
+  and now also for the targets an option removes (`Targets` - the FoD packages of the 34
+  removal options, which phase 06 used to keep in its own table). The old file does not
+  exist any more; everything (the builder, both windows, the phases, the tests)
+  reads the master.
+- **The presets are data, not code.** The built-in presets moved from a 280 line block in
+  the builder to `config/presets.psd1`. A preset is only the list of the options it
+  switches on. The descriptive names of the plan (`None`, `Standard`, `Gaming`, `UltraSlim`,
+  `MinimalServices`) are accepted next to the existing keys.
+- `Resolve-WinEaseConfiguration` (`WinEasehelpers.ps1`) resolves the effective
+  configuration in one place: the base defaults, then the preset, then the individual
+  settings of the user. An individual setting always wins - an option the user set
+  explicitly to `$false` stays `$false`, even when the preset switches it on. Before this
+  the resolution was spread over the builder and a preset could overrule the command line.
+- `Get-WinEaseOptionPolarity` returns the polarity of an option from its key
+  (`Remove*` / `Disable*` / `Enable*` / `Keep*`), so the convention is checkable.
+
+### Changed
+- The conflict check no longer rewrites anything. `Test-WinEaseConfigConflicts` used to
+  take `-AutoResolve` and silently changed the settings of the user (e.g. it turned the
+  Windows Update switch off when the Microsoft Store was kept). It is now a pure
+  validation: it reports the contradiction and the resolution that would apply. The
+  builder applies the safeguards that protect the build - a "keep" request wins over a
+  selected debloat target, and the physical debloat needs its explicit consent - and says
+  so. A conflict that only asks for a different combination (the Store and the Windows
+  Update) is reported, not resolved.
+- The defaults of the components come from the schema instead of a hard-coded list in the
+  builder. The two lists had drifted apart (`KeepAudioTweaks`, `MMCSSGaming`).
+
+### Added
+- **PowerShell <-> Rust engine switch for the Advanced Debloat options.** Every debloat
+  target is now bound to the engine that removes it. The binding lives in
+  `config/schema.psd1` (`DebloatEngines`: the engines a target supports, its default
+  engine, the key the Rust binary understands and the older list entry that was merged
+  into it), so the GUI, the profile format and `phases/09-physical-debloat.ps1` all read
+  the same table. The rules are enforced in the phase, not only in the UI:
+  - a target that is not selected never runs, whatever engine it carries;
+  - the engine `PowerShell` never hands the target to the Rust binary;
+  - the engine `Rust` hands exactly that one key to the Rust binary, and only after the
+    `-AllowPhysicalDebloat` gate and the offline-image check passed;
+  - an engine a target does not support falls back to the registered default.
+  The Rust key is now data driven, which also fixed the page file / swap file mix-up
+  ("Remove swapfile.sys" used to be dispatched as `physical_pagefile`).
+  Both windows show the engine next to every target: the engine cell is locked while
+  the target is not selected, and a global switch applies one engine to every target
+  that supports it. A profile stores the engine per target (`DebloatEngineSelection`).
 - WinUI 3 settings window (`gui/winui`, C# / Windows App SDK 2.5, unpackaged and
   self-contained): navigation pane with the same nine pages, settings cards, Mica, system
   light/dark theme, English / Japanese from the same `config/ui-strings` tables.
@@ -139,7 +295,7 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
   `gui/WinEaseWinUiHost.ps1` serves the window's requests (sources, dependency check, Preset
   Diff, recovery readiness, migration engine, language) inside the builder process, one JSON
   message per line over stdin/stdout. The window asks for the physical debloat consent itself.
-- `config/tweaks.psd1`: single source of truth for every tweak and component setting
+- `config/schema.psd1`: single source of truth for every tweak and component setting
   (key, GUI tab, default, description, legacy aliases, CLI switch, backing variable).
   `AllTweakDefs`, the GUI "Services & Apps" tab, profile apply/export and the plain CLI
   switches are now all generated from it.
@@ -237,6 +393,35 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
   `BackedUpRules`. `Restore-WinEaseUserData` gained `-Categories` and
   `Restore-WinEaseCustomPaths` gained `-SourcePath`; CustomPath entries are no longer
   restored by the user-data path. The default backup folder moved out of Documents.
+- **Phase 09 is the Rust engine only.** The safe work of an Advanced Debloat target used
+  to run in phase 09 as well, so a target could be removed twice: once by its own option
+  and once by the phase 09 handler chain. Every target now declares the phase that owns
+  it (`config\schema.psd1` -> `DebloatEngines` -> `Phase`), the safe handlers live in one
+  place (`lib\WinEaseDebloat.ps1`) and each owning phase runs its own targets
+  (`Invoke-WinEaseDebloatTargets -Phase '<phase>'`). Phase 09 only dispatches the targets
+  whose engine is "Rust" to the Rust binary.
+  - The targets of the Advanced Debloat tab that switch on a granular option are now the
+    second way to ask for the same work, not a second implementation of it
+    (`DebloatEngines` -> `Option`, e.g. "Remove event logs" -> `RemoveOfflineCacheFiles`).
+  - Six items of the Advanced Debloat tab did nothing at all: "Remove Remote Desktop
+    host", "Remove Bluetooth stack", "Remove Print Spooler", "Remove touch/pen/ink
+    components", "Remove accessibility tools" and "Remove BitLocker" only printed a
+    message in phase 09 and left the services enabled. The services are now really
+    disabled (`TermService` / `UmRdpService`, `bthserv` / `BthAvctpSvc` /
+    `BluetoothUserService`, `Spooler` / `PrintNotify`, `TabletInputService`, `fvevc`), and
+    the accessibility item switches on the IFEO block of the installed system.
+  - `PrintNotify` is no longer disabled by the generic service trim; it goes away with the
+    `Spooler` it belongs to (AUD-19).
+  - "Remove hiberfil.sys" now really switches the hibernation mode off and
+    "Remove pagefile.sys" stages a post-install switch that disables the paging file
+    (before this both items only printed a message).
+  - The WinSxS item of the Advanced Debloat tab asks for the aggressive variant
+    (`/StartComponentCleanup /ResetBase`); the safe mode still protects the component
+    store on 24H2+.
+- The language packs can be protected per language. `RemoveLanguageJaJP`,
+  `RemoveLanguageKoKR`, `RemoveLanguageZhCN` and `RemoveLanguageZhTW` decide whether the
+  pack of that language may be removed (OFF = protected), and the language of the image
+  is always kept.
 - GUI structure (S10): `Show-WinEaseGUI` is split into one function per tab; colours live in
   `$script:WinEaseGuiColors`; OK message boxes go through `Show-WinEaseGuiMessage`; background
   work goes through `Invoke-WinEaseGuiBusy` / `Invoke-WinEaseGuiBackgroundJob`; the default
@@ -249,9 +434,23 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
 - Code hygiene (no behaviour change): empty `catch {}` blocks now log via `Write-Verbose`,
   `$null` moved to the left of comparisons, positional parameters named, unused variables
   removed, trailing whitespace stripped.
+- The window starts on the safe "balanced" preset and every debloat target starts on the
+  safe PowerShell engine. A preset that was chosen explicitly (a profile, the command
+  line) is never overridden.
 - The regenerated `WinEase_report.html` is no longer tracked by git.
 
 ### Fixed
+- The Advanced Debloat tab and its standalone dialog listed the same targets twice. The
+  16 "Physical: <target>" entries that duplicate a standard target (Bluetooth stack,
+  Print Spooler, Touch/Pen/Ink, Accessibility tools, Windows Media Player, Remote
+  Desktop host, Windows Sandbox, WSL, help files, crash dumps, provisioning packages,
+  Delivery Optimization, PatchCache, pagefile.sys, hiberfil.sys, swapfile.sys) are gone;
+  each target now has one entry and the engine column decides whether the safe
+  PowerShell engine or the Rust engine removes it. Older profiles that still contain
+  the merged entries are mapped onto the canonical target and keep the Rust engine.
+- The two Advanced Debloat lists were defined twice in `gui/WinEaseGui.ps1` and the
+  copies had drifted apart (the dialog listed 43 experimental items, the tab 30), so
+  some options were only reachable from one of the two. There is one definition now.
 - `Import-WinEaseUserExtensions -PresetsOnly` (the builder's second call) wiped the user's
   tweaks and custom scripts; the collections are now reset only when they are reloaded.
   The extension and migration libraries are no longer dot-sourced twice.

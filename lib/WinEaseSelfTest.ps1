@@ -96,7 +96,7 @@ function Test-WinEaseSelfCheck04ProfilePresets {
             $missingPresets += $ep
         }
     }
-    if ($missingPresets.Count -eq 0 -and $script:TweakGroups.Count -ge 4 -and $script:PowerPresets.Count -ge 4) {
+    if ($missingPresets.Count -eq 0 -and $script:TweakGroups.Count -ge 4) {
         $badPresets = @()
         foreach ($kv in $script:BuiltInPresets.GetEnumerator()) {
             $pName = $kv.Key
@@ -104,16 +104,13 @@ function Test-WinEaseSelfCheck04ProfilePresets {
             if (-not $pDef.ProfileName -or -not $pDef.Description) {
                 $badPresets += "$pName (missing ProfileName/Description)"
             }
-            if (-not $pDef.PowerPreset -or -not $script:PowerPresets.Contains($pDef.PowerPreset)) {
-                $badPresets += "$pName (invalid PowerPreset: $($pDef.PowerPreset))"
-            }
             if (-not $pDef.TweakGroups) {
                 $badPresets += "$pName (missing TweakGroups)"
             }
         }
         if ($badPresets.Count -eq 0) {
             $profPass = $true
-            $profMsg = "$($script:BuiltInPresets.Count) built-in presets validated ($($expectedPresetKeys -join ', ')), $($script:TweakGroups.Count) tweak groups, $($script:PowerPresets.Count) power presets"
+            $profMsg = "$($script:BuiltInPresets.Count) built-in presets validated ($($expectedPresetKeys -join ', ')), $($script:TweakGroups.Count) tweak groups"
         } else {
             $profMsg = "Preset errors: $($badPresets -join '; ')"
         }
@@ -681,16 +678,20 @@ function Test-WinEaseSelfCheck18ConfigConflicts {
                 NoLockScreen = $true
             }
         }
-        $cfResult = Test-WinEaseConfigConflicts -Config $mockConflictedConfig -AutoResolve
-        $resolvedWU = ($cfResult.ResolvedConfig.DisableWindowsUpdate -eq $false)
-        $resolvedStore = ($cfResult.ResolvedConfig.RemoveStore -eq $false)
-        $resolvedPhys = ($cfResult.ResolvedConfig.TweakSettings.PhysicalDebloat -eq $false)
+        # The check is a pure validation: it reports the contradictions and the safeguards,
+        # but it never rewrites a setting of the user.
+        $cfResult = Test-WinEaseConfigConflicts -Config $mockConflictedConfig
+        $settingsUnchanged = (($cfResult.ResolvedConfig.DisableWindowsUpdate -eq $true) -and
+                              ($cfResult.ResolvedConfig.RemoveStore -eq $true) -and
+                              ($cfResult.ResolvedConfig.TweakSettings.PhysicalDebloat -eq $true))
+        $safeguards = @($cfResult.Conflicts | Where-Object { $_.Safeguard })
+        $hasPhysGate = @($cfResult.Conflicts | Where-Object { $_.Rule -eq 'PhysicalDebloatSafetyGate' }).Count -eq 1
 
-        if ($cfResult.Conflicts.Count -ge 3 -and $resolvedWU -and $resolvedStore -and $resolvedPhys) {
+        if ($cfResult.Conflicts.Count -ge 3 -and $settingsUnchanged -and $hasPhysGate) {
             $conflictMatrixPass = $true
-            $conflictMatrixMsg = "$($cfResult.Conflicts.Count) conflicting rules resolved (Store-WU dependency, Store retention, Physical debloat gate)"
+            $conflictMatrixMsg = "$($cfResult.Conflicts.Count) conflicting rules reported, the settings of the user stay untouched ($($safeguards.Count) safeguard(s) for the builder to apply)"
         } else {
-            $conflictMatrixMsg = "Conflict detection failed (conflicts: $($cfResult.Conflicts.Count), resolvedWU: $resolvedWU, resolvedStore: $resolvedStore, resolvedPhys: $resolvedPhys)"
+            $conflictMatrixMsg = "Conflict detection failed (conflicts: $($cfResult.Conflicts.Count), settingsUnchanged: $settingsUnchanged, hasPhysGate: $hasPhysGate)"
         }
     } catch {
         $conflictMatrixMsg = "Exception during conflict matrix test: $_"

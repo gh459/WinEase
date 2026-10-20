@@ -1,7 +1,7 @@
 # user-tweaks.psd1 - User-defined tweaks, presets and custom scripts for WinEase.
 #
 # This file is OPTIONAL. If it does not exist, WinEase runs normally without user extensions.
-# Users can add their own options here without editing config/tweaks.psd1.
+# Users can add their own options here without editing config/schema.psd1.
 #
 # SchemaVersion: '1.0'
 # UserTweaks:    array of tweak definitions (see schema below)

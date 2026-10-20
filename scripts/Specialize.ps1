@@ -18,15 +18,18 @@ Set-Content -LiteralPath "$markerDir\specialize.started" -Value (Get-Date -Forma
   }
 
   # 3. Dynamic Message Signaled Interrupts (MSI) scan for newly detected PCI hardware
+  #    Guarded by the EnableMsiMode option (flag staged by phase 11).
   try {
-    $targetClasses = @('{4d36e968-e325-11ce-bfc1-08002be10318}', '{4d36e972-e325-11ce-bfc1-08002be10318}');
-    $pnpDevs = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.ClassGuid -in $targetClasses -and $_.InstanceId -like "PCI\*" };
-    foreach ($dev in $pnpDevs) {
-      $msiPath = "HKLM:\SYSTEM\CurrentControlSet\Enum\$($dev.InstanceId)\Device Parameters\Interrupt Management\MessageSignaledInterruptProperties";
-      if (-not (Test-Path -LiteralPath $msiPath)) {
-        New-Item -Path $msiPath -Force -ErrorAction SilentlyContinue | Out-Null;
+    if (Test-Path "C:\Windows\Setup\Scripts\enable-msimode.flag") {
+      $targetClasses = @('{4d36e968-e325-11ce-bfc1-08002be10318}', '{4d36e972-e325-11ce-bfc1-08002be10318}');
+      $pnpDevs = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.ClassGuid -in $targetClasses -and $_.InstanceId -like "PCI\*" };
+      foreach ($dev in $pnpDevs) {
+        $msiPath = "HKLM:\SYSTEM\CurrentControlSet\Enum\$($dev.InstanceId)\Device Parameters\Interrupt Management\MessageSignaledInterruptProperties";
+        if (-not (Test-Path -LiteralPath $msiPath)) {
+          New-Item -Path $msiPath -Force -ErrorAction SilentlyContinue | Out-Null;
+        }
+        Set-ItemProperty -LiteralPath $msiPath -Name "MSISupported" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue;
       }
-      Set-ItemProperty -LiteralPath $msiPath -Name "MSISupported" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue;
     }
   } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 

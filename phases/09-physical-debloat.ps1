@@ -18,6 +18,28 @@ if (-not $hasStandardItems -and -not $hasExperimentalItems) {
     return
 }
 
+# Every selected target, in list order and without duplicates. The engine binding decides
+# which engine handles a target, so both lists are handled by the same dispatch.
+$allSelectedItems = @()
+if ($hasStandardItems) { $allSelectedItems += @($script:advancedDebloatStandard) }
+if ($hasExperimentalItems) { $allSelectedItems += @($script:advancedDebloatExperimental) }
+$allSelectedItems = @($allSelectedItems | Select-Object -Unique)
+
+# --- Execution engine selection (PowerShell <-> Rust) ---------------------------------
+# The engine of every target, the target selection and the safe per-target handlers live
+# in lib\WinEaseDebloat.ps1 (loaded by the builder) and in config\schema.psd1
+# (DebloatEngines). This phase is the Rust engine only: it dispatches the targets whose
+# engine is "Rust" to the Rust binary. The safe work of a target is executed by the phase
+# that owns it (the Phase field of the table), so one work item has exactly one
+# implementation and is never executed twice.
+#
+# Invariants (enforced here, not only in the UI):
+#   * a target that is not selected never runs, whatever engine it carries
+#   * a target whose engine is "PowerShell" is never handed to the Rust binary
+#   * a target whose engine is "Rust" is handed to the Rust binary and only that one key
+#     is dispatched to it
+#   * the Rust engine additionally requires the -AllowPhysicalDebloat safety gate
+
 # --- E1 SAFETY GATE: physical deletion is strictly opt-in -----------------------------------
 # Selections coming from a JSON profile or the GUI do NOT authorize destructive physical
 # deletion by themselves. Without -AllowPhysicalDebloat (CLI) or the GUI consent dialog the
@@ -67,372 +89,27 @@ if ($physMountError) {
     return
 }
 
-# --- E2 SAFETY: offline /ResetBase is blocked on 26100+ (checkpoint LCU protection) ---------
-$physTargetBuild = 0
-$physNtoskrnl = Join-Path -Path $scratchDir -ChildPath "Windows\System32\ntoskrnl.exe"
-if (Test-Path -LiteralPath $physNtoskrnl) {
-    try { $physTargetBuild = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($physNtoskrnl).ProductBuildPart } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-}
-$physWinSxSBlockReason = $null
-if ($safeDebloatMode) { $physWinSxSBlockReason = 'Safe Debloat Mode (component-store integrity protection)' }
-elseif (($physTargetBuild -ge 26100) -and (-not $ForceWinSxSCleanup)) { $physWinSxSBlockReason = "build $physTargetBuild (24H2+) checkpoint-LCU corruption protection (0x80070570)" }
+# --- E2 SAFETY: the component store is never touched by the Rust engine ---------------
+# The offline /ResetBase protection for 24H2+ (checkpoint LCU corruption) belongs to the
+# component store cleanup, which phase 09-winsxs.ps1 runs. The Rust engine only deletes
+# the files of the selected targets, so it does not need the build number here.
 
 # --- DISM helpers for Standard items (servicing-stack removal, no raw file deletion) ---
-function Invoke-WinEaseDebloatFeatureRemoval {
-    param([string[]]$FeatureNames)
-    foreach ($feature in $FeatureNames) {
-        if ($isDryRunMode) { Write-Host "    [DRY] Would disable feature: $feature (/Remove)" -ForegroundColor Yellow; continue }
-        $dismOut = & dism.exe /English "/image:$scratchDir" /Disable-Feature "/FeatureName:$feature" /Remove /NoRestart 2>&1
-        $dismExit = $LASTEXITCODE
-        if ($dismExit -eq 0 -or $dismExit -eq 3010) { Write-Host "    [OK] Disabled feature: $feature" -ForegroundColor Green }
-        elseif (($dismOut | Out-String) -match '0x800f080c|feature name .* is unknown') { Write-Host "    [INFO] Feature not present in image: $feature" -ForegroundColor Gray }
-        else { Write-Host "    [WARN] Could not disable feature $feature (DISM exit $dismExit)" -ForegroundColor Yellow }
-    }
-}
+# The safe (PowerShell) engine is not executed here. Every target declares the phase that
+# owns it (config\schema.psd1 -> DebloatEngines -> Phase) and that phase runs it through
+# Invoke-WinEaseDebloatTargets. Running the safe work here as well was the reason a target
+# could be removed twice - once by its own option and once by this phase.
 
-function Invoke-WinEaseDebloatCapabilityRemoval {
-    param([string[]]$NamePatterns)
-    $capLines = & dism.exe /English "/image:$scratchDir" /Get-Capabilities /Format:Table 2>&1
-    $installed = @($capLines | ForEach-Object {
-        if ("$_" -match '^\s*(\S+~\S*)\s*\|\s*Installed') { $Matches[1] }
-    })
-    $matched = @($installed | Where-Object { $cap = $_; @($NamePatterns | Where-Object { $cap -like $_ }).Count -gt 0 })
-    if ($matched.Count -eq 0) {
-        Write-Host "    [INFO] No installed capability matches: $($NamePatterns -join ', ')" -ForegroundColor Gray
-        return
-    }
-    foreach ($cap in $matched) {
-        if ($isDryRunMode) { Write-Host "    [DRY] Would remove capability: $cap" -ForegroundColor Yellow; continue }
-        & dism.exe /English "/image:$scratchDir" /Remove-Capability "/CapabilityName:$cap" /NoRestart > $null 2>&1
-        if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 3010) { Write-Host "    [OK] Removed capability: $cap" -ForegroundColor Green }
-        else { Write-Host "    [WARN] Could not remove capability $cap (DISM exit $LASTEXITCODE)" -ForegroundColor Yellow }
-    }
-}
+# A target can be selected in either list. The engine binding decides where it runs, so
+# the Rust dispatch collects from both lists and skips the targets the PowerShell engine
+# already handled.
+# The Rust dispatch collects the selected targets whose engine is "Rust" from both lists.
+$rustTargetItems = @($allSelectedItems | Where-Object { (Resolve-WinEaseDebloatEngine -Item $_) -eq 'Rust' })
 
-# --- Process Standard items via safe PowerShell removal / DISM ---
-if ($hasStandardItems) {
-    Write-Host "  [Physical Debloat] Processing Standard items safely..." -ForegroundColor Cyan
-    foreach ($item in $script:advancedDebloatStandard) {
-        Write-Host "  [Standard] Processing: $item" -ForegroundColor Gray
-        $handled = $false
-
-        if ($item -match 'WinRE') {
-            # SAFETY: Never delete winre.wim offline. Windows Setup Pre-Finalize stages
-            # SafeOS from winre.wim; offline removal aborts setup (0x80070002/0x8007000B).
-            if ($keepRecoveryEnv) {
-                Write-Host "    [INFO] WinRE kept (KeepRecovery enabled)" -ForegroundColor Gray
-            } else {
-                $winreFlagDir = Join-Path -Path $scratchDir -ChildPath "Windows\Setup\Scripts"
-                $winreFlag = Join-Path -Path $winreFlagDir -ChildPath "winre-cleanup.flag"
-                if ($isDryRunMode) { Write-Host "    [DRY] Would schedule WinRE for online removal (winre-cleanup.flag)" -ForegroundColor Yellow }
-                else {
-                    if (-not (Test-Path -LiteralPath $winreFlagDir)) { New-Item -ItemType Directory -Force -Path $winreFlagDir -ErrorAction SilentlyContinue | Out-Null }
-                    Set-Content -LiteralPath $winreFlag -Value "remove" -Encoding ascii -Force
-                    Write-Host "    [OK] WinRE scheduled for online removal via FirstLogon (reagentc /disable + file delete)" -ForegroundColor Green
-                }
-            }
-            $handled = $true
-        }
-        elseif ($item -match 'PatchCache') {
-            $patchCache = Join-Path -Path $scratchDir -ChildPath "Windows\Installer\`$PatchCache$"
-            if (Test-Path -LiteralPath $patchCache) {
-                if ($isDryRunMode) { Write-Host "    [DRY] Would delete: $patchCache" -ForegroundColor Yellow }
-                else { Remove-Item -LiteralPath $patchCache -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Deleted \$PatchCache$" -ForegroundColor Green }
-            }
-            $handled = $true
-        }
-        elseif ($item -match 'Delivery Optimization') {
-            $doPath = Join-Path -Path $scratchDir -ChildPath "Windows\SoftwareDistribution\DeliveryOptimization"
-            if (Test-Path -LiteralPath $doPath) {
-                if ($isDryRunMode) { Write-Host "    [DRY] Would delete: $doPath" -ForegroundColor Yellow }
-                else { Remove-Item -LiteralPath $doPath -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Deleted DeliveryOptimization cache" -ForegroundColor Green }
-            }
-            $handled = $true
-        }
-        elseif ($item -match 'pagefile') {
-            if ($isDryRunMode) { Write-Host "    [DRY] Would disable pagefile" -ForegroundColor Yellow }
-            else { Write-Host "    [INFO] Pagefile disable is handled by FirstLogon.ps1" -ForegroundColor Gray }
-            $handled = $true
-        }
-        elseif ($item -match 'hiberfil') {
-            if ($isDryRunMode) { Write-Host "    [DRY] Would disable hibernation" -ForegroundColor Yellow }
-            else { Write-Host "    [INFO] Hibernation disable is handled by FirstLogon.ps1" -ForegroundColor Gray }
-            $handled = $true
-        }
-        elseif ($item -match 'language packs') {
-            try {
-                $langPacks = & dism.exe /image:$scratchDir /Get-Packages /Format:Table 2>&1 | Select-String -Pattern 'LanguagePack' | Where-Object { $_ -notmatch 'ja-JP|en-US' }
-                foreach ($lp in $langPacks) {
-                    $pkgName = ($lp -split '\s+')[0]
-                    if ($pkgName) {
-                        if ($isDryRunMode) { Write-Host "    [DRY] Would remove: $pkgName" -ForegroundColor Yellow }
-                        else { & dism.exe /image:$scratchDir /Remove-Package /PackageName:$pkgName /NoRestart 2>&1 | Out-Null; Write-Host "    [OK] Removed: $pkgName" -ForegroundColor Green }
-                    }
-                }
-                $handled = $true
-            } catch { Write-Host "    [WARN] Language pack removal failed: $_" -ForegroundColor Yellow }
-        }
-        elseif ($item -match 'non-essential fonts') {
-            $fontsDir = Join-Path -Path $scratchDir -ChildPath "Windows\Fonts"
-            # The "Keep Extra International & Regional Fonts" setting (keepExtraFonts) is an
-            # explicit keep request, so it must be honoured here exactly as it is in Phase 08.
-            # Without this the physical debloat deleted every font outside its own (much
-            # smaller) keep list even when the user asked to keep the extra fonts.
-            if ($keepExtraFonts) {
-                Write-Host "    [SKIP] Non-essential fonts: kept because keepExtraFonts is enabled." -ForegroundColor Green
-                $handled = $true
-            } elseif (Test-Path -LiteralPath $fontsDir) {
-                $keepFontsList = 'segoe*,tahoma*,marlett.ttf,8541oem.fon,segui*,consol*,lucon*,calibri*,arial*,times*,cou*,8*.*,meiryo*,yugoth*,yumin*,msgoth*,msgothic*,msmin*,msmincho*,segoeuihistoric.ttf'
-                [string[]]$keepFonts = $keepFontsList.Split(',')
-                $toDelete = Get-ChildItem -LiteralPath $fontsDir -File -ErrorAction SilentlyContinue | Where-Object {
-                    $keep = $false
-                    foreach ($kf in $keepFonts) { if ($_.Name -like $kf) { $keep = $true; break } }
-                    return (-not $keep)
-                }
-                if ($isDryRunMode) { Write-Host "    [DRY] Would delete $($toDelete.Count) non-essential fonts" -ForegroundColor Yellow }
-                else { $toDelete | Remove-Item -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Deleted $($toDelete.Count) non-essential fonts" -ForegroundColor Green }
-                $handled = $true
-            }
-        }
-        elseif ($item -match 'WinSxS') {
-            if ($physWinSxSBlockReason) {
-                Write-Host "    [SKIP] WinSxS /StartComponentCleanup /ResetBase skipped: $physWinSxSBlockReason" -ForegroundColor Green
-                Write-Host "      (pass -ForceWinSxSCleanup to override on 24H2+; see 09-winsxs.ps1)" -ForegroundColor DarkYellow
-            }
-            elseif ($isDryRunMode) { Write-Host "    [DRY] Would run DISM /StartComponentCleanup /ResetBase" -ForegroundColor Yellow }
-            else {
-                try { & dism.exe /image:$scratchDir /Cleanup-Image /StartComponentCleanup /ResetBase 2>&1 | Out-Null; Write-Host "    [OK] WinSxS cleanup completed" -ForegroundColor Green } catch { Write-Host "    [WARN] WinSxS cleanup failed: $_" -ForegroundColor Yellow }
-            }
-            $handled = $true
-        }
-        elseif ($item -match 'event logs') {
-            $evtxDir = Join-Path -Path $scratchDir -ChildPath "Windows\System32\winevt\Logs"
-            if (Test-Path -LiteralPath $evtxDir) {
-                $evtxFiles = Get-ChildItem -LiteralPath $evtxDir -Filter "*.evtx" -ErrorAction SilentlyContinue
-                if ($isDryRunMode) { Write-Host "    [DRY] Would delete $($evtxFiles.Count) .evtx files" -ForegroundColor Yellow }
-                else { $evtxFiles | Remove-Item -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Deleted $($evtxFiles.Count) .evtx files" -ForegroundColor Green }
-                $handled = $true
-            }
-        }
-        elseif ($item -match 'crash dumps') {
-            $minidump = Join-Path -Path $scratchDir -ChildPath "Windows\Minidump"
-            $memoryDmp = Join-Path -Path $scratchDir -ChildPath "Windows\Memory.dmp"
-            if (Test-Path -LiteralPath $minidump) {
-                if ($isDryRunMode) { Write-Host "    [DRY] Would delete: $minidump" -ForegroundColor Yellow }
-                else { Remove-Item -LiteralPath $minidump -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Deleted Minidump dir" -ForegroundColor Green }
-            }
-            if (Test-Path -LiteralPath $memoryDmp) {
-                if ($isDryRunMode) { Write-Host "    [DRY] Would delete: $memoryDmp" -ForegroundColor Yellow }
-                else { Remove-Item -LiteralPath $memoryDmp -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Deleted Memory.dmp" -ForegroundColor Green }
-            }
-            $handled = $true
-        }
-        elseif ($item -match 'Store cache') {
-            # The Store cache lives under each user profile and only exists after first sign-in
-            Write-Host "    [INFO] Store cache is per-user; nothing exists in the offline image to remove" -ForegroundColor Gray
-            $handled = $true
-        }
-        elseif ($item -match 'Provisioned AppX') {
-            # Second pass over the Phase 05 pattern list (same protection whitelist) for packages that survived it
-            if ($appxRegex -and $protectedAppxRegex) {
-                $leftoverAppx = @(Get-AppxProvisionedPackage -Path $scratchDir -ErrorAction SilentlyContinue | Where-Object {
-                    $n = $_.PackageName; $d = $_.DisplayName
-                    if (($n -and $protectedAppxRegex.IsMatch($n)) -or ($d -and $protectedAppxRegex.IsMatch($d))) { return $false }
-                    return (($n -and $appxRegex.IsMatch($n)) -or ($d -and $appxRegex.IsMatch($d)))
-                })
-                if ($leftoverAppx.Count -eq 0) { Write-Host "    [OK] No listed provisioned AppX packages remain" -ForegroundColor Green }
-                foreach ($pkg in $leftoverAppx) {
-                    if ($isDryRunMode) { Write-Host "    [DRY] Would remove provisioned AppX: $($pkg.DisplayName)" -ForegroundColor Yellow; continue }
-                    & dism.exe /English "/image:$scratchDir" /Remove-ProvisionedAppxPackage "/PackageName:$($pkg.PackageName)" > $null 2>&1
-                    if ($LASTEXITCODE -eq 0) { Write-Host "    [OK] Removed provisioned AppX: $($pkg.DisplayName)" -ForegroundColor Green }
-                    else { Write-Host "    [WARN] Could not remove provisioned AppX: $($pkg.DisplayName)" -ForegroundColor Yellow }
-                }
-            } else {
-                Write-Host "    [WARN] Phase 05 AppX pattern list unavailable; provisioned AppX pass skipped" -ForegroundColor Yellow
-            }
-            $handled = $true
-        }
-        elseif ($item -match 'non-Japanese IME') {
-            # Same directories Phase 08 removes when Asian IMEs are not kept; JPN is preserved
-            foreach ($imeDir in @('CHS', 'CHT', 'KOR')) {
-                $imePath = Join-Path -Path $scratchDir -ChildPath "Windows\System32\InputMethod\$imeDir"
-                if (Test-Path -LiteralPath $imePath) {
-                    if ($isDryRunMode) { Write-Host "    [DRY] Would delete: $imePath" -ForegroundColor Yellow }
-                    else { Remove-Item -LiteralPath $imePath -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Deleted InputMethod\$imeDir" -ForegroundColor Green }
-                }
-            }
-            $handled = $true
-        }
-        elseif ($item -match 'Windows Sandbox') {
-            Invoke-WinEaseDebloatFeatureRemoval -FeatureNames @('Containers-DisposableClientVM')
-            $handled = $true
-        }
-        elseif ($item -match 'WSL / VM Platform') {
-            if ($wslSupport) { Write-Host "    [SKIP] WSL support is enabled for this build; WSL / VM Platform kept" -ForegroundColor Yellow }
-            else { Invoke-WinEaseDebloatFeatureRemoval -FeatureNames @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform') }
-            $handled = $true
-        }
-        elseif ($item -match '\.NET Framework 3\.5') {
-            Invoke-WinEaseDebloatFeatureRemoval -FeatureNames @('NetFx3')
-            $handled = $true
-        }
-        elseif ($item -match 'PowerShell ISE') {
-            Invoke-WinEaseDebloatCapabilityRemoval -NamePatterns @('Microsoft.Windows.PowerShell.ISE~*')
-            $handled = $true
-        }
-        elseif ($item -match 'Steps Recorder') {
-            Invoke-WinEaseDebloatCapabilityRemoval -NamePatterns @('App.StepsRecorder~*')
-            $handled = $true
-        }
-        elseif ($item -match 'Telnet/TFTP') {
-            Invoke-WinEaseDebloatFeatureRemoval -FeatureNames @('TelnetClient', 'TFTP')
-            $handled = $true
-        }
-        elseif ($item -match 'SNMP') {
-            Invoke-WinEaseDebloatCapabilityRemoval -NamePatterns @('SNMP.Client~*', 'WMI-SNMP-Provider.Client~*')
-            $handled = $true
-        }
-        elseif ($item -match 'Identity Foundation') {
-            Invoke-WinEaseDebloatFeatureRemoval -FeatureNames @('Windows-Identity-Foundation')
-            $handled = $true
-        }
-        elseif ($item -match 'Fax service') {
-            Invoke-WinEaseDebloatFeatureRemoval -FeatureNames @('FaxServicesClientPackage')
-            Invoke-WinEaseDebloatCapabilityRemoval -NamePatterns @('Print.Fax.Scan~*')
-            $handled = $true
-        }
-        elseif ($item -match 'XPS Viewer') {
-            Invoke-WinEaseDebloatCapabilityRemoval -NamePatterns @('XPS.Viewer~*')
-            Invoke-WinEaseDebloatFeatureRemoval -FeatureNames @('Printing-XPSServices-Features')
-            $handled = $true
-        }
-        elseif ($item -match 'help files') {
-            # Windows\Help is already removed unconditionally in phase 08 (08-filesystem.ps1),
-            # so there is nothing left to do here. The handler is kept so that the GUI item
-            # still resolves to a phase 09 branch (the GUI-to-handler wiring test requires
-            # every Standard item to have one) and it reports the already-removed state.
-            $helpDir = Join-Path -Path $scratchDir -ChildPath "Windows\Help"
-            if (Test-Path -LiteralPath $helpDir) {
-                if ($isDryRunMode) { Write-Host "    [DRY] Would delete: $helpDir" -ForegroundColor Yellow }
-                else { Remove-Item -LiteralPath $helpDir -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Deleted Help dir" -ForegroundColor Green }
-            } else {
-                Write-Host "    [SKIP] Help files: already removed in phase 08." -ForegroundColor Green
-            }
-            $handled = $true
-        }
-        elseif ($item -match 'Provisioning') {
-            $provDir = Join-Path -Path $scratchDir -ChildPath "Windows\Provisioning"
-            if (Test-Path -LiteralPath $provDir) {
-                if ($isDryRunMode) { Write-Host "    [DRY] Would delete: $provDir" -ForegroundColor Yellow }
-                else { Remove-Item -LiteralPath $provDir -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Deleted Provisioning dir" -ForegroundColor Green }
-            }
-            $handled = $true
-        }
-        elseif ($item -match 'Windows.old') {
-            $oldDir = Join-Path -Path $scratchDir -ChildPath "Windows.old"
-            if (Test-Path -LiteralPath $oldDir) {
-                if ($isDryRunMode) { Write-Host "    [DRY] Would delete: $oldDir" -ForegroundColor Yellow }
-                else { Remove-Item -LiteralPath $oldDir -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Deleted Windows.old" -ForegroundColor Green }
-            }
-            $handled = $true
-        }
-        elseif ($item -match 'Temp files') {
-            $tempDir = Join-Path -Path $scratchDir -ChildPath "Windows\Temp"
-            if (Test-Path -LiteralPath $tempDir) {
-                if ($isDryRunMode) { Write-Host "    [DRY] Would delete contents of: $tempDir" -ForegroundColor Yellow }
-                else { Get-ChildItem -LiteralPath $tempDir -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Cleaned Temp dir" -ForegroundColor Green }
-            }
-            $handled = $true
-        }
-        elseif ($item -match 'Media Player') {
-            $mpDir = Join-Path -Path $scratchDir -ChildPath "Program Files\Windows Media Player"
-            if (Test-Path -LiteralPath $mpDir) {
-                if ($isDryRunMode) { Write-Host "    [DRY] Would delete: $mpDir" -ForegroundColor Yellow }
-                else { Remove-Item -LiteralPath $mpDir -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Deleted Media Player dir" -ForegroundColor Green }
-            }
-            try { & dism.exe /image:$scratchDir /Disable-Feature /FeatureName:WindowsMediaPlayer /NoRestart 2>&1 | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-            $handled = $true
-        }
-        elseif ($item -match 'Remote Desktop') {
-            # In standard debloat, do not physically delete mstsc.exe from System32 (preserves CBS integrity)
-            Write-Host "    [SAFE] Remote Desktop service disabled via registry (System32 binaries preserved)" -ForegroundColor Cyan
-            $handled = $true
-        }
-        elseif ($item -match 'Bluetooth') {
-            # In standard debloat, do not physically delete bthserv.dll from System32
-            Write-Host "    [SAFE] Bluetooth services disabled via registry (System32 binaries preserved)" -ForegroundColor Cyan
-            $handled = $true
-        }
-        elseif ($item -match 'Spooler') {
-            # In standard debloat, do not physically delete spoolsv.exe from System32
-            Write-Host "    [SAFE] Spooler service disabled via registry (System32 binaries preserved)" -ForegroundColor Cyan
-            $handled = $true
-        }
-        elseif ($item -match 'Touch/Pen') {
-            Write-Host "    [SAFE] Touch/Pen services disabled via registry (System32 binaries preserved)" -ForegroundColor Cyan
-            $handled = $true
-        }
-        elseif ($item -match 'Accessibility') {
-            Write-Host "    [PRESERVE] Accessibility binaries kept for OOBE stability (IFEO-blocked post-setup)" -ForegroundColor Cyan
-            $handled = $true
-        }
-        elseif ($item -match 'Hyper-V') {
-            try { & dism.exe /image:$scratchDir /Disable-Feature /FeatureName:Microsoft-Hyper-V-All /NoRestart 2>&1 | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-            Write-Host "    [SAFE] Hyper-V disabled via DISM (System32 binaries preserved)" -ForegroundColor Cyan
-            $handled = $true
-        }
-        elseif ($item -match 'Cortana') {
-            foreach ($dir in @('Windows\SystemApps\Microsoft.Windows.Search_cw5n1h2txyewy', 'Windows\SystemApps\Microsoft.Cortana_cw5n1h2txyewy')) {
-                $dirPath = Join-Path -Path $scratchDir -ChildPath $dir
-                if (Test-Path -LiteralPath $dirPath) {
-                    if ($isDryRunMode) { Write-Host "    [DRY] Would delete: $dirPath" -ForegroundColor Yellow }
-                    else { Remove-Item -LiteralPath $dirPath -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Deleted: $dir" -ForegroundColor Green }
-                }
-            }
-            $handled = $true
-        }
-        elseif ($item -match 'IIS') {
-            $iisDir = Join-Path -Path $scratchDir -ChildPath "Windows\System32\inetsrv"
-            if (Test-Path -LiteralPath $iisDir) {
-                if ($isDryRunMode) { Write-Host "    [DRY] Would delete: $iisDir" -ForegroundColor Yellow }
-                else { Remove-Item -LiteralPath $iisDir -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Deleted inetsrv dir" -ForegroundColor Green }
-            }
-            $handled = $true
-        }
-        elseif ($item -match 'BitLocker') {
-            Write-Host "    [SAFE] BitLocker disabled via registry (System32 binaries preserved)" -ForegroundColor Cyan
-            $handled = $true
-        }
-        elseif ($item -match 'OneDrive') {
-            $odPath = Join-Path -Path $scratchDir -ChildPath "Windows\System32\OneDriveSetup.exe"
-            if (Test-Path -LiteralPath $odPath) {
-                if ($isDryRunMode) { Write-Host "    [DRY] Would delete: $odPath" -ForegroundColor Yellow }
-                else { Remove-Item -LiteralPath $odPath -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Deleted OneDriveSetup.exe" -ForegroundColor Green }
-            }
-            $handled = $true
-        }
-        elseif ($item -match 'Telemetry') {
-            $diagDir = Join-Path -Path $scratchDir -ChildPath "ProgramData\Microsoft\Diagnosis"
-            if (Test-Path -LiteralPath $diagDir) {
-                if ($isDryRunMode) { Write-Host "    [DRY] Would delete: $diagDir" -ForegroundColor Yellow }
-                else { Remove-Item -LiteralPath $diagDir -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Deleted Diagnosis dir" -ForegroundColor Green }
-            }
-            $handled = $true
-        }
-        else {
-            if (-not $handled) {
-                Write-Host "    [SKIP] No standard handler for: $item" -ForegroundColor DarkGray
-            }
-        }
-    }
-
-    Write-Host "  [Standard Debloat] Safe processing complete." -ForegroundColor Green
-}
-
-# --- Process Experimental items via Rust binary ---
-if ($hasExperimentalItems -and $script:advancedDebloatExperimental.Count -gt 0) {
+# --- Process the targets with the Rust engine ---
+if ($rustTargetItems.Count -gt 0) {
     if (-not $physGateAllowed) {
-        $reqExpCount = @($script:advancedDebloatExperimental).Count
+        $reqExpCount = $rustTargetItems.Count
         Write-Host ""
         Write-Host "  [Physical Debloat] BLOCKED: -AllowPhysicalDebloat was not specified." -ForegroundColor Yellow
         Write-Host "  [Physical Debloat] $reqExpCount experimental items were NOT executed (experimental physical deletion is strictly opt-in)." -ForegroundColor Yellow
@@ -450,42 +127,17 @@ if ($hasExperimentalItems -and $script:advancedDebloatExperimental.Count -gt 0) 
     Write-Host "  [Physical Debloat] Rust binary verified: $rustBinary" -ForegroundColor Green
 
     $experimentalMap = @{}
-    foreach ($item in $script:advancedDebloatExperimental) {
-        $key = $null
-        if ($item -match 'Edge') { $key = 'physical_edge' }
-        elseif ($item -match 'Defender') { $key = 'physical_defender' }
-        elseif ($item -match 'Cortana') { $key = 'physical_cortana' }
-        elseif ($item -match 'OneDrive') { $key = 'physical_onedrive' }
-        elseif ($item -match 'Telemetry') { $key = 'physical_telemetry' }
-        elseif ($item -match 'Hyper-V') { $key = 'physical_hyperv' }
-        elseif ($item -match 'IIS') { $key = 'physical_iis' }
-        elseif ($item -match 'Firewall') { $key = 'physical_firewall' }
-        elseif ($item -match 'Bluetooth') { $key = 'physical_bluetooth' }
-        elseif ($item -match 'Spooler') { $key = 'physical_spooler' }
-        elseif ($item -match 'Touch/Pen') { $key = 'physical_touch_pen' }
-        elseif ($item -match 'Accessibility') { $key = 'physical_accessibility' }
-        elseif ($item -match 'Media Player') { $key = 'physical_media_player' }
-        elseif ($item -match 'Remote Desktop') { $key = 'physical_rdp' }
-        elseif ($item -match 'BitLocker') { $key = 'physical_bitlocker' }
-        elseif ($item -match 'Sandbox') { $key = 'physical_sandbox' }
-        elseif ($item -match 'WSL') { $key = 'physical_wsl' }
-        elseif ($item -match 'Help') { $key = 'physical_help' }
-        elseif ($item -match 'Crash dumps') { $key = 'physical_crash_dumps' }
-        elseif ($item -match 'Provisioning') { $key = 'physical_provisioning' }
-        elseif ($item -match 'Delivery Optimization') { $key = 'physical_delivery_optimization' }
-        elseif ($item -match 'Search index') { $key = 'physical_search_index' }
-        elseif ($item -match 'Windows.old') { $key = 'physical_windows_old' }
-        elseif ($item -match 'Temp files') { $key = 'physical_temp_files' }
-        elseif ($item -match 'PatchCache') { $key = 'physical_patchcache' }
-        elseif ($item -match 'pagefile') { $key = 'physical_pagefile' }
-        elseif ($item -match 'hiberfil') { $key = 'physical_hiberfil' }
-        elseif ($item -match 'swapfile') { $key = 'physical_swapfile' }
-        elseif ($item -match 'Memory.dmp') { $key = 'physical_memory_dmp' }
-        elseif ($item -match 'Minidump') { $key = 'physical_minidump' }
-        else {
-            $key = $item -replace '\s*\[.*?\]\s*', '' -replace '\s+', '_' -replace '[^a-zA-Z0-9_]', '' -replace '_+', '_' -replace '^_|_$', ''
-            $key = 'physical_' + $key.ToLower()
+    foreach ($item in $rustTargetItems) {
+        # Engine gate: only the targets that run on the Rust engine are dispatched to the
+        # binary, and only their own key is dispatched. The PowerShell engine handled the
+        # other targets in the standard loop.
+        if (-not ((Resolve-WinEaseDebloatEngine -Item $item) -eq 'Rust')) {
+            Write-Host "  [Experimental] Skipping (engine is not Rust): $item" -ForegroundColor DarkGray
+            continue
         }
+        # The key comes from config\schema.psd1 (DebloatEngines -> RustKey); the regex list
+        # inside Get-WinEaseDebloatRustKey is only the fallback for unregistered entries.
+        $key = Get-WinEaseDebloatRustKey -Item $item
         if ($key) { $experimentalMap[$key] = $true }
     }
 

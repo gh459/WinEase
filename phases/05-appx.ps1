@@ -210,9 +210,19 @@ if ($parallelism -le 1 -or $folderPaths.Count -le 1) {
 }
 
 # 5b. Disabling Windows 11 24H2/26H2 Recall Optional Feature if present
-Write-Host "Disabling Recall and modern AI optional features..." -ForegroundColor Cyan
-& dism.exe /English "/image:$scratchDir" /Disable-Feature /FeatureName:Recall /Remove > $null 2>&1
-& dism.exe /English "/image:$scratchDir" /Disable-Feature /FeatureName:Windows-Recall-Optional-Package /Remove > $null 2>&1
+# Bound to the RemoveRecall option (OFF = keep the Recall feature).
+if (Test-TweakEnabled 'RemoveRecall' $true) {
+    Write-Host "Disabling Recall and modern AI optional features..." -ForegroundColor Cyan
+    & dism.exe /English "/image:$scratchDir" /Disable-Feature /FeatureName:Recall /Remove > $null 2>&1
+    & dism.exe /English "/image:$scratchDir" /Disable-Feature /FeatureName:Windows-Recall-Optional-Package /Remove > $null 2>&1
+}
+
+# 5c. The Advanced Debloat targets this phase owns (config\schema.psd1 -> DebloatEngines).
+# The provisioned AppX pass and the Cortana / Search system app folders are removed here,
+# so they are not removed a second time by phase 09.
+if (Get-Command -Name Invoke-WinEaseDebloatTargets -ErrorAction SilentlyContinue) {
+    Invoke-WinEaseDebloatTargets -Phase '05-appx'
+}
 
 # M2: User extension actions (Appx)
 if (Get-Command -Name Invoke-WinEaseUserExtensionActions -ErrorAction SilentlyContinue) {

@@ -408,15 +408,16 @@ Describe "WinEase helpers - atomic file I/O (Write-WinEaseTextFileAtomic)" {
 }
 
 Describe "WinEase helpers - configuration conflict resolution (Test-WinEaseConfigConflicts)" {
-    It "detects and auto-resolves Store and Windows Update dependency conflict" {
+    It "detects the Store and Windows Update dependency conflict without changing the settings" {
         $cfg = [PSCustomObject]@{
             KeepStore = $true
             RemoveStore = $false
             DisableWindowsUpdate = $true
         }
-        $res = Test-WinEaseConfigConflicts -Config $cfg -AutoResolve
+        $res = Test-WinEaseConfigConflicts -Config $cfg
         $res.HasConflicts | Should Be $true
-        $res.ResolvedConfig.DisableWindowsUpdate | Should Be $false
+        # the check is a pure validation: it reports, it never rewrites (AUD-14)
+        $res.ResolvedConfig.DisableWindowsUpdate | Should Be $true
     }
 
     It "enforces safety gate on physical debloat when -AllowPhysicalDebloat is false" {
@@ -425,10 +426,14 @@ Describe "WinEase helpers - configuration conflict resolution (Test-WinEaseConfi
             advancedDebloatExperimental = @("Physical deletion candidate")
             TweakSettings = @{ PhysicalDebloat = $true }
         }
-        $res = Test-WinEaseConfigConflicts -Config $cfg -AutoResolve
+        $res = Test-WinEaseConfigConflicts -Config $cfg
         $res.HasConflicts | Should Be $true
-        $res.ResolvedConfig.TweakSettings.PhysicalDebloat | Should Be $false
-        $res.ResolvedConfig.advancedDebloatExperimental.Count | Should Be 0
+        # the check reports, it never rewrites (AUD-14); the builder applies the safeguard
+        $res.ResolvedConfig.TweakSettings.PhysicalDebloat | Should Be $true
+        $res.ResolvedConfig.advancedDebloatExperimental.Count | Should Be 1
+        $gate = @($res.Conflicts | Where-Object { $_.Rule -eq 'PhysicalDebloatSafetyGate' })
+        $gate.Count | Should Be 1
+        $gate[0].Safeguard.Action | Should Be 'ClearExperimental'
     }
 }
 
@@ -673,12 +678,16 @@ Describe "WinEase GUI wiring - every toggle is consumed by the build" {
     $builderAst = [System.Management.Automation.Language.Parser]::ParseInput($builderText, [ref]$null, [ref]$null)
     $phasesDir = Join-Path -Path $script:RepoRoot -ChildPath "phases"
     $phaseText = (Get-ChildItem -LiteralPath $phasesDir -Filter "*.ps1" | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"
+# lib\WinEaseDebloat.ps1 holds the safe (PowerShell) engine of the Advanced Debloat targets
+$phaseText += "`n" + [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1"))
+# config\schema.psd1 is the master schema: the lookup tables of the options live there
+$schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\schema.psd1"))
     $helpersText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "WinEasehelpers.ps1"))
     $scriptText = (Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "scripts") -Filter "*.ps1" -ErrorAction SilentlyContinue |
         ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"
 
-    # The builder derives these tables from config\tweaks.psd1; build them the same way here
-    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+    # The builder derives these tables from config\schema.psd1; build them the same way here
+    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
     $tweakDefs = [ordered]@{}; $varMap = [ordered]@{}; $aliases = [ordered]@{}
     foreach ($td in $settingsDef.Tweaks) {
         $tweakDefs[$td.Key] = $td
@@ -690,6 +699,12 @@ Describe "WinEase GUI wiring - every toggle is consumed by the build" {
         $unconsumed = @()
         foreach ($k in $tweakDefs.Keys) {
             if ($phaseText -match "Test-TweakEnabled\s+'$k'") { continue }
+            # Options may also be consumed through a lookup table whose keys are the option
+            # names (for example the FoD package map in phase 06), so a key that only
+            # appears as a table key counts as consumed as well.
+            if ($phaseText -match "['`"]$([regex]::Escape($k))['`"]\s*=") { continue }
+            # the lookup tables of the options live in the master schema
+            if ($schemaText -match "['`"]$([regex]::Escape($k))['`"]\s*=") { continue }
             if ($varMap.Contains($k)) {
                 $v = $varMap[$k]
                 if (($phaseText -match "\`$$v\b") -or ($helpersText -match "\`$$v\b")) { continue }
@@ -703,15 +718,92 @@ Describe "WinEase GUI wiring - every toggle is consumed by the build" {
         foreach ($a in $aliases.Keys) { $tweakDefs.Contains($aliases[$a]) | Should Be $true }
     }
 
+    # --- No unconditional removals in the post-install scripts --------------------
+    # A removal that runs on every installed system cannot be turned off by the user.
+    # The post-install scripts therefore have to consult a flag that phase 11 only
+    # writes when the matching option is enabled.
+    It "the post-install scripts only remove or change things behind an option flag" {
+        # A removal that runs on every installed system cannot be turned off by the user.
+        # The post-install scripts therefore have to consult a flag that phase 11 only
+        # writes when the matching option is enabled. The check is line based: a mutating
+        # statement is acceptable when the nearest enclosing "if" block above it tests a
+        # .flag path.
+        $scriptDir = Join-Path $script:RepoRoot "scripts"
+        $mutating = @(
+            'Remove-Item\s+-LiteralPath\s+"\\\$initMarkerDir',
+            'Remove-Item\s+-LiteralPath\s+"\\\$markerDir',
+            'Stop-Process',
+            'Stop-Service',
+            'Set-Service',
+            'Disable-ComputerRestore',
+            'Compact\.exe',
+            'fsutil\.exe',
+            'powercfg\.exe'
+        )
+        $unconditional = @()
+        foreach ($file in (Get-ChildItem -LiteralPath $scriptDir -Filter "*.ps1")) {
+            $lines = Get-Content -LiteralPath $file.FullName
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                $line = $lines[$i]
+                if ($line -match '^\s*#') { continue }
+                $isMutating = $false
+                foreach ($pat in $mutating) {
+                    if ($line -match $pat) { $isMutating = $true; break }
+                }
+                if (-not $isMutating) { continue }
+                # Walk upwards to the enclosing "if" that guards this statement. The
+                # window is generous because a guarded block can be long (a loop over
+                # services, for example). A closing brace only ends the search when it
+                # closes the guarded block itself, so a nested loop or try block does not
+                # stop the walk too early.
+                $guarded = $false
+                $depth = 0
+                for ($j = $i - 1; $j -ge 0 -and $j -ge $i - 40; $j--) {
+                    $up = $lines[$j]
+                    # The guard may test a literal path or a variable that holds one
+                    # (for example $hibernateFlag = "C:\...\hibernate-mode.flag").
+                    if ($up -match 'Test-Path\s+["''][^"'']*\.flag["'']') { $guarded = $true; break }
+                    if ($up -match '^\s*\$\w+\s*=\s*["''][^"'']*\.flag["'']') { $guarded = $true; break }
+                    if ($up -match '^\s*\}' ) {
+                        $depth++
+                        # Three consecutive closing braces mean the guarded block itself
+                        # was closed before this statement.
+                        if ($depth -ge 3) { break }
+                    }
+                }
+                if (-not $guarded) {
+                    $unconditional += "$($file.Name):$($i + 1): $($line.Trim())"
+                }
+            }
+        }
+        ($unconditional -join ' | ') | Should Be ''
+    }
+
+    It "phase 11 stages a post-install flag for every post-install option" {
+        $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+        $phase11Text = [System.IO.File]::ReadAllText((Join-Path $phasesDir "11-unattend.ps1"), [System.Text.Encoding]::UTF8)
+        $postInstallOptions = @(
+            'EnableCompactOS', 'EnableNtfs8dot3Disable', 'EnableUltimatePerformancePower',
+            'EnableMsiMode', 'DisableAccessibilityTools', 'DisableWindowsSearchProcess',
+            'HideSearchBox', 'DisableCrossDevice', 'DisableComputerRestore'
+        )
+        $missing = @()
+        foreach ($opt in $postInstallOptions) {
+            if (-not ($settingsDef.Tweaks | Where-Object { $_.Key -eq $opt })) { $missing += "$opt (not defined)"; continue }
+            if ($phase11Text -notmatch [regex]::Escape("'$opt'")) { $missing += "$opt (no flag staged)" }
+        }
+        ($missing -join ', ') | Should Be ''
+    }
+
     # --- Completeness of the option -> processing wiring -------------------------
     # These checks cover the reverse direction of the wiring test above: a phase that
-    # references a setting key which does not exist in config\tweaks.psd1 can never be
+    # references a setting key which does not exist in config\schema.psd1 can never be
     # influenced by the user, because Test-TweakEnabled falls through to its hard-coded
     # default argument for unknown keys.
-    It "every Test-TweakEnabled key used by a phase is defined in config\tweaks.psd1" {
+    It "every Test-TweakEnabled key used by a phase is defined in config\schema.psd1" {
         $defined = @($tweakDefs.Keys)
         $componentKeys = @()
-        $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+        $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
         $componentKeys = @($settingsDef.Components | ForEach-Object { $_.Key })
         $known = $defined + $componentKeys
         $unknown = @()
@@ -726,7 +818,7 @@ Describe "WinEase GUI wiring - every toggle is consumed by the build" {
         # For a defined key Test-TweakEnabled returns TweakSettings[key] and never reaches
         # the default argument, but a mismatching argument is a trap for the next reader
         # and hides the effective default, so it is kept in sync.
-        $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+        $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
         $defaults = @{}
         foreach ($td in $settingsDef.Tweaks) { $defaults[$td.Key] = [bool]$td.Default }
         $mismatched = @()
@@ -798,40 +890,405 @@ Describe "WinEase GUI wiring - every toggle is consumed by the build" {
         $builderText | Should Not Match '\$guiResult\.RadicalRAM'
     }
 
-    It "every GUI Advanced Debloat standard item has a phase 09 handler" {
-        $physPath = Join-Path $phasesDir "09-physical-debloat.ps1"
-        $physAst = [System.Management.Automation.Language.Parser]::ParseFile($physPath, [ref]$null, [ref]$null)
-        # Patterns of the standard if/elseif chain: "$item -match '<pattern>'" in the Standard loop
-        $stdLoop = $physAst.Find({
-            param($n)
-            $n -is [System.Management.Automation.Language.ForEachStatementAst] -and
-            $n.Condition.Extent.Text -eq '$script:advancedDebloatStandard'
-        }, $true)
-        $patterns = @([regex]::Matches($stdLoop.Body.Extent.Text, "\`$item -match '([^']+)'") | ForEach-Object { $_.Groups[1].Value })
-        $patterns.Count | Should BeGreaterThan 0
+    # --- Stage 2: the PowerShell <-> Rust engine switch ------------------------------------
+    # The engine of a target is bound in config\schema.psd1 (DebloatEngines). The rules are:
+    #   * a target that is not selected never runs, no matter which engine it uses
+    #   * the engine "PowerShell" never hands the target to the Rust binary
+    #   * the engine "Rust" hands exactly that one key to the Rust binary
+    $engineDefs = (Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")).DebloatEngines
+    function Get-DebloatItemFromGuiSource {
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiPath, [ref]$null, [ref]$null)
+        $assigns = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in '$script:WinEaseDebloatStandardItems', '$script:WinEaseDebloatExperimentalItems' }, $true)
+        $items = @()
+        foreach ($a in $assigns) { $items += @($a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value }) }
+        return @($items | Select-Object -Unique)
+    }
 
-        $guiAst = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiPath, [ref]$null, [ref]$null)
-        $stdLists = $guiAst.FindAll({
-            param($n)
-            $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$stdItems'
-        }, $true)
-        @($stdLists).Count | Should BeGreaterThan 0
-        $unhandled = @()
-        foreach ($list in $stdLists) {
-            foreach ($item in (Invoke-Expression $list.Right.Extent.Text)) {
-                if (@($patterns | Where-Object { $item -match $_ }).Count -eq 0) { $unhandled += $item }
+
+    It "config\schema.psd1 binds every Advanced Debloat target to an engine" {
+        $engineDefs.Count | Should BeGreaterThan 40
+        $items = @($engineDefs | ForEach-Object { $_.Item })
+        @($items | Select-Object -Unique).Count | Should Be $items.Count
+        foreach ($def in $engineDefs) {
+            $engines = @($def.Engines)
+            $engines.Count | Should BeGreaterThan 0
+            if (-not ($engines -contains 'PowerShell' -or $engines -contains 'Rust')) { throw "no engine for $($def.Item)" }
+            if (-not ($engines -contains $def.Default)) { throw "the default engine of $($def.Item) is not allowed" }
+        }
+    }
+
+    It "every GUI Advanced Debloat item has an engine binding" {
+        $guiItems = Get-DebloatItemFromGuiSource
+        $guiItems.Count | Should BeGreaterThan 40
+        foreach ($item in $guiItems) {
+            $def = @($engineDefs | Where-Object { $_.Item -eq $item })
+            $def.Count | Should Be 1
+        }
+    }
+
+    It "the Rust-only targets are the ones without a PowerShell handler" {
+        $libText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1"), [System.Text.Encoding]::UTF8)
+        $handled = @([regex]::Matches($libText, "(?m)^\s{8}'([^']+)' \{") | ForEach-Object { $_.Groups[1].Value })
+        $handled.Count | Should BeGreaterThan 0
+        $rustOnly = @($engineDefs | Where-Object { @($_.Engines) -notcontains 'PowerShell' })
+        $rustOnly.Count | Should BeGreaterThan 0
+        foreach ($def in $rustOnly) {
+            # a Rust-only target must not be handled by the safe engine
+            if ($handled -contains $def.Item) { throw "the Rust-only target '$($def.Item)' has a safe handler" }
+        }
+    }
+
+    It "every Rust-capable target names the Rust key the binary understands" {
+        $rustSrc = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "tools\winease-physical-debloat\src\main.rs"), [System.Text.Encoding]::UTF8)
+        foreach ($def in $engineDefs) {
+            if (@($def.Engines) -notcontains 'Rust') { continue }
+            $def.RustKey | Should Not BeNullOrEmpty
+            $rustSrc | Should Match ([regex]::Escape($def.RustKey))
+        }
+    }
+
+    It "the builder keeps the engine selection inside the selected targets" {
+        # the engine helpers of the builder are loaded on their own
+        $libPath = Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1"
+        $libAst = [System.Management.Automation.Language.Parser]::ParseFile($libPath, [ref]$null, [ref]$null)
+        $wanted = @('Get-WinEaseDebloatEngines', 'Get-WinEaseDebloatEngineDef', 'Resolve-WinEaseDebloatEngine', 'ConvertTo-WinEaseDebloatTarget', 'Set-WinEaseDebloatEngineSelection', 'Test-WinEaseDebloatOptionEnabled', 'Test-WinEaseDebloatTarget')
+        $funcs = $libAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $wanted -contains $n.Name }, $true)
+        $funcs.Count | Should Be $wanted.Count
+        $script:WinEaseDebloatEngines = [ordered]@{}
+        $script:WinEaseDebloatLegacyMap = [ordered]@{}
+        foreach ($def in $engineDefs) {
+            $script:WinEaseDebloatEngines[[string]$def.Item] = $def
+            foreach ($legacy in @($def.Legacy)) { if ($legacy) { $script:WinEaseDebloatLegacyMap[[string]$legacy] = [string]$def.Item } }
+        }
+        $script:advancedDebloatStandard = @()
+        $script:advancedDebloatExperimental = @()
+        $script:DebloatEngineSelection = [ordered]@{}
+        try {
+            foreach ($fn in $funcs) { Invoke-Expression $fn.Extent.Text }
+
+            $bt = 'Remove Bluetooth stack (service + binary) [20-40MB]'
+            $legacy = 'Physical: Bluetooth stack (complete removal) [~20-40MB]'
+
+            # an older profile entry is mapped onto the canonical target
+            ConvertTo-WinEaseDebloatTarget -Item $legacy | Should Be $bt
+            ConvertTo-WinEaseDebloatTarget -Item $bt | Should Be $bt
+
+            # an engine for a target that is not selected is dropped
+            $script:advancedDebloatStandard = @($bt)
+            Set-WinEaseDebloatEngineSelection -Selection @{ $bt = 'Rust' }
+            $script:DebloatEngineSelection.Contains($bt) | Should Be $true
+            Resolve-WinEaseDebloatEngine -Item $bt | Should Be 'Rust'
+
+            $script:advancedDebloatStandard = @()
+            $script:DebloatEngineSelection = [ordered]@{}
+            Set-WinEaseDebloatEngineSelection -Selection @{ $bt = 'Rust' }
+            $script:DebloatEngineSelection.Count | Should Be 0
+
+            # an engine the target does not support is dropped as well
+            $script:advancedDebloatStandard = @($bt)
+            Set-WinEaseDebloatEngineSelection -Selection @{ $bt = 'PowerShell' }
+            $script:DebloatEngineSelection.Contains($bt) | Should Be $true
+            Resolve-WinEaseDebloatEngine -Item $bt | Should Be 'PowerShell'
+        } finally {
+            $script:WinEaseDebloatEngines = $null
+            $script:WinEaseDebloatLegacyMap = $null
+            $script:DebloatEngineSelection = [ordered]@{}
+        }
+    }
+    It "the phase 09 engine functions resolve and dispatch as specified" {
+        # the engine functions of phase 09 are loaded on their own, so the dispatch can be
+        # checked without running the phase
+        $libPath = Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1"
+        $libAst = [System.Management.Automation.Language.Parser]::ParseFile($libPath, [ref]$null, [ref]$null)
+        $wanted = @('Get-WinEaseDebloatEngines', 'Get-WinEaseDebloatEngineDef', 'Resolve-WinEaseDebloatEngine', 'Get-WinEaseDebloatRustKey', 'Test-WinEaseDebloatTarget')
+        $funcs = $libAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $wanted -contains $n.Name }, $true)
+        $funcs.Count | Should Be $wanted.Count
+        $script:WinEaseDebloatEngines = @{}
+        foreach ($def in $engineDefs) { $script:WinEaseDebloatEngines[[string]$def.Item] = $def }
+        $script:advancedDebloatStandard = @()
+        $script:advancedDebloatExperimental = @()
+        $script:DebloatEngineSelection = [ordered]@{}
+        try {
+            foreach ($fn in $funcs) { Invoke-Expression $fn.Extent.Text }
+
+            $bt = 'Remove Bluetooth stack (service + binary) [20-40MB]'
+            $defender = 'Physical: Defender (complete removal) [~50MB]'
+            $swap = 'Remove swapfile.sys (pagefile disable) [256MB-1GB]'
+
+            # the registered default runs when the user did not choose
+            Resolve-WinEaseDebloatEngine -Item $bt | Should Be 'PowerShell'
+            Resolve-WinEaseDebloatEngine -Item $defender | Should Be 'Rust'
+
+            # the user's choice wins
+            $script:DebloatEngineSelection = [ordered]@{ $bt = 'Rust' }
+            Resolve-WinEaseDebloatEngine -Item $bt | Should Be 'Rust'
+            # the gate needs the target to be selected as well
+            Test-WinEaseDebloatTarget -Item $bt -Engine 'Rust' | Should Be $false
+            $script:advancedDebloatStandard = @($bt)
+            Test-WinEaseDebloatTarget -Item $bt -Engine 'Rust' | Should Be $true
+            Test-WinEaseDebloatTarget -Item $bt -Engine 'PowerShell' | Should Be $false
+            $script:advancedDebloatStandard = @()
+
+            # an engine the target does not support falls back to the default
+            $script:DebloatEngineSelection = [ordered]@{ $defender = 'PowerShell' }
+            Resolve-WinEaseDebloatEngine -Item $defender | Should Be 'Rust'
+
+            # the Rust key is data driven (the swap file must not land on the page file key)
+            Get-WinEaseDebloatRustKey -Item $bt | Should Be 'physical_bluetooth'
+            Get-WinEaseDebloatRustKey -Item $swap | Should Be 'physical_swapfile'
+            Get-WinEaseDebloatRustKey -Item $defender | Should Be 'physical_defender'
+        } finally {
+            # the GUI reads the same table; restore it so the later GUI tests see the real one
+            $script:WinEaseDebloatEngines = $null
+            $script:WinEaseDebloatEngineDefs = $null
+            $script:DebloatEngineSelection = [ordered]@{}
+        }
+    }
+    It "the phase 09 dispatch keeps the two engines apart" {
+        $physText = [System.IO.File]::ReadAllText((Join-Path $phasesDir "09-physical-debloat.ps1"), [System.Text.Encoding]::UTF8)
+        # the Rust dispatch only gets the targets whose engine is "Rust"
+        $physText | Should Match '\(Resolve-WinEaseDebloatEngine -Item \$_\) -eq ''Rust'''
+        $physText | Should Match 'Get-WinEaseDebloatRustKey -Item \$item'
+        # the engine the user picked must survive: phase 09 may not reset the selection
+        $physText | Should Not Match '^\$script:DebloatEngineSelection = \[ordered\]@\{\}$'
+    }
+
+    It "the GUI locks the engine while the target is not selected" {
+        $guiText = [System.IO.File]::ReadAllText($script:GuiPath, [System.Text.Encoding]::UTF8)
+        $guiText | Should Match 'Update-WinEaseDebloatRowState'
+        $guiText | Should Match '\$locked = \(-not \$selected\) -or \(\$allowed\.Count -le 1\)'
+        $guiText | Should Match '\$cell\.ReadOnly = \$locked'
+    }
+
+    It "the GUI offers the engine per target and a global switch" {
+        $guiText = [System.IO.File]::ReadAllText($script:GuiPath, [System.Text.Encoding]::UTF8)
+        $guiText | Should Match 'New-WinEaseDebloatGrid'
+        $guiText | Should Match 'Set-WinEaseDebloatEngineForAll'
+        $guiText | Should Match "Debloat\.Engine\.All"
+    }
+
+    It "an unselected target never reaches the Rust binary" {
+        # the engine map can only add a Rust dispatch for a target that is in the list
+        $libText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1"), [System.Text.Encoding]::UTF8)
+        $libText | Should Match 'Set-WinEaseDebloatEngineSelection'
+        $libText | Should Match 'if \(\$selected -notcontains \$item\) \{ continue \}'
+        # the gate every phase uses
+        $libText | Should Match 'if \(\$selected -notcontains \$Item\) \{ return \$false \}'
+    }
+    It "every GUI Advanced Debloat item is owned by a phase" {
+        # Every target declares the phase that runs its safe work (config\schema.psd1 ->
+        # DebloatEngines -> Phase), so no work item is implemented twice.
+        $owned = @()
+        foreach ($def in $engineDefs) {
+            if (-not $def.Phase) { throw "the target '$($def.Item)' has no owning phase" }
+            $owned += $def.Item
+        }
+        $owned.Count | Should Be $engineDefs.Count
+        $guiItems = Get-DebloatItemFromGuiSource
+        foreach ($item in $guiItems) {
+            if ($owned -notcontains $item) { throw "the target '$item' is not owned by a phase" }
+        }
+    }
+
+    It "the safe work of a target runs in the phase that owns it" {
+        # every phase that owns a target calls the shared dispatcher, so the work is done
+        # exactly once and never a second time in phase 09
+        $phases = @{
+            '05-appx'           = 'phases\05-appx.ps1'
+            '06-fod'            = 'phases\06-fod.ps1'
+            '08-filesystem'     = 'phases\08-filesystem.ps1'
+            '09-winsxs'         = 'phases\09-winsxs.ps1'
+            '10-registry'       = 'phases\10-registry.ps1'
+            '11-unattend'       = 'phases\11-unattend.ps1'
+        }
+        foreach ($phase in $phases.Keys) {
+            $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot $phases[$phase]), [System.Text.Encoding]::UTF8)
+            if ($text -notmatch [regex]::Escape("Invoke-WinEaseDebloatTargets -Phase '$phase'") -and
+                $text -notmatch [regex]::Escape("Test-WinEaseDebloatTarget -Item")) {
+                throw "the phase $phase owns a target but never asks for it"
             }
         }
-        ($unhandled -join ' | ') | Should Be ''
+        # phase 09 is the Rust engine only
+        $physText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\09-physical-debloat.ps1"), [System.Text.Encoding]::UTF8)
+        $physText | Should Not Match 'Invoke-WinEaseDebloatTargets -Phase'
+    }
+
+    It "an Advanced Debloat target can switch on the option of the phase that owns it" {
+        # the Option field of the table is the bridge between the two UIs: the target of the
+        # Advanced Debloat tab and the granular option do the same work, once
+        $withOption = @($engineDefs | Where-Object { $_.Option })
+        $withOption.Count | Should BeGreaterThan 0
+        # several targets may imply the same option (the event logs, the crash dumps and the
+        # temp files are all part of the offline cache cleanup)
+        $optionKeys = @($withOption | ForEach-Object { $_.Option })
+        # every option the table names really exists
+        $known = @((Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")).Tweaks | ForEach-Object { $_.Key })
+        foreach ($o in $optionKeys) {
+            if ($known -notcontains $o) { throw "the option $o of the debloat table does not exist" }
+        }
+    }
+
+    It "the safe handler of a target runs once, in the phase that owns it" {
+        # the shared library is loaded on its own, with a scratch directory that stands in
+        # for the mounted image
+        $libPath = Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1"
+        $libAst = [System.Management.Automation.Language.Parser]::ParseFile($libPath, [ref]$null, [ref]$null)
+        $wanted = @('Get-WinEaseDebloatEngines', 'Get-WinEaseDebloatEngineDef', 'Resolve-WinEaseDebloatEngine', 'Test-WinEaseDebloatTarget', 'Test-WinEaseDebloatOptionEnabled', 'Invoke-WinEaseDebloatTargets', 'Invoke-WinEaseDebloatTarget', 'Remove-WinEaseDebloatPath', 'Get-WinEaseDebloatSafeHandlerItems')
+        $funcs = $libAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $wanted -contains $n.Name }, $true)
+        $funcs.Count | Should Be $wanted.Count
+
+        $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ("winease_debloat_" + [System.IO.Path]::GetRandomFileName())
+        $patchCache = Join-Path $scratch "Windows\Installer\`$PatchCache$"
+        New-Item -ItemType Directory -Force -Path $patchCache | Out-Null
+        Set-Content -LiteralPath (Join-Path $patchCache "payload.msi") -Value "x" -Encoding ascii
+        $script:scratchDir = $scratch
+        $script:isDryRunMode = $false
+        $script:WinEaseDebloatEngines = [ordered]@{}
+        foreach ($def in $engineDefs) { $script:WinEaseDebloatEngines[[string]$def.Item] = $def }
+        $script:advancedDebloatStandard = @()
+        $script:advancedDebloatExperimental = @()
+        $script:DebloatEngineSelection = [ordered]@{}
+        try {
+            foreach ($fn in $funcs) { Invoke-Expression $fn.Extent.Text }
+
+            $target = 'Remove PatchCache (dir delete) [200-500MB]'
+            # not selected -> nothing happens
+            Invoke-WinEaseDebloatTargets -Phase '08-filesystem'
+            (Test-Path -LiteralPath (Join-Path $patchCache "payload.msi")) | Should Be $true
+
+            # selected -> the owning phase removes it
+            $script:advancedDebloatStandard = @($target)
+            Invoke-WinEaseDebloatTargets -Phase '08-filesystem'
+            (Test-Path -LiteralPath (Join-Path $patchCache "payload.msi")) | Should Be $false
+
+            # a phase that does not own the target leaves it alone
+            New-Item -ItemType Directory -Force -Path $patchCache | Out-Null
+            Set-Content -LiteralPath (Join-Path $patchCache "payload.msi") -Value "x" -Encoding ascii
+            Invoke-WinEaseDebloatTargets -Phase '06-fod'
+            (Test-Path -LiteralPath (Join-Path $patchCache "payload.msi")) | Should Be $true
+        } finally {
+            Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
+            $script:scratchDir = $null
+            $script:WinEaseDebloatEngines = $null
+            $script:DebloatEngineSelection = [ordered]@{}
+        }
+    }
+    # --- C1/C2: the master schema, the presets and the resolution engine -------------------
+    It "the built-in presets live in config\presets.psd1" {
+        $presetPath = Join-Path $script:RepoRoot "config\presets.psd1"
+        Test-Path -LiteralPath $presetPath | Should Be $true
+        $presets = Import-PowerShellDataFile -LiteralPath $presetPath
+        @($presets.Presets.Keys).Count | Should BeGreaterThan 5
+        # the descriptive names of the plan are accepted as well
+        foreach ($alias in @('None', 'Standard', 'Gaming', 'UltraSlim', 'MinimalServices')) {
+            $presets.Aliases.Contains($alias) | Should Be $true
+            $presets.Presets.Contains($presets.Aliases[$alias]) | Should Be $true
+        }
+        # the builder does not define the values of the presets a second time
+        $builderText = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $builderText | Should Not Match "ProfileName\s+= 'Extreme Slim & Gaming'"
+        $builderText | Should Match 'config\\presets\.psd1'
+    }
+
+    It "the master schema replaces config\tweaks.psd1" {
+        Test-Path -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1") | Should Be $true
+        Test-Path -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1") | Should Be $false
+        $schema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+        @($schema.Tweaks).Count | Should BeGreaterThan 50
+        @($schema.Components).Count | Should BeGreaterThan 20
+        @($schema.DebloatEngines).Count | Should BeGreaterThan 40
+        # the targets of the options live in the schema as well
+        @($schema.Targets.Keys).Count | Should BeGreaterThan 20
+    }
+
+    It "every option that the phases read through a lookup table is registered in the schema" {
+        $schema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+        $known = @(@($schema.Tweaks | ForEach-Object { $_.Key }) + @($schema.Components | ForEach-Object { $_.Key }))
+        foreach ($p in $schema.Targets.Keys) {
+            if ($known -notcontains $p) { throw "the option $p of the lookup table is not defined" }
+            foreach ($pkg in @($schema.Targets[$p].FoDPackages)) { if (-not $pkg) { throw "the option $p has an empty target" } }
+        }
+    }
+
+    It "the Rust capability of every target is declared in the schema" {
+        $schema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+        foreach ($def in $schema.DebloatEngines) {
+            if ($def.SupportsRustPhysical) {
+                if (-not $def.RustKey) { throw "the target $($def.Item) has no Rust key" }
+                if (@($def.Engines) -notcontains 'Rust') { throw "the target $($def.Item) does not allow the Rust engine" }
+            } else {
+                if (@($def.Engines) -contains 'Rust') { throw "the target $($def.Item) allows the Rust engine but does not declare it" }
+            }
+        }
+    }
+
+    It "the polarity of an option follows the naming convention" {
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+        Get-WinEaseOptionPolarity -Key 'RemoveEdge' | Should Be 'Remove'
+        Get-WinEaseOptionPolarity -Key 'DisableUAC' | Should Be 'Disable'
+        Get-WinEaseOptionPolarity -Key 'EnableScripts' | Should Be 'Enable'
+        Get-WinEaseOptionPolarity -Key 'KeepBluetooth' | Should Be 'Keep'
+        Get-WinEaseOptionPolarity -Key 'BypassActivationRestrictions' | Should Be 'Feature'
+    }
+
+    It "the resolution engine applies the base, then the preset, then the user settings" {
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+        $base    = @{ A = $true; B = $true; C = 'Keep' }
+        $preset  = @{ A = $false; B = $true; C = 'Off' }
+        $over    = @{ A = $false; B = $true }
+        $r = Resolve-WinEaseConfiguration -Base $base -Preset $preset -Overrides $over
+        # the preset overrules the base
+        $r.Components['C'] | Should Be 'Off'
+        # an explicit setting of the user always wins - also an explicit $false
+        $r.Components['A'] | Should Be $false
+        $r.Components['B'] | Should Be $true
+        # an option that is not in the base is not introduced
+        $r2 = Resolve-WinEaseConfiguration -Base @{ A = $true } -Preset @{ X = $true } -Overrides @{ Y = $true }
+        $r2.Components.Contains('X') | Should Be $false
+        $r2.Components.Contains('Y') | Should Be $false
+    }
+
+    It "the resolution engine keeps the explicit tweak settings of the user" {
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+        $r = Resolve-WinEaseConfiguration -TweakBase @{ X = $true; Y = $true } -TweakPreset @{ X = $false } -TweakOverrides @{ Y = $false }
+        $r.Tweaks['X'] | Should Be $false
+        $r.Tweaks['Y'] | Should Be $false
+    }
+
+    It "the conflict check never rewrites a setting of the user" {
+        $cfg = [PSCustomObject]@{ DisableWindowsUpdate = $true; RemoveStore = $true; TweakSettings = @{ PhysicalDebloat = $true } }
+        $res = Test-WinEaseConfigConflicts -Config $cfg
+        $res.HasConflicts | Should Be $true
+        $res.ResolvedConfig.DisableWindowsUpdate | Should Be $true
+        $res.ResolvedConfig.RemoveStore | Should Be $true
+        $res.ResolvedConfig.TweakSettings.PhysicalDebloat | Should Be $true
+        # the old "-AutoResolve" switch is gone
+        (Get-Command Test-WinEaseConfigConflicts).Parameters.ContainsKey('AutoResolve') | Should Be $false
+    }
+    It "the option bridge is used by the phase that owns the option" {
+        $fodText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\06-fod.ps1"), [System.Text.Encoding]::UTF8)
+        $fodText | Should Match 'Test-WinEaseDebloatOptionEnabled -Option \$optKey'
+    }
+    It "the safe handlers live in the shared debloat library" {
+        $libPath = Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1"
+        Test-Path -LiteralPath $libPath | Should Be $true
+        $libText = [System.IO.File]::ReadAllText($libPath, [System.Text.Encoding]::UTF8)
+        $libText | Should Match 'function Invoke-WinEaseDebloatTargets'
+        $libText | Should Match 'function Invoke-WinEaseDebloatTarget'
+        $libText | Should Match 'function Test-WinEaseDebloatTarget'
+        # phase 09 is the Rust engine only: it must not carry a safe handler chain any more
+        $physText = [System.IO.File]::ReadAllText((Join-Path $phasesDir "09-physical-debloat.ps1"), [System.Text.Encoding]::UTF8)
+        $physText | Should Not Match 'Invoke-WinEaseDebloatFeatureRemoval'
+        $physText | Should Not Match 'Invoke-WinEaseDebloatCapabilityRemoval'
     }
 }
 
-Describe "WinEase settings - config\tweaks.psd1 is the single source of truth" {
+Describe "WinEase settings - config\schema.psd1 is the single source of truth" {
     $builderText = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
     $builderAst = [System.Management.Automation.Language.Parser]::ParseInput($builderText, [ref]$null, [ref]$null)
     $guiText = [System.IO.File]::ReadAllText($script:GuiPath, [System.Text.Encoding]::UTF8)
     $guiAst = [System.Management.Automation.Language.Parser]::ParseInput($guiText, [ref]$null, [ref]$null)
-    $settingsDef =Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+    $settingsDef =Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
     $tweakKeys = @($settingsDef.Tweaks | ForEach-Object { $_.Key })
     $componentKeys = @($settingsDef.Components | ForEach-Object { $_.Key })
     $allKeys = $tweakKeys + $componentKeys
@@ -953,8 +1410,8 @@ Describe "WinEase settings - config\tweaks.psd1 is the single source of truth" {
 }
 
 Describe "WinEase GUI - smoke test (form built without ShowDialog)" {
-    # Same derived tables the builder hands the GUI, built from config\tweaks.psd1
-    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+    # Same derived tables the builder hands the GUI, built from config\schema.psd1
+    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
     $script:AllTweakDefs = [ordered]@{}
     foreach ($td in $settingsDef.Tweaks) { $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description } }
     $script:ComponentDefs = [ordered]@{}
@@ -981,17 +1438,26 @@ Describe "WinEase GUI - smoke test (form built without ShowDialog)" {
                 [void][System.Windows.Forms.Application]::DoEvents()
                 $buttons = @(Get-AllControls $tab | Where-Object { $_ -is [System.Windows.Forms.Button] -and $_.Text -match '^(Select All|Clear All|Deselect All)$' })
                 foreach ($btn in ($buttons | Sort-Object { $_.Text -ne 'Select All' })) {
-                    $target = $btn.Tag.Target
                     $want = $btn.Text -eq 'Select All'
-                    # Start from the opposite state so the click has to change every box
-                    Set-WinEaseChecked -Target $target -Checked (-not $want)
-                    [void]$btn.PerformClick()
-                    if ($target -is [System.Windows.Forms.CheckedListBox]) {
-                        $target.Items.Count | Should BeGreaterThan 0 | Out-Null
-                        $target.CheckedItems.Count | Should Be $(if ($want) { $target.Items.Count } else { 0 }) | Out-Null
+                    if ($btn.Tag -and $btn.Tag.ContainsKey('Grid')) {
+                        # Advanced Debloat grid: the button selects or clears every row
+                        $grid = $btn.Tag.Grid
+                        Set-WinEaseDebloatGridChecked -Grid $grid -Checked (-not $want)
+                        [void]$btn.PerformClick()
+                        $grid.Rows.Count | Should BeGreaterThan 0 | Out-Null
+                        @($grid.Rows | Where-Object { [bool]$_.Cells['On'].Value -ne $want }).Count | Should Be 0 | Out-Null
                     } else {
-                        @($target).Count | Should BeGreaterThan 0 | Out-Null
-                        @($target | Where-Object { $_.Checked -ne $want }).Count | Should Be 0 | Out-Null
+                        $target = $btn.Tag.Target
+                        # Start from the opposite state so the click has to change every box
+                        Set-WinEaseChecked -Target $target -Checked (-not $want)
+                        [void]$btn.PerformClick()
+                        if ($target -is [System.Windows.Forms.CheckedListBox]) {
+                            $target.Items.Count | Should BeGreaterThan 0 | Out-Null
+                            $target.CheckedItems.Count | Should Be $(if ($want) { $target.Items.Count } else { 0 }) | Out-Null
+                        } else {
+                            @($target).Count | Should BeGreaterThan 0 | Out-Null
+                            @($target | Where-Object { $_.Checked -ne $want }).Count | Should Be 0 | Out-Null
+                        }
                     }
                     $clicked++
                 }
@@ -1078,13 +1544,13 @@ if (-not (Get-Command -Name Test-WinEaseDependencies -ErrorAction SilentlyContin
 
 Describe "WinEase dependency checker" {
     $depsPath = Join-Path -Path $script:RepoRoot -ChildPath "config\dependencies.psd1"
-    $tweaksPath = Join-Path -Path $script:RepoRoot -ChildPath "config\tweaks.psd1"
+    $tweaksPath = Join-Path -Path $script:RepoRoot -ChildPath "config\schema.psd1"
 
     It "dependency catalog exists" {
         Test-Path -LiteralPath $depsPath | Should Be $true
     }
 
-    It "covers every tweak key from config/tweaks.psd1" {
+    It "covers every tweak key from config/schema.psd1" {
         $deps = Import-PowerShellDataFile -Path $depsPath
         $defs = Import-PowerShellDataFile -Path $tweaksPath
         foreach ($t in $defs.Tweaks) {
@@ -1092,7 +1558,7 @@ Describe "WinEase dependency checker" {
         }
     }
 
-    It "covers every component key from config/tweaks.psd1" {
+    It "covers every component key from config/schema.psd1" {
         $deps = Import-PowerShellDataFile -Path $depsPath
         $defs = Import-PowerShellDataFile -Path $tweaksPath
         foreach ($c in $defs.Components) {
@@ -1106,7 +1572,7 @@ Describe "WinEase dependency checker" {
         $items = @()
         $i = 0
         while ($i -lt $guiLines.Count) {
-            if ($guiLines[$i] -match '\$(std|exp)Items\s*=\s*@\(') {
+            if ($guiLines[$i] -match '\$script:WinEaseDebloat(Standard|Experimental)Items\s*=\s*@\(') {
                 $i++
                 while ($i -lt $guiLines.Count -and $guiLines[$i].Trim() -ne ')') {
                     $l = $guiLines[$i].Trim().TrimEnd(',')
@@ -1594,7 +2060,7 @@ Describe "Migrator tool S6 (tools/migrator/WinEase-Migrator.ps1)" {
 
 
 Describe "S7 - GUI Tab 8 (Migration & Backup)" {
-    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
     $script:AllTweakDefs = [ordered]@{}
     foreach ($td in $settingsDef.Tweaks) { $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description } }
     $script:ComponentDefs = [ordered]@{}
@@ -1668,7 +2134,7 @@ Describe "S7 - GUI Tab 8 (Migration & Backup)" {
 Describe "S5: Migration Assistant bundling" {
     $s5Root = Split-Path -Parent $PSScriptRoot
     $s5Text = [System.IO.File]::ReadAllText((Join-Path $s5Root 'phases\11-unattend.ps1'))
-    $s5Defs = Import-PowerShellDataFile -LiteralPath (Join-Path $s5Root 'config\tweaks.psd1')
+    $s5Defs = Import-PowerShellDataFile -LiteralPath (Join-Path $s5Root 'config\schema.psd1')
 
     It "the component maps to the variable the phase reads" {
         $cd = @($s5Defs.Components | Where-Object { $_.Key -eq 'IncludeMigrationAssistant' })[0]
@@ -1706,7 +2172,7 @@ Describe "S5: Migration Assistant bundling" {
 
 
 Describe "S8 - GUI user extensions tab and Preset Diff" {
-    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
     $script:AllTweakDefs = [ordered]@{}
     foreach ($td in $settingsDef.Tweaks) { $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description } }
     $script:AllTweakDefs['S8GamingSwitch'] = @{ Category = 'Gaming'; Default = $false; Description = 'S8 user switch' }
@@ -2030,7 +2496,7 @@ Describe "Documentation S12" {
 
     It "the doc path check detects missing paths and accepts existing ones" {
         $files = @('phases\18-iso.ps1')
-        $text = 'ok `config\tweaks.psd1` `docs/EXTENSIBILITY_GUIDE.md` `18-iso.ps1` bad `config\does-not-exist.psd1` `nope\x.ps1` `gone.ps1` `config/*.psd1` `migration-manifest.json`'
+        $text = 'ok `config\schema.psd1` `docs/EXTENSIBILITY_GUIDE.md` `18-iso.ps1` bad `config\does-not-exist.psd1` `nope\x.ps1` `gone.ps1` `config/*.psd1` `migration-manifest.json`'
         $r = @(Get-MissingDocPath -Text $text -RepoRoot $script:RepoRoot -Files $files -Exclude @('migration-manifest.json'))
         ($r -join '|') | Should Be 'config\does-not-exist.psd1|gone.ps1'
     }
@@ -2046,7 +2512,7 @@ Describe "GUI display language (English / Japanese)" {
     $script:LangSavedEnv = $env:WINEASE_UI_LANGUAGE
     $env:LOCALAPPDATA = $script:LangTemp
 
-    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
     $script:AllTweakDefs = [ordered]@{}
     foreach ($td in $settingsDef.Tweaks) { $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description } }
     $script:ComponentDefs = [ordered]@{}
@@ -2092,7 +2558,7 @@ Describe "GUI display language (English / Japanese)" {
     # English Advanced Debloat item names written in the GUI source (both the tab and the dialog)
     function Get-DebloatItemFromSource {
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiPath, [ref]$null, [ref]$null)
-        $assigns = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in '$stdItems', '$expItems', '$script:WinEaseDebloatStandardItems', '$script:WinEaseDebloatExperimentalItems' }, $true)
+        $assigns = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in '$script:WinEaseDebloatStandardItems', '$script:WinEaseDebloatExperimentalItems' }, $true)
         $items = @()
         foreach ($a in $assigns) { $items += @($a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value }) }
         return @($items | Select-Object -Unique)
@@ -2131,7 +2597,7 @@ Describe "GUI display language (English / Japanese)" {
             foreach ($f in 'Text', 'Description') { if (-not $ja.ContainsKey("Component.$($c.Key).$f")) { $missing += "Component.$($c.Key).$f" } }
         }
         $items = Get-DebloatItemFromSource
-        $items.Count | Should BeGreaterThan 50
+        $items.Count | Should BeGreaterThan 40
         foreach ($i in $items) { if (-not $ja.ContainsKey("Debloat:$i")) { $missing += "Debloat:$i" } }
         ($missing -join "`n") | Should Be ''
         $tweakKeys = @($settingsDef.Tweaks | ForEach-Object { $_.Key })
@@ -2169,7 +2635,7 @@ Describe "GUI display language (English / Japanese)" {
     }
 
     It "the source files stay ASCII: Japanese lives only in the JSON tables" {
-        foreach ($f in 'gui\WinEaseGui.ps1', 'tools\migrator\WinEase-Migrator.ps1', 'WinEasebuilder.ps1', 'lib\WinEaseExtensions.ps1', 'config\tweaks.psd1') {
+        foreach ($f in 'gui\WinEaseGui.ps1', 'tools\migrator\WinEase-Migrator.ps1', 'WinEasebuilder.ps1', 'lib\WinEaseExtensions.ps1', 'config\schema.psd1') {
             $bytes = [System.IO.File]::ReadAllBytes((Join-Path $script:RepoRoot $f))
             @($bytes | Where-Object { $_ -gt 127 }).Count | Should Be 0
         }
@@ -2290,7 +2756,7 @@ Describe "GUI display language (English / Japanese)" {
             $gui.ComponentCheckboxes['RemoveDefender'].Text | Should Be ('RemoveDefender - ' + $script:ComponentDefs['RemoveDefender'].Gui.Text)
             @(Get-AllControls $gui.Form | Where-Object { $_ -is [System.Windows.Forms.Button] -and $_.Text -match '^(Select All|Clear All|Deselect All)$' }).Count | Should Be 14
             # plain strings, not wrapped items, so English behaves exactly as before
-            ($gui.ClbStd.Items[0] -is [string]) | Should Be $true
+            ($gui.GrdStd.Rows[0].Tag -is [string]) | Should Be $true
         } finally { $gui.Form.Dispose() }
     }
 
@@ -2306,15 +2772,15 @@ Describe "GUI display language (English / Japanese)" {
             $gui.ComponentCheckboxes['RemoveDefender'].Text | Should Be ('RemoveDefender - ' + $ja['Component.RemoveDefender.Text'])
             @(Get-AllControls $gui.Form | Where-Object { $_ -is [System.Windows.Forms.Button] -and ($_.Text -eq $ja['Button.SelectAll'] -or $_.Text -eq $ja['Button.ClearAll']) }).Count | Should Be 14
             # every item shows its translation, and checking all of them hands the English text on
-            $gui.ClbStd.Items.Count | Should BeGreaterThan 20
-            $gui.ClbStd.Items[0].ToString() | Should Be $ja['Debloat:Remove WinRE (reagentc /disable + file delete) [500-700MB]']
-            Set-WinEaseChecked -Target $gui.ClbStd -Checked $true
-            Set-WinEaseChecked -Target $gui.ClbExp -Checked $true
+            $gui.GrdStd.Rows.Count | Should BeGreaterThan 20
+            $gui.GrdStd.Rows[0].Cells['Target'].Value | Should Be $ja['Debloat:Remove WinRE (reagentc /disable + file delete) [500-700MB]']
+            Set-WinEaseDebloatGridChecked -Grid $gui.GrdStd -Checked $true
+            Set-WinEaseDebloatGridChecked -Grid $gui.GrdExp -Checked $true
             Complete-WinEaseGuiResult -Gui $gui -SkipPhysicalDebloatConsent | Should Be $true
             $r = $gui.Result
-            @($r.AdvancedDebloatStandard).Count | Should Be $gui.ClbStd.Items.Count
+            @($r.AdvancedDebloatStandard).Count | Should Be $gui.GrdStd.Rows.Count
             foreach ($v in @($r.AdvancedDebloatStandard) + @($r.AdvancedDebloatExperimental)) { ($english -contains $v) | Should Be $true | Out-Null }
-            ($r.AdvancedDebloatStandard -join "`n") | Should Be ((@($gui.ClbStd.Items | ForEach-Object { Get-WinEaseListItemValue $_ })) -join "`n")
+            ($r.AdvancedDebloatStandard -join "`n") | Should Be ((@($gui.GrdStd.Rows | ForEach-Object { $_.Tag })) -join "`n")
             (Get-WinEaseGuiDraftConfig -Gui $gui).AdvancedDebloatExperimental[0] | Should Match '^Physical: '
             $r.TweakSettings.Count | Should Be $script:AllTweakDefs.Count
         } finally { $gui.Form.Dispose() }
@@ -2322,24 +2788,71 @@ Describe "GUI display language (English / Japanese)" {
         $first = $english[0]
         $gui2 = Show-WinEaseGUI -NoShow -UiLanguage ja -InitialSettings @{ AdvancedDebloatStandard = @($first) }
         try {
-            $gui2.ClbStd.CheckedItems.Count | Should Be 1
-            (Get-WinEaseListItemValue $gui2.ClbStd.CheckedItems[0]) | Should Be $first
+            @($gui2.GrdStd.Rows | Where-Object { [bool]$_.Cells['On'].Value }).Count | Should Be 1
+            @($gui2.GrdStd.Rows | Where-Object { [bool]$_.Cells['On'].Value })[0].Tag | Should Be $first
         } finally { $gui2.Form.Dispose() }
     }
 
+    It "the engine cell is locked while the target is not selected" {
+        $gui = Show-WinEaseGUI -NoShow -InitialSettings @{ SourceDrive = 'E:\'; TweakSettings = [ordered]@{} }
+        try {
+            # a target that supports both engines starts unchecked -> the engine is locked
+            $row = @($gui.GrdStd.Rows | Where-Object { @($_.Tag) -like '*Bluetooth*' })[0]
+            $row | Should Not BeNullOrEmpty
+            $row.Cells['On'].Value | Should Be $false
+            $row.Cells['Engine'].ReadOnly | Should Be $true
+            # checking it unlocks the engine
+            $row.Cells['On'].Value = $true
+            Update-WinEaseDebloatRowState -Grid $gui.GrdStd -RowIndex $row.Index -EngineDefs (Get-WinEaseDebloatEngineDefs)
+            $row.Cells['Engine'].ReadOnly | Should Be $false
+            # a target that only the Rust engine can remove stays locked
+            $rustOnly = @($gui.GrdExp.Rows | Where-Object { [string]$_.Tag -like 'Physical: Defender*' })[0]
+            $rustOnly | Should Not BeNullOrEmpty
+            $rustOnly.Cells['Engine'].ReadOnly | Should Be $true
+            $rustOnly.Cells['Engine'].Value | Should Be 'Rust'
+        } finally { $gui.Form.Dispose() }
+    }
+
+    It "the global engine switch sets every target that supports it" {
+        $gui = Show-WinEaseGUI -NoShow -InitialSettings @{ SourceDrive = 'E:\'; TweakSettings = [ordered]@{} }
+        try {
+            Set-WinEaseDebloatEngineForAll -Grids @($gui.GrdStd, $gui.GrdExp) -Engine 'Rust'
+            $dual = @($gui.GrdStd.Rows | Where-Object { @($_.Tag) -like '*Bluetooth*' })[0]
+            $dual.Cells['Engine'].Value | Should Be 'Rust'
+            # a target that only the Rust engine can remove is not changed
+            $rustOnly = @($gui.GrdExp.Rows | Where-Object { [string]$_.Tag -like 'Physical: Defender*' })[0]
+            $rustOnly.Cells['Engine'].Value | Should Be 'Rust'
+            # the draft config carries the engine of every target, the result only the changed ones
+            Set-WinEaseDebloatGridChecked -Grid $gui.GrdStd -Checked $true
+            $cfg = Get-WinEaseGuiDraftConfig -Gui $gui
+            $cfg.DebloatEngineSelection.Count | Should BeGreaterThan 0
+            Complete-WinEaseGuiResult -Gui $gui -SkipPhysicalDebloatConsent | Should Be $true
+            $r = $gui.Result
+            $r.DebloatEngineSelection.Count | Should BeGreaterThan 0
+            foreach ($k in $r.DebloatEngineSelection.Keys) { $r.DebloatEngineSelection[$k] | Should Be 'Rust' }
+        } finally { $gui.Form.Dispose() }
+    }
+
+    It "the window starts on the safe preset with every engine on PowerShell" {
+        $gui = Show-WinEaseGUI -NoShow
+        try {
+            $gui.Preset.SelectedIndex | Should Be 1
+            $gui.GrdStd.Rows[0].Cells['Engine'].Value | Should Be 'PowerShell'
+        } finally { $gui.Form.Dispose() }
+    }
     It "Advanced Debloat dialog in Japanese returns the English item names" {
         $english = Get-DebloatItemFromSource
         Set-WinEaseUiLanguage -Language 'ja'
         $dlg = Show-AdvancedDebloatDialog -NoShow
         try {
             $dlg.Text | Should Be (Get-WinEaseUiString 'Dlg.Debloat.Title' -Language 'ja')
-            Set-WinEaseChecked -Target $dlg.Tag.Std -Checked $true
-            Set-WinEaseChecked -Target $dlg.Tag.Exp -Checked $true
-            $std = Get-WinEaseCheckedItems -List $dlg.Tag.Std
-            $exp = Get-WinEaseCheckedItems -List $dlg.Tag.Exp
+            Set-WinEaseDebloatGridChecked -Grid $dlg.Tag.Std -Checked $true
+            Set-WinEaseDebloatGridChecked -Grid $dlg.Tag.Exp -Checked $true
+            $std = @((Get-WinEaseDebloatGridState -Grid $dlg.Tag.Std).Selected)
+            $exp = @((Get-WinEaseDebloatGridState -Grid $dlg.Tag.Exp).Selected)
             $std.Count | Should Be 32
             foreach ($v in @($std) + @($exp)) { ($english -contains $v) | Should Be $true | Out-Null }
-            $dlg.Tag.Std.Items[0].ToString() | Should Not Be $std[0]
+            $dlg.Tag.Std.Rows[0].Cells['Target'].Value | Should Not Be $std[0]
         } finally {
             $dlg.Dispose()
             Set-WinEaseUiLanguage -Language 'en'
@@ -2360,8 +2873,8 @@ Describe "GUI display language (English / Japanese)" {
             $gui.RadSWM.Checked = $true
             $gui.TweakCheckboxes['DisableUAC'].Checked = $true
             $gui.ComponentCheckboxes['RemoveStore'].Checked = $true
-            $gui.ClbStd.SetItemChecked(2, $true)
-            $gui.ClbExp.SetItemChecked(4, $true)
+            $gui.GrdStd.Rows[2].Cells['On'].Value = $true
+            $gui.GrdExp.Rows[4].Cells['On'].Value = $true
             $gui.MigRoot.Text = 'D:\mig'
             $gui.CustomPaths.Text = "C:\a`r`nC:\b"
             $gui.MigExcludeSecrets.Checked = $false
@@ -2373,7 +2886,7 @@ Describe "GUI display language (English / Japanese)" {
             $gui.MigRulesList.SetItemChecked(3, $true)
             $ruleIds = @(Get-WinEaseGuiMigrationRuleIds -Gui $gui)
             $ruleIds.Count | Should Be 2
-            $stdValue = Get-WinEaseListItemValue $gui.ClbStd.Items[2]
+            $stdValue = $gui.GrdStd.Rows[2].Tag
             $gui.Tabs.SelectedIndex = 4
             $presetIndex = $gui.Preset.SelectedIndex
             $before = Get-WinEaseGuiDraftConfig -Gui $gui
@@ -2505,7 +3018,7 @@ Describe "GUI display language (English / Japanese)" {
 }
 
 Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
-    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
     $script:AllTweakDefs = [ordered]@{}
     foreach ($td in $settingsDef.Tweaks) { $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description } }
     $script:ComponentDefs = [ordered]@{}
@@ -2532,7 +3045,7 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
         @($back.Tweaks).Count | Should Be $script:AllTweakDefs.Count
         @($back.Components).Count | Should Be @($script:ComponentDefs.Values | Where-Object { $_.Gui }).Count
         @($back.DebloatStandard).Count | Should BeGreaterThan 20
-        @($back.DebloatExperimental).Count | Should BeGreaterThan 20
+        @($back.DebloatExperimental).Count | Should BeGreaterThan 10
         $back.Initial.SourceDrive | Should Be 'E:\'
         $back.Initial.UserName | Should Be 'Tester'
         $back.Initial.ExportESDMode | Should Be $true

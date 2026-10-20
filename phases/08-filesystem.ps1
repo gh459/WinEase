@@ -208,27 +208,59 @@ if ($removeDefender) {
 }
 
 # General cleanup & offline cache trimming
-Write-Host "Cleaning offline system caches, prefetch, and setup logs..." -ForegroundColor Cyan
-Remove-Item -Path "$scratchDir\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -Path "$scratchDir\Windows\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -Path "$scratchDir\Windows\System32\LogFiles\*" -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -Path "$scratchDir\Windows\System32\winevt\Logs\*" -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -Path "$scratchDir\Windows\Minidump\*" -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -Path "$scratchDir\Windows\Prefetch\*" -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -Path "$scratchDir\Windows\Panther\*" -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -Path "$scratchDir\Windows\Downloaded Program Files\*" -Recurse -Force -ErrorAction SilentlyContinue
+# Every removal here used to run unconditionally on every build. They are now bound to
+# individual options so that "keep" really keeps: OFF = the folder is left untouched.
+# The option asks for the whole set; the Advanced Debloat targets ask for one part of it
+# (the event logs, the crash dumps, the temp files). The work is done once, here.
+$cleanOfflineCaches = (Test-TweakEnabled 'RemoveOfflineCacheFiles' $true)
+$cleanEventLogs = $cleanOfflineCaches
+$cleanCrashDumps = $cleanOfflineCaches
+$cleanTempFiles = $cleanOfflineCaches
+if (Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue) {
+    $cleanEventLogs = $cleanEventLogs -or (Test-WinEaseDebloatTarget -Item 'Remove event logs [10-50MB]')
+    $cleanCrashDumps = $cleanCrashDumps -or (Test-WinEaseDebloatTarget -Item 'Remove crash dumps [varies]')
+    $cleanTempFiles = $cleanTempFiles -or (Test-WinEaseDebloatTarget -Item 'Remove Temp files [varies]')
+}
+if ($cleanOfflineCaches -or $cleanEventLogs -or $cleanCrashDumps -or $cleanTempFiles) {
+    Write-Host "Cleaning offline system caches, prefetch, and setup logs..." -ForegroundColor Cyan
+    if ($cleanTempFiles) {
+        Remove-Item -Path "$scratchDir\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if ($cleanOfflineCaches) {
+        Remove-Item -Path "$scratchDir\Windows\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "$scratchDir\Windows\System32\LogFiles\*" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "$scratchDir\Windows\Prefetch\*" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "$scratchDir\Windows\Panther\*" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "$scratchDir\Windows\Downloaded Program Files\*" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if ($cleanEventLogs) {
+        Remove-Item -Path "$scratchDir\Windows\System32\winevt\Logs\*" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if ($cleanCrashDumps) {
+        Remove-Item -Path "$scratchDir\Windows\Minidump\*" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "$scratchDir\Windows\Memory.dmp" -Force -ErrorAction SilentlyContinue
+    }
+}
 if ($trimWallpapers) {
     Write-Host "Trimming 4K default wallpapers and lock screen images (-TrimWallpapers)..." -ForegroundColor Cyan
     Remove-ProtectedDirectory -Path "$scratchDir\Windows\Web\Wallpaper" -ScratchPath $scratchDir
     Remove-Item "$scratchDir\Windows\Web\Screen\*.jpg" -Force -ErrorAction SilentlyContinue
 }
-Remove-Item -Path (Join-Path -Path $winDir -ChildPath "Help") -Recurse -Force -ErrorAction SilentlyContinue
+$removeHelpFiles = (Test-TweakEnabled 'RemoveHelpFiles' $true)
+if (-not $removeHelpFiles -and (Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue)) {
+    $removeHelpFiles = Test-WinEaseDebloatTarget -Item 'Remove help files [10-20MB]'
+}
+if ($removeHelpFiles) {
+    Remove-Item -Path (Join-Path -Path $winDir -ChildPath "Help") -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 # Edge Browser and OneDrive (Preserve System32 WebView2 runtime for Windows 11 OOBE stability)
-Write-Host "Removing Edge browser and OneDrive..." -ForegroundColor Cyan
-Remove-ProtectedDirectory -Path "$scratchDir\Program Files (x86)\Microsoft\Edge" -ScratchPath $scratchDir
-Remove-ProtectedDirectory -Path "$scratchDir\Program Files (x86)\Microsoft\EdgeUpdate" -ScratchPath $scratchDir
-Remove-ProtectedDirectory -Path "$scratchDir\Program Files (x86)\Microsoft\EdgeCore" -ScratchPath $scratchDir
+if (Test-TweakEnabled 'RemoveEdge' $true) {
+    Write-Host "Removing Edge browser..." -ForegroundColor Cyan
+    Remove-ProtectedDirectory -Path "$scratchDir\Program Files (x86)\Microsoft\Edge" -ScratchPath $scratchDir
+    Remove-ProtectedDirectory -Path "$scratchDir\Program Files (x86)\Microsoft\EdgeUpdate" -ScratchPath $scratchDir
+    Remove-ProtectedDirectory -Path "$scratchDir\Program Files (x86)\Microsoft\EdgeCore" -ScratchPath $scratchDir
+}
 
 # Residual SystemApps payload removal (Windows Backup app & Web Experience host)
 # Provisioned-package removal does not delete the SystemApps staging folders that contain
@@ -237,7 +269,9 @@ Remove-ProtectedDirectory -Path "$scratchDir\Program Files (x86)\Microsoft\EdgeC
 # Servicing payload/manifests stay intact in WinSxS, so CBS integrity is not affected.
 $systemAppsDir = Join-Path -Path $winDir -ChildPath "SystemApps"
 if (Test-Path -LiteralPath $systemAppsDir) {
-    $systemAppsRemovePatterns = @('Microsoft.WindowsBackupApp_*', 'MicrosoftWindows.Client.WebExperience_*')
+    $systemAppsRemovePatterns = @()
+    if (Test-TweakEnabled 'RemoveWindowsBackup' $true)    { $systemAppsRemovePatterns += 'Microsoft.WindowsBackupApp_*' }
+    if (Test-TweakEnabled 'RemoveWebExperienceHost' $true) { $systemAppsRemovePatterns += 'MicrosoftWindows.Client.WebExperience_*' }
     foreach ($systemAppPattern in $systemAppsRemovePatterns) {
         Get-ChildItem -LiteralPath $systemAppsDir -Directory -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -like $systemAppPattern } |
@@ -251,7 +285,9 @@ if (Test-Path -LiteralPath $systemAppsDir) {
 # Directive 2.1: Physical deletion of System32 binaries abolished to prevent NTFS hardlink desync and WIM stream corruption (0x80070570).
 # Execution neutralization for OneDriveSetup.exe, VoiceAccess.exe, Livecaptions.exe, and GameBarPresenceWriter.exe is handled via IFEO in Phase 10.
 # Purge Windows Backup scheduled tasks
-Remove-Item -LiteralPath "$scratchDir\Windows\System32\Tasks\Microsoft\Windows\AppListBackup" -Recurse -Force -ErrorAction SilentlyContinue
+if (Test-TweakEnabled 'RemoveWindowsBackup' $true) {
+    Remove-Item -LiteralPath "$scratchDir\Windows\System32\Tasks\Microsoft\Windows\AppListBackup" -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 
 # WinRE Handling (Guarantees Setup SafeOS staging succeeds, then cleans up post-install)
@@ -288,6 +324,13 @@ if ($keepRecoveryEnv) {
             Write-Warning "Failed to set permissions for WinRE: $_. Continuing build safely."
         }
     }
+}
+
+# The Advanced Debloat targets this phase owns (config\schema.psd1 -> DebloatEngines):
+# the cache and payload folders that are removed here, so phase 09 does not remove them a
+# second time.
+if (Get-Command -Name Invoke-WinEaseDebloatTargets -ErrorAction SilentlyContinue) {
+    Invoke-WinEaseDebloatTargets -Phase '08-filesystem'
 }
 
 # Feature flags and build traceability manifest are staged comprehensively in Phase 11
