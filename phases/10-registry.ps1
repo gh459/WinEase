@@ -37,27 +37,30 @@ try {
 } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
 # Helper function to evaluate individual toggle settings
-function Test-TweakEnabled {
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$Name,
-        [bool]$Default = $true
-    )
-    if ($null -ne $script:TweakSettings -and $script:TweakSettings.Contains($Name)) {
-        return [bool]$script:TweakSettings[$Name]
-    }
-    # Legacy key names (older profiles / -TweakSettings hashtables) that map onto this GUI key
-    if ($null -ne $script:TweakSettings -and $script:TweakKeyAliases) {
-        foreach ($alias in $script:TweakKeyAliases.Keys) {
-            if ($script:TweakKeyAliases[$alias] -eq $Name -and $script:TweakSettings.Contains($alias)) {
-                return [bool]$script:TweakSettings[$alias]
+# (guarded so a re-run of the phase does not redefine it; phase 11 declares the same helper)
+if (-not (Get-Command -Name Test-TweakEnabled -ErrorAction SilentlyContinue)) {
+    function Test-TweakEnabled {
+        param(
+            [Parameter(Mandatory=$true)]
+            [string]$Name,
+            [bool]$Default = $true
+        )
+        if ($null -ne $script:TweakSettings -and $script:TweakSettings.Contains($Name)) {
+            return [bool]$script:TweakSettings[$Name]
+        }
+        # Legacy key names (older profiles / -TweakSettings hashtables) that map onto this GUI key
+        if ($null -ne $script:TweakSettings -and $script:TweakKeyAliases) {
+            foreach ($alias in $script:TweakKeyAliases.Keys) {
+                if ($script:TweakKeyAliases[$alias] -eq $Name -and $script:TweakSettings.Contains($alias)) {
+                    return [bool]$script:TweakSettings[$alias]
+                }
             }
         }
+        $varName = "Tweak_$Name"
+        $v = Get-Variable -Name $varName -Scope Script -ErrorAction SilentlyContinue
+        if ($null -ne $v) { return [bool]$v.Value }
+        return $Default
     }
-    $varName = "Tweak_$Name"
-    $v = Get-Variable -Name $varName -Scope Script -ErrorAction SilentlyContinue
-    if ($null -ne $v) { return [bool]$v.Value }
-    return $Default
 }
 
 # ============================================================================
@@ -85,7 +88,7 @@ if (Test-TweakEnabled 'BypassNRO' $true) {
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\ReserveManager" /v "ShippedWithReserves" /t REG_DWORD /d 0 /f > $null 2>&1
 }
 
-if (Test-TweakEnabled 'PreventDeviceEncryption' $true) {
+if (Test-TweakEnabled 'PreventDeviceEncryption' $false) {
     Write-Host "Preventing automatic BitLocker device encryption..." -ForegroundColor Green
     reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\BitLocker" /v "PreventDeviceEncryption" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\EnhancedStorageDevices" /v "TCGSecurityActivationDisabled" /t REG_DWORD /d 1 /f > $null 2>&1
@@ -311,12 +314,12 @@ if (Test-TweakEnabled 'DisableVBS' $false) {
     reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" /v "Locked" /t REG_DWORD /d 0 /f > $null 2>&1
 }
 
-if (Test-TweakEnabled 'DisableWPBT' $true) {
+if (Test-TweakEnabled 'DisableWPBT' $false) {
     Write-Host "Blocking UEFI WPBT execution (OEM bloatware persistence prevention)..." -ForegroundColor Green
     reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager" /v "DisableWpbtExecution" /t REG_DWORD /d 1 /f > $null 2>&1
 }
 
-if (Test-TweakEnabled 'DisableBSODEmoticon' $true) {
+if (Test-TweakEnabled 'DisableBSODEmoticon' $false) {
     reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\CrashControl" /v "DisplayParameters" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\CrashControl" /v "DisableEmoticon" /t REG_DWORD /d 1 /f > $null 2>&1
 }
@@ -348,8 +351,19 @@ if (Test-TweakEnabled 'DisableIdleMaintenance' $false) {
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance" /v "MaintenanceDisabled" /t REG_DWORD /d 1 /f > $null 2>&1
 }
 
+# AtlasOS & ReviOS low-latency kernel tuning.
+# The GUI exposes "AtlasOS & ReviOS Low-Latency Kernel Tuning" as a component
+# (AtlasReviOSMode) but nothing in the phases read it, so the checkbox had no
+# effect at all. It is the umbrella switch for the latency kernel work below:
+# DPC thread tweaking + foreground quantum scheduling (ThreadDpcEnable) and the
+# MMCSS Games/Pro Audio task profiles. Turning it off skips the whole set.
+$atlasReviOSEnabled = [bool]$atlasReviOSMode
+
 if (Test-TweakEnabled 'ThreadDpcEnable' $false) {
     reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Kernel" /v "ThreadDpcEnable" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\PriorityControl" /v "Win32PrioritySeparation" /t REG_DWORD /d 38 /f > $null 2>&1
+} elseif ($atlasReviOSEnabled) {
+    # Atlas/ReviOS baseline: foreground quantum scheduling without the DPC tweak.
     reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\PriorityControl" /v "Win32PrioritySeparation" /t REG_DWORD /d 38 /f > $null 2>&1
 }
 
@@ -381,7 +395,7 @@ if ($keepAudioTweaks -or $dawMode -or (Test-TweakEnabled 'LowLatencyAudioMMCSS' 
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio" /v "GPU Priority" /t REG_DWORD /d 8 /f > $null 2>&1
 }
 
-if ($mmcssGaming -or (Test-TweakEnabled 'MMCSSGaming' $false)) {
+if ($mmcssGaming -or (Test-TweakEnabled 'MMCSSGaming' $false) -or $atlasReviOSEnabled) {
     Write-Host "  [Gaming] Configuring Games MMCSS task profile..." -ForegroundColor Green
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" /v "Priority" /t REG_DWORD /d 6 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" /v "Scheduling Category" /t REG_SZ /d "High" /f > $null 2>&1
@@ -412,6 +426,21 @@ if ($disableFSE -or (Test-TweakEnabled 'DisableFSE' $false)) {
     reg.exe add "HKLM\zNTUSER\System\GameConfigStore" /v "GameDVR_HonorUserFSEBehaviorMode" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zDEFAULT\System\GameConfigStore" /v "GameDVR_FSEBehaviorMode" /t REG_DWORD /d 2 /f > $null 2>&1
     reg.exe add "HKLM\zDEFAULT\System\GameConfigStore" /v "GameDVR_HonorUserFSEBehaviorMode" /t REG_DWORD /d 1 /f > $null 2>&1
+}
+
+# NVIDIA low-latency: PowerMizer performance mode + per-CPU core DPC registry tuning.
+# The switch existed in the CLI and the README documented the behaviour, but no phase
+# consumed it, so the flag had no effect. PowerMizer is set to "Prefer maximum
+# performance" (0x1) and the per-processor DPC policy is switched to the DPC profile.
+if ($nvidiaLowLatency -or (Test-TweakEnabled 'NvidiaLowLatency' $false)) {
+    Write-Host "  [NVIDIA] Applying PowerMizer performance mode and per-CPU core DPC policy..." -ForegroundColor Green
+    # PowerMizer: 0 = max performance (newer drivers), 1 = adaptive
+    reg.exe add "HKLM\zSYSTEM\CurrentControlSet\Control\Video\NVIDIA\PowerMizer" /v "PowerMizerPerf" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSYSTEM\CurrentControlSet\Control\Video\NVIDIA\PowerMizer" /v "PowerMizerAsync" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zSYSTEM\CurrentControlSet\Control\Video\NVIDIA\PowerMizer" /v "PowerMizerClock" /t REG_DWORD /d 0 /f > $null 2>&1
+    # Per-processor DPC policy: 1 = the processor is a DPC processor (defers non-DPC work).
+    reg.exe add "HKLM\zSYSTEM\CurrentControlSet\Control\Session Manager\kernel" /v "DpcProfile" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSYSTEM\CurrentControlSet\Control\Session Manager\kernel\Processor" /v "DpcProfile" /t REG_DWORD /d 1 /f > $null 2>&1
 }
 
 # HAGS & MSI
@@ -612,7 +641,7 @@ if ($disableWU -or (Test-TweakEnabled 'DisableWindowsUpdate' $false)) {
     $serviceConfigs["WaaSMedicSVC"]         = 4
 }
 
-if (Test-TweakEnabled 'ServiceTrim' $true) {
+if ([bool]$script:activeTweakGroups['ServiceTrim']) {
     foreach ($svc in $serviceConfigs.GetEnumerator()) {
         reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\$($svc.Key)" /f /v "Start" /t REG_DWORD /d $($svc.Value) > $null 2>&1
     }
@@ -643,19 +672,65 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
     Remove-Item -LiteralPath $reginiFile -Force -ErrorAction SilentlyContinue
 
     Write-Host "Disabling Windows Defender drivers & services offline in zSYSTEM..." -ForegroundColor Green
+
+    # --- ELAM (Early Launch Anti-Malware) neutralization -------------------------------
+    # WdBoot is an ELAM driver (Group = Early-Launch). ELAM drivers are loaded by the boot
+    # loader before the kernel starts the anti-malware stack, so a plain Start=4 is not
+    # always honoured: the driver is still picked up from the ELAM hive. Clearing the
+    # "Early-Launch" group membership and the ELAM support flag takes the driver out of
+    # the early-launch path entirely.
     foreach ($drv in @('WdBoot', 'WdFilter', 'WdNisDrv')) {
         reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\$drv" /v "Start" /t REG_DWORD /d 4 /f > $null 2>&1
     }
+    reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\WdBoot" /v "SupportElamHive" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe delete "HKLM\zSYSTEM\ControlSet001\Services\WdBoot" /v "Group" /f > $null 2>&1
+    # WdFilter is an FSFilter anti-virus minifilter; drop it from the filter group as well
+    # so no file-system filter instance is bound when the stack starts.
+    reg.exe delete "HKLM\zSYSTEM\ControlSet001\Services\WdFilter" /v "Group" /f > $null 2>&1
+
+    # --- Service key removal ------------------------------------------------------------
+    # The service keys are deleted (not just disabled) so that a later CBS servicing pass
+    # cannot re-enable them. Each operation is verified: the previous implementation
+    # redirected every reg.exe call to "> $null 2>&1", so a failed delete (e.g. a key still
+    # owned by TrustedInstaller) was indistinguishable from a successful one and the build
+    # continued with Defender still registered.
     $defServices = @('WinDefend', 'MDCoreSvc', 'WdNisSvc', 'Sense', 'SecurityHealthService', 'wscsvc', 'webthreatdefsvc', 'webthreatdefusersvc', 'SgrmBroker', 'SgrmAgent', 'whesvc')
+    $failedDefSvc = [System.Collections.Generic.List[string]]::new()
     foreach ($svc in $defServices) {
         reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\$svc" /v "Start" /t REG_DWORD /d 4 /f > $null 2>&1
         reg.exe delete "HKLM\zSYSTEM\ControlSet001\Services\$svc\TriggerInfo" /f > $null 2>&1
         reg.exe delete "HKLM\zSYSTEM\ControlSet001\Services\$svc" /f > $null 2>&1
+        # Verify the key is really gone instead of trusting the exit code of a silenced call.
+        $null = & reg.exe query "HKLM\zSYSTEM\ControlSet001\Services\$svc" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $failedDefSvc.Add($svc)
+        }
     }
+    if ($failedDefSvc.Count -gt 0) {
+        Write-Warning "  - Defender service keys still present after removal: $($failedDefSvc -join ', ')"
+        Write-Warning "  - These services may be re-registered by CBS; the post-build verification in Phase 15 will flag this."
+    } else {
+        Write-Host "  - All $($defServices.Count) Defender service keys removed from the offline SYSTEM hive." -ForegroundColor Green
+    }
+
+    # --- Policies ------------------------------------------------------------------------
+    # Tamper Protection must be off before the engine can be stopped or removed.
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows Defender\Features" /v "TamperProtection" /t REG_DWORD /d 0 /f > $null 2>&1
+    # DisableAntiSpyware no longer disables the engine on Windows 11 24H2+ (Microsoft removed
+    # the behaviour), so it is kept only for legacy builds and the working policies below are
+    # the actual mechanism.
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender" /v "DisableAntiSpyware" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender" /v "DisableAntiVirus" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v "DisableRealtimeMonitoring" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v "DisableBehaviorMonitoring" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v "DisableOnAccessProtection" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v "DisableScanOnRealtimeEnable" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\MpEngine" /v "MpEngineEnableFileNameFiltering" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet" /v "SubmitSamplesConsent" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet" /v "SpynetReporting" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet" /v "SpynetProtection" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Signature Updates" /v "SignatureUpdateInterval" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender" /v "PUAProtection" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe delete "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v "SecurityHealth" /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.SecHealthUI_8wekyb3d8bbwe" /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.Windows.SecHealthUI_cw5n1h2txyewy" /f > $null 2>&1

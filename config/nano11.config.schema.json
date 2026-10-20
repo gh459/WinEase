@@ -66,15 +66,14 @@
       "items": { "type": "string" },
       "description": "Selected experimental debloat deletion components (requires explicit gate)"
     },
+    "IncludeMigrationAssistant": { "type": "boolean", "default": false },
     "TweakGroups": {
       "type": "object",
       "properties": {
         "NetworkStack": { "type": "boolean" },
         "TimerBCD": { "type": "boolean" },
         "GPULatency": { "type": "boolean" },
-        "ServiceTrim": { "type": "boolean" },
-        "VisualFX": { "type": "boolean" },
-        "CpuMitigations": { "type": "boolean" }
+        "ServiceTrim": { "type": "boolean" }
       }
     },
     "TweakSettings": {
@@ -135,7 +134,20 @@
     "DisableFastStartup": { "type": "boolean", "default": false },
     "CleanContextMenus": { "type": "boolean", "default": true },
     "DisableCortana": { "type": "boolean", "default": true },
-    "DisableDiagnosticData": { "type": "boolean", "default": true }
+    "DisableDiagnosticData": { "type": "boolean", "default": true },
+    "ConfigureWinlogon": { "type": "boolean", "default": true },
+    "EnableScripts": { "type": "boolean", "default": true },
+    "DisableWindowsAI": { "type": "boolean", "default": true },
+    "DisableDeliveryOptimization": { "type": "boolean", "default": true },
+    "DisablePowerThrottling": { "type": "boolean", "default": true },
+    "EnableHAGS": { "type": "boolean", "default": true },
+    "NtfsDisable8dot3": { "type": "boolean", "default": true },
+    "ThreadDpcEnable": { "type": "boolean", "default": false },
+    "NetworkTuning": { "type": "boolean", "default": false },
+    "DisableIdleMaintenance": { "type": "boolean", "default": false },
+    "SvcHostConsolidation": { "type": "boolean", "default": false },
+    "HideSearchBox": { "type": "boolean", "default": true },
+    "MenuShowDelayZero": { "type": "boolean", "default": true }
   },
   "additionalProperties": false
 }

@@ -119,7 +119,15 @@ if (-not $keepAsianIME) {
 }
 
 if ($removeDefender) {
+    # NOTE: "Windows-Defender-Client-Package~" (the pattern that was used here before) does
+    # not exist in the official Windows 11 install.wim: the Defender servicing payload is
+    # part of the base OS (a Servicing Stack package) and is therefore never listed by
+    # "dism /Get-Packages", so the pattern matched nothing and the removal was a no-op.
+    # The pattern is kept for images that actually ship the FoD client package, and the
+    # real payload (windows-defender-service) is neutralized in Phase 08 by removing the
+    # CBS re-staging maps plus the ProgramData/Program Files payload.
     $packagePatterns += "Windows-Defender-Client-Package~"
+    $packagePatterns += "Microsoft-Windows-Windows-Defender-Client-Package~"
 }
 
 # UltraSlim size-first trim (additional ④ size levers):

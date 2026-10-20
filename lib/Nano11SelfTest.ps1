@@ -96,7 +96,7 @@ function Test-Nano11SelfCheck04ProfilePresets {
             $missingPresets += $ep
         }
     }
-    if ($missingPresets.Count -eq 0 -and $script:TweakGroups.Count -ge 6 -and $script:PowerPresets.Count -ge 4) {
+    if ($missingPresets.Count -eq 0 -and $script:TweakGroups.Count -ge 4 -and $script:PowerPresets.Count -ge 4) {
         $badPresets = @()
         foreach ($kv in $script:BuiltInPresets.GetEnumerator()) {
             $pName = $kv.Key
@@ -113,7 +113,7 @@ function Test-Nano11SelfCheck04ProfilePresets {
         }
         if ($badPresets.Count -eq 0) {
             $profPass = $true
-            $profMsg = "$($script:BuiltInPresets.Count) built-in presets validated ($($expectedPresetKeys -join ', ')), 6 tweak groups, 4 power presets"
+            $profMsg = "$($script:BuiltInPresets.Count) built-in presets validated ($($expectedPresetKeys -join ', ')), $($script:TweakGroups.Count) tweak groups, $($script:PowerPresets.Count) power presets"
         } else {
             $profMsg = "Preset errors: $($badPresets -join '; ')"
         }
@@ -551,7 +551,6 @@ function Test-Nano11SelfCheck15WinSxsAppxGuards {
             'Microsoft.Windows.StartMenuExperienceHost_10.0.26100.1_neutral_neutral_cw5n1h2txyewy',
             'Microsoft.Windows.PeopleExperienceHost_10.0.26100.1_neutral_neutral_cw5n1h2txyewy',
             'WindowsInternal.ComposableShell.Experiences.TextInput.InputApp_1000.26100.1.0_neutral_neutral_cw5n1h2txyewy',
-            'Microsoft.SecHealthUI_1000.26100.1.0_x64__8wekyb3d8bbwe',
             'Microsoft.Windows.Sense.Client_10.0.26100.1_neutral_neutral_cw5n1h2txyewy'
         )
 
@@ -559,7 +558,7 @@ function Test-Nano11SelfCheck15WinSxsAppxGuards {
             '*Microsoft.UI.Xaml*', '*Microsoft.VCLibs*', '*Microsoft.NET.Native*',
             '*MicrosoftWindows.Client.CBS*', '*Microsoft.Windows.ShellExperienceHost*',
             '*Microsoft.Windows.StartMenuExperienceHost*', '*Microsoft.Windows.PeopleExperienceHost*',
-            '*WindowsInternal.*', '*Microsoft.SecHealthUI*', '*Microsoft.DesktopAppInstaller*',
+            '*WindowsInternal.*', '*Microsoft.DesktopAppInstaller*',
             '*Microsoft.Services.Store.Engagement*', '*Microsoft.Windows.Sense.Client*',
             '*CoreAI*', '*PinningConfirmationDialog*', '*SecureAssessmentBrowser*'
         )
@@ -569,6 +568,15 @@ function Test-Nano11SelfCheck15WinSxsAppxGuards {
         foreach ($pkg in $mockAppxWhitelisted) {
             if ($testProtRegex.IsMatch($pkg)) { $whitelistedBlocked++ }
         }
+
+        # D. Defender removal must take the Windows Security UI package with it.
+        #    When Defender is removed there is nothing left for SecHealthUI to display, so
+        #    the package must end up in the removal list instead of the protection list.
+        $mockSecHealth = 'Microsoft.SecHealthUI_1000.26100.1.0_x64__8wekyb3d8bbwe'
+        $secHealthProtected = $testProtRegex.IsMatch($mockSecHealth)
+        $testRemovePatterns = @('*Microsoft.SecHealthUI*', '*Microsoft.Windows.SecHealthUI*')
+        $testRemoveRegex = [regex]::new(('^(' + (($testRemovePatterns | ForEach-Object { [regex]::Escape($_) -replace '\\\*', '.*' }) -join '|') + ')$'), [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        $secHealthRemoved = $testRemoveRegex.IsMatch($mockSecHealth)
 
         # B. WinSxS 24H2 Guard Verification
         $mockBuild24H2 = 26100
@@ -580,9 +588,9 @@ function Test-Nano11SelfCheck15WinSxsAppxGuards {
         $testShort = Get-SafeShortPath "C:\Program Files"
         $shortPathValid = ($null -ne $testShort)
 
-        if (($whitelistedBlocked -eq $mockAppxWhitelisted.Count) -and $guardBlocked24H2 -and $guardAllowed23H2 -and $shortPathValid) {
+        if (($whitelistedBlocked -eq $mockAppxWhitelisted.Count) -and $guardBlocked24H2 -and $guardAllowed23H2 -and $shortPathValid -and (-not $secHealthProtected) -and $secHealthRemoved) {
             $safetyExtPass = $true
-            $safetyExtMsg = "$whitelistedBlocked/$($mockAppxWhitelisted.Count) critical AppX protected; WinSxS 24H2 Checkpoint guard enforced; Get-SafeShortPath operational"
+            $safetyExtMsg = "$whitelistedBlocked/$($mockAppxWhitelisted.Count) critical AppX protected; WinSxS 24H2 Checkpoint guard enforced; Get-SafeShortPath operational; SecHealthUI scheduled for removal with Defender"
         } else {
             $safetyExtMsg = "AppX protection ($whitelistedBlocked/$($mockAppxWhitelisted.Count)) or WinSxS guard ($guardBlocked24H2, $guardAllowed23H2) failed"
         }

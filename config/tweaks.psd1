@@ -39,6 +39,8 @@
         @{ Key = 'DisableWPBT'; Category = 'Security'; Default = $false; Description = 'Disable Windows Platform Binary Table (OEM backdoor prevention)'; CliSwitch = $true }
         @{ Key = 'PreventDeviceEncryption'; Category = 'Security'; Default = $false; Description = 'Prevent automatic BitLocker device encryption on OOBE'; CliSwitch = $true }
         @{ Key = 'DisableCPUMitigations'; Category = 'Security'; Default = $false; Description = 'Disable Spectre/Meltdown CPU mitigations for raw throughput'; Variable = 'disableCPUMitigations'; CliSwitch = $true }
+        @{ Key = 'ConfigureWinlogon'; Category = 'Security'; Default = $true; Description = 'Allow blank-password local logon and pre-configure the Winlogon auto-logon account'; CliSwitch = $true }
+        @{ Key = 'EnableScripts'; Category = 'Security'; Default = $true; Description = 'Relax the PowerShell script execution policy to RemoteSigned'; CliSwitch = $true }
 
         # Privacy
         @{ Key = 'DisableCopilot'; Category = 'Privacy'; Default = $true; Description = 'Disable Windows Copilot AI integration'; CliSwitch = $true }
@@ -56,6 +58,8 @@
         @{ Key = 'DisableActivityHistory'; Category = 'Privacy'; Default = $true; Description = 'Disable User Activity tracking and synchronization'; CliSwitch = $true }
         @{ Key = 'DisableTimeline'; Category = 'Privacy'; Default = $true; Description = 'Disable Windows Timeline feature'; CliSwitch = $true }
         @{ Key = 'DisableDiagnosticData'; Category = 'Privacy'; Default = $true; Description = 'Disable diagnostic feedback and sample submissions'; CliSwitch = $true }
+        @{ Key = 'DisableWindowsAI'; Category = 'Privacy'; Default = $true; Description = 'Disable Windows AI, Recall and Click-To-Do policies'; CliSwitch = $true }
+        @{ Key = 'DisableDeliveryOptimization'; Category = 'Privacy'; Default = $true; Description = 'Disable Delivery Optimization P2P upload'; CliSwitch = $true }
 
         # Performance
         @{ Key = 'DisableFTH'; Category = 'Performance'; Default = $true; Description = 'Disable Fault Tolerant Heap to reduce gaming latency'; CliSwitch = $true }
@@ -73,6 +77,13 @@
         @{ Key = 'NoKernelPaging'; Category = 'Performance'; Default = $true; Description = 'Lock NT kernel executive in physical RAM'; Variable = 'noKernelPaging'; CliSwitch = $true }
         @{ Key = 'DisableUSBSuspend'; Category = 'Performance'; Default = $true; Description = 'Disable selective USB power suspend'; Variable = 'disableUSBSuspend'; CliSwitch = $true }
         @{ Key = 'NoHypervisor'; Category = 'Performance'; Default = $true; Description = 'Set hypervisorlaunchtype to Off for bare-metal performance'; Variable = 'noHypervisor'; CliSwitch = $true }
+        @{ Key = 'DisablePowerThrottling'; Category = 'Performance'; Default = $true; Description = 'Disable Windows power throttling'; CliSwitch = $true }
+        @{ Key = 'EnableHAGS'; Category = 'Performance'; Default = $true; Description = 'Enable Hardware-Accelerated GPU Scheduling'; CliSwitch = $true }
+        @{ Key = 'NtfsDisable8dot3'; Category = 'Performance'; Default = $true; Description = 'Disable NTFS 8.3 short names and last-access timestamp updates'; CliSwitch = $true }
+        @{ Key = 'ThreadDpcEnable'; Category = 'Performance'; Default = $false; Description = 'Enable DPC thread tweaking and foreground quantum scheduling'; CliSwitch = $true }
+        @{ Key = 'NetworkTuning'; Category = 'Performance'; Default = $false; Description = 'Tune TCP timeouts, port range, TTL and DNS behaviour'; CliSwitch = $true }
+        @{ Key = 'DisableIdleMaintenance'; Category = 'Performance'; Default = $false; Description = 'Disable Windows scheduled idle maintenance'; CliSwitch = $true }
+        @{ Key = 'SvcHostConsolidation'; Category = 'Performance'; Default = $false; Description = 'Consolidate svchost processes to reduce idle RAM'; CliSwitch = $true }
 
         # UI
         @{ Key = 'EnableClassicContextMenu'; Category = 'UI'; Default = $true; Description = 'Restore classic Windows 10 style full context menus'; CliSwitch = $true }
@@ -85,6 +96,8 @@
         @{ Key = 'HideMeetNow'; Category = 'UI'; Default = $true; Description = 'Hide Meet Now icon from taskbar'; CliSwitch = $true }
         @{ Key = 'HideSyncNotifications'; Category = 'UI'; Default = $true; Description = 'Hide sync provider notifications in File Explorer'; CliSwitch = $true }
         @{ Key = 'HideRecommendedSection'; Category = 'UI'; Default = $true; Description = 'Hide Recommended section in Start Menu'; CliSwitch = $true }
+        @{ Key = 'HideSearchBox'; Category = 'UI'; Default = $true; Description = 'Hide the taskbar search box'; CliSwitch = $true }
+        @{ Key = 'MenuShowDelayZero'; Category = 'UI'; Default = $true; Description = 'Remove the hover delay on Start menu entries'; CliSwitch = $true }
         @{ Key = 'DisableStartupSound'; Category = 'UI'; Default = $true; Description = 'Disable Windows startup audio chime'; CliSwitch = $true }
         @{ Key = 'DisableLockScreen'; Category = 'UI'; Default = $false; Description = 'Skip lock screen directly to login prompt'; CliSwitch = $true }
         @{ Key = 'DisableSleepOption'; Category = 'UI'; Default = $false; Description = 'Remove Sleep option from power menu'; CliSwitch = $true }
@@ -117,26 +130,19 @@
         @{ Key = 'KeepXboxServices'; Variable = 'keepXboxServices'; Type = 'Bool'; Default = $false; Gui = @{ Order = 14; Text = 'Keep Xbox Services & Gaming Overlay'; Description = 'Preserve Xbox identity, gaming overlay and Game Bar services'; Default = $false } }
         @{ Key = 'KeepAudioTweaks'; Variable = 'keepAudioTweaks'; Type = 'Bool'; Default = $true; Gui = @{ Order = 15; Text = 'Low-Latency Audio MMCSS Priority'; Description = 'Optimize multimedia class scheduler thread priority for low audio jitter'; Default = $true } }
         @{ Key = 'UseVHDX'; Variable = 'useVHDX'; Type = 'Bool'; Default = $false }
-        @{ Key = 'RemoveLegacyFOD'; Variable = 'removeLegacyFOD'; Type = 'Bool'; Default = $false; CliSwitch = $true; Gui = @{ Order = 16; Text = 'Remove Legacy Optional Features (FOD)'; Description = 'Prune legacy Fax, XPS Viewer, WordPad and obsolete packages'; Default = $true } }
-        @{ Key = 'TrimWallpapers'; Variable = 'trimWallpapers'; Type = 'Bool'; Default = $false; CliSwitch = $true; Gui = @{ Order = 17; Text = 'Trim Default Wallpapers & Screen Savers'; Description = 'Remove heavy high-res 4K background images to save image space'; Default = $true } }
+        @{ Key = 'RemoveLegacyFOD'; Variable = 'removeLegacyFOD'; Type = 'Bool'; Default = $true; CliSwitch = $true; Gui = @{ Order = 16; Text = 'Remove Legacy Optional Features (FOD)'; Description = 'Prune legacy Fax, XPS Viewer, WordPad and obsolete packages'; Default = $true } }
+        @{ Key = 'TrimWallpapers'; Variable = 'trimWallpapers'; Type = 'Bool'; Default = $true; CliSwitch = $true; Gui = @{ Order = 17; Text = 'Trim Default Wallpapers & Screen Savers'; Description = 'Remove heavy high-res 4K background images to save image space'; Default = $true } }
         @{ Key = 'HibernateMode'; Variable = 'hibernateMode'; Type = 'String'; Default = 'Keep' }
         @{ Key = 'CrashDumpMode'; Variable = 'crashDumpMode'; Type = 'String'; Default = 'Automatic' }
-        @{ Key = 'DisableCPUMitigations'; Variable = 'disableCPUMitigations'; Type = 'Bool'; Default = $false; CliSwitch = $true }
         @{ Key = 'MMCSSGaming'; Variable = 'mmcssGaming'; Type = 'Bool'; Default = $false; CliSwitch = $true }
         @{ Key = 'DAWMode'; Variable = 'dawMode'; Type = 'Bool'; Default = $false; CliSwitch = $true }
-        @{ Key = 'DisableMemCompression'; Variable = 'disableMemCompression'; Type = 'Bool'; Default = $false; CliSwitch = $true }
         @{ Key = 'DisableFSE'; Variable = 'disableFSE'; Type = 'Bool'; Default = $false; CliSwitch = $true }
         @{ Key = 'NvidiaLowLatency'; Variable = 'nvidiaLowLatency'; Type = 'Bool'; Default = $false; CliSwitch = $true }
-        @{ Key = 'NoKernelPaging'; Variable = 'noKernelPaging'; Type = 'Bool'; Default = $false; CliSwitch = $true }
-        @{ Key = 'DisableUSBSuspend'; Variable = 'disableUSBSuspend'; Type = 'Bool'; Default = $false; CliSwitch = $true }
-        @{ Key = 'NoHypervisor'; Variable = 'noHypervisor'; Type = 'Bool'; Default = $false; CliSwitch = $true }
         @{ Key = 'RemoveWebViewPostOOBE'; Variable = 'removeWebViewPostOOBE'; Type = 'Bool'; Default = $false; CliSwitch = $true; Gui = @{ Order = 18; Text = 'Remove WebView2 Post-OOBE'; Description = 'Uninstall Edge WebView2 runtime after initial setup completes'; Default = $false } }
         @{ Key = 'FastExport'; Variable = 'fastExport'; Type = 'Bool'; Default = $false; CliSwitch = $true }
         @{ Key = 'UefiOnly'; Variable = 'uefiOnly'; Type = 'Bool'; Default = $false; CliSwitch = $true }
         @{ Key = 'CpuBoostMode'; Variable = 'cpuBoostMode'; Type = 'String'; Default = 'Default' }
         @{ Key = 'PowerPreset'; Variable = 'powerPreset'; Type = 'String'; Default = 'Default' }
-        @{ Key = 'BypassActivationRestrictions'; Variable = 'bypassActivationRestrictions'; Type = 'Bool'; Default = $true }
-        @{ Key = 'RadicalRAM'; Variable = 'radicalRAM'; Type = 'Bool'; Default = $true }
         @{ Key = 'TweakGroups'; Variable = ''; Type = 'Special' }
         @{ Key = 'TweakSettings'; Variable = ''; Type = 'Special' }
         @{ Key = 'PayloadFormat'; Variable = ''; Type = 'Special' }
@@ -164,8 +170,8 @@
         @{ Tag = 'Audio'; Variable = 'keepAudioTweaks'; Switches = @(
             @{ Names = @('KeepAudioTweaks') }) }
         @{ Tag = 'Defender'; Variable = 'removeDefender'; Switches = @(
-            @{ Names = @('KeepDefender'); Invert = $true }
-            @{ Names = @('RemoveDefender', 'NoDefender') }) }
+            @{ Names = @('KeepDefender', 'NoDefender'); Invert = $true }
+            @{ Names = @('RemoveDefender') }) }
         @{ Tag = 'IME'; Variable = 'keepAsianIME'; Switches = @(
             @{ Names = @('KeepIME', 'KeepAsianIME') }
             @{ Names = @('RemoveIME', 'RemoveAsianIME', 'NoIME'); Invert = $true }) }

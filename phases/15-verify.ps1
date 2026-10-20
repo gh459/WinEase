@@ -195,6 +195,76 @@ if ($Validate) {
     $valLog | Out-File (Join-Path -Path $baseWorkDir -ChildPath "verify-paths.txt") -Encoding utf8
 }
 
+# Defender removal verification (runs against the fully expanded final payload).
+# The offline build removes the Defender service keys and the ProgramData/Program Files
+# payload, but CBS keeps the complete Defender servicing payload in WinSxS and can re-stage
+# it (and re-register the service keys) on the first boot. The check below therefore
+# verifies the three things that decide whether Defender comes back:
+#   1. the CBS re-staging maps for Defender are gone (they are what re-stages the payload),
+#   2. the Defender service keys are absent from the offline SYSTEM hive,
+#   3. the Defender payload folders in Program Files / ProgramData are empty.
+# A failure is reported as a warning: the image is still valid, the user is just told that
+# Defender may re-appear on the installed system.
+if ($removeDefender) {
+    Write-Host "Verifying Windows Defender removal in the final payload..." -ForegroundColor Cyan
+    $defIssues = [System.Collections.Generic.List[string]]::new()
+    $defReport = [System.Collections.Generic.List[string]]::new()
+
+    # 1. CBS re-staging maps
+    $defMapDir = Join-Path -Path $verifyApply -ChildPath "Windows\WinSxS\FileMaps"
+    $defMaps = @()
+    if (Test-Path -LiteralPath $defMapDir) {
+        $defMaps = @(Get-ChildItem -LiteralPath $defMapDir -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match 'defender' })
+    }
+    $defReport.Add("CBS Defender FileMaps entries : $($defMaps.Count)")
+    if ($defMaps.Count -gt 0) {
+        $defIssues.Add("CBS re-staging maps still present ($($defMaps.Count) entries) - Defender may be re-staged on first boot")
+    }
+
+    # 2. Defender service keys in the offline SYSTEM hive
+    $sysHive = Join-Path -Path $verifyApply -ChildPath "Windows\System32\config\SYSTEM"
+    $defSvc = @('WinDefend','MDCoreSvc','WdNisSvc','Sense','SecurityHealthService','wscsvc')
+    $presentSvc = @()
+    if (Test-Path -LiteralPath $sysHive) {
+        $null = & reg.exe load "HKLM\zVERIFYDEF" "$sysHive" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            foreach ($s in $defSvc) {
+                $null = & reg.exe query "HKLM\zVERIFYDEF\ControlSet001\Services\$s" 2>&1
+                if ($LASTEXITCODE -eq 0) { $presentSvc += $s }
+            }
+            & reg.exe unload "HKLM\zVERIFYDEF" > $null 2>&1
+        }
+    }
+    $defReport.Add("Defender service keys present  : $(if($presentSvc.Count){$presentSvc -join ', '}else{'none'})")
+    if ($presentSvc.Count -gt 0) {
+        $defIssues.Add("Defender service keys still registered: $($presentSvc -join ', ')")
+    }
+
+    # 3. Defender payload folders
+    foreach ($p in @("Program Files\Windows Defender", "ProgramData\Microsoft\Windows Defender")) {
+        $full = Join-Path -Path $verifyApply -ChildPath $p
+        $cnt = 0
+        if (Test-Path -LiteralPath $full) {
+            $cnt = @(Get-ChildItem -LiteralPath $full -Recurse -Force -File -ErrorAction SilentlyContinue).Count
+        }
+        $defReport.Add("Payload files in $p : $cnt")
+        if ($cnt -gt 0) {
+            $defIssues.Add("$p still contains $cnt file(s)")
+        }
+    }
+
+    foreach ($line in $defReport) { Write-Host "  - $line" -ForegroundColor Gray }
+    $defReport | Out-File (Join-Path -Path $baseWorkDir -ChildPath "verify-defender.txt") -Encoding utf8
+    if ($defIssues.Count -gt 0) {
+        foreach ($issue in $defIssues) {
+            Write-Warning "Defender verification: $issue"
+        }
+    } else {
+        Write-Host "  - [PASS] Defender payload, service keys and CBS re-staging maps are all removed." -ForegroundColor Green
+    }
+}
+
 # Clean up verification scratch on success (robust delete: expanded images contain
 # >260-char paths and TrustedInstaller/RX-only ACLs that plain Remove-Item cannot delete)
 $verifyApplySw = [System.Diagnostics.Stopwatch]::StartNew()

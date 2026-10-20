@@ -72,8 +72,13 @@ param(
     [string]$ComparePreset,
 
     # 1. Windows Defender
+    # NOTE: "-NoDefender" used to be an alias of "-RemoveDefender", i.e. it meant
+    # "remove Defender" while every other "-NoXXX" switch in this script means
+    # "keep XXX" (e.g. -NoIME keeps the IME, -RemoveIME removes it). That inversion
+    # was a footgun, so "-NoDefender" now means "keep Defender" and is handled as
+    # the inverse of "-RemoveDefender" by the switch-resolution block below.
     [switch]$KeepDefender,
-    [alias("NoDefender")]
+    [switch]$NoDefender,
     [switch]$RemoveDefender,
 
     # 2. Asian IMEs
@@ -203,6 +208,24 @@ param(
     [switch]$BypassActivationRestrictions,
     [alias("UltraLowRAM", "LowRAM")]
     [switch]$RadicalRAM,
+
+    # 22. Settings that were applied by the phases but had no CLI switch of their own.
+    # Each of these used to be referenced from a phase through Test-TweakEnabled with a
+    # hard-coded default, which meant the phase branch was permanently on (or permanently
+    # off) and the user could not influence it. They are proper switches now.
+    [switch]$ConfigureWinlogon,
+    [switch]$EnableScripts,
+    [switch]$DisableWindowsAI,
+    [switch]$DisableDeliveryOptimization,
+    [switch]$DisablePowerThrottling,
+    [switch]$EnableHAGS,
+    [switch]$NtfsDisable8dot3,
+    [switch]$ThreadDpcEnable,
+    [switch]$NetworkTuning,
+    [switch]$DisableIdleMaintenance,
+    [switch]$SvcHostConsolidation,
+    [switch]$HideSearchBox,
+    [switch]$MenuShowDelayZero,
     [switch]$NoRadicalRAM,
     # Hashtable (@{ GPULatency = $false }) or string "GPULatency=0;TimerBCD=1" (the string form survives
     # being passed through powershell.exe -File, e.g. on elevation or in batch queue mode)
@@ -433,6 +456,8 @@ if ((-not $TestSelf) -and ($env:NANO11_TEST_MODE -ne "1") -and (-not $isDryRunMo
 # 2c. Validate conflicting / contradictory switch parameters
 $conflicts = @(
     @('KeepDefender', 'RemoveDefender'),
+    @('KeepDefender', 'NoDefender'),
+    @('NoDefender', 'RemoveDefender'),
     @('KeepIME', 'RemoveIME'),
     @('KeepFonts', 'RemoveFonts'),
     @('KeepDrivers', 'RemoveDrivers'),
@@ -676,8 +701,10 @@ $script:TweakGroups = [ordered]@{
     TimerBCD       = @{ Default = $true;  Risk = '**';   Description = 'dynamic tick/TSC sync/platform clock' }
     GPULatency     = @{ Default = $true;  Risk = '*';    Description = 'MSI mode/HAGS/GPU scheduling registry' }
     ServiceTrim    = @{ Default = $true;  Risk = '**';   Description = 'WSearch/SysMain/DiagTrack/Ndu service trimming' }
-    VisualFX       = @{ Default = $true;  Risk = '*';    Description = 'DWM transparency/animations/effects minimization' }
-    CpuMitigations = @{ Default = $false; Risk = '***';  Description = 'Spectre/Meltdown speculative execution mitigations (Security trade-off)' }
+    # NOTE: the former "VisualFX" and "CpuMitigations" groups were dead definitions - no phase
+    # read them. Their work is covered by the OptimizeVisualEffects tweak and the
+    # DisableCPUMitigations tweak respectively, so the groups were removed instead of being
+    # wired up to a second, parallel switch.
 }
 
 $script:activeTweakGroups = [ordered]@{}
@@ -740,8 +767,6 @@ $script:BuiltInPresets = [ordered]@{
             TimerBCD       = $true
             GPULatency     = $true
             ServiceTrim    = $true
-            VisualFX       = $true
-            CpuMitigations = $false
         }
     }
     'balanced' = [ordered]@{
@@ -791,8 +816,6 @@ $script:BuiltInPresets = [ordered]@{
             TimerBCD       = $true
             GPULatency     = $true
             ServiceTrim    = $false
-            VisualFX       = $false
-            CpuMitigations = $false
         }
     }
     'fat32' = [ordered]@{
@@ -842,8 +865,6 @@ $script:BuiltInPresets = [ordered]@{
             TimerBCD       = $true
             GPULatency     = $true
             ServiceTrim    = $true
-            VisualFX       = $true
-            CpuMitigations = $false
         }
     }
     'handheld' = [ordered]@{
@@ -893,8 +914,6 @@ $script:BuiltInPresets = [ordered]@{
             TimerBCD       = $true
             GPULatency     = $true
             ServiceTrim    = $true
-            VisualFX       = $true
-            CpuMitigations = $false
         }
     }
     'vm' = [ordered]@{
@@ -944,8 +963,6 @@ $script:BuiltInPresets = [ordered]@{
             TimerBCD       = $true
             GPULatency     = $true
             ServiceTrim    = $false
-            VisualFX       = $false
-            CpuMitigations = $false
         }
     }
     'audio' = [ordered]@{
@@ -995,8 +1012,6 @@ $script:BuiltInPresets = [ordered]@{
             TimerBCD       = $true
             GPULatency     = $false
             ServiceTrim    = $true
-            VisualFX       = $true
-            CpuMitigations = $false
         }
     }
 }
@@ -1481,9 +1496,14 @@ function Invoke-Nano11GuiSession {
     if ($guiResult.AdvancedDebloatExperimental) { $script:advancedDebloatExperimental = @($guiResult.AdvancedDebloatExperimental) } else { $script:advancedDebloatExperimental = @() }
 
     # Explicit Physical Debloat Consent Gate
+    # The GUI windows (WinUI 3 and the classic WinForms window) both ask for this consent
+    # themselves, next to the selection, and report it back as PhysicalDebloatConsent. When
+    # the consent was already granted there is nothing left to confirm here. This fallback
+    # dialog only appears for a non-GUI run that set the advanced debloat lists directly
+    # (e.g. a profile), where no GUI was involved.
     $advStdCount = @($script:advancedDebloatStandard).Count
     $advExpCount = @($script:advancedDebloatExperimental).Count
-    if ((-not $script:allowPhysicalDebloat) -and (($advStdCount + $advExpCount) -gt 0)) {
+    if ((-not $script:allowPhysicalDebloat) -and (($advStdCount + $advExpCount) -gt 0) -and (-not $guiResult.PhysicalDebloatConsent)) {
         $consentMsg = "Advanced Debloat options selected: Standard=$advStdCount / Experimental=$advExpCount.`n`n" +
             "These operations physically delete files and directories from the offline image.`n" +
             "Experimental items permanently break Windows Update and sfc verification.`n`n" +

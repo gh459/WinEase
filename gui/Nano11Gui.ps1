@@ -1166,7 +1166,12 @@ function Get-Nano11GuiDefaultWorkDir {
 }
 
 function Complete-Nano11GuiResult {
-    param([hashtable]$Gui)
+    param(
+        [hashtable]$Gui,
+        # Set by the test harness: skip the modal physical-debloat confirmation so the
+        # automated GUI tests do not block on a message box.
+        [switch]$SkipPhysicalDebloatConsent
+    )
     $srcText = $Gui.Source.Text.Trim()
     if (-not $srcText) {
         Show-Nano11GuiMessage -Text (Get-Nano11UiString 'Msg.SourceRequired.Text') -Title (Get-Nano11UiString 'Msg.SourceRequired.Title') -Kind Warning
@@ -1226,6 +1231,27 @@ function Complete-Nano11GuiResult {
     foreach ($item in $Gui.ClbExp.CheckedItems) { $expSelected += (Get-Nano11ListItemValue $item) }
     $formResult.AdvancedDebloatStandard     = $stdSelected
     $formResult.AdvancedDebloatExperimental = $expSelected
+
+    # Physical debloat consent. The WinUI 3 window asks for this itself (it owns the
+    # confirmation dialog), the classic WinForms window did not, so the builder ended up
+    # showing a second, differently worded confirmation for this GUI only. Ask here as well
+    # so both windows behave the same: the user confirms once, next to the selection.
+    $formResult.PhysicalDebloatConsent = $false
+    if ((-not $SkipPhysicalDebloatConsent) -and (($stdSelected.Count + $expSelected.Count) -gt 0)) {
+        $consentText = Get-Nano11UiString 'Msg.PhysicalConsent.Text' -Format @($stdSelected.Count, $expSelected.Count) -Default (
+            "Advanced Debloat options selected: Standard={0} / Experimental={1}.`n`n" +
+            "These operations physically delete files and directories from the offline image.`n" +
+            "Experimental items permanently break Windows Update and sfc verification.`n`n" +
+            "Enable physical debloat for this build? (No clears the Advanced Debloat selections.)")
+        $consentTitle = Get-Nano11UiString 'Msg.PhysicalConsent.Title' -Default 'nano11 - Confirm Physical Debloat'
+        if (Confirm-Nano11GuiAction -Message $consentText -Title $consentTitle) {
+            $formResult.PhysicalDebloatConsent = $true
+        } else {
+            # The user declined: clear the selection so the builder does not run anything.
+            $formResult.AdvancedDebloatStandard     = @()
+            $formResult.AdvancedDebloatExperimental = @()
+        }
+    }
 
     return $true
 }

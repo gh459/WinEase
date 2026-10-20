@@ -2,6 +2,33 @@
 # Extracted from nano11builder.ps1
 # Dot-sourced by the main orchestrator
 
+# Helper function to evaluate individual toggle settings.
+# The same helper is defined in phase 10; it is repeated here because the phases are
+# dot-sourced independently and phase 11 reads the same TweakSettings table.
+if (-not (Get-Command -Name Test-TweakEnabled -ErrorAction SilentlyContinue)) {
+    function Test-TweakEnabled {
+        param(
+            [Parameter(Mandatory=$true)]
+            [string]$Name,
+            [bool]$Default = $true
+        )
+        if ($null -ne $script:TweakSettings -and $script:TweakSettings.Contains($Name)) {
+            return [bool]$script:TweakSettings[$Name]
+        }
+        if ($null -ne $script:TweakSettings -and $script:TweakKeyAliases) {
+            foreach ($alias in $script:TweakKeyAliases.Keys) {
+                if ($script:TweakKeyAliases[$alias] -eq $Name -and $script:TweakSettings.Contains($alias)) {
+                    return [bool]$script:TweakSettings[$alias]
+                }
+            }
+        }
+        $varName = "Tweak_$Name"
+        $v = Get-Variable -Name $varName -Scope Script -ErrorAction SilentlyContinue
+        if ($null -ne $v) { return [bool]$v.Value }
+        return $Default
+    }
+}
+
 
 # 11. Copy autounattend.xml with Architecture Support & Self-healing (Resolves Issues #3, #18, #21, #2, #8, #20)
 Write-Host "Configuring autounattend.xml for target architecture ($architecture)..." -ForegroundColor Green
@@ -985,11 +1012,22 @@ exit 0
         Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "remove-defender.flag") -Value "1" -Encoding ascii -Force
         Write-Host "  - Staged remove-defender.flag" -ForegroundColor Green
     }
-    if ($disableMemCompression) {
+    if ($disableMemCompression -or (Test-TweakEnabled 'DisableMemCompression' $false)) {
         Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "disable-memcompression.flag") -Value "1" -Encoding ascii -Force
     }
-    if ($noHypervisor -or (-not $wslSupport -and $selectedProfile -in @('extreme', 'handheld', 'audio'))) {
-        Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "no-hypervisor.flag") -Value "1" -Encoding ascii -Force
+    # The hypervisor is turned off when the user asked for it (the NoHypervisor tweak, which
+    # also disables it for the extreme/handheld/audio profiles through the preset value).
+    # The previous condition additionally forced it off for those profiles regardless of the
+    # user's selection, which silently overrode the GUI switch.
+    # WSL2 and the Virtual Machine Platform cannot run with hypervisorlaunchtype=Off, so an
+    # explicit "Enable WSL2" request wins over the NoHypervisor tweak (which is on by default).
+    # Otherwise the two settings contradicted each other and WSL2 silently never started.
+    if ($noHypervisor -or (Test-TweakEnabled 'NoHypervisor' $false)) {
+        if ($wslSupport) {
+            Write-Host "  - NoHypervisor skipped: WSL2 support is enabled and needs the hypervisor" -ForegroundColor Yellow
+        } else {
+            Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "no-hypervisor.flag") -Value "1" -Encoding ascii -Force
+        }
     }
     if ($script:activeTweakGroups -and $script:activeTweakGroups.Contains('NetworkStack') -and $script:activeTweakGroups['NetworkStack']) {
         Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "disable-netbios.flag") -Value "1" -Encoding ascii -Force
@@ -1028,6 +1066,11 @@ exit 0
     }
     if ($PowerPreset -and $PowerPreset -ne 'Default') {
         Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "power-preset.flag") -Value $PowerPreset -Encoding ascii -Force
+    }
+    if ($disableUSBSuspend -or (Test-TweakEnabled 'DisableUSBSuspend' $false)) {
+        # USB selective suspend can only be changed on the running system (powercfg), not in the
+        # offline image, so the online step is staged here and executed by FirstLogon.ps1.
+        Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "disable-usb-suspend.flag") -Value "1" -Encoding ascii -Force
     }
     if ($HibernateMode) {
         Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "hibernate-mode.flag") -Value $HibernateMode -Encoding ascii -Force
@@ -1246,6 +1289,8 @@ if %errorlevel% equ 0 (
     sc start WinDefend >nul 2>&1
     sc config WdNisSvc start= demand >nul 2>&1
     sc start WdNisSvc >nul 2>&1
+    sc config Sense start= demand >nul 2>&1
+    sc start Sense >nul 2>&1
     echo Windows Defender is now ENABLED.
 )
 pause
@@ -1361,16 +1406,26 @@ sc query WinDefend | find "RUNNING" >nul
 if %errorlevel% equ 0 (
     echo Disabling Windows Defender...
     reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v DisableAntiSpyware /t REG_DWORD /d 1 /f >nul 2>&1
+    reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v DisableAntiVirus /t REG_DWORD /d 1 /f >nul 2>&1
     reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v DisableRealtimeMonitoring /t REG_DWORD /d 1 /f >nul 2>&1
     sc config WinDefend start= disabled >nul 2>&1
     sc stop WinDefend >nul 2>&1
+    sc config WdNisSvc start= disabled >nul 2>&1
+    sc stop WdNisSvc >nul 2>&1
+    sc config Sense start= disabled >nul 2>&1
+    sc stop Sense >nul 2>&1
     echo Windows Defender has been DISABLED.
 ) else (
     echo Enabling Windows Defender...
     reg delete "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v DisableAntiSpyware /f >nul 2>&1
+    reg delete "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v DisableAntiVirus /f >nul 2>&1
     reg delete "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v DisableRealtimeMonitoring /f >nul 2>&1
     sc config WinDefend start= auto >nul 2>&1
     sc start WinDefend >nul 2>&1
+    sc config WdNisSvc start= demand >nul 2>&1
+    sc start WdNisSvc >nul 2>&1
+    sc config Sense start= demand >nul 2>&1
+    sc start Sense >nul 2>&1
     echo Windows Defender has been ENABLED.
 )
 pause

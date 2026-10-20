@@ -599,6 +599,8 @@ Describe "nano11 GUI wiring - every toggle is consumed by the build" {
     $phasesDir = Join-Path -Path $script:RepoRoot -ChildPath "phases"
     $phaseText = (Get-ChildItem -LiteralPath $phasesDir -Filter "*.ps1" | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"
     $helpersText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "nano11helpers.ps1"))
+    $scriptText = (Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "scripts") -Filter "*.ps1" -ErrorAction SilentlyContinue |
+        ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"
 
     # The builder derives these tables from config\tweaks.psd1; build them the same way here
     $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
@@ -624,6 +626,92 @@ Describe "nano11 GUI wiring - every toggle is consumed by the build" {
 
     It "legacy tweak aliases point at existing AllTweakDefs keys" {
         foreach ($a in $aliases.Keys) { $tweakDefs.Contains($aliases[$a]) | Should Be $true }
+    }
+
+    # --- Completeness of the option -> processing wiring -------------------------
+    # These checks cover the reverse direction of the wiring test above: a phase that
+    # references a setting key which does not exist in config\tweaks.psd1 can never be
+    # influenced by the user, because Test-TweakEnabled falls through to its hard-coded
+    # default argument for unknown keys.
+    It "every Test-TweakEnabled key used by a phase is defined in config\tweaks.psd1" {
+        $defined = @($tweakDefs.Keys)
+        $componentKeys = @()
+        $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+        $componentKeys = @($settingsDef.Components | ForEach-Object { $_.Key })
+        $known = $defined + $componentKeys
+        $unknown = @()
+        foreach ($m in [regex]::Matches($phaseText, "Test-TweakEnabled\s+'([^']+)'")) {
+            $k = $m.Groups[1].Value
+            if ($known -notcontains $k) { $unknown += $k }
+        }
+        (($unknown | Sort-Object -Unique) -join ', ') | Should Be ''
+    }
+
+    It "the hard-coded default of every Test-TweakEnabled call matches the defined default" {
+        # For a defined key Test-TweakEnabled returns TweakSettings[key] and never reaches
+        # the default argument, but a mismatching argument is a trap for the next reader
+        # and hides the effective default, so it is kept in sync.
+        $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\tweaks.psd1")
+        $defaults = @{}
+        foreach ($td in $settingsDef.Tweaks) { $defaults[$td.Key] = [bool]$td.Default }
+        $mismatched = @()
+        foreach ($m in [regex]::Matches($phaseText, "Test-TweakEnabled\s+'([^']+)'\s*`$(true|false)")) {
+            $k = $m.Groups[1].Value
+            $arg = ($m.Groups[2].Value -eq 'true')
+            if ($defaults.ContainsKey($k) -and $defaults[$k] -ne $arg) {
+                $mismatched += "$k (arg=$($m.Groups[2].Value), default=$($defaults[$k]))"
+            }
+        }
+        (($mismatched | Sort-Object -Unique) -join ', ') | Should Be ''
+    }
+
+    It "every Component variable is read by at least one phase or setup script" {
+        # A GUI switch whose variable is never read has no effect at all.
+        $unconsumed = @()
+        foreach ($cd in $settingsDef.Components) {
+            if ($cd.Type -eq 'Special' -or -not $cd.Variable) { continue }
+            $v = $cd.Variable
+            if (($phaseText -match "\`$$v\b") -or ($helpersText -match "\`$$v\b") -or ($scriptText -match "\`$$v\b")) { continue }
+            $unconsumed += "$($cd.Key) (`$$v)"
+        }
+        ($unconsumed -join ', ') | Should Be ''
+    }
+
+    It "no setting key is defined in both Tweaks and Components" {
+        # A key in both tables is registered twice: the two definitions can drift apart
+        # (different defaults, different GUI visibility) and the winner depends on the
+        # order in which the builder applies them.
+        $componentKeyList = @($settingsDef.Components | ForEach-Object { $_.Key })
+        $dupes = @($tweakDefs.Keys | Where-Object { $componentKeyList -contains $_ })
+        ($dupes -join ', ') | Should Be ''
+    }
+
+    It "a Component default matches its GUI default" {
+        $mismatched = @()
+        foreach ($cd in $settingsDef.Components) {
+            if (-not $cd.Gui) { continue }
+            if (-not $cd.ContainsKey('Default') -or -not $cd.Gui.ContainsKey('Default')) { continue }
+            if ([bool]$cd.Default -ne [bool]$cd.Gui.Default) {
+                $mismatched += "$($cd.Key) (Default=$($cd.Default), Gui.Default=$($cd.Gui.Default))"
+            }
+        }
+        ($mismatched -join ', ') | Should Be ''
+    }
+
+    It "every TweakGroup is read by a phase" {
+        $groups = @()
+        $groupDef = Select-String -Path (Join-Path $script:RepoRoot "nano11builder.ps1") -Pattern '\$script:TweakGroups\s*=\s*\[ordered\]@\{' | Select-Object -First 1
+        if ($groupDef) {
+            $builderLines = Get-Content (Join-Path $script:RepoRoot "nano11builder.ps1")
+            $block = $builderLines[($groupDef.LineNumber - 1)..($groupDef.LineNumber + 12)] -join "`n"
+            foreach ($m in [regex]::Matches($block, '(?m)^\s{4}(\w+)\s*=\s*@\{')) { $groups += $m.Groups[1].Value }
+        }
+        $unused = @()
+        foreach ($g in $groups) {
+            if ($phaseText -match "activeTweakGroups\['$g'\]") { continue }
+            $unused += $g
+        }
+        ($unused -join ', ') | Should Be ''
     }
 
     It "phases do not read legacy alias names directly" {
@@ -856,7 +944,7 @@ Describe "nano11 GUI - smoke test (form built without ShowDialog)" {
     It "main window: result hashtable keeps its contract" {
         $gui = Show-Nano11GUI -NoShow -InitialSettings @{ SourceDrive = 'E:\'; TweakSettings = [ordered]@{} }
         try {
-            Complete-Nano11GuiResult -Gui $gui | Should Be $true
+            Complete-Nano11GuiResult -Gui $gui -SkipPhysicalDebloatConsent | Should Be $true
             $r = $gui.Result
             foreach ($k in 'Success', 'UserName', 'ComputerName', 'PresetKey', 'BasePresetKey', 'SourceDrive', 'WorkDir', 'Index',
                            'InjectDrivers', 'DryRun', 'UseVHDX', 'ExportESDMode', 'SplitWIMMode', 'TweakSettings',
@@ -964,6 +1052,16 @@ Describe "nano11 dependency checker" {
         $cfg = @{ WSLSupport = $true; NoHypervisor = $true; TweakSettings = @{}; AdvancedDebloatStandard = @(); AdvancedDebloatExperimental = @() }
         $r = Test-Nano11Dependencies -Config $cfg
         $r.Conflicts.Count | Should BeGreaterThan 0
+    }
+
+    It "WSLSupport wins over NoHypervisor: phase 11 never writes no-hypervisor.flag when WSL2 is enabled" {
+        $p11 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\11-unattend.ps1'))
+        $m = [regex]::Match($p11, '(?s)if \(\$noHypervisor -or \(Test-TweakEnabled ''NoHypervisor'' \$false\)\) \{(.*?)\n    \}')
+        $m.Success | Should Be $true
+        $m.Groups[1].Value | Should Match 'if \(\$wslSupport\)'
+        # the flag write must sit in the else branch, i.e. after the wslSupport check
+        $body = $m.Groups[1].Value
+        $body.IndexOf('no-hypervisor.flag') | Should BeGreaterThan $body.IndexOf('if ($wslSupport)')
     }
 
     It "returns impacts for RemoveStore" {
@@ -1477,7 +1575,7 @@ Describe "S7 - GUI Tab 8 (Migration & Backup)" {
             $tab8 = @($gui.Form.Controls | ForEach-Object { Get-S7Controls $_ } | Where-Object { $_ -is [System.Windows.Forms.TabPage] -and $_.Text -match '8\. Migration' })[0]
             @(Get-S7Controls $tab8) -contains $chk | Should Be $true
             $chk.Checked = $true
-            Complete-Nano11GuiResult -Gui $gui | Should Be $true
+            Complete-Nano11GuiResult -Gui $gui -SkipPhysicalDebloatConsent | Should Be $true
             $gui.Result['IncludeMigrationAssistant'] | Should Be $true
         } finally { $gui.Form.Dispose() }
     }
@@ -2136,7 +2234,7 @@ Describe "GUI display language (English / Japanese)" {
             $gui.ClbStd.Items[0].ToString() | Should Be $ja['Debloat:Remove WinRE (reagentc /disable + file delete) [500-700MB]']
             Set-Nano11Checked -Target $gui.ClbStd -Checked $true
             Set-Nano11Checked -Target $gui.ClbExp -Checked $true
-            Complete-Nano11GuiResult -Gui $gui | Should Be $true
+            Complete-Nano11GuiResult -Gui $gui -SkipPhysicalDebloatConsent | Should Be $true
             $r = $gui.Result
             @($r.AdvancedDebloatStandard).Count | Should Be $gui.ClbStd.Items.Count
             foreach ($v in @($r.AdvancedDebloatStandard) + @($r.AdvancedDebloatExperimental)) { ($english -contains $v) | Should Be $true | Out-Null }

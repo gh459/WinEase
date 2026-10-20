@@ -6,9 +6,12 @@ use windows::core::PCWSTR;
 use windows::Win32::Foundation::{
     CloseHandle, GetLastError, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, HANDLE, LUID,
 };
+use windows::Win32::Security::Authorization::{
+    SetNamedSecurityInfoW, SE_FILE_OBJECT,
+};
 use windows::Win32::Security::{
-    AdjustTokenPrivileges, LookupPrivilegeValueW, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES,
-    TOKEN_PRIVILEGES, TOKEN_QUERY,
+    AdjustTokenPrivileges, LookupPrivilegeValueW, OWNER_SECURITY_INFORMATION,
+    SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_QUERY, TOKEN_PRIVILEGES,
 };
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, DeleteFileW, RemoveDirectoryW, SetFileAttributesW, FILE_ATTRIBUTE_NORMAL,
@@ -121,6 +124,31 @@ fn escalate_privileges() {
         } else {
             println!("[PRIV] Failed to enable: {}", p);
         }
+    }
+}
+
+/// Take ownership of a path so that it can be deleted even when it is owned by
+/// TrustedInstaller (the owner of most Windows component files).
+///
+/// Enabling `SeTakeOwnershipPrivilege` alone is not enough: the privilege only permits
+/// the *operation*, it does not change the owner. `SetNamedSecurityInfo` with
+/// `OWNER_SECURITY_INFORMATION` performs the actual ownership change. Without this step
+/// every protected component file fails to delete with ERROR_ACCESS_DENIED, and the
+/// failures used to be swallowed by the caller.
+fn take_ownership(path: &str) -> bool {
+    let wide = to_wide(path);
+    unsafe {
+        // A NULL owner with OWNER_SECURITY_INFORMATION assigns the current user.
+        let result = SetNamedSecurityInfoW(
+            PCWSTR(wide.as_ptr()),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            None,
+            None,
+            None,
+            None,
+        );
+        result.is_ok()
     }
 }
 
@@ -298,6 +326,15 @@ fn delete_file(path: &str, dry_run: bool) -> Result<bool, String> {
                 }
             }
         }
+        // Deletion failed - most likely because the file is owned by TrustedInstaller.
+        // Take ownership and retry the plain delete before falling back to the
+        // delete-on-close disposition below.
+        if take_ownership(path) {
+            match DeleteFileW(PCWSTR(wide.as_ptr())) {
+                Ok(()) => return Ok(true),
+                Err(_) => {}
+            }
+        }
         let handle = CreateFileW(
             PCWSTR(wide.as_ptr()),
             0x00010000, // DELETE
@@ -388,6 +425,9 @@ fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
         }
     }
     collect(p, &mut entries);
+    // Take ownership of the directory itself first: without it the child deletions
+    // below fail on TrustedInstaller-owned component folders.
+    let _ = take_ownership(&p.to_string_lossy());
     for entry in &entries {
         if entry.is_dir() {
             let s = entry.to_string_lossy();
@@ -396,7 +436,12 @@ fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
                 let _ = RemoveDirectoryW(PCWSTR(wide.as_ptr()));
             }
         } else {
-            let _ = delete_file(&entry.to_string_lossy(), false);
+            // The result was previously discarded with `let _ =`, which hid every
+            // failure and made an incomplete deletion look successful. The error is
+            // collected now and reported by the caller.
+            if let Err(e) = delete_file(&entry.to_string_lossy(), false) {
+                println!("  [ERR] {}", e);
+            }
         }
     }
     let s = p.to_string_lossy();

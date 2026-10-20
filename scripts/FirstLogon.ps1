@@ -351,6 +351,57 @@ $scripts = @(
 		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
+		# USB selective suspend disable (staged by phase 11 when -DisableUSBSuspend is set).
+		# USB power management can only be changed on the running system through powercfg,
+		# so the offline build can only stage the request.
+		if (Test-Path "C:\Windows\Setup\Scripts\disable-usb-suspend.flag") {
+			try {
+				# 0 = disabled (never suspend USB), 1 = enabled.
+				& powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_USB USBSELECTIVE 0 2>$null;
+				& powercfg.exe /setdcvalueindex SCHEME_CURRENT SUB_USB USBSELECTIVE 0 2>$null;
+				& powercfg.exe /setactive SCHEME_CURRENT 2>$null;
+				Remove-Item "C:\Windows\Setup\Scripts\disable-usb-suspend.flag" -Force -ErrorAction SilentlyContinue;
+			} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+		}
+	};
+	{
+		# Windows Defender enforcement (post-OOBE): the offline build removes the Defender
+		# service keys, but CBS can re-register them from the WinSxS servicing payload during
+		# the first boot, which resurrects MsMpEng.exe / Sense.exe. This block re-asserts the
+		# removal online and terminates any engine process that is already running.
+		if (Test-Path "C:\Windows\Setup\Scripts\remove-defender.flag") {
+			try {
+				# Stop and disable every Defender-related service (idempotent: a missing
+				# service key is fine, the goal is "not running and not startable").
+				foreach ($svc in 'WinDefend','MDCoreSvc','WdNisSvc','Sense','SecurityHealthService','wscsvc','SgrmBroker','SgrmAgent') {
+					Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue;
+					Set-Service -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue;
+				}
+				# Terminate the engine and helper processes. MsMpEng.exe is the AV engine
+				# itself; Sense.exe is the Defender telemetry host; SecurityHealthSystray.exe
+				# and SecurityHealthHost.exe belong to the Windows Security UI.
+				foreach ($proc in 'MsMpEng','Sense','SecurityHealthSystray','SecurityHealthHost','MpCmdRun') {
+					Get-Process -Name $proc -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
+				}
+				# Remove the service keys again so a later CBS pass cannot re-enable them.
+				foreach ($svc in 'WinDefend','MDCoreSvc','WdNisSvc','Sense','SecurityHealthService','wscsvc') {
+					$svcKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$svc";
+					if (Test-Path -LiteralPath $svcKey) {
+						Remove-Item -LiteralPath $svcKey -Recurse -Force -ErrorAction SilentlyContinue;
+					}
+				}
+				# Keep the removal policies in place even if a servicing pass rewrote them.
+				New-Item -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender' -Force -ErrorAction SilentlyContinue | Out-Null;
+				New-Item -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection' -Force -ErrorAction SilentlyContinue | Out-Null;
+				Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender' -Name 'DisableAntiVirus' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue;
+				Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection' -Name 'DisableRealtimeMonitoring' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue;
+				# Tamper Protection would re-enable the engine on the next boot.
+				New-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows Defender\Features' -Force -ErrorAction SilentlyContinue | Out-Null;
+				Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows Defender\Features' -Name 'TamperProtection' -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue;
+			} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+		}
+	};
+	{
 		# Windows Search disable enforcement (offline hive edit backup: stop & disable WSearch online,
 		# kill SearchHost if it spawned, hide the taskbar search box for the logged-on user)
 		if (Test-Path "C:\Windows\Setup\Scripts\disable-search.flag") {

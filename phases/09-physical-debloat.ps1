@@ -174,8 +174,15 @@ if ($hasStandardItems) {
         }
         elseif ($item -match 'non-essential fonts') {
             $fontsDir = Join-Path -Path $scratchDir -ChildPath "Windows\Fonts"
-            if (Test-Path -LiteralPath $fontsDir) {
-                $keepFontsList = 'segoeui*,meiryo*,yugoth*,msmincho*,msgothic*,arial*,tahoma*,verdana*,calibri*,consola*,cour*,times*,georgia*,trebuc*,impact*,comic*'
+            # The "Keep Extra International & Regional Fonts" setting (keepExtraFonts) is an
+            # explicit keep request, so it must be honoured here exactly as it is in Phase 08.
+            # Without this the physical debloat deleted every font outside its own (much
+            # smaller) keep list even when the user asked to keep the extra fonts.
+            if ($keepExtraFonts) {
+                Write-Host "    [SKIP] Non-essential fonts: kept because keepExtraFonts is enabled." -ForegroundColor Green
+                $handled = $true
+            } elseif (Test-Path -LiteralPath $fontsDir) {
+                $keepFontsList = 'segoe*,tahoma*,marlett.ttf,8541oem.fon,segui*,consol*,lucon*,calibri*,arial*,times*,cou*,8*.*,meiryo*,yugoth*,yumin*,msgoth*,msgothic*,msmin*,msmincho*,segoeuihistoric.ttf'
                 [string[]]$keepFonts = $keepFontsList.Split(',')
                 $toDelete = Get-ChildItem -LiteralPath $fontsDir -File -ErrorAction SilentlyContinue | Where-Object {
                     $keep = $false
@@ -300,10 +307,16 @@ if ($hasStandardItems) {
             $handled = $true
         }
         elseif ($item -match 'help files') {
+            # Windows\Help is already removed unconditionally in phase 08 (08-filesystem.ps1),
+            # so there is nothing left to do here. The handler is kept so that the GUI item
+            # still resolves to a phase 09 branch (the GUI-to-handler wiring test requires
+            # every Standard item to have one) and it reports the already-removed state.
             $helpDir = Join-Path -Path $scratchDir -ChildPath "Windows\Help"
             if (Test-Path -LiteralPath $helpDir) {
                 if ($isDryRunMode) { Write-Host "    [DRY] Would delete: $helpDir" -ForegroundColor Yellow }
                 else { Remove-Item -LiteralPath $helpDir -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "    [OK] Deleted Help dir" -ForegroundColor Green }
+            } else {
+                Write-Host "    [SKIP] Help files: already removed in phase 08." -ForegroundColor Green
             }
             $handled = $true
         }

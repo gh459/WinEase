@@ -68,14 +68,24 @@ $protectedAppxPatterns = @(
     '*Microsoft.Windows.StartMenuExperienceHost*',
     '*Microsoft.Windows.PeopleExperienceHost*',
     '*WindowsInternal.*',
-    '*Microsoft.SecHealthUI*',
     '*Microsoft.DesktopAppInstaller*',
     '*Microsoft.Services.Store.Engagement*',
     '*Microsoft.Windows.Sense.Client*',
     '*CoreAI*',
-    '*PinningConfirmationDialog*',
+    '*PinningConfirmationBrowser*',
     '*SecureAssessmentBrowser*'
 )
+# The Windows Security UI (SecHealthUI) is normally protected, because the Security app is
+# part of the Windows shell experience. When Defender itself is removed there is nothing left
+# for the Security app to show, so the protection is lifted and the package is added to the
+# removal list below. Leaving it protected would keep the Windows Security app installed
+# (and its per-user package registered) even though Defender is gone.
+if (-not $removeDefender) {
+    $protectedAppxPatterns += '*Microsoft.SecHealthUI*'
+} else {
+    $appxPatterns += @('*Microsoft.SecHealthUI*', '*Microsoft.Windows.SecHealthUI*')
+    Write-Host "  - Removing the Windows Security UI package (Defender removal requested)" -ForegroundColor Yellow
+}
 $protectedAppxRegexPatterns = $protectedAppxPatterns | ForEach-Object { [regex]::Escape($_) -replace '\\\*', '.*' }
 $protectedAppxRegex = [regex]::new(('^(' + ($protectedAppxRegexPatterns -join '|') + ')$'), [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
 

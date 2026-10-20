@@ -133,20 +133,78 @@ if ($ultraSlimMode) {
 # Windows Defender definitions and telemetry cache purge (safe for Code Integrity & ci.dll)
 if ($removeDefender) {
     Write-Host "Purging Windows Defender definition updates, platform cache, and telemetry..." -ForegroundColor Cyan
-        Remove-Item -Path "$scratchDir\ProgramData\Microsoft\Windows Defender\*" -Recurse -Force -ErrorAction SilentlyContinue
-        # Defender Remover (ionuttbara) integration: remove Defender folders entirely and recreate empty ones
-        foreach ($defFolder in @("Program Files\Windows Defender", "Program Files\Windows Defender Advanced Threat Protection")) {
-            $fullDefPath = Join-Path -Path $scratchDir -ChildPath $defFolder
-            if (Test-Path -LiteralPath $fullDefPath) {
-                Write-Host "  - Removing Defender folder: $defFolder" -ForegroundColor Cyan
-                Remove-ProtectedDirectory -Path $fullDefPath -ScratchPath $scratchDir
-                New-Item -ItemType Directory -Force -Path $fullDefPath -ErrorAction SilentlyContinue | Out-Null
+
+    # 1. ProgramData payload (definition databases + MpEngine.dll).
+    #    NOTE: the previous implementation used "Remove-Item -Path '...\*' -Recurse", which in
+    #    Windows PowerShell 5.1 does not reliably recurse into a wildcard root and silently
+    #    swallowed every failure (-ErrorAction SilentlyContinue). The directory could therefore
+    #    survive the purge with its contents still present. Remove-ProtectedDirectory takes
+    #    ownership first and throws when the directory is still there afterwards, so a failed
+    #    purge is now visible instead of silent.
+    $defenderDataDir = Join-Path -Path $scratchDir -ChildPath "ProgramData\Microsoft\Windows Defender"
+    if (Test-Path -LiteralPath $defenderDataDir) {
+        Write-Host "  - Purging ProgramData\Microsoft\Windows Defender" -ForegroundColor Cyan
+        Remove-ProtectedDirectory -Path $defenderDataDir -ScratchPath $scratchDir
+        New-Item -ItemType Directory -Force -Path $defenderDataDir -ErrorAction SilentlyContinue | Out-Null
+    }
+
+    # 2. Defender Remover (ionuttbara) integration: remove Defender folders entirely and recreate
+    #    empty ones so the service registrations keep resolving to an existing (empty) folder.
+    foreach ($defFolder in @("Program Files\Windows Defender", "Program Files\Windows Defender Advanced Threat Protection")) {
+        $fullDefPath = Join-Path -Path $scratchDir -ChildPath $defFolder
+        if (Test-Path -LiteralPath $fullDefPath) {
+            Write-Host "  - Removing Defender folder: $defFolder" -ForegroundColor Cyan
+            Remove-ProtectedDirectory -Path $fullDefPath -ScratchPath $scratchDir
+            New-Item -ItemType Directory -Force -Path $fullDefPath -ErrorAction SilentlyContinue | Out-Null
+        }
+    }
+
+    # 3. Neutralize the CBS re-staging maps for Defender.
+    #    WinSxS keeps the complete Defender payload (windows-defender-service holds MsMpEng.exe,
+    #    MpClient.dll, MpSvc.dll, MpAsDesc.dll ...). CBS uses the FileMaps entries to re-stage
+    #    that payload back into "Program Files\Windows Defender" and to re-register the
+    #    WinDefend/MDCoreSvc service keys, which is what resurrects the Defender process after
+    #    the offline service-key deletion in Phase 10. Removing only the map entries stops the
+    #    re-staging while leaving the WinSxS package folders themselves untouched, so the
+    #    component store stays internally consistent (deleting the payload folders instead
+    #    breaks hardlink identity and triggers WIM stream corruption 0x80070570 / Code
+    #    Integrity failure 0xC0000428 -> installer BSOD).
+    $fileMapsDir = Join-Path -Path $scratchDir -ChildPath "Windows\WinSxS\FileMaps"
+    if (Test-Path -LiteralPath $fileMapsDir) {
+        $defenderMaps = @(Get-ChildItem -LiteralPath $fileMapsDir -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match 'defender' })
+        if ($defenderMaps.Count -gt 0) {
+            Write-Host "  - Removing CBS re-staging maps for Defender ($($defenderMaps.Count) FileMaps entries)..." -ForegroundColor Cyan
+            $mapFailures = 0
+            foreach ($map in $defenderMaps) {
+                try {
+                    # The FileMaps entries are owned by TrustedInstaller and are sparse files.
+                    # Without taking ownership first, Remove-Item fails with "access denied"
+                    # and cmd del /f fails the same way, so ownership MUST be taken first.
+                    & attrib.exe -R -S -H $map.FullName > $null 2>&1
+                    & takeown.exe /F $map.FullName /A > $null 2>&1
+                    & icacls.exe $map.FullName /grant "*S-1-5-32-544:F" /C /Q > $null 2>&1
+                    Remove-Item -LiteralPath $map.FullName -Force -ErrorAction Stop
+                } catch {
+                    $mapFailures++
+                    Write-Warning "  - Could not remove Defender FileMap '$($map.Name)': $($_.Exception.Message)"
+                }
+            }
+            $mapRemaining = @(Get-ChildItem -LiteralPath $fileMapsDir -Force -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match 'defender' }).Count
+            if ($mapFailures -eq 0 -and $mapRemaining -eq 0) {
+                Write-Host "  - All Defender CBS re-staging maps removed." -ForegroundColor Green
+            } else {
+                Write-Warning "  - $mapRemaining Defender CBS re-staging map(s) remain; Defender may be re-staged on first boot."
             }
         }
+    }
+
     # Note: WinSxS manifests, security catalogs (.cat), and System32 binaries are strictly preserved.
     # On Windows 11 24H2+, deleting hardlinked binaries outside DISM causes WIM stream corruption (Data Error 0x80070570)
     # and Code Integrity (ci.dll) failure with STATUS_INVALID_IMAGE_HASH (0xC0000428) -> Installer BSOD/reboot loop.
-    # Defender is 100% neutralized offline in Phase 10 via ELAM drivers (WdBoot/WdFilter/WdNisDrv Start=4), services & group policies.
+    # Defender is neutralized offline in Phase 10 via ELAM drivers (WdBoot/WdFilter/WdNisDrv Start=4),
+    # service & group policies, and by the removal of the CBS re-staging maps above.
 }
 
 # General cleanup & offline cache trimming
@@ -159,7 +217,7 @@ Remove-Item -Path "$scratchDir\Windows\Minidump\*" -Recurse -Force -ErrorAction 
 Remove-Item -Path "$scratchDir\Windows\Prefetch\*" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path "$scratchDir\Windows\Panther\*" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path "$scratchDir\Windows\Downloaded Program Files\*" -Recurse -Force -ErrorAction SilentlyContinue
-if ($trimWallpapers -or $ultraSlimMode) {
+if ($trimWallpapers) {
     Write-Host "Trimming 4K default wallpapers and lock screen images (-TrimWallpapers)..." -ForegroundColor Cyan
     Remove-ProtectedDirectory -Path "$scratchDir\Windows\Web\Wallpaper" -ScratchPath $scratchDir
     Remove-Item "$scratchDir\Windows\Web\Screen\*.jpg" -Force -ErrorAction SilentlyContinue

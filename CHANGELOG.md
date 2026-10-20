@@ -10,6 +10,125 @@ The M1-M4 feature work and the S1-S12 follow-up sessions (design review against
 subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
 `docs/dev/SESSION_BRIEFS.md`.
 
+### Fixed
+- GUI switches that had no effect, and settings that could not be turned off. The
+  settings tables in `config\tweaks.psd1` are the single source of truth, but
+  several options were never wired to the phases that implement them:
+  - `AtlasReviOSMode` (GUI "AtlasOS & ReviOS Low-Latency Kernel Tuning") was read
+    by no phase at all, so the checkbox did nothing. It is now the umbrella switch
+    for the latency kernel work in `phases/10-registry.ps1` (foreground quantum
+    scheduling, the DPC tweak and the Games MMCSS task profile).
+  - `DisableUSBSuspend` was likewise never read. USB selective suspend can only be
+    changed on a running system, so `phases/11-unattend.ps1` now stages a
+    `disable-usb-suspend.flag` and `scripts/FirstLogon.ps1` applies it with
+    `powercfg`.
+  - `NvidiaLowLatency` was never read either, although the README documents it as
+    "NVIDIA PowerMizer performance mode & Per-CPU Core DPC". It now applies the
+    PowerMizer performance-mode values and the per-processor DPC policy in
+    `phases/10-registry.ps1`.
+  - Fourteen phase branches read setting keys that were never declared in
+    `config\tweaks.psd1` (`ConfigureWinlogon`, `EnableScripts`, `DisableWindowsAI`,
+    `DisableDeliveryOptimization`, `ServiceTrim`, `DisablePowerThrottling`,
+    `EnableHAGS`, `NtfsDisable8dot3`, `ThreadDpcEnable`, `NetworkTuning`,
+    `DisableIdleMaintenance`, `SvcHostConsolidation`, `HideSearchBox`,
+    `MenuShowDelayZero`). `Test-TweakEnabled` falls through to its hard-coded
+    default argument for an unknown key, so ten of them were permanently on and
+    four were permanently off - the user could not influence them either way.
+    They are now declared as proper tweaks with a matching CLI switch.
+  - `phases/11-unattend.ps1` forced the hypervisor off for the extreme, handheld
+    and audio profiles regardless of the user's selection, and read
+    `DisableMemCompression` / `DisableUSBSuspend` from a variable only. These now
+    follow the tweak setting.
+  - The physical debloat font removal ignored "Keep Extra International & Regional
+    Fonts" and used a much smaller keep list than phase 08, so it deleted fonts the
+    user had asked to keep. It now honours the setting and shares phase 08's keep
+    list.
+  - `TrimWallpapers` was overridden by `UltraSlimMode`, so turning the wallpaper
+    option off had no effect. The individual setting now decides.
+  - The `Windows\Help` directory was removed unconditionally in phase 08 and again
+    by the phase 09 "Remove help files" item; the phase 09 handler now reports
+    that it was already removed.
+  - The "VisualFX" and "CpuMitigations" tweak groups were dead definitions that no
+    phase read. Their work is covered by the `OptimizeVisualEffects` and
+    `DisableCPUMitigations` tweaks, so the groups were removed instead of adding a
+    second switch for the same setting.
+  - The classic WinForms window never asked for the physical-debloat consent (the
+    WinUI 3 window does), so the builder showed a second, differently worded
+    confirmation for that GUI only. Both windows now ask next to the selection and
+    report the answer as `PhysicalDebloatConsent`.
+- Settings that were registered twice were reduced to one definition. The key
+  names, defaults and the GUI placement are unchanged; only the duplicate entry
+  was removed:
+  - `BypassActivationRestrictions`, `DisableCPUMitigations`, `RadicalRAM`,
+    `DisableMemCompression`, `NoKernelPaging`, `DisableUSBSuspend` and
+    `NoHypervisor` existed in both the Tweaks and the Components table, so the two
+    definitions carried different defaults and the winner depended on the order in
+    which the builder applied them. The **Components** entries were removed and the
+    **Tweaks** entries kept, because the presets, the GUI tabs and the
+    `Sync-Nano11TweakVariables` mapping all use the Tweak side.
+  - `RemoveLegacyFOD` and `TrimWallpapers` carried a different default in the
+    component definition (`Default`) than in its GUI entry (`Gui.Default`), so the
+    CLI and the GUI started from a different state. The **component `Default`**
+    entries were removed and the GUI default kept, which is the value the GUI
+    shows and the value the presets use.
+  - `ServiceTrim` existed both as a tweak group and as a phase 10 branch that
+    looked it up as a tweak. The **tweak** was removed and the phase now reads the
+    tweak group, so the group stays the single switch for the service trimming.
+  - The three `Test-TweakEnabled` default arguments that disagreed with the
+    declared default (`PreventDeviceEncryption`, `DisableWPBT`,
+    `DisableBSODEmoticon`) were corrected to the declared default.
+- Windows Defender was not fully removed and the engine process came back after
+  installation. Measured on the built `install.wim` (read-only mount) and compared
+  against the untouched source ISO:
+  - The `Windows-Defender-Client-Package~` pattern in `phases/06-fod.ps1` never
+    matched anything - the Defender payload is a base-OS Servicing Stack package and
+    is not listed by `dism /Get-Packages`, so the removal was a no-op. The real
+    payload (`windows-defender-service`: `MsMpEng.exe`, `MpClient.dll`, `MpSvc.dll`,
+    `MpAsDesc.dll`) stayed in WinSxS and CBS re-staged it from
+    `WinSxS\FileMaps\program_files_windows_defender_*.cdf-ms` on first boot, which
+    also re-registered the `WinDefend` / `MDCoreSvc` service keys that Phase 10 had
+    deleted. `phases/08-filesystem.ps1` now removes those FileMaps entries (with
+    `takeown` + `icacls` first - they are TrustedInstaller-owned sparse files that
+    cannot be deleted otherwise) so the re-staging cannot happen, while the WinSxS
+    package folders themselves stay intact to keep the component store consistent.
+  - `Remove-Item -Path '...\*' -Recurse -Force -ErrorAction SilentlyContinue` for
+    `ProgramData\Microsoft\Windows Defender` did not reliably recurse into the
+    wildcard root and swallowed every failure, so a failed purge looked successful.
+    It now uses `Remove-ProtectedDirectory`, which takes ownership and throws when
+    the directory survives.
+  - `phases/10-registry.ps1` silenced every `reg.exe` call, so a service-key delete
+    that failed (e.g. a key still owned by TrustedInstaller) was indistinguishable
+    from a successful one. The deletion is now verified per service and reported.
+    `WdBoot` is additionally taken out of the `Early-Launch` (ELAM) group and
+    `WdFilter` out of the `FSFilter Anti-Virus` group, and the 24H2+ policies that
+    actually work (`DisableAntiVirus`, `DisableRealtimeMonitoring`,
+    `DisableBehaviorMonitoring`, `DisableOnAccessProtection`, Spynet, signature
+    updates) are set - `DisableAntiSpyware` alone no longer disables the engine on
+    Windows 11 24H2+.
+  - `scripts/FirstLogon.ps1` had no Defender handling at all. It now stops and
+    disables the Defender services, terminates `MsMpEng` / `Sense` /
+    `SecurityHealthSystray` / `SecurityHealthHost` / `MpCmdRun`, re-deletes the
+    service keys and re-asserts the policies after the first logon.
+  - The "Windows Security" AppX package was in the AppX protection whitelist, so it
+    stayed installed even with Defender gone. The protection is now lifted when
+    `-RemoveDefender` is active and the package is added to the removal list.
+  - The desktop "Toggle Windows Defender" tools disabled `Sense` but never re-enabled
+    it, and the Atlas/ReviOS variant did not touch `WdNisSvc` / `Sense` at all.
+    Both are now symmetric.
+- `tools/nano11-physical-debloat` enabled `SeTakeOwnershipPrivilege` but never took
+  ownership, so TrustedInstaller-owned component files failed to delete, and the
+  per-file errors inside `delete_directory` were discarded with `let _ =`. The tool
+  now calls `SetNamedSecurityInfoW` to take ownership before deleting and reports
+  the errors instead of swallowing them.
+- `phases/15-verify.ps1` now verifies the Defender removal in the final payload
+  (CBS re-staging maps, service keys in the offline SYSTEM hive, payload folders)
+  and reports what is still present.
+- `-NoDefender` used to be an alias of `-RemoveDefender`, so it meant "remove
+  Defender" while every other `-NoXXX` switch in the builder means "keep XXX"
+  (`-NoIME` keeps the IME, `-RemoveIME` removes it). `-NoDefender` now keeps
+  Defender, and `-KeepDefender` / `-NoDefender` / `-RemoveDefender` are reported as
+  mutually exclusive.
+
 ### Added
 - WinUI 3 settings window (`gui/winui`, C# / Windows App SDK 2.5, unpackaged and
   self-contained): navigation pane with the same nine pages, settings cards, Mica, system
