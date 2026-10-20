@@ -922,6 +922,13 @@ function Remove-WinEaseTreeRobust {
         [string]$SafetyRoot,
         [switch]$AllowLockedFallback
     )
+    # rd and robocopy report failures on stderr. When the caller runs with
+    # $ErrorActionPreference = 'Stop' (the GitHub Actions powershell shell does), Windows
+    # PowerShell 5.1 turns those redirected lines into terminating errors, so this function
+    # threw "Access is denied" instead of retrying and returning $false. The result is
+    # reported through the return value, so keep native-tool noise non-terminating here.
+    # The assignment is local to this function and restored when it returns.
+    $ErrorActionPreference = 'Continue'
     if ([string]::IsNullOrWhiteSpace($Path)) { return $true }
 
     $full = try { ConvertTo-WinEaseNormalizedPath -Path $Path } catch { [System.IO.Path]::GetFullPath($Path).TrimEnd('\') }

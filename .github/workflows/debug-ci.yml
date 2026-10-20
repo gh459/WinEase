@@ -9,47 +9,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Robust removal - enumeration denied (as in the Pester test)
+      - name: Candidate setup for the SYSTEM-only DACL test
         continue-on-error: true
         shell: powershell
         run: |
           . .\WinEasehelpers.ps1
-          "ErrorActionPreference=$ErrorActionPreference"
+          $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
           $root = Join-Path ([System.IO.Path]::GetTempPath()) ('WinEase_robust_' + [guid]::NewGuid().ToString('N').Substring(0, 8))
-          $tree = Join-Path $root 't_enum'
-          $denied = Join-Path $tree 'DeniedSvc'
+          $tree = Join-Path $root 't_wim'
+          $denied = Join-Path $tree 'WebThreatDefSvc'
           [System.IO.Directory]::CreateDirectory($denied) | Out-Null
           [System.IO.File]::WriteAllText((Join-Path $denied 'payload.bin'), 'x')
-          & icacls.exe $denied /inheritance:r /deny '*S-1-5-32-544:RX' /C /Q
-          "--- ACL after setup"
+          & icacls.exe $denied /inheritance:r > $null 2>&1
+          & icacls.exe $denied /grant '*S-1-5-18:F' /C /Q > $null 2>&1
+          & icacls.exe $denied /setowner '*S-1-5-18' /C /Q > $null 2>&1
+          & icacls.exe $denied /remove:g '*S-1-5-32-544' /C /Q > $null 2>&1
+          & icacls.exe $denied /remove:g "*$me" /C /Q > $null 2>&1
+          "--- icacls"
           icacls.exe $denied
-          "--- run helper (verbose)"
+          "--- Get-Acl"
           try {
-            $ok = Remove-WinEaseTreeRobust -Path $tree -SafetyRoot $root -Verbose 4>&1 | ForEach-Object { "$_" }
-            "result: $ok"
-          } catch {
-            "THREW: $($_.Exception.GetType().FullName): $($_.Exception.Message)"
-            $_.ScriptStackTrace
-          }
-          "tree still exists: $(Test-Path -LiteralPath $tree)"
-
-      - name: Robust removal - same, but under Stop (what Pester 3 may impose)
-        continue-on-error: true
-        shell: powershell
-        run: |
-          . .\WinEasehelpers.ps1
-          $ErrorActionPreference = 'Stop'
-          $root = Join-Path ([System.IO.Path]::GetTempPath()) ('WinEase_robust_' + [guid]::NewGuid().ToString('N').Substring(0, 8))
-          $tree = Join-Path $root 't_enum'
-          $denied = Join-Path $tree 'DeniedSvc'
-          [System.IO.Directory]::CreateDirectory($denied) | Out-Null
-          [System.IO.File]::WriteAllText((Join-Path $denied 'payload.bin'), 'x')
-          & icacls.exe $denied /inheritance:r /deny '*S-1-5-32-544:RX' /C /Q > $null 2>&1
-          try {
-            $ok = Remove-WinEaseTreeRobust -Path $tree -SafetyRoot $root
-            "result: $ok"
-          } catch {
-            "THREW: $($_.Exception.GetType().FullName): $($_.Exception.Message)"
-            $_.ScriptStackTrace
-          }
-          "tree still exists: $(Test-Path -LiteralPath $tree)"
+            $acl = Get-Acl -LiteralPath $denied
+            $n = @($acl.Access | Where-Object { try { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-32-544' } catch { $false } }).Count
+            "admins ACEs: $n   owner: $($acl.Owner)"
+          } catch { "Get-Acl THREW: $($_.Exception.Message)" }
+          "--- helper"
+          try { "result: $(Remove-WinEaseTreeRobust -Path $tree -SafetyRoot $root)" } catch { "THREW: $($_.Exception.Message)" }
+          "tree exists after: $(Test-Path -LiteralPath $tree)"
