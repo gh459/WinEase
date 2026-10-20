@@ -11,16 +11,19 @@ function Export-WinEaseHtmlReport {
         [hashtable]$BuildInfo
     )
 
-    $title = if ($BuildInfo.ContainsKey('Title')) { $BuildInfo.Title } else { "WinEase Master Build Report" }
-    $timestamp = if ($BuildInfo.ContainsKey('Timestamp')) { $BuildInfo.Timestamp } else { (Get-Date).ToString("yyyy-MM-dd HH:mm:ss") }
-    $profileName = if ($BuildInfo.ContainsKey('Profile')) { $BuildInfo.Profile } else { "Extreme Slim & Gaming" }
-    $arch = if ($BuildInfo.ContainsKey('Architecture')) { $BuildInfo.Architecture } else { "amd64" }
-    $outputIso = if ($BuildInfo.ContainsKey('OutputIso')) { $BuildInfo.OutputIso } else { "WinEase.iso" }
-    $payloadFormat = if ($BuildInfo.ContainsKey('PayloadFormat')) { $BuildInfo.PayloadFormat } else { "install.wim" }
+    $title = if ($BuildInfo.ContainsKey('Title')) { [string]$BuildInfo.Title } else { "WinEase Master Build Report" }
+    $timestamp = if ($BuildInfo.ContainsKey('Timestamp')) { [string]$BuildInfo.Timestamp } else { (Get-Date).ToString("yyyy-MM-dd HH:mm:ss") }
+    $profileName = if ($BuildInfo.ContainsKey('Profile')) { [string]$BuildInfo.Profile } else { "Extreme Slim & Gaming" }
+    $arch = if ($BuildInfo.ContainsKey('Architecture')) { [string]$BuildInfo.Architecture } else { "amd64" }
+    $outputIso = if ($BuildInfo.ContainsKey('OutputIso')) { [string]$BuildInfo.OutputIso } else { "WinEase.iso" }
+    $payloadFormat = if ($BuildInfo.ContainsKey('PayloadFormat')) { [string]$BuildInfo.PayloadFormat } else { "install.wim" }
     $origSize = if ($BuildInfo.ContainsKey('OriginalSizeBytes') -and $BuildInfo.OriginalSizeBytes) { [long]$BuildInfo.OriginalSizeBytes } else { 0 }
     $finalSize = if ($BuildInfo.ContainsKey('FinalSizeBytes') -and $BuildInfo.FinalSizeBytes) { [long]$BuildInfo.FinalSizeBytes } else { 0 }
-    $isoSha256 = if ($BuildInfo.ContainsKey('IsoSha256')) { $BuildInfo.IsoSha256 } else { "N/A" }
+    $isoSha256 = if ($BuildInfo.ContainsKey('IsoSha256')) { [string]$BuildInfo.IsoSha256 } else { "N/A" }
     $settings = if ($BuildInfo.ContainsKey('Settings') -and $BuildInfo.Settings) { $BuildInfo.Settings } else { @{} }
+
+    # Helper function for HTML escaping dynamic content to prevent XSS
+    $enc = { param([string]$text) [System.Net.WebUtility]::HtmlEncode([string]$text) }
 
     $finalGBText = if ($finalSize -gt 0) { "$([math]::Round($finalSize / 1GB, 2)) GB" } else { "N/A" }
     $diffText = if ($origSize -gt 0 -and $finalSize -gt 0) {
@@ -81,7 +84,7 @@ function Export-WinEaseHtmlReport {
     [void]$sb.AppendLine('<head>')
     [void]$sb.AppendLine('<meta charset="utf-8">')
     [void]$sb.AppendLine('<meta name="viewport" content="width=device-width, initial-scale=1.0">')
-    [void]$sb.AppendLine("<title>$title</title>")
+    [void]$sb.AppendLine("<title>$(& $enc $title)</title>")
     [void]$sb.AppendLine('<style>')
     [void]$sb.AppendLine('  :root { --bg-main: #0b0f19; --bg-card: #151d2f; --border-card: #22304d; --accent: #00d2ff; --accent-glow: rgba(0, 210, 255, 0.25); --text-primary: #f1f5f9; --text-secondary: #94a3b8; --badge-pass: #10b981; --badge-warn: #f59e0b; --badge-fail: #ef4444; }')
     [void]$sb.AppendLine('  * { box-sizing: border-box; margin: 0; padding: 0; }')
@@ -124,29 +127,29 @@ function Export-WinEaseHtmlReport {
     [void]$sb.AppendLine('    </div>')
     [void]$sb.AppendLine('    <div style="text-align: right;">')
     [void]$sb.AppendLine('      <span class="badge">BUILD COMPLETE</span>')
-    [void]$sb.AppendLine("      <div style=`"font-size: 12px; color: var(--text-secondary); margin-top: 5px;`">$timestamp</div>")
+    [void]$sb.AppendLine("      <div style=`"font-size: 12px; color: var(--text-secondary); margin-top: 5px;`">$(& $enc $timestamp)</div>")
     [void]$sb.AppendLine('    </div>')
     [void]$sb.AppendLine('  </header>')
 
     [void]$sb.AppendLine('  <div class="grid">')
     [void]$sb.AppendLine('    <div class="stat-card">')
     [void]$sb.AppendLine('      <div class="label">Bootable ISO Size</div>')
-    [void]$sb.AppendLine("      <div class=`"value`">$finIsoGBText</div>")
-    [void]$sb.AppendLine("      <div class=`"diff`">$isoDiffText</div>")
+    [void]$sb.AppendLine("      <div class=`"value`">$(& $enc $finIsoGBText)</div>")
+    [void]$sb.AppendLine("      <div class=`"diff`">$(& $enc $isoDiffText)</div>")
     [void]$sb.AppendLine('    </div>')
     [void]$sb.AppendLine('    <div class="stat-card">')
     [void]$sb.AppendLine('      <div class="label">Compressed Payload</div>')
-    [void]$sb.AppendLine("      <div class=`"value`">$finPayloadGBText</div>")
-    [void]$sb.AppendLine("      <div class=`"diff`">$payloadDiffText</div>")
+    [void]$sb.AppendLine("      <div class=`"value`">$(& $enc $finPayloadGBText)</div>")
+    [void]$sb.AppendLine("      <div class=`"diff`">$(& $enc $payloadDiffText)</div>")
     [void]$sb.AppendLine('    </div>')
     [void]$sb.AppendLine('    <div class="stat-card">')
     [void]$sb.AppendLine('      <div class="label">Active Profile</div>')
-    [void]$sb.AppendLine("      <div class=`"value`" style=`"font-size: 18px; line-height: 32px;`">$profileName</div>")
-    [void]$sb.AppendLine("      <div class=`"diff`" style=`"color: var(--accent);`">Arch: $arch</div>")
+    [void]$sb.AppendLine("      <div class=`"value`" style=`"font-size: 18px; line-height: 32px;`">$(& $enc $profileName)</div>")
+    [void]$sb.AppendLine("      <div class=`"diff`" style=`"color: var(--accent);`">Arch: $(& $enc $arch)</div>")
     [void]$sb.AppendLine('    </div>')
     [void]$sb.AppendLine('    <div class="stat-card">')
     [void]$sb.AppendLine('      <div class="label">Payload Format</div>')
-    [void]$sb.AppendLine("      <div class=`"value`" style=`"font-size: 18px; line-height: 32px;`">$payloadFormat</div>")
+    [void]$sb.AppendLine("      <div class=`"value`" style=`"font-size: 18px; line-height: 32px;`">$(& $enc $payloadFormat)</div>")
     [void]$sb.AppendLine("      <div class=`"diff`">$formatDesc</div>")
     [void]$sb.AppendLine('    </div>')
     [void]$sb.AppendLine('  </div>')
@@ -157,9 +160,9 @@ function Export-WinEaseHtmlReport {
     [void]$sb.AppendLine('    <table>')
     [void]$sb.AppendLine('      <thead><tr><th>Metric Axis</th><th>Source Baseline</th><th>Optimized WinEase</th><th>Delta / Reduction</th></tr></thead>')
     [void]$sb.AppendLine('      <tbody>')
-    [void]$sb.AppendLine("        <tr><td><strong>Axis 1: Bootable ISO Medium</strong></td><td>$srcIsoGBText</td><td>$finIsoGBText</td><td><span class=`"status-tag status-enabled`">$isoDiffText</span></td></tr>")
-    [void]$sb.AppendLine("        <tr><td><strong>Axis 2: Compressed Image Payload ($payloadFormat)</strong></td><td>$srcPayloadGBText</td><td>$finPayloadGBText</td><td><span class=`"status-tag status-enabled`">$payloadDiffText</span></td></tr>")
-    [void]$sb.AppendLine("        <tr><td><strong>Axis 3: Installed Target Footprint (Drive C:)</strong></td><td>$installedDiskSource</td><td>$installedDiskTarget</td><td><span class=`"status-tag status-enabled`">$installedDiskDelta</span></td></tr>")
+    [void]$sb.AppendLine("        <tr><td><strong>Axis 1: Bootable ISO Medium</strong></td><td>$(& $enc $srcIsoGBText)</td><td>$(& $enc $finIsoGBText)</td><td><span class=`"status-tag status-enabled`">$(& $enc $isoDiffText)</span></td></tr>")
+    [void]$sb.AppendLine("        <tr><td><strong>Axis 2: Compressed Image Payload ($(& $enc $payloadFormat))</strong></td><td>$(& $enc $srcPayloadGBText)</td><td>$(& $enc $finPayloadGBText)</td><td><span class=`"status-tag status-enabled`">$(& $enc $payloadDiffText)</span></td></tr>")
+    [void]$sb.AppendLine("        <tr><td><strong>Axis 3: Installed Target Footprint (Drive C:)</strong></td><td>$(& $enc $installedDiskSource)</td><td>$(& $enc $installedDiskTarget)</td><td><span class=`"status-tag status-enabled`">$(& $enc $installedDiskDelta)</span></td></tr>")
     [void]$sb.AppendLine('      </tbody>')
     [void]$sb.AppendLine('    </table>')
     [void]$sb.AppendLine('  </div>')
@@ -174,9 +177,9 @@ function Export-WinEaseHtmlReport {
         $health = if ($guestBench.SubsystemHealth) { $guestBench.SubsystemHealth } else { @{} }
 
         [void]$sb.AppendLine('    <div class="grid" style="margin-bottom: 16px;">')
-        [void]$sb.AppendLine("      <div class=`"stat-card`"><div class=`"label`">Idle Memory (Working Set)</div><div class=`"value`">$ramMB</div><div class=`"diff`">Stock: ~2.4 - 3.2 GB</div></div>")
-        [void]$sb.AppendLine("      <div class=`"stat-card`"><div class=`"label`">Idle CPU Load</div><div class=`"value`">$cpuPct</div><div class=`"diff`">Background Quiescence</div></div>")
-        [void]$sb.AppendLine("      <div class=`"stat-card`"><div class=`"label`">Boot Time (Diagnostics-Perf)</div><div class=`"value`">$bootSec</div><div class=`"diff`">MainPath Boot</div></div>")
+        [void]$sb.AppendLine("      <div class=`"stat-card`"><div class=`"label`">Idle Memory (Working Set)</div><div class=`"value`">$(& $enc $ramMB)</div><div class=`"diff`">Stock: ~2.4 - 3.2 GB</div></div>")
+        [void]$sb.AppendLine("      <div class=`"stat-card`"><div class=`"label`">Idle CPU Load</div><div class=`"value`">$(& $enc $cpuPct)</div><div class=`"diff`">Background Quiescence</div></div>")
+        [void]$sb.AppendLine("      <div class=`"stat-card`"><div class=`"label`">Boot Time (Diagnostics-Perf)</div><div class=`"value`">$(& $enc $bootSec)</div><div class=`"diff`">MainPath Boot</div></div>")
         [void]$sb.AppendLine('    </div>')
 
         [void]$sb.AppendLine('    <table>')
@@ -187,7 +190,7 @@ function Export-WinEaseHtmlReport {
             $statusText = if ($hItem -and $hItem.Status) { $hItem.Status } else { "Verified" }
             $details = if ($hItem -and $hItem.Details) { $hItem.Details } else { "Standard operation" }
             $badgeClass = if ($statusText -eq 'Healthy') { 'status-enabled' } elseif ($statusText -like '*Disabled*') { 'status-disabled' } else { 'status-retained' }
-            [void]$sb.AppendLine("        <tr><td><strong>$subName</strong></td><td>$details</td><td><span class=`"status-tag $badgeClass`">$statusText</span></td></tr>")
+            [void]$sb.AppendLine("        <tr><td><strong>$(& $enc $subName)</strong></td><td>$(& $enc $details)</td><td><span class=`"status-tag $badgeClass`">$(& $enc $statusText)</span></td></tr>")
         }
         [void]$sb.AppendLine('      </tbody>')
         [void]$sb.AppendLine('    </table>')
@@ -275,9 +278,9 @@ function Export-WinEaseHtmlReport {
     [void]$sb.AppendLine('    <h2>&#128190; Output ISO &amp; Flashing Guide</h2>')
     [void]$sb.AppendLine('    <table>')
     [void]$sb.AppendLine('      <tbody>')
-    [void]$sb.AppendLine("        <tr><td><strong>Generated ISO Path</strong></td><td><code>$outputIso</code></td></tr>")
+    [void]$sb.AppendLine("        <tr><td><strong>Generated ISO Path</strong></td><td><code>$(& $enc $outputIso)</code></td></tr>")
     if ($isoSha256 -and $isoSha256 -ne "N/A") {
-        [void]$sb.AppendLine("        <tr><td><strong>SHA256 Checksum</strong></td><td><code>$isoSha256</code></td></tr>")
+        [void]$sb.AppendLine("        <tr><td><strong>SHA256 Checksum</strong></td><td><code>$(& $enc $isoSha256)</code></td></tr>")
     }
     [void]$sb.AppendLine('        <tr><td><strong>Recommended Deployment</strong></td><td><strong>Ventoy</strong>: Copy ISO directly to USB drive<br><strong>Rufus</strong>: Write as Standard Windows Installation<br><strong>FAT32 USB</strong>: Split-WIM (install.swm) files supported natively</td></tr>')
     [void]$sb.AppendLine('      </tbody>')
@@ -298,7 +301,7 @@ function Export-WinEaseHtmlReport {
         foreach ($pk in $phaseTimings.Keys) {
             $pv = $phaseTimings[$pk]
             $pct = [math]::Round(([double]$pv / $totalPhaseSec) * 100, 1)
-            [void]$sb.AppendLine("        <tr><td>$pk</td><td>$pv</td><td>$pct %</td></tr>")
+            [void]$sb.AppendLine("        <tr><td>$(& $enc $pk)</td><td>$(& $enc $pv)</td><td>$pct %</td></tr>")
         }
         [void]$sb.AppendLine("        <tr><td><strong>Total</strong></td><td><strong>$([math]::Round($totalPhaseSec,1))</strong></td><td><strong>100 %</strong></td></tr>")
         [void]$sb.AppendLine('      </tbody>')

@@ -505,6 +505,32 @@ Describe "WinEase helpers - BuildContext lifecycle" {
     }
 }
 
+Describe "Export-WinEaseHtmlReport HTML escaping" {
+    BeforeAll {
+        . (Join-Path $script:RepoRoot "lib\WinEaseReport.ps1")
+    }
+
+    It "properly escapes HTML tags and prevents XSS injection" {
+        $outPath = Join-Path ([System.IO.Path]::GetTempPath()) ("report_xss_" + [guid]::NewGuid().ToString('N') + ".html")
+        $evil = '<script>alert(1)</script>'
+        try {
+            Export-WinEaseHtmlReport -OutputPath $outPath -BuildInfo @{
+                Title     = $evil
+                Profile   = "<b>$evil</b>"
+                Settings  = @{ RemoveDefender = $true }
+            }
+            Test-Path -LiteralPath $outPath | Should Be $true
+            $html = [System.IO.File]::ReadAllText($outPath)
+            $html | Should Not Match '<script>alert\(1\)</script>'
+            $html | Should Match '&lt;script&gt;alert\(1\)&lt;/script&gt;'
+        } finally {
+            if (Test-Path -LiteralPath $outPath) {
+                Remove-Item -LiteralPath $outPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
 Describe "WinEase helpers - BuildContext advanced debloat lists" {
     BeforeAll {
         . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
