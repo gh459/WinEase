@@ -205,6 +205,12 @@ Describe "WinEase builder - robust tree removal (long paths + image ACLs)" {
         & icacls.exe $denied /inheritance:r > $null 2>&1
         & icacls.exe $denied /grant '*S-1-5-18:F' /C /Q > $null 2>&1
         & icacls.exe $denied /setowner '*S-1-5-18' /C /Q > $null 2>&1
+        # /inheritance:r only strips INHERITED entries. Where the parent's entries are not
+        # marked as inherited (the GitHub-hosted runner's temp folder), Administrators and the
+        # current user would keep an explicit grant and the "locked" directory would not be
+        # locked at all, so drop those two explicitly. A no-op where they were already gone.
+        & icacls.exe $denied /remove:g '*S-1-5-32-544' /C /Q > $null 2>&1
+        & icacls.exe $denied /remove:g ('*' + [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value) /C /Q > $null 2>&1
         # Precondition: the DACL grants nothing to Administrators (privilege-state agnostic).
         $aclPre = Get-Acl -LiteralPath $denied
         $adminsAces = @($aclPre.Access | Where-Object {
@@ -1919,6 +1925,7 @@ Describe "Documentation S12" {
         'custom-scripts-manifest.json', # generated at build time from the custom scripts folder
         'SetupComplete.cmd',            # written into the image by phases\11-unattend.ps1 at build time
         'ErrorHandler.cmd',             # written into the image by phases\11-unattend.ps1 at build time
+        'gui\winui\bin\WinEaseGui.exe', # WinUI build output (gui\winui\build.ps1); git-ignored, absent from a clean checkout
         'implementation_plan.md'        # planning note outside the repository
     )
 
