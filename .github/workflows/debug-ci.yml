@@ -1,0 +1,55 @@
+name: debug-ci (temporary)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Token, integrity level and environment
+        shell: powershell
+        run: |
+          whoami
+          whoami /groups | Select-String -Pattern 'Mandatory|Administrators'
+          whoami /priv | Select-String -Pattern 'TakeOwnership|Restore|Backup'
+          "USERPROFILE=$env:USERPROFILE"
+          "TEMP=$env:TEMP"
+          "PS=$($PSVersionTable.PSVersion)"
+
+      - name: Migration .bak scenario
+        shell: powershell
+        run: |
+          . .\tools\migrator\WinEaseMigration.ps1
+          $srcDir = Join-Path $env:TEMP 'migtest_src3'
+          $bkDir  = Join-Path $env:TEMP 'migtest_bk3'
+          New-Item -ItemType Directory -Force -Path (Join-Path $srcDir 'Documents') | Out-Null
+          'hello' | Set-Content (Join-Path $srcDir 'Documents\test.txt')
+          $b = Backup-WinEaseUserData -FolderMap @{ Documents = (Join-Path $srcDir 'Documents') } -BackupRoot $bkDir
+          "--- backup result"; $b | Format-List *
+          "--- manifest"; Get-Content (Join-Path $bkDir 'migration-manifest.json') -Raw
+          $destFile = Join-Path $env:USERPROFILE 'test.txt'
+          'existing' | Set-Content $destFile
+          "destFile exists before restore: $(Test-Path $destFile)"
+          $r = Restore-WinEaseUserData -BackupRoot $bkDir -ConflictPolicy BackupExisting
+          "--- restore result"; $r | Format-List *
+          "bak exists: $(Test-Path "$destFile.WinEase.bak")"
+          Get-ChildItem $env:USERPROFILE -Filter 'test*' -Force | Select-Object FullName, Length | Format-Table -AutoSize | Out-String
+
+      - name: Robust-removal ACL scenario
+        shell: powershell
+        run: |
+          $root = Join-Path ([System.IO.Path]::GetTempPath()) ('WinEase_robust_' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+          $denied = Join-Path $root 't_wim\WebThreatDefSvc'
+          [System.IO.Directory]::CreateDirectory($denied) | Out-Null
+          [System.IO.File]::WriteAllText((Join-Path $denied 'payload.bin'), 'x')
+          "--- icacls before"; icacls.exe $denied
+          icacls.exe $denied /inheritance:r
+          icacls.exe $denied /grant '*S-1-5-18:F' /C /Q
+          icacls.exe $denied /setowner '*S-1-5-18' /C /Q
+          "--- icacls after"; icacls.exe $denied
+          "--- Get-Acl"
+          (Get-Acl -LiteralPath $denied).Access | Format-Table IdentityReference, FileSystemRights, AccessControlType -AutoSize | Out-String
+          "--- owner"; (Get-Acl -LiteralPath $denied).Owner
