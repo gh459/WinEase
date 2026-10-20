@@ -543,8 +543,8 @@ class BuildContext {
     [bool]$BypassActivationRestrictions
     [bool]$RadicalRAM
     [bool]$AllowPhysicalDebloat
-    [bool]$AdvancedDebloatStandard
-    [bool]$AdvancedDebloatExperimental
+    [string[]]$AdvancedDebloatStandard
+    [string[]]$AdvancedDebloatExperimental
     [hashtable]$ActiveTweakGroups
     [hashtable]$TweakSettings
     [string]$PayloadFormat
@@ -588,8 +588,8 @@ class BuildContext {
         $this.ExportSucceeded = $false
         $this.IsoGenerated = $false
         $this.AllowPhysicalDebloat = $false
-        $this.AdvancedDebloatStandard = $false
-        $this.AdvancedDebloatExperimental = $false
+        $this.AdvancedDebloatStandard = @()
+        $this.AdvancedDebloatExperimental = @()
         $this.RemovedPackagesCount = 0
         $this.WinSxSSavedMB = 0
         $this.WinSxsBeforeMB = 0
@@ -682,8 +682,12 @@ function New-BuildContextFromScriptScope {
     $ctx.BypassActivationRestrictions = $bypassActivationRestrictions
     $ctx.RadicalRAM = $radicalRAM
     $ctx.AllowPhysicalDebloat = if ($null -ne $allowPhysicalDebloat) { [bool]$allowPhysicalDebloat } elseif ($null -ne $script:AllowPhysicalDebloat) { [bool]$script:AllowPhysicalDebloat } else { $false }
-    $ctx.AdvancedDebloatStandard = if ($null -ne $advancedDebloatStandard) { [bool]$advancedDebloatStandard } elseif ($null -ne $script:AdvancedDebloatStandard) { [bool]$script:AdvancedDebloatStandard } else { $false }
-    $ctx.AdvancedDebloatExperimental = if ($null -ne $advancedDebloatExperimental) { [bool]$advancedDebloatExperimental } elseif ($null -ne $script:AdvancedDebloatExperimental) { [bool]$script:AdvancedDebloatExperimental } else { $false }
+    # Item lists (string[]), not flags: keep elements and order; $null/unset becomes an empty list.
+    # Assigned outside an if-expression: its output would unroll an empty array to $null.
+    $advStandardSrc = if ($null -ne $advancedDebloatStandard) { $advancedDebloatStandard } else { $script:AdvancedDebloatStandard }
+    $ctx.AdvancedDebloatStandard = [string[]]@($advStandardSrc | Where-Object { $null -ne $_ })
+    $advExperimentalSrc = if ($null -ne $advancedDebloatExperimental) { $advancedDebloatExperimental } else { $script:AdvancedDebloatExperimental }
+    $ctx.AdvancedDebloatExperimental = [string[]]@($advExperimentalSrc | Where-Object { $null -ne $_ })
     $ctx.ActiveTweakGroups = $script:activeTweakGroups
     $ctx.TweakSettings = if ($null -ne $script:TweakSettings) { $script:TweakSettings } else { [ordered]@{} }
     $ctx.PayloadFormat = $PayloadFormat
@@ -740,8 +744,8 @@ function Sync-ScriptScopeFromContext {
     $script:ExportSucceeded = $ctx.ExportSucceeded
     $script:IsoGenerated = $ctx.IsoGenerated
     $script:AllowPhysicalDebloat = $ctx.AllowPhysicalDebloat
-    $script:AdvancedDebloatStandard = $ctx.AdvancedDebloatStandard
-    $script:AdvancedDebloatExperimental = $ctx.AdvancedDebloatExperimental
+    $script:AdvancedDebloatStandard = [string[]]@($ctx.AdvancedDebloatStandard | Where-Object { $null -ne $_ })
+    $script:AdvancedDebloatExperimental = [string[]]@($ctx.AdvancedDebloatExperimental | Where-Object { $null -ne $_ })
     $script:activeTweakGroups = $ctx.ActiveTweakGroups
     $script:TweakSettings = $ctx.TweakSettings
 }
