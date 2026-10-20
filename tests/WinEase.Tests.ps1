@@ -662,6 +662,27 @@ Describe "WinEase helpers - Path and Directory Safety Guards" {
         Test-CanSafelyDeleteDirectory -Path $baseDir -ExpectedBaseDir $baseDir | Should Be $false
     }
 
+    It "Test-IsPathPreserved correctly identifies exact, parent, and descendant preserved paths" {
+        $preserved = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        [void]$preserved.Add("C:\TestWorkspace\MountDir")
+
+        # Null/empty set checks
+        Test-IsPathPreserved -Path "C:\TestWorkspace\MountDir" -PreservedDirs $null | Should Be $false
+        Test-IsPathPreserved -Path "" -PreservedDirs $preserved | Should Be $false
+
+        # Exact match
+        Test-IsPathPreserved -Path "C:\TestWorkspace\MountDir" -PreservedDirs $preserved | Should Be $true
+
+        # Parent of preserved dir
+        Test-IsPathPreserved -Path "C:\TestWorkspace" -PreservedDirs $preserved | Should Be $true
+
+        # Descendant of preserved dir
+        Test-IsPathPreserved -Path "C:\TestWorkspace\MountDir\SubFolder" -PreservedDirs $preserved | Should Be $true
+
+        # Unrelated path
+        Test-IsPathPreserved -Path "C:\OtherFolder\Build" -PreservedDirs $preserved | Should Be $false
+    }
+
     It "Test-WinEasePathExistsSafe returns true for existing directory and file" {
         Test-WinEasePathExistsSafe -Path $script:RepoRoot | Should Be $true
         Test-WinEasePathExistsSafe -Path $helpersPath | Should Be $true

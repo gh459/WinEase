@@ -272,6 +272,40 @@ function Get-WinEaseVolumeFreeSpaceGB {
 
 
 # ==============================================================================
+function Test-IsPathPreserved {
+    param(
+        [string]$Path,
+        [System.Collections.Generic.HashSet[string]]$PreservedDirs
+    )
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not $PreservedDirs -or $PreservedDirs.Count -eq 0) {
+        return $false
+    }
+
+    $normPath = try { ConvertTo-WinEaseNormalizedPath -Path $Path } catch { $Path.TrimEnd('\', '/') }
+
+    foreach ($pDir in $PreservedDirs) {
+        if ([string]::IsNullOrWhiteSpace($pDir)) { continue }
+        $normPDir = try { ConvertTo-WinEaseNormalizedPath -Path $pDir } catch { $pDir.TrimEnd('\', '/') }
+
+        if ($normPath -ieq $normPDir) {
+            Write-Warning "Directory '$normPath' is in PreservedMountDirs. Deletion prohibited."
+            return $true
+        }
+        if ($normPDir.StartsWith($normPath + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+            Write-Warning "Directory '$normPath' is a parent of preserved directory '$normPDir'. Deletion prohibited."
+            return $true
+        }
+        if ($normPath.StartsWith($normPDir + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+            Write-Warning "Directory '$normPath' is a descendant of preserved directory '$normPDir'. Deletion prohibited."
+            return $true
+        }
+    }
+
+    return $false
+}
+
+
+# ==============================================================================
 function Test-CanSafelyDeleteDirectory {
     param(
         [string]$Path,
@@ -296,23 +330,8 @@ function Test-CanSafelyDeleteDirectory {
         }
     }
 
-    if ($PreservedDirs) {
-        foreach ($pDir in $PreservedDirs) {
-            if ([string]::IsNullOrWhiteSpace($pDir)) { continue }
-            $normPDir = try { ConvertTo-WinEaseNormalizedPath -Path $pDir } catch { $pDir.TrimEnd('\', '/') }
-            if ($normPath -ieq $normPDir) {
-                Write-Warning "Directory '$normPath' is in PreservedMountDirs. Deletion prohibited."
-                return $false
-            }
-            if ($normPDir.StartsWith($normPath + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
-                Write-Warning "Directory '$normPath' is a parent of preserved directory '$normPDir'. Deletion prohibited."
-                return $false
-            }
-            if ($normPath.StartsWith($normPDir + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
-                Write-Warning "Directory '$normPath' is a descendant of preserved directory '$normPDir'. Deletion prohibited."
-                return $false
-            }
-        }
+    if (Test-IsPathPreserved -Path $normPath -PreservedDirs $PreservedDirs) {
+        return $false
     }
 
     try {
@@ -369,15 +388,8 @@ function Test-CanSafelyDeleteVhdx {
         }
     }
 
-    if ($PreservedDirs) {
-        foreach ($pDir in $PreservedDirs) {
-            if ([string]::IsNullOrWhiteSpace($pDir)) { continue }
-            $normP = try { ConvertTo-WinEaseNormalizedPath -Path $pDir } catch { $pDir.TrimEnd('\', '/') }
-            if ($normVhdx -ieq $normP -or $normVhdx.StartsWith($normP + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
-                Write-Warning "VHDX '$normVhdx' is in or under PreservedMountDirs '$normP'. Deletion prohibited."
-                return $false
-            }
-        }
+    if (Test-IsPathPreserved -Path $normVhdx -PreservedDirs $PreservedDirs) {
+        return $false
     }
 
     return $true
