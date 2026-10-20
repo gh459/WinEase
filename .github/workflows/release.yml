@@ -1,0 +1,26 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish GitHub release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Package source
+        run: |
+          git archive --format=zip --prefix=WinEase/ -o "WinEase-${GITHUB_REF_NAME}.zip" HEAD
+
+      - name: Create release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: WinEase-${{ github.ref_name }}.zip
+          generate_release_notes: true

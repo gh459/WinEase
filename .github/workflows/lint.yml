@@ -1,0 +1,39 @@
+name: PSScriptAnalyzer
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: PSScriptAnalyzer
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Run PSScriptAnalyzer
+        # The Pester suite runs the analyzer too, but only when the module is installed
+        # on the machine. This workflow makes the static check a gate of its own.
+        # Only errors fail the build: a new warning of a newer analyzer version must
+        # not break the pipeline of a pull request.
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          $results = Invoke-ScriptAnalyzer -Path . -Recurse -Settings .\PSScriptAnalyzerSettings.psd1
+          $results | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize -Wrap
+          foreach ($r in $results) {
+            $level = if ($r.Severity -eq 'Error') { 'error' } else { 'warning' }
+            Write-Host "::$level file=$($r.ScriptPath),line=$($r.Line)::$($r.RuleName): $($r.Message)"
+          }
+          if (@($results | Where-Object Severity -eq 'Error').Count -gt 0) { throw 'PSScriptAnalyzer reported errors' }

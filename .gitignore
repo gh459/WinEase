@@ -1,0 +1,26 @@
+# Build outputs & volatile diagnostics - never commit
+logs/
+build_diagnostics/
+*.iso
+*.wim
+*.esd
+*.swm
+*.vhdx
+*.iso.sha256
+
+# Workspace artifacts (kept out of VCS; workspace lives outside this folder by default)
+WinEase_workspace/
+
+# Local GUI helpers that may contain machine-specific paths
+*.local.ps1
+
+# Rust build artifacts (winease-physical-debloat); build with: cargo build --release
+tools/winease-physical-debloat/target/
+
+# Regenerated on every build (template: templates/report.html)
+WinEase_report.html
+
+# WinUI 3 window build output (build with: gui\winuiuild.ps1)
+gui/winui/bin/
+gui/winui/WinEaseGui/bin/
+gui/winui/WinEaseGui/obj/

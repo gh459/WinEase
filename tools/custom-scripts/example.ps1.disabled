@@ -1,0 +1,16 @@
+# Example custom post-install script (disabled).
+# To activate: remove the ".disabled" suffix (file must end with .ps1 / .bat / .cmd / .reg)
+# This sample shows the recommended pattern: guarded, idempotent, self-cleaning.
+
+Write-Host "[custom-scripts] example ran at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+
+# Example: defer heavy work to the background so first logon stays responsive
+Start-Job -Name "WinEase-CustomExample" -ScriptBlock {
+    try {
+        # Add your customization here, e.g.:
+        # & winget install --id SomePublisher.Example -e --silent
+        # & dism.exe /Online /Enable-Feature /FeatureName:Microsoft-Hyper-V /All /NoRestart
+    } catch {
+        # Never throw - errors here are non-fatal by design
+    }
+} | Out-Null

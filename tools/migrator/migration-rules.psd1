@@ -1,0 +1,75 @@
+# migration-rules.psd1 - Standard PC migration rules for WinEase (games + app configs + custom paths)
+@{
+    SchemaVersion = '1.0'
+
+    # Default secret exclude patterns (security protection)
+    DefaultSecretExcludePatterns = @(
+        '*Login Data*',
+        '*Cookies*',
+        '*Web Data*',
+        '*Local State*',
+        '*.pfx',
+        '*.p12',
+        '*.pem',
+        '*id_rsa*',
+        '*id_ed25519*',
+        '*credentials.json*',
+        '*token.json*',
+        '*auth.json*'
+    )
+
+    # 4.4 Game save data migration rules
+    GameRules = @(
+        @{ Id = 'MinecraftJavaSaves'; Name = 'Minecraft: Java Edition (Worlds & Options)'; Category = 'GameSave'; StorageType = 'Local'; SourcePaths = @('%APPDATA%\.minecraft\saves','%APPDATA%\.minecraft\options.txt','%APPDATA%\.minecraft\servers.dat'); ExcludePatterns = @('*.lock','session.lock'); ProcessNames = @('javaw','MinecraftLauncher'); CloudSaveNotice = 'Local worlds are not synced to Xbox Cloud. Backing up saves folder is essential.'; RestoreHint = 'Install Minecraft Launcher first, then restore before launching the game.' }
+        @{ Id = 'EldenRingSaves'; Name = 'ELDEN RING (AppData Save Data)'; Category = 'GameSave'; StorageType = 'HybridCloud'; SourcePaths = @('%APPDATA%\EldenRing'); ExcludePatterns = @('*.bak'); ProcessNames = @('eldenring'); CloudSaveNotice = 'Steam Cloud also syncs this folder. Restoring local files will overwrite older local state; verify Steam Cloud conflict prompt on first launch.'; RestoreHint = 'Close Steam or pause Steam Cloud before restoring if you want local backup to take precedence.' }
+        @{ Id = 'Cyberpunk2077Saves'; Name = 'Cyberpunk 2077 (Saved Games)'; Category = 'GameSave'; StorageType = 'HybridCloud'; SourcePaths = @('%USERPROFILE%\Saved Games\CD Projekt Red\Cyberpunk 2077'); ExcludePatterns = @(); ProcessNames = @('Cyberpunk2077'); CloudSaveNotice = 'Synced with Steam/GOG Cross-Progression Cloud.'; RestoreHint = 'Restores directly to %USERPROFILE%\Saved Games.' }
+        @{ Id = 'DarkSouls3Saves'; Name = 'DARK SOULS III (AppData Save Data)'; Category = 'GameSave'; StorageType = 'Local'; SourcePaths = @('%APPDATA%\DarkSoulsIII'); ExcludePatterns = @(); ProcessNames = @('DarkSoulsIII'); CloudSaveNotice = 'WARNING: Dark Souls III does NOT support Steam Cloud by default. Local backup is mandatory.'; RestoreHint = 'Restore before launching Dark Souls III.' }
+        @{ Id = 'PalworldSaves'; Name = 'Palworld (Local SaveGames)'; Category = 'GameSave'; StorageType = 'HybridCloud'; SourcePaths = @('%LOCALAPPDATA%\Pal\Saved\SaveGames'); ExcludePatterns = @(); ProcessNames = @('Palworld','Palworld-Win64-Shipping'); CloudSaveNotice = 'Synced with Steam Cloud.'; RestoreHint = 'Restore to %LOCALAPPDATA%\Pal\Saved\SaveGames.' }
+        @{ Id = 'WindowsSavedGamesFolder'; Name = 'Windows Standard Saved Games (%USERPROFILE%\Saved Games)'; Category = 'GameSave'; StorageType = 'HybridCloud'; SourcePaths = @('%USERPROFILE%\Saved Games'); ExcludePatterns = @('desktop.ini'); ProcessNames = @(); CloudSaveNotice = 'Contains saves for many modern titles. Check individual game cloud settings.'; RestoreHint = 'Restores to standard Windows Saved Games directory.' }
+        @{ Id = 'DocumentsMyGamesFolder'; Name = 'My Games Folder (%USERPROFILE%\Documents\My Games)'; Category = 'GameSave'; StorageType = 'HybridCloud'; SourcePaths = @('%USERPROFILE%\Documents\My Games'); ExcludePatterns = @('*.log','*.dmp'); ProcessNames = @(); CloudSaveNotice = 'Used by Square Enix, Bethesda, Indie, and Unreal Engine titles.'; RestoreHint = 'Restores to %USERPROFILE%\Documents\My Games.' }
+        @{ Id = 'SteamUserData'; Name = 'Steam User Data (config, screenshots, controller configs)'; Category = 'GameSave'; StorageType = 'HybridCloud'; SourcePaths = @('%PROGRAMFILES(X86)%\Steam\userdata'); ExcludePatterns = @('*.log','*.tmp'); ProcessNames = @('steam'); CloudSaveNotice = 'Steam Cloud syncs most data. Local backup preserves screenshots and controller configs.'; RestoreHint = 'Close Steam before restoring. Steam Cloud will reconcile on next launch.' }
+        @{ Id = 'EpicGamesSaves'; Name = 'Epic Games (Saved Games)'; Category = 'GameSave'; StorageType = 'HybridCloud'; SourcePaths = @('%USERPROFILE%\Saved Games'); ExcludePatterns = @('desktop.ini'); ProcessNames = @('EpicGamesLauncher'); CloudSaveNotice = 'Epic Cloud Save syncs supported titles. Local backup preserves unsupported titles.'; RestoreHint = 'Restore to %USERPROFILE%\Saved Games.' }
+        @{ Id = 'GOGGalaxySaves'; Name = 'GOG Galaxy (Game Saves)'; Category = 'GameSave'; StorageType = 'HybridCloud'; SourcePaths = @('%LOCALAPPDATA%\GOG.com\Galaxy'); ExcludePatterns = @('*.log'); ProcessNames = @('GalaxyClient'); CloudSaveNotice = 'GOG Cloud Save syncs supported titles.'; RestoreHint = 'Restore to %LOCALAPPDATA%\GOG.com\Galaxy.' }
+        @{ Id = 'EAAppSaves'; Name = 'EA App (Game Saves)'; Category = 'GameSave'; StorageType = 'HybridCloud'; SourcePaths = @('%USERPROFILE%\Documents\EA Games','%LOCALAPPDATA%\Electronic Arts'); ExcludePatterns = @('*.log','*.tmp'); ProcessNames = @('EADesktop'); CloudSaveNotice = 'EA Cloud Save syncs supported titles.'; RestoreHint = 'Restore to original locations.' }
+        @{ Id = 'UbisoftConnectSaves'; Name = 'Ubisoft Connect (Game Saves)'; Category = 'GameSave'; StorageType = 'HybridCloud'; SourcePaths = @('%PROGRAMFILES(X86)%\Ubisoft\Ubisoft Game Launcher\savegames'); ExcludePatterns = @(); ProcessNames = @('UbisoftConnect'); CloudSaveNotice = 'Ubisoft Cloud Save syncs supported titles.'; RestoreHint = 'Restore to Ubisoft Game Launcher savegames folder.' }
+        @{ Id = 'XboxAppSaves'; Name = 'Xbox App (Local Game Data)'; Category = 'GameSave'; StorageType = 'HybridCloud'; SourcePaths = @('%LOCALAPPDATA%\Packages'); ExcludePatterns = @('*.log'); ProcessNames = @('XboxApp'); CloudSaveNotice = 'Xbox Cloud Save syncs supported titles.'; RestoreHint = 'Restore to %LOCALAPPDATA%\Packages.' }
+        @{ Id = 'RiotGamesSaves'; Name = 'Riot Games (Valorant/LoL Settings)'; Category = 'GameSave'; StorageType = 'HybridCloud'; SourcePaths = @('%LOCALAPPDATA%\Riot Games'); ExcludePatterns = @('*.log'); ProcessNames = @('RiotClientServices'); CloudSaveNotice = 'Riot settings may need manual reconfiguration.'; RestoreHint = 'Restore to %LOCALAPPDATA%\Riot Games.' }
+        @{ Id = 'BattleNetSaves'; Name = 'Battle.net (Game Saves & Settings)'; Category = 'GameSave'; StorageType = 'HybridCloud'; SourcePaths = @('%APPDATA%\Battle.net','%PROGRAMDATA%\Battle.net'); ExcludePatterns = @('*.log'); ProcessNames = @('Battle.net'); CloudSaveNotice = 'Battle.net settings sync for supported titles.'; RestoreHint = 'Restore to original locations.' }
+    )
+
+    # 4.5 Application config migration rules
+    AppConfigRules = @(
+        @{ Id = 'VSCodeSettings'; Name = 'Visual Studio Code (Settings, Keybindings, Snippets)'; Category = 'AppConfig'; SourcePaths = @('%APPDATA%\Code\User\settings.json','%APPDATA%\Code\User\keybindings.json','%APPDATA%\Code\User\snippets'); ExcludePatterns = @('*workspaceStorage*','*globalStorage*'); ProcessNames = @('Code'); ExcludeSecrets = $true; RestoreHint = 'Install VS Code first (winget id: Microsoft.VisualStudioCode).' }
+        @{ Id = 'WindowsTerminalSettings'; Name = 'Windows Terminal (settings.json)'; Category = 'AppConfig'; SourcePaths = @('%LOCALAPPDATA%\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json','%LOCALAPPDATA%\Microsoft\Windows Terminal\settings.json'); ExcludePatterns = @(); ProcessNames = @('WindowsTerminal'); ExcludeSecrets = $true; RestoreHint = 'Applies custom color schemes, fonts, and profiles to Windows Terminal.' }
+        @{ Id = 'PowerShellProfiles'; Name = 'PowerShell User Profiles (PS 5.1 & PS 7)'; Category = 'AppConfig'; SourcePaths = @('%USERPROFILE%\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1','%USERPROFILE%\Documents\PowerShell\Microsoft.PowerShell_profile.ps1'); ExcludePatterns = @(); ProcessNames = @(); ExcludeSecrets = $true; RestoreHint = 'Restores custom prompt, aliases, and module imports.' }
+        @{ Id = 'GitGlobalConfig'; Name = 'Git Global Configuration (.gitconfig)'; Category = 'AppConfig'; SourcePaths = @('%USERPROFILE%\.gitconfig'); ExcludePatterns = @('*git-credentials*'); ProcessNames = @(); ExcludeSecrets = $true; RestoreHint = 'Restores user.name, user.email, and aliases (.git-credentials excluded for security).' }
+        @{ Id = 'OBSStudioProfiles'; Name = 'OBS Studio (Scene Collections & Profiles)'; Category = 'AppConfig'; SourcePaths = @('%APPDATA%\obs-studio\basic\profiles','%APPDATA%\obs-studio\basic\scenes'); ExcludePatterns = @('*service.json*'); ProcessNames = @('obs64'); ExcludeSecrets = $true; RestoreHint = 'Stream keys (service.json) are excluded by default for security.' }
+        @{ Id = 'SevenZipConfig'; Name = '7-Zip Configuration (Registry Export)'; Category = 'AppConfig'; RegistryPaths = @('HKCU:\Software\7-Zip'); SourcePaths = @(); ExcludePatterns = @(); ProcessNames = @('7zFM'); ExcludeSecrets = $true; RestoreHint = 'Restores 7-Zip file associations and view preferences.' }
+        @{ Id = 'ChromeSettings'; Name = 'Google Chrome (Bookmarks, Settings)'; Category = 'AppConfig'; SourcePaths = @('%LOCALAPPDATA%\Google\Chrome\User Data\Default\Bookmarks','%LOCALAPPDATA%\Google\Chrome\User Data\Default\Preferences'); ExcludePatterns = @('*Login Data*','*Cookies*','*Web Data*','*Local State*'); ProcessNames = @('chrome'); ExcludeSecrets = $true; RestoreHint = 'Bookmarks and preferences restored. Passwords/cookies excluded for security.' }
+        @{ Id = 'FirefoxSettings'; Name = 'Mozilla Firefox (Profiles, Bookmarks)'; Category = 'AppConfig'; SourcePaths = @('%APPDATA%\Mozilla\Firefox\Profiles'); ExcludePatterns = @('*cookies.sqlite*','*logins.json*','*key4.db*'); ProcessNames = @('firefox'); ExcludeSecrets = $true; RestoreHint = 'Bookmarks and settings restored. Passwords/cookies excluded for security.' }
+        @{ Id = 'EdgeSettings'; Name = 'Microsoft Edge (Bookmarks, Settings)'; Category = 'AppConfig'; SourcePaths = @('%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Bookmarks','%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Preferences'); ExcludePatterns = @('*Login Data*','*Cookies*','*Web Data*'); ProcessNames = @('msedge'); ExcludeSecrets = $true; RestoreHint = 'Bookmarks and preferences restored. Passwords/cookies excluded for security.' }
+        @{ Id = 'NotepadPlusPlusConfig'; Name = 'Notepad++ (Config, Themes, Plugins)'; Category = 'AppConfig'; SourcePaths = @('%APPDATA%\Notepad++'); ExcludePatterns = @(); ProcessNames = @('notepad++'); ExcludeSecrets = $true; RestoreHint = 'Restores all Notepad++ settings and plugins.' }
+        @{ Id = 'SublimeTextConfig'; Name = 'Sublime Text (Settings, Packages)'; Category = 'AppConfig'; SourcePaths = @('%APPDATA%\Sublime Text\Packages\User'); ExcludePatterns = @(); ProcessNames = @('sublime_text'); ExcludeSecrets = $true; RestoreHint = 'Restores Sublime Text user settings and packages.' }
+        @{ Id = 'FileZillaConfig'; Name = 'FileZilla (Site Manager, Settings)'; Category = 'AppConfig'; SourcePaths = @('%APPDATA%\FileZilla'); ExcludePatterns = @('*.xml.bak'); ProcessNames = @('filezilla'); ExcludeSecrets = $true; RestoreHint = 'Site manager and settings restored. Passwords in sitemanager.xml may need re-entry.' }
+        @{ Id = 'PuTTYConfig'; Name = 'PuTTY (Sessions, Keys)'; Category = 'AppConfig'; SourcePaths = @(); RegistryPaths = @('HKCU:\Software\SimonTatham\PuTTY'); ExcludePatterns = @(); ProcessNames = @('putty'); ExcludeSecrets = $true; RestoreHint = 'PuTTY sessions restored from registry. Private keys (.ppk) excluded for security.' }
+        @{ Id = 'WinRARConfig'; Name = 'WinRAR (Settings, Themes)'; Category = 'AppConfig'; SourcePaths = @('%APPDATA%\WinRAR'); ExcludePatterns = @(); ProcessNames = @('WinRAR'); ExcludeSecrets = $true; RestoreHint = 'Restores WinRAR settings and themes.' }
+        @{ Id = 'TotalCommanderConfig'; Name = 'Total Commander (Config, Plugins)'; Category = 'AppConfig'; SourcePaths = @('%APPDATA%\GHISLER'); ExcludePatterns = @(); ProcessNames = @('TOTALCMD64'); ExcludeSecrets = $true; RestoreHint = 'Restores Total Commander settings and plugins.' }
+        @{ Id = 'AutoHotkeyScripts'; Name = 'AutoHotkey Scripts'; Category = 'AppConfig'; SourcePaths = @('%USERPROFILE%\Documents\AutoHotkey Scripts','%USERPROFILE%\AutoHotkey'); ExcludePatterns = @(); ProcessNames = @('AutoHotkey'); ExcludeSecrets = $true; RestoreHint = 'Restores AutoHotkey scripts.' }
+    )
+
+    # 4.6 Custom path rules (user-defined arbitrary file/folder backup)
+    # Users can add their own paths here or in config/user/user-migration-rules.psd1
+    CustomPathRules = @(
+        # Example: back up a custom folder preserving directory structure
+        # @{
+        #     Id              = 'MyCustomFolder'
+        #     Name            = 'My Custom Folder'
+        #     Category        = 'CustomPath'
+        #     SourcePaths     = @('%USERPROFILE%\MyCustomFolder')
+        #     ExcludePatterns = @('*.tmp','*.log')
+        #     ProcessNames    = @()
+        #     ExcludeSecrets  = $true
+        #     RestoreHint     = 'Restores to %USERPROFILE%\MyCustomFolder'
+        # }
+    )
+}
