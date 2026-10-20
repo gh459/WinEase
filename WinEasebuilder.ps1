@@ -836,9 +836,9 @@ function Get-WinEasePreset {
     param([string]$Name)
     if (-not $Name) { return $script:BuiltInPresets['extreme'] }
     $clean = $Name.Trim().ToLower()
-        # The descriptive names and the numbered shortcuts come from config\presets.psd1.
-        $aliasMap = $script:BuiltInPresetAliases
-    $targetKey = if ($aliasMap.ContainsKey($clean)) { $aliasMap[$clean] } else { $clean }
+    # The descriptive names and the numbered shortcuts come from config\presets.psd1.
+    $aliasMap = $script:BuiltInPresetAliases
+    $targetKey = if ($aliasMap.Contains($clean)) { $aliasMap[$clean] } else { $clean }
     if ($script:BuiltInPresets.Contains($targetKey)) {
         return $script:BuiltInPresets[$targetKey]
     }
