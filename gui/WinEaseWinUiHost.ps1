@@ -69,14 +69,13 @@ function New-WinEaseWinUiInitMessage {
         $d = $script:AllTweakDefs[$tk]
         $tweaks += , [ordered]@{ Key = $tk; Category = "$($d.Category)"; Default = [bool]$d.Default; Description = "$($d.Description)"; DescriptionJa = "$($d.DescriptionJa)" }
     }
-    $components = @()
-    foreach ($cd in $script:ComponentDefs.Values) {
+    $components = @(foreach ($cd in $script:ComponentDefs.Values) {
         if (-not $cd.Gui) { continue }
-        $components += , [ordered]@{
+        [ordered]@{
             Key = $cd.Key; Text = "$($cd.Gui.Text)"; Description = "$($cd.Gui.Description)"; Default = [bool]$cd.Gui.Default
             Tab = "$($cd.Gui.Tab)"; Order = [int]$cd.Gui.Order
         }
-    }
+    })
     $initial = [ordered]@{}
     foreach ($k in @('SourceDrive', 'WorkDir', 'Index', 'InjectDrivers', 'UserName', 'ComputerName', 'PresetKey')) {
         $initial[$k] = if ($null -ne $InitialSettings[$k]) { "$($InitialSettings[$k])" } else { '' }
