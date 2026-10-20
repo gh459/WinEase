@@ -407,6 +407,109 @@ Describe "WinEase helpers - atomic file I/O (Write-WinEaseTextFileAtomic)" {
     }
 }
 
+Describe "WinEase helpers - Repair-WinEaseDeniedAcl" {
+    BeforeAll {
+        if (-not (Get-Command -Name Repair-WinEaseDeniedAcl -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot -ChildPath "WinEasehelpers.ps1")
+        }
+    }
+
+    $isWindowsPlatform = [Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT -or $IsWindows -or ($env:OS -like '*Windows*')
+
+    It "function Repair-WinEaseDeniedAcl is defined and has Mandatory Path parameter" {
+        $cmd = Get-Command -Name Repair-WinEaseDeniedAcl -ErrorAction SilentlyContinue
+        $cmd | Should Not Be $null
+        $cmd.Parameters.ContainsKey('Path') | Should Be $true
+        $cmd.Parameters['Path'].Attributes.Mandatory | Should Be $true
+    }
+
+    It "repairs a readable directory ACL by setting owner, removing Deny ACEs, and adding FullControl Allow" -Skip:(-not $isWindowsPlatform) {
+        $tempDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_repair_acl_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($tempDir) | Out-Null
+        try {
+            # Apply an initial explicit Deny ACE for Administrators (S-1-5-32-544)
+            & icacls.exe $tempDir /deny '*S-1-5-32-544:(R)' /C /Q > $null 2>&1
+
+            $result = Repair-WinEaseDeniedAcl -Path $tempDir
+            $result | Should Be $null
+
+            # Verify owner and ACL rules
+            $aclAfter = Get-Acl -LiteralPath $tempDir
+            $ownerSid = $aclAfter.Owner
+            $ownerSid | Should Match 'S-1-5-32-544|Administrators'
+
+            # Verify Deny rules for S-1-5-32-544 are gone
+            $denyRules = @($aclAfter.Access | Where-Object {
+                $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Deny -and
+                $_.IdentityReference.Value -eq 'S-1-5-32-544'
+            })
+            $denyRules.Count | Should Be 0
+
+            # Verify Allow rule for S-1-5-32-544 exists
+            $allowRules = @($aclAfter.Access | Where-Object {
+                $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
+                $_.IdentityReference.Value -eq 'S-1-5-32-544' -and
+                $_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl
+            })
+            $allowRules.Count | Should BeGreaterThan 0
+        } finally {
+            if (Test-Path -LiteralPath $tempDir) {
+                & cmd.exe /c "rd /s /q `"$tempDir`"" > $null 2>&1
+            }
+        }
+    }
+
+    It "repairs an unreadable DACL directory using fresh descriptor fallback" -Skip:(-not $isWindowsPlatform) {
+        $tempDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_repair_unreadable_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($tempDir) | Out-Null
+        try {
+            # Strip inheritance and grant only SYSTEM access so DACL blocks current user or Administrators
+            & icacls.exe $tempDir /inheritance:r /grant '*S-1-5-18:F' /C /Q > $null 2>&1
+            & icacls.exe $tempDir /remove:g '*S-1-5-32-544' /C /Q > $null 2>&1
+
+            $result = Repair-WinEaseDeniedAcl -Path $tempDir
+            $result | Should Be $null
+
+            $aclAfter = Get-Acl -LiteralPath $tempDir
+            $allowRules = @($aclAfter.Access | Where-Object {
+                $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
+                $_.IdentityReference.Value -eq 'S-1-5-32-544'
+            })
+            $allowRules.Count | Should BeGreaterThan 0
+        } finally {
+            if (Test-Path -LiteralPath $tempDir) {
+                & cmd.exe /c "rd /s /q `"$tempDir`"" > $null 2>&1
+            }
+        }
+    }
+
+    It "returns error string when Set-Acl fails on a readable DACL" -Skip:(-not $isWindowsPlatform) {
+        Mock Enable-WinEaseTokenPrivileges { $true }
+        Mock Get-Acl {
+            New-Object System.Security.AccessControl.DirectorySecurity
+        }
+        Mock Set-Acl {
+            throw "Access denied to set ACL"
+        }
+
+        $result = Repair-WinEaseDeniedAcl -Path "C:\DummyPath"
+        $result | Should Match '^Set-Acl failed:'
+    }
+
+    It "returns error string when fresh descriptor Set-Acl fails on an unreadable DACL" -Skip:(-not $isWindowsPlatform) {
+        Mock Enable-WinEaseTokenPrivileges { $true }
+        Mock Get-Acl {
+            throw "Unreadable DACL"
+        }
+        Mock Set-Acl {
+            throw "Access denied to set fresh ACL"
+        }
+
+        $result = Repair-WinEaseDeniedAcl -Path "C:\DummyPath"
+        $result | Should Match '^fresh-descriptor Set-Acl failed:'
+    }
+}
+
 Describe "WinEase helpers - configuration conflict resolution (Test-WinEaseConfigConflicts)" {
     It "detects the Store and Windows Update dependency conflict without changing the settings" {
         $cfg = [PSCustomObject]@{
