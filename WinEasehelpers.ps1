@@ -2007,3 +2007,203 @@ function Resolve-WinEaseUserConfigPath {
     }
     return $newPath
 }
+
+
+# 5. Compare-WinEaseConfig & Format-WinEaseConfigDiff
+function Resolve-WinEaseConfigForDiff {
+    param($InputConfig, $NameHint)
+    $result = @{ Name = $NameHint; Data = $null }
+    if ($InputConfig -is [string]) {
+        $s = $InputConfig.Trim()
+        if (Test-Path -LiteralPath $s) {
+            try { $raw = [System.IO.File]::ReadAllText($s, [System.Text.Encoding]::UTF8); $parsed = $raw | ConvertFrom-Json; $result.Data = $parsed; $result.Name = [System.IO.Path]::GetFileNameWithoutExtension($s) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        } elseif ($script:BuiltInPresets -and $script:BuiltInPresets.Contains($s)) {
+            $result.Data = $script:BuiltInPresets[$s]
+            $result.Name = $s
+        } else {
+            $result.Name = $s
+            $result.Data = @{}
+        }
+    } elseif ($InputConfig -is [System.Collections.IDictionary]) {
+        $result.Data = $InputConfig
+        if ($NameHint) { $result.Name = $NameHint }
+    } elseif ($InputConfig.PSObject) {
+        $result.Data = $InputConfig
+        if ($NameHint) { $result.Name = $NameHint }
+    }
+    if ($null -eq $result.Data) { $result.Data = @{} }
+    if (-not $result.Name) { $result.Name = 'Config' }
+    return $result
+}
+
+function Compare-WinEaseConfig {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $ReferenceConfig,
+        [Parameter(Mandatory = $true)]
+        $DifferenceConfig
+    )
+    $ref = Resolve-WinEaseConfigForDiff -InputConfig $ReferenceConfig -NameHint 'Reference'
+    $diff = Resolve-WinEaseConfigForDiff -InputConfig $DifferenceConfig -NameHint 'Difference'
+
+    $compDiffs = @()
+    $tweakGroupDiffs = @()
+    $tweakSettingDiffs = @()
+
+    # Component diffs
+    $allCompKeys = @()
+    if ($ref.Data -is [System.Collections.IDictionary]) { $allCompKeys += $ref.Data.Keys }
+    elseif ($ref.Data.PSObject) { $allCompKeys += $ref.Data.PSObject.Properties.Name }
+    if ($diff.Data -is [System.Collections.IDictionary]) { $allCompKeys += $diff.Data.Keys }
+    elseif ($diff.Data.PSObject) { $allCompKeys += $diff.Data.PSObject.Properties.Name }
+    $allCompKeys = $allCompKeys | Select-Object -Unique
+    foreach ($k in $allCompKeys) {
+        $rv = $null; $dv = $null
+        if ($ref.Data -is [System.Collections.IDictionary]) { if ($ref.Data.Contains($k)) { $rv = $ref.Data[$k] } } elseif ($ref.Data.PSObject -and $ref.Data.PSObject.Properties[$k]) { $rv = $ref.Data.PSObject.Properties[$k].Value }
+        if ($diff.Data -is [System.Collections.IDictionary]) { if ($diff.Data.Contains($k)) { $dv = $diff.Data[$k] } } elseif ($diff.Data.PSObject -and $diff.Data.PSObject.Properties[$k]) { $dv = $diff.Data.PSObject.Properties[$k].Value }
+        if ($rv -ne $dv) {
+            $compDiffs += [PSCustomObject]@{ Key = $k; Category = 'Component'; ReferenceValue = $rv; DifferenceValue = $dv }
+        }
+    }
+
+    # TweakSettings diffs
+    $refTS = $null; $diffTS = $null
+    if ($ref.Data -is [System.Collections.IDictionary] -and $ref.Data.Contains('TweakSettings')) { $refTS = $ref.Data['TweakSettings'] }
+    elseif ($ref.Data.PSObject -and $ref.Data.PSObject.Properties['TweakSettings']) { $refTS = $ref.Data.PSObject.Properties['TweakSettings'].Value }
+    if ($diff.Data -is [System.Collections.IDictionary] -and $diff.Data.Contains('TweakSettings')) { $diffTS = $diff.Data['TweakSettings'] }
+    elseif ($diff.Data.PSObject -and $diff.Data.PSObject.Properties['TweakSettings']) { $diffTS = $diff.Data.PSObject.Properties['TweakSettings'].Value }
+
+    $allTweakKeys = @()
+    if ($refTS -is [System.Collections.IDictionary]) { $allTweakKeys += $refTS.Keys }
+    elseif ($refTS.PSObject) { $allTweakKeys += $refTS.PSObject.Properties.Name }
+    if ($diffTS -is [System.Collections.IDictionary]) { $allTweakKeys += $diffTS.Keys }
+    elseif ($diffTS.PSObject) { $allTweakKeys += $diffTS.PSObject.Properties.Name }
+    $allTweakKeys = $allTweakKeys | Select-Object -Unique
+    foreach ($k in $allTweakKeys) {
+        $rv = $null; $dv = $null
+        if ($refTS -is [System.Collections.IDictionary]) { if ($refTS.Contains($k)) { $rv = $refTS[$k] } } elseif ($refTS.PSObject -and $refTS.PSObject.Properties[$k]) { $rv = $refTS.PSObject.Properties[$k].Value }
+        if ($diffTS -is [System.Collections.IDictionary]) { if ($diffTS.Contains($k)) { $dv = $diffTS[$k] } } elseif ($diffTS.PSObject -and $diffTS.PSObject.Properties[$k]) { $dv = $diffTS.PSObject.Properties[$k].Value }
+        $desc = ''
+        if ($script:AllTweakDefs -and $script:AllTweakDefs.Contains($k)) { $desc = $script:AllTweakDefs[$k].Description }
+        if ($rv -ne $dv) {
+            $tweakSettingDiffs += [PSCustomObject]@{ Key = $k; Category = 'TweakSetting'; Description = $desc; ReferenceValue = $rv; DifferenceValue = $dv }
+        }
+    }
+
+    # TweakGroups
+    $refTG = $null; $diffTG = $null
+    if ($ref.Data -is [System.Collections.IDictionary] -and $ref.Data.Contains('TweakGroups')) { $refTG = $ref.Data['TweakGroups'] }
+    elseif ($ref.Data.PSObject -and $ref.Data.PSObject.Properties['TweakGroups']) { $refTG = $ref.Data.PSObject.Properties['TweakGroups'].Value }
+    if ($diff.Data -is [System.Collections.IDictionary] -and $diff.Data.Contains('TweakGroups')) { $diffTG = $diff.Data['TweakGroups'] }
+    elseif ($diff.Data.PSObject -and $diff.Data.PSObject.Properties['TweakGroups']) { $diffTG = $diff.Data.PSObject.Properties['TweakGroups'].Value }
+    $allTGKeys = @()
+    if ($refTG -is [System.Collections.IDictionary]) { $allTGKeys += $refTG.Keys }
+    elseif ($refTG.PSObject) { $allTGKeys += $refTG.PSObject.Properties.Name }
+    if ($diffTG -is [System.Collections.IDictionary]) { $allTGKeys += $diffTG.Keys }
+    elseif ($diffTG.PSObject) { $allTGKeys += $diffTG.PSObject.Properties.Name }
+    $allTGKeys = $allTGKeys | Select-Object -Unique
+    foreach ($k in $allTGKeys) {
+        $rv = $null; $dv = $null
+        if ($refTG -is [System.Collections.IDictionary]) { if ($refTG.Contains($k)) { $rv = $refTG[$k] } } elseif ($refTG.PSObject -and $refTG.PSObject.Properties[$k]) { $rv = $refTG.PSObject.Properties[$k].Value }
+        if ($diffTG -is [System.Collections.IDictionary]) { if ($diffTG.Contains($k)) { $dv = $diffTG[$k] } } elseif ($diffTG.PSObject -and $diffTG.PSObject.Properties[$k]) { $dv = $diffTG.PSObject.Properties[$k].Value }
+        if ($rv -ne $dv) {
+            $tweakGroupDiffs += [PSCustomObject]@{ Key = $k; Category = 'TweakGroup'; ReferenceValue = $rv; DifferenceValue = $dv }
+        }
+    }
+
+    $totalDiff = $compDiffs.Count + $tweakGroupDiffs.Count + $tweakSettingDiffs.Count
+    return [PSCustomObject]@{
+        ReferenceName     = $ref.Name
+        DifferenceName    = $diff.Name
+        ComponentDiffs    = $compDiffs
+        TweakGroupDiffs   = $tweakGroupDiffs
+        TweakSettingDiffs = $tweakSettingDiffs
+        AddedImpacts      = @()
+        RemovedImpacts    = @()
+        TotalDiffCount    = $totalDiff
+    }
+}
+
+function Format-WinEaseConfigDiff {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$DiffResult
+    )
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine("Config diff: $($DiffResult.ReferenceName) -> $($DiffResult.DifferenceName)")
+    [void]$sb.AppendLine("Total differences: $($DiffResult.TotalDiffCount)")
+    if ($DiffResult.ComponentDiffs.Count -gt 0) {
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('[Components]')
+        foreach ($d in $DiffResult.ComponentDiffs) { [void]$sb.AppendLine("  $($d.Key): $($d.ReferenceValue) -> $($d.DifferenceValue)") }
+    }
+    if ($DiffResult.TweakGroupDiffs.Count -gt 0) {
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('[Tweak Groups]')
+        foreach ($d in $DiffResult.TweakGroupDiffs) { [void]$sb.AppendLine("  $($d.Key): $($d.ReferenceValue) -> $($d.DifferenceValue)") }
+    }
+    if ($DiffResult.TweakSettingDiffs.Count -gt 0) {
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('[Tweak Settings]')
+        foreach ($d in $DiffResult.TweakSettingDiffs) { [void]$sb.AppendLine("  $($d.Key): $($d.ReferenceValue) -> $($d.DifferenceValue)") }
+    }
+    return $sb.ToString()
+}
+
+# 6. Test-WinEaseRecoveryReadiness
+function Test-WinEaseRecoveryReadiness {
+    [CmdletBinding()]
+    param(
+        [psobject]$Config
+    )
+    $secondaryDrives = @()
+    try {
+        $drives = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue
+        foreach ($d in $drives) {
+            if ($d.Name -eq 'C' -or $d.Name.Length -ne 1) { continue }
+            if ($d.Free -gt 0) {
+                $freeGB = [math]::Round($d.Free / 1GB, 1)
+                $secondaryDrives += "$($d.Name): ($freeGB GB free)"
+            }
+        }
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+
+    $sysRestoreEnabled = $false
+    try {
+        $sr = Get-ComputerRestorePoint -ErrorAction SilentlyContinue
+        if ($sr) { $sysRestoreEnabled = $true }
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+
+    $winReEnabled = $true
+    if ($Config -and $Config.KeepRecoveryEnv -eq $false) { $winReEnabled = $false }
+
+    $migrationBackupFound = $false
+    try {
+        $manifestPath = Join-Path -Path (Join-Path -Path $env:USERPROFILE -ChildPath 'Documents\WinEase_workspace') -ChildPath 'migration-manifest.json'
+        if (Test-Path -LiteralPath $manifestPath) { $migrationBackupFound = $true }
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+
+    $score = 'Low'
+    if ($secondaryDrives.Count -gt 0 -and $sysRestoreEnabled) { $score = 'High' }
+    elseif ($secondaryDrives.Count -gt 0 -or $sysRestoreEnabled -or $winReEnabled) { $score = 'Medium' }
+
+    $recs = @()
+    if (-not $winReEnabled) {
+        $recs += "The generated ISO will have Windows Recovery Environment (WinRE) removed. Keep the installation USB media as a recovery disk."
+    }
+    if ($secondaryDrives.Count -eq 0 -and -not $migrationBackupFound) {
+        $recs += "No secondary drive or migration backup found. Run WinEase-Migrator.ps1 to back up user data before building."
+    }
+
+    return [PSCustomObject]@{
+        HasSecondaryDrive    = ($secondaryDrives.Count -gt 0)
+        SecondaryDrives      = $secondaryDrives
+        SystemRestoreEnabled = $sysRestoreEnabled
+        WinReEnabledOnTarget = $winReEnabled
+        MigrationBackupFound = $migrationBackupFound
+        ReadinessScore       = $score
+        Recommendations     = $recs
+    }
+}
