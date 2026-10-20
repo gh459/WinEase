@@ -393,6 +393,7 @@ Describe "WinEase helpers - registry hive unmounting (Unmount-RegistryHiveWithRe
     It "returns true immediately when hive is not mounted (reg query fails)" {
         $script:unloadCalled = $false
         function reg.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
             param([string]$subcmd, [string]$key)
             if ($subcmd -eq 'query') { $global:LASTEXITCODE = 1 }
             elseif ($subcmd -eq 'unload') {
@@ -407,6 +408,7 @@ Describe "WinEase helpers - registry hive unmounting (Unmount-RegistryHiveWithRe
     It "returns true when hive is mounted and unloads successfully on first attempt" {
         $script:unloadCalls = 0
         function reg.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
             param([string]$subcmd, [string]$key)
             if ($subcmd -eq 'query') { $global:LASTEXITCODE = 0 }
             elseif ($subcmd -eq 'unload') {
@@ -421,6 +423,7 @@ Describe "WinEase helpers - registry hive unmounting (Unmount-RegistryHiveWithRe
     It "retries unloading when initial unload attempts fail and succeeds on a later attempt" {
         $script:unloadAttempts = 0
         function reg.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
             param([string]$subcmd, [string]$key)
             if ($subcmd -eq 'query') { $global:LASTEXITCODE = 0 }
             elseif ($subcmd -eq 'unload') {
@@ -439,6 +442,7 @@ Describe "WinEase helpers - registry hive unmounting (Unmount-RegistryHiveWithRe
     It "returns false when all retry attempts fail to unload" {
         $script:unloadAttempts = 0
         function reg.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
             param([string]$subcmd, [string]$key)
             if ($subcmd -eq 'query') { $global:LASTEXITCODE = 0 }
             elseif ($subcmd -eq 'unload') {
