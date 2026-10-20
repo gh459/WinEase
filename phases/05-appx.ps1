@@ -7,55 +7,37 @@ param()
 
 # 5. Removing provisioned AppX packages (Bloatware)
 Write-Host "Removing provisioned AppX packages (bloatware)..." -ForegroundColor Cyan
-$appxPatterns = @(
-    '*Zune*', '*Bing*', '*Clipchamp*', '*Gaming*', '*People*', '*PowerAutomate*',
-    '*Teams*', '*Todos*', '*YourPhone*', '*SoundRecorder*', '*Solitaire*',
-    '*FeedbackHub*', '*Maps*', '*OfficeHub*', '*Help*', '*Family*', '*Alarms*',
-    '*CommunicationsApps*', '*Copilot*', '*CompatibilityEnhancements*',
-    '*AV1VideoExtension*', '*AVCEncoderVideoExtension*', '*HEIFImageExtension*',
-    '*HEVCVideoExtension*', '*MicrosoftStickyNotes*', '*OutlookForWindows*',
-    '*RawImageExtension*', '*VP9VideoExtensions*', '*WebpImageExtension*',
-    '*DevHome*', '*Photos*', '*Camera*', '*QuickAssist*',
-    '*Paint*', '*Notepad*', '*CrossDevice*', '*Getstarted*', '*GetStarted*', '*Microsoft.Getstarted*', '*Tips*',
-    '*WindowsCalculator*', '*Calculator*', '*Xbox*',
-    '*Microsoft.Windows.Ai.Copilot*', '*Recall*', '*MicrosoftCorporationII.QuickAssist*',
-    '*MicrosoftCorporationII.MicrosoftFamily*', '*Edge.DevToolsClient*', '*549981C3F5F10*',
-    '*Client.WebExperience*', '*Windows.Ai*', '*WindowsAI*',
-    # Windows Backup app (Microsoft.WindowsBackupApp / WindowsBackupClient.exe host)
-    '*WindowsBackupApp*',
-    # Modern AI & Copilot bloatware (Windows 11 24H2 / 26H2 Canary)
-    '*CopilotStudio*', '*ClickToDo*', '*WindowsAIClient*', '*Microsoft.Windows.StudioFX*',
-    '*NewsAndInterests*', '*RecallAgent*', '*AIComponents*', '*Microsoft.Windows.AiPca*',
-    # Third-party preloaded sponsor apps & OEM bloat
-    '*Spotify*', '*Disney*', '*LinkedIn*', '*Twitter*', '*TikTok*', '*Facebook*',
-    '*Instagram*', '*Netflix*', '*Amazon*', '*PrimeVideo*', '*CandyCrush*',
-    # Xbox / Gaming overlays & speech services
-    '*Microsoft.GamingApp*', '*XboxGameOverlay*', '*XboxSpeechToTextOverlay*',
-    '*XboxGamingOverlay*', '*XboxIdentityProvider*', '*Microsoft.MixedReality.Portal*',
-    '*MixedReality*',
-    # Diagnostics & Feedback & Legacy 3D / Wallet
-    '*Microsoft.WindowsFeedbackHub*', '*Microsoft.3DBuilder*', '*Print3D*', '*Wallet*', '*Pay*'
-)
-# Optional: Microsoft Store removal (-RemoveStore / prompt 15).
-# Only the Store app and its purchase UI are removed. Microsoft.DesktopAppInstaller (winget)
-# and Store framework packages (VCLibs, UI.Xaml, NET.Native, Services.Store.Engagement) are
-# intentionally kept so winget, WinUtil and already-installed apps keep working.
-if ($removeStore) {
-    Write-Host "  [Store] Microsoft Store will be removed (Microsoft.WindowsStore, Microsoft.StorePurchaseApp)." -ForegroundColor Yellow
-    $appxPatterns += @('Microsoft.WindowsStore_*', 'Microsoft.StorePurchaseApp_*')
+# The list of the packages that are removed lives in config\schema.psd1 (AppxRemoval):
+# every entry names the setting that controls it, so a package is only removed when
+# the user asked for it. The whole pass is controlled by RemoveAppxBloatware.
+$appxSettings = @{
+    RemoveAppxBloatware = [bool]$removeAppxBloatware
+    RemoveDefender      = [bool]$removeDefender
+    RemoveStore         = [bool]$removeStore
+    KeepBasicApps       = [bool]$keepBasicApps
+    KeepXboxServices    = [bool]$keepXboxServices
 }
-if ($keepBasicApps) {
-    Write-Host "  [Apps] Preserving essential productivity apps: Notepad, Paint, Calculator (-KeepBasicApps)." -ForegroundColor Green
-    $appxPatterns = @($appxPatterns | Where-Object {
-        $_ -notlike '*Notepad*' -and
-        $_ -notlike '*Paint*' -and
-        $_ -notlike '*Calculator*'
-    })
+$appxPatterns = @()
+if (Get-Command -Name Get-WinEaseAppxRemovalPatterns -ErrorAction SilentlyContinue) {
+    $appxPatterns = @(Get-WinEaseAppxRemovalPatterns -Settings $appxSettings)
+} elseif ($script:WinEaseSettingsDef -and $script:WinEaseSettingsDef.AppxRemoval) {
+    # The shared library is not loaded: fall back to the definition file itself.
+    $fallback = [ordered]@{}
+    foreach ($d in @($script:WinEaseSettingsDef.AppxRemoval)) {
+        if (-not $d -or -not $d.Pattern) { continue }
+        $option = [string]$d.Option
+        if ([string]::IsNullOrWhiteSpace($option)) { $fallback[[string]$d.Pattern] = $true; continue }
+        if (-not $appxSettings.ContainsKey($option)) { continue }
+        $on = [bool]$appxSettings[$option]
+        if ([bool]$d.Invert) { $on = -not $on }
+        if ($on) { $fallback[[string]$d.Pattern] = $true }
+    }
+    $appxPatterns = @($fallback.Keys)
 }
-if ($keepXboxServices) {
-    Write-Host "  [Xbox] Preserving Xbox Game Bar and Gaming subsystem (-KeepXboxServices)." -ForegroundColor Green
-    # '*Gaming*' must also be dropped: it matches Microsoft.GamingApp (the Xbox app) on its own
-    $appxPatterns = @($appxPatterns | Where-Object { $_ -notlike '*Xbox*' -and $_ -notlike '*Gaming*' })
+if ($appxPatterns.Count -eq 0) {
+    Write-Host "  [Apps] No AppX removal requested - every provisioned package is kept." -ForegroundColor Green
+} else {
+    Write-Host "  [Apps] Removing the AppX bloatware of $($appxPatterns.Count) pattern(s) (RemoveAppxBloatware=$removeAppxBloatware)." -ForegroundColor Cyan
 }
 # Protection Whitelist: System-critical frameworks, shell hosts, and core dependencies
 # MUST NEVER be removed. Removing them breaks Start Menu, Taskbar, Modern File Explorer, or causes 0x80073cfa.
@@ -82,29 +64,35 @@ $protectedAppxPatterns = @(
 # (and its per-user package registered) even though Defender is gone.
 if (-not $removeDefender) {
     $protectedAppxPatterns += '*Microsoft.SecHealthUI*'
-} else {
-    $appxPatterns += @('*Microsoft.SecHealthUI*', '*Microsoft.Windows.SecHealthUI*')
-    Write-Host "  - Removing the Windows Security UI package (Defender removal requested)" -ForegroundColor Yellow
 }
-$protectedAppxRegexPatterns = $protectedAppxPatterns | ForEach-Object { [regex]::Escape($_) -replace '\\\*', '.*' }
-$protectedAppxRegex = [regex]::new(('^(' + ($protectedAppxRegexPatterns -join '|') + ')$'), [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-
-$appxRegexPatterns = $appxPatterns | Sort-Object -Unique | ForEach-Object { [regex]::Escape($_) -replace '\\\*', '.*' }
-$appxRegex = [regex]::new(('^(' + ($appxRegexPatterns -join '|') + ')$'), [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-
-$packagesToRemove = Get-AppxProvisionedPackage -Path $scratchDir -ErrorAction SilentlyContinue | Where-Object {
-    $name = $_.PackageName
-    $disp = $_.DisplayName
-    # Strictly exclude any package matching the protection whitelist
-    if (($name -and $protectedAppxRegex.IsMatch($name)) -or ($disp -and $protectedAppxRegex.IsMatch($disp))) {
-        return $false
+$protectedAppxRegex = $null
+$appxRegex = $null
+if (Get-Command -Name Get-WinEaseAppxPatternRegex -ErrorAction SilentlyContinue) {
+    $protectedAppxRegex = Get-WinEaseAppxPatternRegex -Patterns $protectedAppxPatterns
+    $appxRegex = Get-WinEaseAppxPatternRegex -Patterns $appxPatterns
+} else {
+    $protectedAppxRegexPatterns = $protectedAppxPatterns | ForEach-Object { [regex]::Escape($_) -replace '\\\*', '.*' }
+    $protectedAppxRegex = [regex]::new(('^(' + ($protectedAppxRegexPatterns -join '|') + ')$'), [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    $appxRegexPatterns = @($appxPatterns | Sort-Object -Unique | ForEach-Object { [regex]::Escape($_) -replace '\\\*', '.*' })
+    if ($appxRegexPatterns.Count -gt 0) {
+        $appxRegex = [regex]::new(('^(' + ($appxRegexPatterns -join '|') + ')$'), [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
     }
-    return (($name -and $appxRegex.IsMatch($name)) -or ($disp -and $appxRegex.IsMatch($disp)))
+}
+
+$packagesToRemove = @()
+if ($appxRegex) {
+    $packagesToRemove = @(Get-AppxProvisionedPackage -Path $scratchDir -ErrorAction SilentlyContinue | Where-Object {
+        Test-WinEaseAppxPackageRemovable -Name $_.PackageName -DisplayName $_.DisplayName -RemovalRegex $appxRegex -ProtectedRegex $protectedAppxRegex
+    })
 }
 
 $successfullyRemovedPackages = [System.Collections.Generic.List[object]]::new()
 foreach ($package in $packagesToRemove) {
     Write-Host "  - Removing: $($package.DisplayName)"
+    if ($isDryRunMode) {
+        Write-Host "    [DRY] Would remove the provisioned package '$($package.PackageName)'" -ForegroundColor Yellow
+        continue
+    }
     $removed = $false
     try {
         Remove-AppxProvisionedPackage -Path $scratchDir -PackageName $package.PackageName -ErrorAction Stop | Out-Null

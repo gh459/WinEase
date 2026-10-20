@@ -98,7 +98,16 @@
             $failCount++;
             continue;
           }
-          $actual = (Get-FileHash -LiteralPath $uf.FullName -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash;
+          $actual = try {
+            $fs = [System.IO.File]::OpenRead($uf.FullName);
+            $sha = [System.Security.Cryptography.SHA256]::Create();
+            try {
+              [System.BitConverter]::ToString($sha.ComputeHash($fs)).Replace("-", "");
+            } finally {
+              if ($null -ne $sha) { $sha.Dispose(); }
+              if ($null -ne $fs) { $fs.Dispose(); }
+            }
+          } catch { $null };
           if ($actual -ine $expected) {
             $endDt = Get-Date;
             $endStr = $endDt.ToString("yyyy-MM-dd HH:mm:ss.fff");

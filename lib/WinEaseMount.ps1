@@ -167,6 +167,77 @@ function Get-WinEaseDismOfflineHives {
     return @($candidates)
 }
 
+# Internal helper function: Handle mount warning or error depending on BestEffort flag
+function Invoke-WinEaseMountError {
+    param(
+        [string]$Message,
+        [switch]$BestEffort
+    )
+    if ($BestEffort) {
+        Write-Warning $Message
+        return $false
+    }
+    throw $Message
+}
+
+# Internal helper function: Validate mounted images to protect active/valid mounts before unmounting hives
+function Test-WinEaseDismOfflineHiveUnmountSafety {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$NormTarget,
+        [Parameter(Mandatory=$true)]
+        [string]$TargetMountDir,
+        [object[]]$MountedImages
+    )
+    foreach ($img in $MountedImages) {
+        if ([string]::IsNullOrWhiteSpace($img.Path)) { continue }
+        try {
+            $normImgPath = ConvertTo-WinEaseNormalizedPath -Path $img.Path
+        } catch { continue }
+
+        $isSame = [string]::Equals($normImgPath, $NormTarget, [System.StringComparison]::OrdinalIgnoreCase)
+        $isDescendant = $normImgPath.StartsWith($NormTarget + '\', [System.StringComparison]::OrdinalIgnoreCase)
+        $isAncestor = $NormTarget.StartsWith($normImgPath + '\', [System.StringComparison]::OrdinalIgnoreCase)
+
+        if ($isSame) {
+            if ($img.MountStatus -ne 'Invalid') {
+                return "Cannot unmount offline hives: MountDir '$TargetMountDir' has active DISM mount status '$($img.MountStatus)'."
+            }
+        } elseif ($isDescendant -or $isAncestor) {
+            if ($img.MountStatus -ieq 'Invalid') {
+                Write-Warning "Overlapping orphaned/invalid DISM mount detected at '$($img.Path)' (Status: Invalid) - deferring to cleanup."
+                continue
+            }
+            return "Cannot unmount offline hives: Overlapping DISM mount detected at '$($img.Path)' (Status: $($img.MountStatus))."
+        }
+    }
+    return $null
+}
+
+# Internal helper function: Attempt to unload a list of candidate offline registry hives
+function Invoke-DismOfflineHiveUnloadAttempt {
+    param(
+        [object[]]$Candidates
+    )
+    [GC]::Collect()
+    [GC]::WaitForPendingFinalizers()
+    Start-Sleep -Milliseconds 300
+
+    foreach ($cand in $Candidates) {
+        $keyToUnload = "HKLM\" + $cand.KeyName
+        $unloadOutput = & reg.exe unload $keyToUnload 2>&1
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -eq 0) {
+            Write-Host "  -> Successfully unloaded offline hive: $($cand.KeyName)" -ForegroundColor Green
+        } else {
+            Write-Warning "  -> Failed to unload offline hive '$($cand.KeyName)' (Exit code: $exitCode): $unloadOutput"
+        }
+    }
+
+    [GC]::Collect()
+    [GC]::WaitForPendingFinalizers()
+}
+
 # Helper function: Safely unmount orphaned DISM offline registry hives
 function Unmount-DismOfflineHives {
     param(
@@ -178,45 +249,19 @@ function Unmount-DismOfflineHives {
     )
     $normTarget = ConvertTo-WinEaseNormalizedPath -Path $TargetMountDir
     if (-not $script:ManagedMountDirs.Contains($normTarget)) {
-        $msg = "Target mount directory '$TargetMountDir' is not registered in ManagedMountDirs."
-        if ($BestEffort) { Write-Warning $msg; return $false }
-        throw $msg
+        return (Invoke-WinEaseMountError -Message "Target mount directory '$TargetMountDir' is not registered in ManagedMountDirs." -BestEffort:$BestEffort)
     }
 
     # Verify mounted images status to protect active/valid mounts
     try {
         $mountedImages = @(Get-WinEaseMountedImages)
     } catch {
-        $msg = "Failed to query DISM mounted images during offline hive unload validation: $_"
-        if ($BestEffort) { Write-Warning $msg; return $false }
-        throw $msg
+        return (Invoke-WinEaseMountError -Message "Failed to query DISM mounted images during offline hive unload validation: $_" -BestEffort:$BestEffort)
     }
 
-    foreach ($img in $mountedImages) {
-        if ([string]::IsNullOrWhiteSpace($img.Path)) { continue }
-        try {
-            $normImgPath = ConvertTo-WinEaseNormalizedPath -Path $img.Path
-        } catch { continue }
-
-        $isSame = [string]::Equals($normImgPath, $normTarget, [System.StringComparison]::OrdinalIgnoreCase)
-        $isDescendant = $normImgPath.StartsWith($normTarget + '\', [System.StringComparison]::OrdinalIgnoreCase)
-        $isAncestor = $normTarget.StartsWith($normImgPath + '\', [System.StringComparison]::OrdinalIgnoreCase)
-
-        if ($isSame) {
-            if ($img.MountStatus -ne 'Invalid') {
-                $msg = "Cannot unmount offline hives: MountDir '$TargetMountDir' has active DISM mount status '$($img.MountStatus)'."
-                if ($BestEffort) { Write-Warning $msg; return $false }
-                throw $msg
-            }
-        } elseif ($isDescendant -or $isAncestor) {
-            if ($img.MountStatus -ieq 'Invalid') {
-                Write-Warning "Overlapping orphaned/invalid DISM mount detected at '$($img.Path)' (Status: Invalid) - deferring to cleanup."
-                continue
-            }
-            $msg = "Cannot unmount offline hives: Overlapping DISM mount detected at '$($img.Path)' (Status: $($img.MountStatus))."
-            if ($BestEffort) { Write-Warning $msg; return $false }
-            throw $msg
-        }
+    $safetyErr = Test-WinEaseDismOfflineHiveUnmountSafety -NormTarget $normTarget -TargetMountDir $TargetMountDir -MountedImages $mountedImages
+    if ($safetyErr) {
+        return (Invoke-WinEaseMountError -Message $safetyErr -BestEffort:$BestEffort)
     }
 
     for ($attempt = 1; $attempt -le $Retries; $attempt++) {
@@ -226,24 +271,7 @@ function Unmount-DismOfflineHives {
         }
 
         Write-Host "Unloading $($candidates.Count) orphaned DISM offline registry hives for '$normTarget' (Attempt $attempt/$Retries)..." -ForegroundColor Cyan
-
-        [GC]::Collect()
-        [GC]::WaitForPendingFinalizers()
-        Start-Sleep -Milliseconds 300
-
-        foreach ($cand in $candidates) {
-            $keyToUnload = "HKLM\" + $cand.KeyName
-            $unloadOutput = & reg.exe unload $keyToUnload 2>&1
-            $exitCode = $LASTEXITCODE
-            if ($exitCode -eq 0) {
-                Write-Host "  -> Successfully unloaded offline hive: $($cand.KeyName)" -ForegroundColor Green
-            } else {
-                Write-Warning "  -> Failed to unload offline hive '$($cand.KeyName)' (Exit code: $exitCode): $unloadOutput"
-            }
-        }
-
-        [GC]::Collect()
-        [GC]::WaitForPendingFinalizers()
+        Invoke-DismOfflineHiveUnloadAttempt -Candidates $candidates
 
         $remaining = @(Get-WinEaseDismOfflineHives -TargetMountDir $normTarget)
         if ($remaining.Count -eq 0) {
@@ -260,11 +288,7 @@ function Unmount-DismOfflineHives {
     if ($finalRemaining.Count -gt 0) {
         $keysList = ($finalRemaining | ForEach-Object { "$($_.KeyName) -> $($_.HivePath)" }) -join "`n    "
         $errMsg = "Failed to unload $($finalRemaining.Count) orphaned DISM offline hives for '$normTarget' after $Retries attempts:`n    $keysList`nPlease close any process locking these hives or restart Windows before retrying."
-        if ($BestEffort) {
-            Write-Warning $errMsg
-            return $false
-        }
-        throw $errMsg
+        return (Invoke-WinEaseMountError -Message $errMsg -BestEffort:$BestEffort)
     }
     return $true
 }
@@ -296,6 +320,104 @@ function Invoke-WinEaseMountpointCleanup {
     & dism.exe @cleanArgs > $null 2>&1
     $exitCode = $LASTEXITCODE
     return ($exitCode -eq 0)
+}
+
+# Internal helper function: Test if a entry mount path or WIM path is within any workspace root
+function Test-WinEaseMountPathInWorkspace {
+    param(
+        [string]$Path
+    )
+    if (-not $Path) { return $false }
+    $normP = try { ConvertTo-WinEaseNormalizedPath -Path $Path } catch { $null }
+    if (-not $normP) { return $false }
+
+    if ($script:MountAllocationRoot) {
+        $normAllocRoot = ConvertTo-WinEaseNormalizedPath -Path $script:MountAllocationRoot
+        if (Test-WinEasePathWithin -Path $normP -Root $normAllocRoot) {
+            return $true
+        }
+    }
+    $wsRef = if ($script:BaseWorkDir) { $script:BaseWorkDir } elseif ($baseWorkDir) { $baseWorkDir } elseif ($workingDir) { $workingDir } else { $null }
+    if ($wsRef) {
+        $normWorking = ConvertTo-WinEaseNormalizedPath -Path $wsRef
+        if (Test-WinEasePathWithin -Path $normP -Root $normWorking) {
+            return $true
+        }
+    }
+    return $false
+}
+
+# Internal helper function: Perform Level 3 surgical registry metadata purge for corrupted/invalid orphaned DISM mounts
+function Invoke-WinEaseLevel3RegistryPurge {
+    param(
+        [string]$NormMount,
+        [string]$NormWim
+    )
+    if (-not ($NormMount -or $NormWim)) { return }
+
+    if ($NormMount) {
+        try {
+            [void](Unmount-DismOfflineHives -TargetMountDir $NormMount -BestEffort)
+        } catch {
+            Write-Warning "Offline hive unload before Level 3 purge encountered warning: $_"
+        }
+    }
+
+    $regBaseKey = "SOFTWARE\Microsoft\WIMMount\Mounted Images"
+    $hklm = $null
+    $mountedKey = $null
+    try {
+        $hklm = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64)
+        $mountedKey = $hklm.OpenSubKey($regBaseKey, $true)
+        if (-not $mountedKey) { return }
+
+        $subKeyNames = $mountedKey.GetSubKeyNames()
+        foreach ($guid in $subKeyNames) {
+            $entryKey = $null
+            try {
+                $entryKey = $mountedKey.OpenSubKey($guid, $false)
+                if (-not $entryKey) { continue }
+
+                $mPathVal = [string]$entryKey.GetValue("Mount Path")
+                $wPathVal = [string]$entryKey.GetValue("WIM Path")
+                $statusVal = $entryKey.GetValue("Status")
+
+                if ([string]::IsNullOrWhiteSpace($mPathVal)) { continue }
+                $normEntryMount = try { ConvertTo-WinEaseNormalizedPath -Path $mPathVal } catch { $null }
+                $normEntryWim   = try { if ($wPathVal) { [System.IO.Path]::GetFullPath($wPathVal).TrimEnd('\') } } catch { $null }
+
+                $matchTargetMount = ($NormMount -and $normEntryMount -and ($normEntryMount -ieq $NormMount))
+                $matchTargetWim   = ($NormWim -and $normEntryWim -and ($normEntryWim -ieq $NormWim))
+                $isWorkspaceMount = Test-WinEaseMountPathInWorkspace -Path $normEntryMount
+
+                # Strictly require Mount Path or WIM Path to match managed target, or be orphaned within workspace
+                if ($matchTargetMount -or $matchTargetWim -or ($isWorkspaceMount -and ($statusVal -in @(2, 3, "2", "3")))) {
+                    Write-Host "Purging corrupted/orphaned DISM mount metadata from registry: $guid (Mount: $mPathVal, WIM: $wPathVal, Status: $statusVal)..." -ForegroundColor Yellow
+                    try {
+                        $mountedKey.DeleteSubKeyTree($guid, $false)
+                        Write-Host "  -> Successfully purged orphaned DISM mount metadata via .NET Registry: $guid" -ForegroundColor Green
+                    } catch {
+                        & reg.exe delete "HKLM\$regBaseKey\$guid" /f > $null 2>&1
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Host "  -> Successfully purged orphaned DISM mount metadata via reg.exe: $guid" -ForegroundColor Green
+                        } else {
+                            Write-Warning "Could not delete orphaned WIMMount registry entry ${guid}: $_"
+                        }
+                    }
+                }
+            } finally {
+                if ($entryKey) { $entryKey.Dispose() }
+            }
+        }
+    } catch {
+        Write-Warning "Surgical registry metadata purge encountered warning: $_"
+    } finally {
+        if ($mountedKey) { $mountedKey.Dispose() }
+        if ($hklm) { $hklm.Dispose() }
+    }
+
+    # Synchronize DISM mountpoints cache after surgical registry metadata purge
+    Invoke-WinEaseMountpointCleanup | Out-Null
 }
 
 # Helper function: Detect and discard conflicting/orphaned DISM mounts (Resolves Error 0xc1420127 & Invalid mount lock)
@@ -355,28 +477,8 @@ function Clear-DismMountConflicts {
             $matchWim   = ($normWim -and $mImg -and ($mImg -ieq $normWim))
 
             if ($matchWim -and (-not $matchMount) -and $mPath) {
-                # Check if $mPath is located inside workspace root
-                $isWorkspaceMount = $false
-                if ($script:MountAllocationRoot) {
-                    $normAllocRoot = ConvertTo-WinEaseNormalizedPath -Path $script:MountAllocationRoot
-                    if (Test-WinEasePathWithin -Path $mPath -Root $normAllocRoot) {
-                        $isWorkspaceMount = $true
-                    }
-                }
-                $wsRef = if ($script:BaseWorkDir) { $script:BaseWorkDir } elseif ($baseWorkDir) { $baseWorkDir } elseif ($workingDir) { $workingDir } else { $null }
-                if (-not $isWorkspaceMount -and $wsRef) {
-                    $normWorking = ConvertTo-WinEaseNormalizedPath -Path $wsRef
-                    if (Test-WinEasePathWithin -Path $mPath -Root $normWorking) {
-                        $isWorkspaceMount = $true
-                    }
-                }
-                if (-not $isWorkspaceMount -and $wsRef -and $normWim) {
-                    $normWorking = ConvertTo-WinEaseNormalizedPath -Path $wsRef
-                    # Adopt only when the mounted WIM itself lives in our workspace (no name-based guessing)
-                    if (Test-WinEasePathWithin -Path $normWim -Root $normWorking) {
-                        $isWorkspaceMount = $true
-                    }
-                }
+                # Check if $mPath or $normWim is located inside workspace root
+                $isWorkspaceMount = (Test-WinEaseMountPathInWorkspace -Path $mPath) -or ($normWim -and (Test-WinEaseMountPathInWorkspace -Path $normWim))
 
                 if ($isWorkspaceMount) {
                     Write-Host "Detected prior build mount at workspace path '$mPath' for '$normWim'. Adopting for safe cleanup." -ForegroundColor Yellow
@@ -448,92 +550,8 @@ function Clear-DismMountConflicts {
             }
         }
 
-        if ($canPurge -and ($normMount -or $normWim)) {
-            # Unload any offline hives first before metadata purge
-            if ($normMount) {
-                try {
-                    [void](Unmount-DismOfflineHives -TargetMountDir $normMount -BestEffort)
-                } catch {
-                    Write-Warning "Offline hive unload before Level 3 purge encountered warning: $_"
-                }
-            }
-
-            $regBaseKey = "SOFTWARE\Microsoft\WIMMount\Mounted Images"
-            $hklm = $null
-            $mountedKey = $null
-            try {
-                $hklm = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64)
-                $mountedKey = $hklm.OpenSubKey($regBaseKey, $true)
-                if ($mountedKey) {
-                    $subKeyNames = $mountedKey.GetSubKeyNames()
-                    foreach ($guid in $subKeyNames) {
-                        $entryKey = $null
-                        try {
-                            $entryKey = $mountedKey.OpenSubKey($guid, $false)
-                            if ($entryKey) {
-                                $mPathVal = [string]$entryKey.GetValue("Mount Path")
-                                $wPathVal = [string]$entryKey.GetValue("WIM Path")
-                                $statusVal = $entryKey.GetValue("Status")
-
-                                if ([string]::IsNullOrWhiteSpace($mPathVal)) { continue }
-                                $normEntryMount = try { ConvertTo-WinEaseNormalizedPath -Path $mPathVal } catch { $null }
-                                $normEntryWim   = try { if ($wPathVal) { [System.IO.Path]::GetFullPath($wPathVal).TrimEnd('\') } } catch { $null }
-
-                                $matchTargetMount = ($normMount -and $normEntryMount -and ($normEntryMount -ieq $normMount))
-                                $matchTargetWim   = ($normWim -and $normEntryWim -and ($normEntryWim -ieq $normWim))
-
-                                $isWorkspaceMount = $false
-                                if ($normEntryMount) {
-                                    if ($script:MountAllocationRoot) {
-                                        $normAllocRoot = ConvertTo-WinEaseNormalizedPath -Path $script:MountAllocationRoot
-                                        if (Test-WinEasePathWithin -Path $normEntryMount -Root $normAllocRoot) {
-                                            $isWorkspaceMount = $true
-                                        }
-                                    }
-                                    if (-not $isWorkspaceMount -and $script:BaseWorkDir) {
-                                        $normBaseRoot = ConvertTo-WinEaseNormalizedPath -Path $script:BaseWorkDir
-                                        if (Test-WinEasePathWithin -Path $normEntryMount -Root $normBaseRoot) {
-                                            $isWorkspaceMount = $true
-                                        }
-                                    }
-                                    if (-not $isWorkspaceMount -and $workingDir) {
-                                        $normWorking = ConvertTo-WinEaseNormalizedPath -Path $workingDir
-                                        if (Test-WinEasePathWithin -Path $normEntryMount -Root $normWorking) {
-                                            $isWorkspaceMount = $true
-                                        }
-                                    }
-                                }
-
-                                # Strictly require Mount Path or WIM Path to match managed target, or be orphaned within workspace
-                                if ($matchTargetMount -or $matchTargetWim -or ($isWorkspaceMount -and ($statusVal -in @(2, 3, "2", "3")))) {
-                                    Write-Host "Purging corrupted/orphaned DISM mount metadata from registry: $guid (Mount: $mPathVal, WIM: $wPathVal, Status: $statusVal)..." -ForegroundColor Yellow
-                                    try {
-                                        $mountedKey.DeleteSubKeyTree($guid, $false)
-                                        Write-Host "  -> Successfully purged orphaned DISM mount metadata via .NET Registry: $guid" -ForegroundColor Green
-                                    } catch {
-                                        & reg.exe delete "HKLM\$regBaseKey\$guid" /f > $null 2>&1
-                                        if ($LASTEXITCODE -eq 0) {
-                                            Write-Host "  -> Successfully purged orphaned DISM mount metadata via reg.exe: $guid" -ForegroundColor Green
-                                        } else {
-                                            Write-Warning "Could not delete orphaned WIMMount registry entry ${guid}: $_"
-                                        }
-                                    }
-                                }
-                            }
-                        } finally {
-                            if ($entryKey) { $entryKey.Dispose() }
-                        }
-                    }
-                }
-            } catch {
-                Write-Warning "Surgical registry metadata purge encountered warning: $_"
-            } finally {
-                if ($mountedKey) { $mountedKey.Dispose() }
-                if ($hklm) { $hklm.Dispose() }
-            }
-
-            # Synchronize DISM mountpoints cache after surgical registry metadata purge
-            Invoke-WinEaseMountpointCleanup | Out-Null
+        if ($canPurge) {
+            Invoke-WinEaseLevel3RegistryPurge -NormMount $normMount -NormWim $normWim
         }
     }
 

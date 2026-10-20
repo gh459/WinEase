@@ -1,0 +1,3 @@
+## 2025-02-23 - Screen Reader Accessibility in WinUI 3 Custom Setting Cards
+**Learning:** In WinUI 3 XAML interfaces, wrapping interactive controls (`ToggleSwitch`, `TextBox`, `ComboBox`) inside custom card containers (`Border`/`Grid`) without setting `AutomationProperties.Name` on the child controls leaves screen readers unable to announce what setting or field is currently focused during keyboard navigation.
+**Action:** Always set `AutomationProperties.SetName` (and `AutomationProperties.SetHelpText` when descriptions exist) directly on the interactive control within setting card and field row factories.

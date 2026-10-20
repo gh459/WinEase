@@ -66,6 +66,7 @@
         'AdvancedDebloatStandard' = @{ TriggerValue = $null; Status = 'Safe'; Summary = 'Internal advanced debloat list container'; AffectedFeatures = @(); ConflictsWith = @() }
         'AdvancedDebloatExperimental' = @{ TriggerValue = $null; Status = 'Safe'; Summary = 'Internal advanced debloat list container'; AffectedFeatures = @(); ConflictsWith = @() }
         'IncludeMigrationAssistant' = @{ TriggerValue = $null; Status = 'Safe'; Summary = 'Build option (include migration assistant tool)'; AffectedFeatures = @(); ConflictsWith = @() }
+        'RemoveAppxBloatware' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Removes the preinstalled AppX inbox apps of the image (Zune, Clipchamp, Xbox, sponsored apps)'; AffectedFeatures = @('Inbox media apps (Zune Music / Zune Video / Clipchamp)','Xbox app and Game Bar companion apps','Sponsored and OEM preinstalled apps (Spotify, Candy Crush, Disney+)','Teams, To Do, Outlook for Windows, Sticky Notes'); ConflictsWith = @('KeepBasicApps','KeepXboxServices') }
     }
 
     Tweaks = @{

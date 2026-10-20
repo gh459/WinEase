@@ -23,6 +23,10 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Run PSScriptAnalyzer
+        # The Pester suite runs the analyzer too, but only when the module is installed
+        # on the machine. This workflow makes the static check a gate of its own.
+        # Only errors fail the build: a new warning of a newer analyzer version must
+        # not break the pipeline of a pull request.
         shell: pwsh
         run: |
           Install-Module PSScriptAnalyzer -Force -Scope CurrentUser

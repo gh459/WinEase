@@ -159,31 +159,37 @@ $allPackagesOutput = & dism.exe /English "/image:$scratchDir" /Get-Packages /For
 $allPackages = ($allPackagesOutput -split '\r?\n') | Select-Object -Skip 1
 
 $packagesToRemove = [System.Collections.Generic.List[string]]::new()
-foreach ($packagePattern in $packagePatterns) {
-    $pattern = if ($packagePattern.EndsWith("*")) { $packagePattern } else { "$packagePattern*" }
-    $matched = $allPackages | Where-Object { $_ -like $pattern }
-    foreach ($pkg in $matched) {
-        $packageIdentity = ($pkg -split '\s+')[0]
-        if ($packageIdentity -and (-not $packagesToRemove.Contains($packageIdentity))) {
-            # Defensive guard: Strictly protect fonts and the target-language Asian IME if preservation flags are set
-            if ($keepExtraFonts -and ($packageIdentity -like "*LanguageFeatures-Fonts-*")) {
-                continue
-            }
-            $ownLanguageIme = ($script:primaryImeLang -and $packageIdentity -like "*IME-$script:primaryImeLang*")
-            $ownLanguageFont = $false
-            if ($script:primaryImeLang) {
-                $ownLanguageFontPackage = @{ 'ko-kr' = 'Fonts-Kore'; 'zh-cn' = 'Fonts-Hans'; 'zh-tw' = 'Fonts-Hant' }[$script:primaryImeLang]
-                if ($ownLanguageFontPackage) {
-                    $ownLanguageFont = ($packageIdentity -like "*LanguageFeatures-$ownLanguageFontPackage*")
+if ($packagePatterns.Count -gt 0) {
+    $regexParts = foreach ($packagePattern in $packagePatterns) {
+        $pattern = if ($packagePattern.EndsWith("*")) { $packagePattern } else { "$packagePattern*" }
+        "^" + [regex]::Escape($pattern).Replace("\*", ".*").Replace("\?", ".")
+    }
+    $combinedRegex = [regex]::new(($regexParts -join "|"), [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+
+    foreach ($pkg in $allPackages) {
+        if ($combinedRegex.IsMatch($pkg)) {
+            $packageIdentity = ($pkg -split '\s+')[0]
+            if ($packageIdentity -and (-not $packagesToRemove.Contains($packageIdentity))) {
+                # Defensive guard: Strictly protect fonts and the target-language Asian IME if preservation flags are set
+                if ($keepExtraFonts -and ($packageIdentity -like "*LanguageFeatures-Fonts-*")) {
+                    continue
                 }
+                $ownLanguageIme = ($script:primaryImeLang -and $packageIdentity -like "*IME-$script:primaryImeLang*")
+                $ownLanguageFont = $false
+                if ($script:primaryImeLang) {
+                    $ownLanguageFontPackage = @{ 'ko-kr' = 'Fonts-Kore'; 'zh-cn' = 'Fonts-Hans'; 'zh-tw' = 'Fonts-Hant' }[$script:primaryImeLang]
+                    if ($ownLanguageFontPackage) {
+                        $ownLanguageFont = ($packageIdentity -like "*LanguageFeatures-$ownLanguageFontPackage*")
+                    }
+                }
+                if ($keepAsianIME -and ($ownLanguageIme -or $packageIdentity -like "*Fonts-Jpan*")) {
+                    continue
+                }
+                if ($ownLanguageFont) {
+                    continue
+                }
+                $packagesToRemove.Add($packageIdentity)
             }
-            if ($keepAsianIME -and ($ownLanguageIme -or $packageIdentity -like "*Fonts-Jpan*")) {
-                continue
-            }
-            if ($ownLanguageFont) {
-                continue
-            }
-            $packagesToRemove.Add($packageIdentity)
         }
     }
 }
