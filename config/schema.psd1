@@ -37,6 +37,7 @@
         @{ Key = 'DisableSmartScreen'; Category = 'Security'; Default = $false; Description = 'Disable SmartScreen filter for apps and downloads'; CliSwitch = $true }
         @{ Key = 'DisableVBS'; Category = 'Security'; Default = $false; Description = 'Disable Virtualization-Based Security (VBS / Core Isolation)'; CliSwitch = $true }
         @{ Key = 'DisableWPBT'; Category = 'Security'; Default = $false; Description = 'Disable Windows Platform Binary Table (OEM backdoor prevention)'; CliSwitch = $true }
+        @{ Key = 'HardenSystemSecurity'; Category = 'Security'; Default = $false; Description = 'Harden LSA, NTLM, anonymous access, AutoRun and PowerShell logging (Harden-Windows-Security subset)'; CliSwitch = $true }
         @{ Key = 'PreventDeviceEncryption'; Category = 'Security'; Default = $false; Description = 'Prevent automatic BitLocker device encryption on OOBE'; CliSwitch = $true }
         @{ Key = 'DisableCPUMitigations'; Category = 'Security'; Default = $false; Description = 'Disable Spectre/Meltdown CPU mitigations for raw throughput'; Variable = 'disableCPUMitigations'; CliSwitch = $true }
         @{ Key = 'ConfigureWinlogon'; Category = 'Security'; Default = $false; Description = 'Allow blank-password local logon and pre-configure the Winlogon auto-logon account'; CliSwitch = $true }
@@ -98,6 +99,17 @@
         @{ Key = 'HideRecommendedSection'; Category = 'UI'; Default = $true; Description = 'Hide Recommended section in Start Menu'; CliSwitch = $true }
         @{ Key = 'HideSearchBox'; Category = 'UI'; Default = $true; Description = 'Hide the taskbar search box'; CliSwitch = $true }
         @{ Key = 'MenuShowDelayZero'; Category = 'UI'; Default = $true; Description = 'Remove the hover delay on Start menu entries'; CliSwitch = $true }
+        @{ Key = 'DisableSnapAssist'; Category = 'UI'; Default = $false; Description = 'Disable Snap Layouts, snap suggestions and the snap bar'; CliSwitch = $true }
+        @{ Key = 'DisableNotificationBanners'; Category = 'UI'; Default = $false; Description = 'Turn off notification banners (toasts)'; CliSwitch = $true }
+        @{ Key = 'HideExplorerHomeGallery'; Category = 'UI'; Default = $false; Description = 'Hide Home and Gallery from the File Explorer navigation pane'; CliSwitch = $true }
+        @{ Key = 'HideAltTabEdgeTabs'; Category = 'UI'; Default = $false; Description = 'Show only open windows in Alt+Tab (no browser tabs)'; CliSwitch = $true }
+        @{ Key = 'HideTaskViewButton'; Category = 'UI'; Default = $false; Description = 'Hide the Task View button from the taskbar'; CliSwitch = $true }
+        @{ Key = 'TaskbarNeverCombine'; Category = 'UI'; Default = $false; Description = 'Never combine taskbar buttons'; CliSwitch = $true }
+        @{ Key = 'DisableGameMode'; Category = 'UI'; Default = $false; Description = 'Turn off Game Mode'; CliSwitch = $true }
+        @{ Key = 'ShowBatteryPercentage'; Category = 'UI'; Default = $false; Description = 'Show the battery percentage in the system tray'; CliSwitch = $true }
+        @{ Key = 'AlwaysShowScrollbars'; Category = 'UI'; Default = $false; Description = 'Always show scrollbars'; CliSwitch = $true }
+        @{ Key = 'DisableLogonBlur'; Category = 'UI'; Default = $false; Description = 'Disable the acrylic blur on the sign-in screen'; CliSwitch = $true }
+        @{ Key = 'HideOneDriveNavPane'; Category = 'UI'; Default = $false; Description = 'Hide OneDrive from the File Explorer navigation pane'; CliSwitch = $true }
 
         # --- Removal options (polarity: OFF = keep / nothing happens, ON = remove) -------
         # These replace the previously unconditional deletions. Every one of them used to
@@ -417,6 +429,7 @@
         @{ Pattern = '*HEIFImageExtension*'; Group = 'Media' }
         @{ Pattern = '*HEVCVideoExtension*'; Group = 'Media' }
         @{ Pattern = '*Microsoft.StickyNotes*'; Group = 'Media' }
+        @{ Pattern = '*Microsoft.MicrosoftStickyNotes*'; Group = 'Media' }
         @{ Pattern = '*OutlookForWindows*'; Group = 'Media' }
         @{ Pattern = '*RawImageExtension*'; Group = 'Media' }
         @{ Pattern = '*VP9VideoExtensions*'; Group = 'Media' }
@@ -443,6 +456,7 @@
         @{ Pattern = '*WindowsAIClient*'; Group = 'AI' }
         @{ Pattern = '*Microsoft.Windows.StudioFX*'; Group = 'AI' }
         @{ Pattern = '*NewsAndInterests*'; Group = 'AI' }
+        @{ Pattern = '*WidgetsPlatformRuntime*'; Group = 'AI' }
         @{ Pattern = '*RecallAgent*'; Group = 'AI' }
         @{ Pattern = '*AIComponents*'; Group = 'AI' }
         @{ Pattern = '*Microsoft.Windows.AiPca*'; Group = 'AI' }
@@ -457,6 +471,14 @@
         @{ Pattern = '*Amazon*'; Group = 'Sponsor' }
         @{ Pattern = '*PrimeVideo*'; Group = 'Sponsor' }
         @{ Pattern = '*CandyCrush*'; Group = 'Sponsor' }
+        @{ Pattern = '*RoyalRevolt*'; Group = 'Sponsor' }
+        @{ Pattern = 'king.com.*'; Group = 'Sponsor' }
+        @{ Pattern = '*Microsoft.Office.OneNote*'; Group = 'Legacy' }
+        @{ Pattern = '*Microsoft.SkypeApp*'; Group = 'Legacy' }
+        @{ Pattern = '*Microsoft.Microsoft3DViewer*'; Group = 'Legacy' }
+        @{ Pattern = '*Microsoft.Messaging*'; Group = 'Legacy' }
+        @{ Pattern = '*Microsoft.Whiteboard*'; Group = 'Legacy' }
+        @{ Pattern = '*Microsoft.PCManager*'; Group = 'Legacy' }
         @{ Pattern = '*Microsoft.WindowsFeedbackHub*'; Group = 'Legacy' }
         @{ Pattern = '*Microsoft.3DBuilder*'; Group = 'Legacy' }
         @{ Pattern = '*Print3D*'; Group = 'Legacy' }

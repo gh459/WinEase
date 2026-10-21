@@ -227,6 +227,17 @@ param(
     [switch]$SvcHostConsolidation,
     [switch]$HideSearchBox,
     [switch]$MenuShowDelayZero,
+    [switch]$DisableSnapAssist,
+    [switch]$DisableNotificationBanners,
+    [switch]$HideExplorerHomeGallery,
+    [switch]$HideAltTabEdgeTabs,
+    [switch]$HideTaskViewButton,
+    [switch]$TaskbarNeverCombine,
+    [switch]$DisableGameMode,
+    [switch]$ShowBatteryPercentage,
+    [switch]$AlwaysShowScrollbars,
+    [switch]$DisableLogonBlur,
+    [switch]$HideOneDriveNavPane,
     # Removal options (polarity: OFF = keep, ON = remove). These used to run
     # unconditionally on every build.
     [switch]$RemoveHelpFiles,
@@ -294,6 +305,7 @@ param(
     [switch]$DisableSmartScreen,
     [switch]$DisableVBS,
     [switch]$DisableWPBT,
+    [switch]$HardenSystemSecurity,
     [switch]$PreventDeviceEncryption,
 
     # 23. Granular Privacy & AI Toggles

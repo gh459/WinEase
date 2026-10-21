@@ -53,6 +53,7 @@
                 DisableSmartScreen = $false
                 DisableVBS = $false
                 DisableWPBT = $false
+                HardenSystemSecurity = $false
                 PreventDeviceEncryption = $false
                 DisableCPUMitigations = $false
                 ConfigureWinlogon = $false
@@ -108,6 +109,17 @@
                 HideRecommendedSection = $false
                 HideSearchBox = $false
                 MenuShowDelayZero = $false
+                DisableSnapAssist = $false
+                DisableNotificationBanners = $false
+                HideExplorerHomeGallery = $false
+                HideAltTabEdgeTabs = $false
+                HideTaskViewButton = $false
+                TaskbarNeverCombine = $false
+                DisableGameMode = $false
+                ShowBatteryPercentage = $false
+                AlwaysShowScrollbars = $false
+                DisableLogonBlur = $false
+                HideOneDriveNavPane = $false
                 RemoveHelpFiles = $false
                 RemoveEdge = $false
                 RemoveWindowsBackup = $false

@@ -534,21 +534,21 @@ WinEase/
 
 - **Original Project & Concept:** [NTDEV](https://github.com/ntdevlabs/nano11)
   - [Patreon](http://patreon.com/ntdev) | [PayPal](http://paypal.me/ntdev2) | [Ko-fi](http://ko-fi.com/ntdev)
-- **Optimization & Debloat Tool Integrations:**
-  - [Chris Titus Tech's WinUtil](https://github.com/ChrisTitusTech/winutil) - Open-source Windows utility & OOBE bloat mitigation
-  - [Sophia Script for Windows](https://github.com/farag2/Sophia-Script-for-Windows) - Advanced Windows 11 PowerShell debloater by Dmitry Nefedov (farag2)
-  - [SophiApp](https://github.com/Sophia-Community/SophiApp) - Modern WPF GUI front-end for Sophia Script
-  - [Optimizer](https://github.com/hellzerg/optimizer) - Standalone C# utility for privacy and system performance by Hellzerg
-  - [Bloatynosy](https://github.com/builtbybel/Bloatynosy) - Windows 11 feature debloater and AI manager by Builtbybel
-  - [ReviOS & Revision Tool](https://github.com/meetrevision) - Low-latency OS playbook & standalone performance optimizer
-  - [AtlasOS](https://github.com/atlas-os/atlas) - Open-source gaming & low-latency Windows modification playbook
-  - [Win11Debloat](https://github.com/raphire/win11debloat) - Lightweight PowerShell script for removing preinstalled apps and disabling telemetry by Raphire
-  - [Windows Defender Remover](https://github.com/ionuttbara/windows-defender-remover) - Script for removing Windows Defender and related components by ionuttbara
-  - [privacy.sexy](https://github.com/undergroundwires/privacy.sexy) - Open-source privacy and security hardening script generator by undergroundwires
-  - [Crapfixer](https://github.com/builtbybel/Crapfixer) - Windows 11 cleanup and privacy tweaking tool by Builtbybel
-  - [FluentCleaner](https://github.com/builtbybel/FluentCleaner) - Windows system and app cache cleaner by Builtbybel
-  - [Debloat-Win11](https://github.com/SysAdminDoc/Debloat-Win11) - Windows 11 debloat script by SysAdminDoc
-  - [Harden-Windows-Security](https://github.com/HotCakeX/Harden-Windows-Security) - Windows security hardening and compliance toolkit by HotCakeX
+- **Optimization & Debloat Tool Integrations** (tweaks re-implemented in WinEase; last upstream review 2026-10-21, see [docs/dev/upstream-sync-2026-10.md](docs/dev/upstream-sync-2026-10.md)):
+  - [Chris Titus Tech's WinUtil](https://github.com/ChrisTitusTech/winutil) - Open-source Windows utility & OOBE bloat mitigation (reviewed: 26.10.07)
+  - [Sophia Script for Windows](https://github.com/farag2/Sophia-Script-for-Windows) - Advanced Windows 11 PowerShell debloater by Dmitry Nefedov (farag2) (reviewed: 8.0.0)
+  - [SophiApp](https://github.com/Sophia-Community/SophiApp) - Modern WPF GUI front-end for Sophia Script (reviewed: 1.0.97)
+  - [Optimizer](https://github.com/hellzerg/optimizer) - Standalone C# utility for privacy and system performance by Hellzerg (reviewed: 16.7)
+  - [Bloatynosy](https://github.com/builtbybel/Bloatynosy) - Windows 11 feature debloater and AI manager by Builtbybel (reviewed: 1.01.103)
+  - [ReviOS & Revision Tool](https://github.com/meetrevision) - Low-latency OS playbook & standalone performance optimizer (reviewed: Revision Tool 2.14.1)
+  - [AtlasOS](https://github.com/atlas-os/atlas) - Open-source gaming & low-latency Windows modification playbook (reviewed: 0.5.0-hotfix)
+  - [Win11Debloat](https://github.com/raphire/win11debloat) - Lightweight PowerShell script for removing preinstalled apps and disabling telemetry by Raphire (reviewed: 2026.08.24)
+  - [Windows Defender Remover](https://github.com/ionuttbara/windows-defender-remover) - Script for removing Windows Defender and related components by ionuttbara (reviewed: release13-rev1)
+  - [privacy.sexy](https://github.com/undergroundwires/privacy.sexy) - Open-source privacy and security hardening script generator by undergroundwires (reviewed: 0.13.8)
+  - [Crapfixer](https://github.com/builtbybel/Crapfixer) - Windows 11 cleanup and privacy tweaking tool by Builtbybel (reviewed: 2.01.41)
+  - [FluentCleaner](https://github.com/builtbybel/FluentCleaner) - Windows system and app cache cleaner by Builtbybel (reviewed: 26.09.01)
+  - [Debloat-Win11](https://github.com/SysAdminDoc/Debloat-Win11) - Windows 11 debloat script by SysAdminDoc (reviewed: v2.3.8)
+  - [Harden-Windows-Security](https://github.com/HotCakeX/Harden-Windows-Security) - Windows security hardening and compliance toolkit by HotCakeX (reviewed: HardenSystemSecurity-v1.0.97.0)
 - **Contributors:**
   - [Tinnitus97](https://github.com/Tinnitus97) (PR #6: Universal language support, robocopy WinSxS fix)
   - Community bug reports and feature requests from [nano11 Issues](https://github.com/ntdevlabs/nano11/issues)

@@ -77,6 +77,7 @@
         'DisableSmartScreen' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Disables SmartScreen filter'; AffectedFeatures = @('SmartScreen warnings for unknown apps/downloads','Phishing site warnings'); ConflictsWith = @() }
         'DisableVBS' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Disables Virtualization-Based Security'; AffectedFeatures = @('Core Isolation (HVCI)','Credential Guard','VBS-dependent anti-cheat'); ConflictsWith = @() }
         'DisableWPBT' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Disables Windows Platform Binary Table'; AffectedFeatures = @('OEM UEFI-embedded tool auto-install (e.g. Armoury Crate)'); ConflictsWith = @() }
+        'HardenSystemSecurity' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Offline security hardening (Harden-Windows-Security subset: LSA protection, WDigest off, NTLMv2 only, anonymous restrictions, Remote Assistance/AutoRun off, script block logging)'; AffectedFeatures = @('Unsigned LSA plug-ins / password filters (LSA protection)','NTLMv1/LM-only NAS, printers and legacy SMB servers','Anonymous share/account enumeration by legacy tools','Remote Assistance (Quick Assist is not affected)','AutoRun/AutoPlay of USB drives and discs'); ConflictsWith = @('RemoveDefender','DisableVBS','DisableUAC','DisableSmartScreen','DisableCPUMitigations') }
         'PreventDeviceEncryption' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Prevents automatic BitLocker device encryption on OOBE'; AffectedFeatures = @('OOBE automatic device encryption'); ConflictsWith = @() }
         'DisableCopilot' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Disables Windows Copilot AI'; AffectedFeatures = @('Windows Copilot','Edge Copilot sidebar','Notepad/Paint AI features','Teams auto-install'); ConflictsWith = @() }
         'DisableWebSearch' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Disables Bing web search in Start Menu'; AffectedFeatures = @('Bing web search results and suggestions in Start'); ConflictsWith = @() }
@@ -113,6 +114,17 @@
         'DisableUSBSuspend' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Disables USB selective suspend'; AffectedFeatures = @('USB selective suspend (controller and DAC power management)'); ConflictsWith = @() }
         'HideSearchBox' = @{ TriggerValue = $true; Status = 'Safe'; Summary = 'Hides the taskbar search box'; AffectedFeatures = @(); ConflictsWith = @() }
         'MenuShowDelayZero' = @{ TriggerValue = $true; Status = 'Safe'; Summary = 'Removes the hover delay on Start menu entries'; AffectedFeatures = @(); ConflictsWith = @() }
+        'DisableSnapAssist' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Disables Snap Layouts and snap suggestions'; AffectedFeatures = @('Snap Layouts / Snap Assist'); ConflictsWith = @() }
+        'DisableNotificationBanners' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Turns off notification banners'; AffectedFeatures = @('Notification banners (toasts)'); ConflictsWith = @() }
+        'HideExplorerHomeGallery' = @{ TriggerValue = $true; Status = 'Safe'; Summary = 'Hides Home and Gallery in Explorer'; AffectedFeatures = @(); ConflictsWith = @() }
+        'HideAltTabEdgeTabs' = @{ TriggerValue = $true; Status = 'Safe'; Summary = 'Hides browser tabs from Alt+Tab'; AffectedFeatures = @(); ConflictsWith = @() }
+        'HideTaskViewButton' = @{ TriggerValue = $true; Status = 'Safe'; Summary = 'Hides the Task View button'; AffectedFeatures = @(); ConflictsWith = @() }
+        'TaskbarNeverCombine' = @{ TriggerValue = $true; Status = 'Safe'; Summary = 'Never combines taskbar buttons'; AffectedFeatures = @(); ConflictsWith = @() }
+        'DisableGameMode' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Turns off Game Mode'; AffectedFeatures = @('Game Mode'); ConflictsWith = @() }
+        'ShowBatteryPercentage' = @{ TriggerValue = $true; Status = 'Safe'; Summary = 'Shows the battery percentage'; AffectedFeatures = @(); ConflictsWith = @() }
+        'AlwaysShowScrollbars' = @{ TriggerValue = $true; Status = 'Safe'; Summary = 'Always shows scrollbars'; AffectedFeatures = @(); ConflictsWith = @() }
+        'DisableLogonBlur' = @{ TriggerValue = $true; Status = 'Safe'; Summary = 'Disables the sign-in screen blur'; AffectedFeatures = @(); ConflictsWith = @() }
+        'HideOneDriveNavPane' = @{ TriggerValue = $true; Status = 'Safe'; Summary = 'Hides OneDrive in Explorer'; AffectedFeatures = @(); ConflictsWith = @() }
         'RemoveHelpFiles' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Remove the Windows Help files folder'; AffectedFeatures = @(); ConflictsWith = @() }
         'RemoveEdge' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Remove the Edge browser (the WebView2 runtime is kept for OOBE)'; AffectedFeatures = @(); ConflictsWith = @() }
         'RemoveWindowsBackup' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Remove the Windows Backup app and its scheduled task'; AffectedFeatures = @(); ConflictsWith = @() }

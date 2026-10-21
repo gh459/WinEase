@@ -3,6 +3,56 @@
 All notable changes to this fork are documented here. Versions follow the upstream
 WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
+## Unreleased (local fork, 2026-10-21) - upstream sync 2026-10
+
+The tweaks added by the latest releases of the tools credited in the README were
+reviewed and the ones that fit an offline image were ported into the existing options.
+Item by item, with the reason for every skipped tweak:
+`docs/dev/upstream-sync-2026-10.md`. One new opt-in option (HardenSystemSecurity,
+default off); no changed default.
+
+### Added
+- **11 new UI options (all off by default, GUI + CLI switch + JSON profile):**
+  `DisableSnapAssist`, `DisableNotificationBanners`, `HideExplorerHomeGallery`,
+  `HideAltTabEdgeTabs`, `HideTaskViewButton`, `TaskbarNeverCombine`, `DisableGameMode`,
+  `ShowBatteryPercentage`, `AlwaysShowScrollbars`, `DisableLogonBlur`, `HideOneDriveNavPane`.
+  These are the user-preference tweaks of the upstream tools that the sync had skipped
+  because WinEase had no option for them.
+- **HardenSystemSecurity (new, opt-in, default off, `-HardenSystemSecurity`):** the
+  offline-applicable subset of Harden-Windows-Security 1.0.97.0 - LSA protection
+  (`RunAsPPL=2`), WDigest off, NTLMv2 only, anonymous SAM/share restrictions, Remote
+  Assistance off, AutoRun/AutoPlay off, PowerShell script block logging. The dependency
+  check reports it as conflicting with RemoveDefender, DisableVBS, DisableUAC,
+  DisableSmartScreen and DisableCPUMitigations. Documented in `docs/SECURITY_OPTIONS.md`
+  together with the previously missing DisableSmartScreen and DisableVBS entries.
+- **DisableTelemetryAndDiagnostics:** contact harvesting, inking/typing privacy consent,
+  app launch tracking, PowerShell 7 telemetry opt-out, Sleep Study, Edge diagnostic data
+  and personalization reporting, tailored experiences (user policy), online speech
+  recognition policy, Narrator online services.
+- **DisableWindowsAI:** Notepad AI policy, the "AI components" Settings page, Recall
+  export / data providers, Paint Cocreator / generative fill / image creator, AI clipboard actions.
+- **DisableCopilot:** `RemoveMicrosoftCopilotApp` policy and the Copilot features of Edge
+  (page context, Microsoft 365 chat icon, history AI search, compose, Bing chat on the new
+  tab, local foundational model).
+- **DisableCloudContent:** Edge default-browser campaigns, recommendations, shopping
+  assistant, startup boost and first run; backup reminder toast; SCOOBE and account
+  notifications; lock screen Spotlight and ads; Spotlight on the desktop.
+- **DisableWebSearch:** search highlights and device search history.
+- **HideRecommendedSection:** the recent / most used lists of Start and recent documents.
+- **DisableWidgets:** the "News and interests" feeds policy; `Microsoft.WidgetsPlatformRuntime` removed.
+- **DisableActivityHistory:** Windows Backup UI and monitoring.
+- **DisableSuperfetch:** ReadyBoost caches.
+- **Service trims:** `diagsvc`, `IsoEnvBroker`.
+- **RemoveDefender:** Microsoft Security core drivers (`MsSecCore`, `MsSecFlt`, `MsSecWfp`)
+  disabled, Defender autologgers and Ubpm maintenance entries removed, Windows Security
+  Settings page hidden (merged with the AI page into one `SettingsPageVisibility` value).
+- **AppX removal list:** RoyalRevolt, `king.com.*`, PC Manager, OneNote (Store), Skype,
+  3D Viewer, Messaging, Whiteboard.
+
+### Fixed
+- **Sticky Notes was never removed.** The pattern `*Microsoft.StickyNotes*` does not match
+  the real package name `Microsoft.MicrosoftStickyNotes`; the correct pattern was added.
+
 ## Unreleased (local fork, 2026-10-21) - every Advanced Debloat target can be removed by the engine it offers
 
 ### Fixed
