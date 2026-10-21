@@ -2254,9 +2254,9 @@ function Compare-WinEaseConfig {
     $ref = Resolve-WinEaseConfigForDiff -InputConfig $ReferenceConfig -NameHint 'Reference'
     $diff = Resolve-WinEaseConfigForDiff -InputConfig $DifferenceConfig -NameHint 'Difference'
 
-    $compDiffs = @()
-    $tweakGroupDiffs = @()
-    $tweakSettingDiffs = @()
+    $compDiffs = [System.Collections.Generic.List[PSCustomObject]]::new()
+    $tweakGroupDiffs = [System.Collections.Generic.List[PSCustomObject]]::new()
+    $tweakSettingDiffs = [System.Collections.Generic.List[PSCustomObject]]::new()
 
     # Component diffs
     $allCompKeys = @()
@@ -2270,7 +2270,7 @@ function Compare-WinEaseConfig {
         if ($ref.Data -is [System.Collections.IDictionary]) { if ($ref.Data.Contains($k)) { $rv = $ref.Data[$k] } } elseif ($ref.Data.PSObject -and $ref.Data.PSObject.Properties[$k]) { $rv = $ref.Data.PSObject.Properties[$k].Value }
         if ($diff.Data -is [System.Collections.IDictionary]) { if ($diff.Data.Contains($k)) { $dv = $diff.Data[$k] } } elseif ($diff.Data.PSObject -and $diff.Data.PSObject.Properties[$k]) { $dv = $diff.Data.PSObject.Properties[$k].Value }
         if ($rv -ne $dv) {
-            $compDiffs += [PSCustomObject]@{ Key = $k; Category = 'Component'; ReferenceValue = $rv; DifferenceValue = $dv }
+            $compDiffs.Add([PSCustomObject]@{ Key = $k; Category = 'Component'; ReferenceValue = $rv; DifferenceValue = $dv })
         }
     }
 
@@ -2294,7 +2294,7 @@ function Compare-WinEaseConfig {
         $desc = ''
         if ($script:AllTweakDefs -and $script:AllTweakDefs.Contains($k)) { $desc = $script:AllTweakDefs[$k].Description }
         if ($rv -ne $dv) {
-            $tweakSettingDiffs += [PSCustomObject]@{ Key = $k; Category = 'TweakSetting'; Description = $desc; ReferenceValue = $rv; DifferenceValue = $dv }
+            $tweakSettingDiffs.Add([PSCustomObject]@{ Key = $k; Category = 'TweakSetting'; Description = $desc; ReferenceValue = $rv; DifferenceValue = $dv })
         }
     }
 
@@ -2315,7 +2315,7 @@ function Compare-WinEaseConfig {
         if ($refTG -is [System.Collections.IDictionary]) { if ($refTG.Contains($k)) { $rv = $refTG[$k] } } elseif ($refTG.PSObject -and $refTG.PSObject.Properties[$k]) { $rv = $refTG.PSObject.Properties[$k].Value }
         if ($diffTG -is [System.Collections.IDictionary]) { if ($diffTG.Contains($k)) { $dv = $diffTG[$k] } } elseif ($diffTG.PSObject -and $diffTG.PSObject.Properties[$k]) { $dv = $diffTG.PSObject.Properties[$k].Value }
         if ($rv -ne $dv) {
-            $tweakGroupDiffs += [PSCustomObject]@{ Key = $k; Category = 'TweakGroup'; ReferenceValue = $rv; DifferenceValue = $dv }
+            $tweakGroupDiffs.Add([PSCustomObject]@{ Key = $k; Category = 'TweakGroup'; ReferenceValue = $rv; DifferenceValue = $dv })
         }
     }
 
