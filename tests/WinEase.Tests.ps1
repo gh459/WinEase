@@ -2871,6 +2871,46 @@ Describe "S7 - GUI Tab 8 (Migration & Backup)" {
     }
 }
 
+Describe "Get-WinEaseDebloatSafeHandlerItems unit tests" {
+    BeforeAll {
+        . (Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1")
+        $script:SchemaData = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+    }
+
+    It "returns a non-empty string array of safe debloat handler items" {
+        $items = Get-WinEaseDebloatSafeHandlerItems
+        $items | Should Not Be $null
+        @($items).Count | Should BeGreaterThan 0
+        foreach ($item in $items) {
+            ($item -is [string]) | Should Be $true
+            [string]::IsNullOrWhiteSpace($item) | Should Be $false
+        }
+    }
+
+    It "returns unique items with no duplicates" {
+        $items = Get-WinEaseDebloatSafeHandlerItems
+        $unique = @($items | Select-Object -Unique)
+        @($items).Count | Should Be @($unique).Count
+    }
+
+    It "every returned item is registered in config\schema.psd1 under DebloatEngines" {
+        $items = Get-WinEaseDebloatSafeHandlerItems
+        $registeredItems = @($script:SchemaData.DebloatEngines | ForEach-Object { $_.Item })
+        foreach ($item in $items) {
+            ($registeredItems -contains $item) | Should Be $true
+        }
+    }
+
+    It "every returned item has a corresponding case branch in Invoke-WinEaseDebloatTarget" {
+        $items = Get-WinEaseDebloatSafeHandlerItems
+        $libText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1"), [System.Text.Encoding]::UTF8)
+        $handledInSwitch = @([regex]::Matches($libText, "(?m)^\s{8}'([^']+)' \{") | ForEach-Object { $_.Groups[1].Value })
+        foreach ($item in $items) {
+            ($handledInSwitch -contains $item) | Should Be $true
+        }
+    }
+}
+
 Describe "S5: Migration Assistant bundling" {
     $s5Root = Split-Path -Parent $PSScriptRoot
     $s5Text = [System.IO.File]::ReadAllText((Join-Path $s5Root 'phases\11-unattend.ps1'))
