@@ -68,7 +68,9 @@ jobs:
           [ "$head" = "$GITHUB_SHA" ] || { echo "::error title=Commit mismatch::checked out $head, expected $GITHUB_SHA"; exit 1; }
           tagged="$(.github/scripts/resolve-tag-commit.sh "$TAG")"
           [ "$tagged" = "$GITHUB_SHA" ] || { echo "::error title=Tag moved::$TAG now points to $tagged, the checks ran on $GITHUB_SHA"; exit 1; }
-          git status --porcelain | grep . && { echo "::error title=Dirty checkout::the working tree is not the plain commit"; exit 1; } || true
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error title=Dirty checkout::the working tree is not the plain commit"; exit 1
+          fi
 
       - name: Build the source ZIP
         id: build
