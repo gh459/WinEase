@@ -150,6 +150,31 @@ if (Test-TweakEnabled 'DisableCloudContent' $true) {
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent" /v "DisableAccountBasedInSettings" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\PushToInstall" /v "DisablePushToInstall" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\MRT" /v "DontOfferThroughWUAU" /t REG_DWORD /d 1 /f > $null 2>&1
+    # WinUtil 26.10.07 (WPFTweaksEdgeDebloat): Edge's "make Edge your default browser" campaign.
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "DefaultBrowserSettingsCampaignEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
+    # Win11Debloat 2026.08.24 (Disable_Edge_Ads_And_Suggestions, Disable_Windows_Suggestions):
+    # Edge recommendations, spotlight, feedback, Acrobat and wallet promotions, and the
+    # "back up your PC" reminder toast.
+    foreach ($edgePolicy in 'DefaultBrowserSettingEnabled', 'ShowRecommendationsEnabled', 'SpotlightExperiencesAndRecommendationsEnabled', 'UserFeedbackAllowed', 'ShowAcrobatSubscriptionButton', 'WalletDonationEnabled') {
+        reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v $edgePolicy /t REG_DWORD /d 0 /f > $null 2>&1
+    }
+    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
+        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.BackupReminder" /v "Enabled" /t REG_DWORD /d 0 /f > $null 2>&1
+        # Debloat-Win11 v2.3.8: the "finish setting up your device" (SCOOBE) page and the
+        # Microsoft account notifications of Start and Settings.
+        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement" /v "ScoobeSystemSettingEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
+        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "Start_AccountNotifications" /t REG_DWORD /d 0 /f > $null 2>&1
+        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\SystemSettings\AccountNotifications" /v "EnableAccountNotifications" /t REG_DWORD /d 0 /f > $null 2>&1
+    }
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent" /v "DisableWindowsSpotlightOnDesktop" /t REG_DWORD /d 1 /f > $null 2>&1
+    # Bloatynosy 1.01.103: lock screen ads and Spotlight, Edge shopping, startup boost and first run.
+    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
+        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "RotatingLockScreenOverlayEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
+        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "RotatingLockScreenEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
+    }
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "EdgeShoppingAssistantEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "StartupBoostEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "HideFirstRunExperience" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\PolicyManager\current\device\Start" /v "ConfigureStartPins" /t REG_SZ /d "{\`"pinnedList\`": [{}]}" /f > $null 2>&1
 }
 
@@ -174,6 +199,26 @@ if (Test-TweakEnabled 'DisableTelemetryAndDiagnostics' $true) {
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" /v "MaxTelemetryAllowed" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\SQMClient\Windows" /v "CEIPEnable" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Device Metadata" /v "PreventDeviceMetadataFromNetwork" /t REG_DWORD /d 1 /f > $null 2>&1
+    # WinUtil 26.10.07 (WPFTweaksTelemetry): contact harvesting, the inking/typing privacy
+    # consent, app launch tracking and the PowerShell 7 telemetry opt-out.
+    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
+        reg.exe add "HKLM\$userHive\Software\Microsoft\InputPersonalization\TrainedDataStore" /v "HarvestContacts" /t REG_DWORD /d 0 /f > $null 2>&1
+        reg.exe add "HKLM\$userHive\Software\Microsoft\Personalization\Settings" /v "AcceptedPrivacyPolicy" /t REG_DWORD /d 0 /f > $null 2>&1
+        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "Start_TrackProgs" /t REG_DWORD /d 0 /f > $null 2>&1
+    }
+    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Environment" /v "POWERSHELL_TELEMETRY_OPTOUT" /t REG_SZ /d "1" /f > $null 2>&1
+    # Debloat-Win11 v2.3.8 (Edge.ps1): Edge diagnostic data and personalization reporting.
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "DiagnosticData" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "PersonalizationReportingEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
+    # Bloatynosy 1.01.103: tailored experiences (user policy), online speech recognition and
+    # Narrator's online services.
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\InputPersonalization" /v "AllowInputPersonalization" /t REG_DWORD /d 0 /f > $null 2>&1
+    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
+        reg.exe add "HKLM\$userHive\Software\Policies\Microsoft\Windows\CloudContent" /v "DisableTailoredExperiencesWithDiagnosticData" /t REG_DWORD /d 1 /f > $null 2>&1
+        reg.exe add "HKLM\$userHive\Software\Microsoft\Narrator\NoRoam" /v "OnlineServicesEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
+    }
+    # Revision Tool 2.14.1: the Sleep Study power diagnostics recorder.
+    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Power" /v "SleepStudyDisabled" /t REG_DWORD /d 1 /f > $null 2>&1
 }
 
 # Windows Error Reporting
@@ -190,6 +235,9 @@ if (Test-TweakEnabled 'DisableActivityHistory' $true) {
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\SettingSync" /v "DisableBackupRestore" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\SettingSync" /v "DisableSettingSync" /t REG_DWORD /d 2 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\SettingSync" /v "DisableSettingSyncUserOverride" /t REG_DWORD /d 1 /f > $null 2>&1
+    # Debloat-Win11 v2.3.8: the Windows Backup UI and its monitoring.
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsBackup" /v "DisableBackupUI" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\WindowsBackup" /v "DisableMonitoring" /t REG_DWORD /d 1 /f > $null 2>&1
 }
 
 # ============================================================================
@@ -215,6 +263,19 @@ if (Test-TweakEnabled 'DisableWindowsAI' $true) {
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "DisableRemoteAgentConnectors" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "AllowCopilotRuntime" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Notepad" /v "EnableAIFeatures" /t REG_DWORD /d 0 /f > $null 2>&1
+    # WinUtil 26.10.07 (WPFTweaksWindowsAI): the machine policy for Notepad's AI features
+    # and the "AI components" page of the Settings app.
+    reg.exe add "HKLM\zSOFTWARE\Policies\WindowsNotepad" /v "DisableAIFeatures" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "SettingsPageVisibility" /t REG_SZ /d "hide:aicomponents" /f > $null 2>&1
+    # Debloat-Win11 v2.3.8 (WindowsAiPolicies.psd1, SystemTweaks_Privacy): Recall export and
+    # data providers, Paint's image generation, and the AI actions of the clipboard.
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "AllowRecallExport" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\WindowsAI" /v "DisableRecallDataProviders" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\WindowsAI" /v "DisableRecallDataProviders" /t REG_DWORD /d 1 /f > $null 2>&1
+    foreach ($paintPolicy in 'DisableCocreator', 'DisableGenerativeFill', 'DisableImageCreator') {
+        reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint" /v $paintPolicy /t REG_DWORD /d 1 /f > $null 2>&1
+    }
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" /v "EnableSmartClipboard" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Paint" /v "EnableCocreator" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "RecallPin" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "RecallPin" /t REG_DWORD /d 0 /f > $null 2>&1
@@ -232,6 +293,15 @@ if (Test-TweakEnabled 'DisableCopilot' $true) {
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "HubsSidebarEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "CopilotPageContext" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "ShowCopilotButton" /t REG_DWORD /d 0 /f > $null 2>&1
+    # Debloat-Win11 v2.3.8: Copilot's page context in Edge and the policy that removes the
+    # Microsoft Copilot app.
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "CopilotCDPPageContext" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "RemoveMicrosoftCopilotApp" /t REG_DWORD /d 1 /f > $null 2>&1
+    # Bloatynosy 1.01.103 (WinRules.ini, "Disable Edge AI Features").
+    foreach ($edgePolicy in 'EdgeEntraCopilotPageContext', 'Microsoft365CopilotChatIconEnabled', 'EdgeHistoryAISearchEnabled', 'ComposeInlineEnabled', 'NewTabPageBingChatEnabled') {
+        reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v $edgePolicy /t REG_DWORD /d 0 /f > $null 2>&1
+    }
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "GenAILocalFoundationalModelSettings" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Teams" /v "DisableInstallation" /t REG_DWORD /d 1 /f > $null 2>&1
 }
 
@@ -269,6 +339,11 @@ if (Test-TweakEnabled 'DisableWebSearch' $true) {
     reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Search" /v "BingSearchEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\Explorer" /v "DisableSearchBoxSuggestions" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\Explorer" /v "DisableSearchBoxSuggestions" /t REG_DWORD /d 1 /f > $null 2>&1
+    # Win11Debloat 2026.08.24 (Disable_Search_Highlights, Disable_Search_History).
+    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
+        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\SearchSettings" /v "IsDynamicSearchBoxEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
+        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\SearchSettings" /v "IsDeviceSearchHistoryEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
+    }
 }
 
 if (Test-TweakEnabled 'HideSearchBox' $true) {
@@ -280,6 +355,8 @@ if (Test-TweakEnabled 'DisableWidgets' $true) {
     Write-Host "Disabling Windows 11 Widgets..." -ForegroundColor Green
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Dsh" /v "AllowNewsAndInterests" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Widgets" /v "AllowWidgets" /t REG_DWORD /d 0 /f > $null 2>&1
+    # Bloatynosy 1.01.103: the "News and interests" feeds policy.
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Feeds" /v "EnableFeeds" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "TaskbarDa" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "TaskbarDa" /t REG_DWORD /d 0 /f > $null 2>&1
 }
@@ -290,6 +367,13 @@ if (Test-TweakEnabled 'HideRecommendedSection' $true) {
     reg.exe add "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\Explorer" /v "HideRecommendedSection" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "Start_IrisRecommendations" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "Start_IrisRecommendations" /t REG_DWORD /d 0 /f > $null 2>&1
+    # Sophia Script 8.0.0 (RecentlyAddedStartApps, MostUsedStartApps, StartRecommendedSection):
+    # the recent / most used lists of the new Start menu and recent documents tracking.
+    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
+        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\Start" /v "ShowRecentList" /t REG_DWORD /d 0 /f > $null 2>&1
+        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\Start" /v "ShowFrequentList" /t REG_DWORD /d 0 /f > $null 2>&1
+        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "Start_TrackDocs" /t REG_DWORD /d 0 /f > $null 2>&1
+    }
 }
 
 # ============================================================================
@@ -321,6 +405,30 @@ if (Test-TweakEnabled 'DisableVBS' $false) {
 if (Test-TweakEnabled 'DisableWPBT' $false) {
     Write-Host "Blocking UEFI WPBT execution (OEM bloatware persistence prevention)..." -ForegroundColor Green
     reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager" /v "DisableWpbtExecution" /t REG_DWORD /d 1 /f > $null 2>&1
+}
+
+if (Test-TweakEnabled 'HardenSystemSecurity' $false) {
+    # Harden-Windows-Security (HotCakeX) HardenSystemSecurity-v1.0.97.0: the subset of its
+    # categories that is a plain registry value and can be written into the offline hives.
+    Write-Host "Applying offline security hardening (LSA, NTLM, anonymous access, AutoRun, logging)..." -ForegroundColor Green
+    # LSA protection (2 = enabled without the UEFI lock, so it can still be turned off)
+    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Lsa" /v "RunAsPPL" /t REG_DWORD /d 2 /f > $null 2>&1
+    # No clear-text credentials in LSASS memory
+    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\SecurityProviders\WDigest" /v "UseLogonCredential" /t REG_DWORD /d 0 /f > $null 2>&1
+    # NTLMv2 only, refuse LM and NTLM
+    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Lsa" /v "LmCompatibilityLevel" /t REG_DWORD /d 5 /f > $null 2>&1
+    # No anonymous enumeration of SAM accounts and shares
+    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Lsa" /v "RestrictAnonymous" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Lsa" /v "RestrictAnonymousSAM" /t REG_DWORD /d 1 /f > $null 2>&1
+    # Remote Assistance off
+    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Remote Assistance" /v "fAllowToGetHelp" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" /v "fAllowToGetHelp" /t REG_DWORD /d 0 /f > $null 2>&1
+    # AutoRun / AutoPlay off for every drive type
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "NoDriveTypeAutoRun" /t REG_DWORD /d 255 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "NoAutorun" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Explorer" /v "NoAutoplayfornonVolume" /t REG_DWORD /d 1 /f > $null 2>&1
+    # PowerShell script block logging (event 4104)
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging" /v "EnableScriptBlockLogging" /t REG_DWORD /d 1 /f > $null 2>&1
 }
 
 if (Test-TweakEnabled 'DisableBSODEmoticon' $false) {
@@ -490,6 +598,47 @@ if (Test-TweakEnabled 'TaskbarEndTask' $true) {
     reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings" /v "TaskbarEndTask" /t REG_DWORD /d 1 /f > $null 2>&1
 }
 
+# UI preferences seen in WinUtil / Win11Debloat / Bloatynosy / Debloat-Win11 (upstream sync
+# 2026-10). All of them are off by default; each one only writes the per-user hives.
+$uiPreferenceTweaks = @(
+    @{ On = (Test-TweakEnabled 'DisableSnapAssist' $false); Values = @(
+        @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced', 'SnapAssist', 'REG_DWORD', '0'),
+        @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced', 'EnableSnapAssistFlyout', 'REG_DWORD', '0'),
+        @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced', 'EnableSnapBar', 'REG_DWORD', '0')) }
+    @{ On = (Test-TweakEnabled 'DisableNotificationBanners' $false); Values = @(
+        @('Software\Microsoft\Windows\CurrentVersion\PushNotifications', 'ToastEnabled', 'REG_DWORD', '0')) }
+    @{ On = (Test-TweakEnabled 'HideExplorerHomeGallery' $false); Values = @(
+        @('Software\Classes\CLSID\{f874310e-b6b7-47dc-bc84-b9e6b38f5903}', 'System.IsPinnedToNameSpaceTree', 'REG_DWORD', '0'),
+        @('Software\Classes\CLSID\{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}', 'System.IsPinnedToNameSpaceTree', 'REG_DWORD', '0')) }
+    @{ On = (Test-TweakEnabled 'HideAltTabEdgeTabs' $false); Values = @(
+        @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced', 'MultiTaskingAltTabFilter', 'REG_DWORD', '3')) }
+    @{ On = (Test-TweakEnabled 'HideTaskViewButton' $false); Values = @(
+        @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced', 'ShowTaskViewButton', 'REG_DWORD', '0')) }
+    @{ On = (Test-TweakEnabled 'TaskbarNeverCombine' $false); Values = @(
+        @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced', 'TaskbarGlomLevel', 'REG_DWORD', '2'),
+        @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced', 'MMTaskbarGlomLevel', 'REG_DWORD', '2')) }
+    @{ On = (Test-TweakEnabled 'DisableGameMode' $false); Values = @(
+        @('Software\Microsoft\GameBar', 'AllowAutoGameMode', 'REG_DWORD', '0'),
+        @('Software\Microsoft\GameBar', 'AutoGameModeEnabled', 'REG_DWORD', '0')) }
+    @{ On = (Test-TweakEnabled 'ShowBatteryPercentage' $false); Values = @(
+        @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced', 'IsBatteryPercentageEnabled', 'REG_DWORD', '1')) }
+    @{ On = (Test-TweakEnabled 'AlwaysShowScrollbars' $false); Values = @(
+        @('Control Panel\Accessibility', 'DynamicScrollbars', 'REG_DWORD', '0')) }
+    @{ On = (Test-TweakEnabled 'HideOneDriveNavPane' $false); Values = @(
+        @('Software\Classes\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}', 'System.IsPinnedToNameSpaceTree', 'REG_DWORD', '0')) }
+)
+foreach ($uiTweak in $uiPreferenceTweaks) {
+    if (-not $uiTweak.On) { continue }
+    foreach ($v in $uiTweak.Values) {
+        foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
+            reg.exe add "HKLM\$userHive\$($v[0])" /v $v[1] /t $v[2] /d $v[3] /f > $null 2>&1
+        }
+    }
+}
+if (Test-TweakEnabled 'DisableLogonBlur' $false) {
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" /v "DisableAcrylicBackgroundOnLogon" /t REG_DWORD /d 1 /f > $null 2>&1
+}
+
 if (Test-TweakEnabled 'TaskbarAlignLeft' $false) {
     reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "TaskbarAl" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "TaskbarAl" /t REG_DWORD /d 0 /f > $null 2>&1
@@ -580,6 +729,7 @@ $serviceConfigs = [ordered]@{
     "DialogBlockingService"                    = 4
     "DiagTrack"                                = 4
     "diagnosticshub.standardcollector.service" = 4
+    "diagsvc"                                  = 4
     "dmwappushservice"                         = 4
     "DoSvc"                                    = 4
     "DPS"                                      = 4
@@ -624,6 +774,7 @@ $serviceConfigs = [ordered]@{
     "WMPNetworkSvc"                            = 4
     "WpcMonSvc"                                = 4
     "WSAIFabricSvc"                            = 4
+    "IsoEnvBroker"                             = 4
     "CDPSvc"                                   = 4
     "CDPUserSvc"                               = 4
     "WSearch"                                  = $(if ($keepSearchIndex -or -not (Test-TweakEnabled 'DisableWindowsSearchIndexing' $true)) { 2 } else { 4 })
@@ -648,6 +799,12 @@ if ([bool]$script:activeTweakGroups['ServiceTrim']) {
     foreach ($svc in $serviceConfigs.GetEnumerator()) {
         reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\$($svc.Key)" /f /v "Start" /t REG_DWORD /d $($svc.Value) > $null 2>&1
     }
+}
+
+# Revision Tool 2.14.1 (Superfetch): ReadyBoost caches go together with SysMain.
+if (Test-TweakEnabled 'DisableSuperfetch' $true) {
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\EMDMgmt" /v "GroupPolicyDisallowCaches" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\EMDMgmt" /v "AllowNewCachesByDefault" /t REG_DWORD /d 0 /f > $null 2>&1
 }
 
 # The services of the components the Advanced Debloat tab removes. These used to be
@@ -784,6 +941,25 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
     reg.exe delete "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v "SecurityHealth" /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.SecHealthUI_8wekyb3d8bbwe" /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.Windows.SecHealthUI_cw5n1h2txyewy" /f > $null 2>&1
+
+    # Windows Defender Remover release13-rev1: the Microsoft Security core drivers of 24H2+
+    # (disabled, not deleted: they are boot-start filters), the Defender ETW autologgers,
+    # the Defender maintenance entries of the Ubpm scheduler, and the Settings page.
+    foreach ($drv in @('MsSecCore', 'MsSecFlt', 'MsSecWfp')) {
+        $null = & reg.exe query "HKLM\zSYSTEM\ControlSet001\Services\$drv" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\$drv" /v "Start" /t REG_DWORD /d 4 /f > $null 2>&1
+        }
+    }
+    reg.exe delete "HKLM\zSYSTEM\ControlSet001\Control\WMI\Autologger\DefenderApiLogger" /f > $null 2>&1
+    reg.exe delete "HKLM\zSYSTEM\ControlSet001\Control\WMI\Autologger\DefenderAuditLogger" /f > $null 2>&1
+    reg.exe delete "HKLM\zSYSTEM\ControlSet001\Control\Ubpm" /v "CriticalMaintenance_DefenderCleanup" /f > $null 2>&1
+    reg.exe delete "HKLM\zSYSTEM\ControlSet001\Control\Ubpm" /v "CriticalMaintenance_DefenderVerification" /f > $null 2>&1
+    # SettingsPageVisibility is a single value: keep the AI page hidden as well when
+    # DisableWindowsAI wrote it above.
+    $hiddenPages = @('windowsdefender')
+    if (Test-TweakEnabled 'DisableWindowsAI' $true) { $hiddenPages = @('aicomponents') + $hiddenPages }
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "SettingsPageVisibility" /t REG_SZ /d ("hide:" + ($hiddenPages -join ';')) /f > $null 2>&1
 }
 
 # ============================================================================
