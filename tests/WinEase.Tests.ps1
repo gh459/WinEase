@@ -1055,6 +1055,131 @@ Describe "WinEase helpers - Path and Directory Safety Guards" {
     }
 }
 
+Describe "WinEase helpers - Test-CanSafelyDeleteVhdx" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+    }
+
+    It "returns false when script:BuildSucceeded is false" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $false
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\disk.vhdx" -VhdxDetached $true | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when VhdxDetached is false" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\disk.vhdx" -VhdxDetached $false | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when VhdxPath is null, empty, or whitespace" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Test-CanSafelyDeleteVhdx -VhdxPath $null -VhdxDetached $true | Should Be $false
+            Test-CanSafelyDeleteVhdx -VhdxPath "" -VhdxDetached $true | Should Be $false
+            Test-CanSafelyDeleteVhdx -VhdxPath "   " -VhdxDetached $true | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when VhdxPath does not exist" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $false }
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\nonexistent.vhdx" -VhdxDetached $true | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when VhdxPath fails safety check (Test-IsSafePathToDelete returns false)" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $false }
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Windows\disk.vhdx" -VhdxDetached $true | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when ConvertTo-WinEaseNormalizedPath throws" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { throw "Invalid path format" }
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\disk.vhdx" -VhdxDetached $true | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when VhdxPath is outside ExpectedBaseDir" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { param($Path) return $Path }
+            Mock Test-WinEasePathWithin { return $false }
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\OtherDir\disk.vhdx" -VhdxDetached $true -ExpectedBaseDir "C:\Workspace" | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when VhdxPath is preserved in PreservedDirs" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { param($Path) return $Path }
+            Mock Test-WinEasePathWithin { return $true }
+            Mock Test-IsPathPreserved { return $true }
+            $preserved = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            [void]$preserved.Add("C:\Workspace\disk.vhdx")
+
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\disk.vhdx" -VhdxDetached $true -ExpectedBaseDir "C:\Workspace" -PreservedDirs $preserved | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns true when all safety conditions are met" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { param($Path) return $Path }
+            Mock Test-WinEasePathWithin { return $true }
+            Mock Test-IsPathPreserved { return $false }
+
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\disk.vhdx" -VhdxDetached $true -ExpectedBaseDir "C:\Workspace" | Should Be $true
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\disk.vhdx" -VhdxDetached $true | Should Be $true
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+}
+
 Describe "WinEase helpers - Get-WinEaseRelativePath" {
     BeforeAll {
         $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
