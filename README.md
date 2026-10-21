@@ -458,6 +458,26 @@ This working copy carries the following changes on top of the upstream fork:
 - **PC migration & backup engine (M3)**: `tools/migrator/migration-rules.psd1` (15 game + 16 app rules) + `tools/migrator/WinEaseMigration.ps1` (13 functions). Custom file/folder backup preserving directory structure. `tools/migrator/WinEase-Migrator.ps1` standalone CLI/GUI wizard.
 - **Extensibility guide (M4)**: `docs/EXTENSIBILITY_GUIDE.md` (English) and `docs/EXTENSIBILITY_GUIDE.ja.md` (Japanese).
 
+## 🔒 Development & Release Automation
+
+| Workflow | Runs on | What it does |
+|---|---|---|
+| `ci.yml` | push / PR to `main` | `-TestSelf` (PowerShell 5.1 + 7), Pester (`tests\WinEase.Tests.ps1`, `tests\WinEase.Regression.Tests.ps1`), dry-runs of extreme / balanced / none / vm, Rust engine build |
+| `lint.yml` | push / PR to `main` | PSScriptAnalyzer (errors fail) |
+| `workflow-audit.yml` | changes under `.github/` | actionlint + zizmor security audit of the workflows |
+| `release.yml` | `v*` tag | runs all of the above on the tagged commit, verifies the tag did not move, builds and checks the ZIP, publishes it with a `.sha256` file and a build provenance attestation |
+| `claude-issue-agent.yml` | issue assigned / `@claude` from a collaborator | implements the request on a branch and opens a **draft** PR |
+| `claude-pr-review.yml` | PR from a branch of this repository | **read-only, advisory** AI review comments; never approves or merges |
+
+Verify a downloaded release: `sha256sum -c WinEase-<tag>.zip.sha256` (or `Get-FileHash`) and
+`gh attestation verify WinEase-<tag>.zip -R gh459/WinEase`.
+
+Dependency updates: Dependabot opens monthly PRs for GitHub Actions (SHA-pinned), Cargo
+(`tools/winease-physical-debloat`) and NuGet (`gui/winui`). Each one goes through the full CI and
+a human review; nothing is merged automatically. Security alerts: enable Dependabot alerts in
+the repository settings and handle them the same way. Audit, risks and the settings that must be
+made on GitHub: [`docs/dev/github-automation-audit.md`](docs/dev/github-automation-audit.md).
+
 ---
 
 ## 📁 Repository Structure

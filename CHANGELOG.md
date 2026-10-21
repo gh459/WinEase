@@ -3,6 +3,32 @@
 All notable changes to this fork are documented here. Versions follow the upstream
 WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
+## Unreleased - GitHub automation hardening (2026-10-21)
+
+Audit and details: `docs/dev/github-automation-audit.md`.
+
+### Fixed
+- **Preset and profile tweaks were ignored:** `Apply-ProfileSettings` collected the tweak
+  layers but never wrote them back, so `-Profile` / `-LoadProfile` built with the schema
+  default of every tweak (and legacy tweak names in profiles had no effect). They apply again.
+- **Profiles with quoted booleans are refused:** `"RemoveDefender": "false"` used to be read as
+  true. A value of the wrong type in a component or `TweakSettings` now stops the load.
+- `config/WinEase.config.schema.json` accepts the `Settings` block and `DebloatEngineSelection`
+  that `-SaveProfile` writes; four defaults now match `config/schema.psd1`.
+
+### Added
+- `tests/WinEase.Regression.Tests.ps1`: presets, CLI/profile precedence, `-NonInteractive`,
+  legacy profiles, unknown keys, invalid files, save/load round trip, `-ComparePreset`, JSON
+  schema, delete/restore safety.
+- Workflow security audit (actionlint + zizmor), read-only AI PR review, Rust CI job,
+  Dependabot for Cargo and NuGet.
+- Release: tests on the tagged commit, tag/commit check, ZIP verification, SHA-256 asset,
+  build provenance attestation.
+
+### Changed
+- Claude issue agent only starts for the owner, members and collaborators; permissions are
+  per job; all actions are pinned to commit SHAs.
+
 ## Unreleased (local fork, 2026-10-21) - upstream sync 2026-10
 
 The tweaks added by the latest releases of the tools credited in the README were
