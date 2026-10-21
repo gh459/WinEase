@@ -208,10 +208,11 @@ $scripts = @(
 					$global:LASTEXITCODE = 0;
 					$prevEap = $ErrorActionPreference;
 					$ErrorActionPreference = 'Continue';
+					$escapedScriptPath = $scriptPath -replace "'", "''";
 					try {
 						$output = switch ($ext) {
 							'.ps1' {
-								& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -NoProfile -NonInteractive -Command "& { `$ErrorActionPreference = 'Stop'; & '$scriptPath'; if (`$null -ne `$LASTEXITCODE -and `$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE } }" 2>&1
+								& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -NoProfile -NonInteractive -Command "& { `$ErrorActionPreference = 'Stop'; & '$escapedScriptPath'; if (`$null -ne `$LASTEXITCODE -and `$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE } }" 2>&1
 							}
 							'.bat' {
 								& "$env:SystemRoot\System32\cmd.exe" /c "`"$scriptPath`"" 2>&1

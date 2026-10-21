@@ -1356,6 +1356,7 @@ Describe "WinEase setup scripts - Custom Scripts Logging" {
         $content | Should Match "FAILED"
         $content | Should Match "SUCCESS"
         $content | Should Match "LASTEXITCODE = 0"
+        $content.Contains("escapedScriptPath = `$scriptPath -replace") | Should Be $true
     }
 
     It "scripts/UserOnce.ps1 contains execution logging and redaction" {
@@ -1364,6 +1365,7 @@ Describe "WinEase setup scripts - Custom Scripts Logging" {
         $content | Should Match "UserOnce-custom\.log"
         $content | Should Match "Redact-WinEaseUserSecret"
         $content | Should Match "Duration:"
+        $content.Contains("escapedScriptPath = `$scriptPath -replace") | Should Be $true
     }
 }
 

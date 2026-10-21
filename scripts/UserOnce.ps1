@@ -127,9 +127,10 @@
         $global:LASTEXITCODE = 0;
         $prevEap = $ErrorActionPreference;
         $ErrorActionPreference = 'Continue';
+        $escapedScriptPath = $scriptPath -replace "'", "''";
         try {
           $output = switch ($ext) {
-            '.ps1' { & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -NoProfile -NonInteractive -Command "& { `$ErrorActionPreference = 'Stop'; & '$scriptPath'; if (`$null -ne `$LASTEXITCODE -and `$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE } }" 2>&1 }
+            '.ps1' { & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -NoProfile -NonInteractive -Command "& { `$ErrorActionPreference = 'Stop'; & '$escapedScriptPath'; if (`$null -ne `$LASTEXITCODE -and `$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE } }" 2>&1 }
             '.reg' { & "$env:SystemRoot\System32\reg.exe" import "$scriptPath" 2>&1 }
             '.cmd' { & "$env:SystemRoot\System32\cmd.exe" /c "`"$scriptPath`"" 2>&1 }
             '.bat' { & "$env:SystemRoot\System32\cmd.exe" /c "`"$scriptPath`"" 2>&1 }
