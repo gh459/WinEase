@@ -1733,7 +1733,7 @@ $script:WinSxsSavedMB  = if ($script:WinSxsBeforeMB -gt 0 -and $script:WinSxsAft
 
 # M2: User extension actions (SetupScripts)
 if (Get-Command -Name Invoke-WinEaseUserExtensionActions -ErrorAction SilentlyContinue) {
-    try { Invoke-WinEaseUserExtensionActions -PhaseType SetupScripts -ScratchDir $scratchDir -DryRun:$DryRun -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    try { Invoke-WinEaseUserExtensionActions -PhaseType SetupScripts -ScratchDir $scratchDir -DryRun:$DryRun -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } | Out-Null } catch { Write-Warning "User extension actions failed (SetupScripts): $($_.Exception.Message)" }
 }
 # M2: Custom scripts (OfflineImage stage) - runs after the registry/unattend work, before FirstLogon/UserOnce staging
 if (Get-Command -Name Invoke-WinEaseCustomScriptsStage -ErrorAction SilentlyContinue) {

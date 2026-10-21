@@ -2418,6 +2418,32 @@ Describe "User Extensibility Engine (lib/WinEaseExtensions.ps1)" {
         $m.Sha256 | Should Not Be ''
         Remove-Item $tmp -Force -ErrorAction SilentlyContinue
     }
+    It "Invoke-WinEaseUserExtensionActions logs warning on action failure" {
+        $oldDefs = $script:UserTweakDefs
+        try {
+            $script:UserTweakDefs = [ordered]@{
+                'User_TestFail' = @{
+                    Key = 'User_TestFail'
+                    Actions = @(
+                        @{
+                            Type = 'Registry'
+                            Hive = 'NON_EXISTENT_HIVE'
+                            Path = 'InvalidPath\SubKey'
+                            Name = 'TestValue'
+                            Value = '1'
+                        }
+                    )
+                }
+            }
+            $warnings = @()
+            $res = Invoke-WinEaseUserExtensionActions -PhaseType Registry -TweakSettings @{ 'User_TestFail' = $true } -WarningVariable warnings
+            $res.FailedCount | Should Be 1
+            $warnings.Count | Should BeGreaterThan 0
+            $warnings[0] | Should Match "User extension action 'Registry' failed for tweak 'User_TestFail'"
+        } finally {
+            $script:UserTweakDefs = $oldDefs
+        }
+    }
 }
 
 # --- PC Migration & Backup Engine tests (M3) ---

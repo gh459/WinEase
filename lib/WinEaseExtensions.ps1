@@ -175,7 +175,7 @@ function Invoke-WinEaseUserExtensionActions {
                 $failed++
                 $r.Status = 'Failed'
                 $r.Error = $_.Exception.Message
-                Write-Verbose "Ignored: $($_.Exception.Message)"
+                Write-Warning "User extension action '$actType' failed for tweak '$($ut.Key)': $($_.Exception.Message)"
             }
             $results += $r
         }
