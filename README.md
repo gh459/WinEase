@@ -462,7 +462,7 @@ This working copy carries the following changes on top of the upstream fork:
 - **GUI split out**: the WinForms GUI moved to `gui/WinEaseGui.ps1` with shared control helpers (about 1,200 lines out of `WinEasebuilder.ps1`).
 - **Safer AppX folder cleanup**: no more recursive `takeown /R` / `icacls /T`; junctions are removed as links so deletion never follows them out of the image.
 - **Benchmark tooling**: `tools/Measure-WinEaseGuestBaseline.ps1` and `tools/Compare-WinEaseBenchmarks.ps1` measure and compare installed-system footprint, idle load and boot time.
-- **Code hygiene**: `PSScriptAnalyzerSettings.psd1` added; the codebase reports zero Error/Warning findings and the Pester suite (64 tests) enforces it.
+- **Code hygiene**: `PSScriptAnalyzerSettings.psd1` added; the codebase reports zero Error/Warning findings and the Pester suite (about 390 tests as of 2026-10-21) enforces it.
 - **Toggle-state loading fixed**: GUI initialization called `ContainsKey` on `[ordered]@{}` (not implemented in Windows PowerShell 5.1), which logged 122 method-not-found errors per launch and left the per-tweak values saved in profiles unapplied; the GUI loader and Phase 10's `Test-TweakEnabled` now use `Contains`.
 - **Build verification (2026-10-19)**: a full GUI-driven run completed the pipeline with "Build succeeded and safety checks passed" and produced `WinEase.iso` (7,888,314,368 bytes).
 - **Dependency & impact checker (M1)**: `config/dependencies.psd1` catalog (174 entries) with Conflicts/Impacts/Unknowns detection. GUI "Check Dependencies" button, `-StrictDependencyCheck` CLI switch, HTML report section.
@@ -526,10 +526,12 @@ WinEase-main/
 ├── docs/
 │   ├── EXTENSIBILITY_GUIDE.md    # Extensibility guide (English): quick start + reference
 │   ├── EXTENSIBILITY_GUIDE.ja.md # Same guide in Japanese
+│   ├── SECURITY_OPTIONS.md       # Impact of each security option (Defender, Update, ...)
 │   └── dev/SESSION_BRIEFS.md  # Work briefs used for the S1-S12 fix sessions
 ├── tests/
 │   └── WinEase.Tests.ps1       # Pester test suite
-├── .github/workflows/ci.yml   # CI workflow
+├── .github/workflows/         # ci.yml (tests), lint.yml (PSScriptAnalyzer), release.yml (source zip on v* tags), claude-issue-agent.yml
+├── .gitattributes             # export-ignore: keeps .git*/.github/.jules out of release archives
 ├── autounattend.xml           # Unattended setup template (scripts injected at build time)
 ├── WinEase-GUI.bat             # GUI launcher
 ├── oscdimg.exe                # Bundled ISO mastering tool
