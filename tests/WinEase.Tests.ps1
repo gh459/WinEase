@@ -3062,7 +3062,7 @@ Describe "S10 - GUI and migrator cleanup (shared parts)" {
             $ast = [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$null, [ref]$null)
             $spCalls = @($ast.FindAll({ param($n)
                 $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Start-Process' -and
-                $n.Extent.Text -like '*WinEase-Migrator.ps1*'
+                $n.Extent.Text -like '*powershell.exe*'
             }, $true))
             $spCalls.Count | Should BeGreaterThan 0
             foreach ($call in $spCalls) {
