@@ -1768,7 +1768,7 @@ function New-WinEaseMigrationActionsGroup {
             # The custom paths of the backup are only restored to the locations that are
             # listed in the custom path box: the manifest alone never decides where a
             # file is written to.
-            $allowed = @($g.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            $allowed = @(($g.CustomPaths.Text -split "`n").ForEach({ $_.Trim() }).Where({ $_ }))
             if ($allowed.Count -gt 0) { $ra['AllowedCustomPaths'] = $allowed }
             if ($retry) { $ra['RetryFailedOnly'] = $true }
             $o = Invoke-WinEaseGuiMigrationJob -Button $btn -Form $f -RepoRoot $script:WinEaseGuiRepoRoot -Arguments $ra -Script 'param($a) Start-WinEaseMigrationRestore @a'
@@ -1794,7 +1794,7 @@ function New-WinEaseMigrationCustomPathsGroup {
         $btn = $this
         $f = $btn.FindForm()
         $g = $f.Tag
-        $paths = @($g.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        $paths = @(($g.CustomPaths.Text -split "`n").ForEach({ $_.Trim() }).Where({ $_ }))
         if ($paths.Count -eq 0) {
             Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Mig.Custom.NoPaths') -Title (Get-WinEaseUiString 'Mig.Button.BackupCustom') -Kind Warning
             return
@@ -1815,7 +1815,7 @@ function New-WinEaseMigrationCustomPathsGroup {
         $g = $f.Tag
         # The custom paths are restored to the locations that are listed here: the
         # manifest alone never decides where a file is written to.
-        $paths = @($g.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        $paths = @(($g.CustomPaths.Text -split "`n").ForEach({ $_.Trim() }).Where({ $_ }))
         if ($paths.Count -eq 0) {
             Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Mig.Custom.NoPaths') -Title (Get-WinEaseUiString 'Mig.Button.RestoreCustom') -Kind Warning
             return
