@@ -1713,7 +1713,8 @@ function New-WinEaseMigrationActionsGroup {
                 $root = Get-WinEaseGuiMigrationRoot -Gui $g
                 # -BackupRoot exists in every WinEase-Migrator.ps1 version (it is a -PackagePath alias after S6);
                 # the wizard opens in the language of this window
-                Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$migratorPath`" -GUI -BackupRoot `"$root`" -UiLanguage $($script:WinEaseUiLanguage)" -WindowStyle Normal
+                $migratorArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $migratorPath, '-GUI', '-BackupRoot', $root, '-UiLanguage', $script:WinEaseUiLanguage)
+                Start-Process -FilePath "powershell.exe" -ArgumentList $migratorArgs -WindowStyle Normal
             } catch {
                 Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'Mig.Wizard.Title') -Kind Error
             }

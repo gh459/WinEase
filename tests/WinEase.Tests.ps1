@@ -3057,6 +3057,26 @@ Describe "S10 - GUI and migrator cleanup (shared parts)" {
     $script:S10MigText = [System.IO.File]::ReadAllText($script:S10Mig)
     $script:S10GuiAst = [System.Management.Automation.Language.Parser]::ParseFile($script:S10Gui, [ref]$null, [ref]$null)
 
+    It "GUI and WinUI host launch the migration wizard using array argument lists" {
+        foreach ($file in @($script:S10Gui, (Join-Path $script:RepoRoot "gui\WinEaseWinUiHost.ps1"))) {
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$null, [ref]$null)
+            $spCalls = @($ast.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Start-Process' -and
+                $n.Extent.Text -like '*WinEase-Migrator.ps1*'
+            }, $true))
+            $spCalls.Count | Should BeGreaterThan 0
+            foreach ($call in $spCalls) {
+                $argListParam = $call.CommandElements | Where-Object {
+                    $_ -is [System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -eq 'ArgumentList'
+                }
+                $argListParam | Should Not BeNullOrEmpty
+                $paramIdx = [array]::IndexOf(@($call.CommandElements), $argListParam)
+                $argExpr = $call.CommandElements[$paramIdx + 1]
+                ($argExpr -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) | Should Be $false
+            }
+        }
+    }
+
     It "colours are defined once: FromArgb only appears in the colour table" {
         ([regex]::Matches($script:S10GuiText, 'FromArgb')).Count | Should Be 14
         ([regex]::Matches($script:S10MigText, 'FromArgb')).Count | Should Be 0
