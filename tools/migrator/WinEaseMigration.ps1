@@ -1,9 +1,17 @@
-﻿# WinEaseMigration.ps1 - PC migration / backup / restore engine for WinEase
+# WinEaseMigration.ps1 - PC migration / backup / restore engine for WinEase
 # Dot-sourced by tools/migrator/WinEase-Migrator.ps1 (and the GUI migration tab) and by the test suite.
 # WinEasebuilder.ps1 does NOT load this file. Depends on Test-WinEasePathWithin from
 # WinEasehelpers.ps1, so the caller must dot-source WinEasehelpers.ps1 first.
 
-# 1. Expand-WinEaseMigrationPath
+# The profile folders of Windows. A file of one of them is restored into that folder
+# (the backup stores it as <BackupRoot>\<Category>\<relative path>), so
+# Documents\report.txt does not end up next to the profile root.
+$script:WinEaseStandardProfileFolders = @(
+    'Desktop', 'Documents', 'Downloads', 'Favorites', 'Links', 'Music', 'Pictures', 'Saved Games',
+    'Searches', 'Contacts', 'Videos', '3D Objects', 'OneDrive'
+)
+
+# 3.1 Expand-WinEaseMigrationPath
 function Expand-WinEaseMigrationPath {
     [CmdletBinding()]
     [OutputType([string])]
@@ -14,6 +22,22 @@ function Expand-WinEaseMigrationPath {
     $expanded = [Environment]::ExpandEnvironmentVariables($RawPath)
     try { $expanded = [System.IO.Path]::GetFullPath($expanded) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     return $expanded
+}
+
+# A short, stable prefix of a path. It keeps two files with the same name apart in the
+# backup, so one of them cannot overwrite the other.
+function Get-WinEasePathHash8 {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Path.ToLowerInvariant())
+        return ([System.BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '')).Substring(0, 8).ToLowerInvariant()
+    } finally { $sha.Dispose() }
 }
 
 # 2. Get-WinEaseMigrationRules
@@ -108,8 +132,9 @@ function Test-WinEaseSecretPath {
 function Export-WinEaseAppInventory {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$OutputPath,
+        # An empty path means "do not write the inventory" (a dry run must not create
+        # a directory or a file on disk).
+        [string]$OutputPath = '',
         [switch]$OfflineTestMode,
         [object[]]$MockRegistryEntries
     )
@@ -255,7 +280,13 @@ function Restore-WinEaseApps {
     if (-not (Test-Path -LiteralPath $InventoryPath)) { return [PSCustomObject]@{ Installed = $installed; Failed = $failed; ManualGuidance = $manual } }
     try {
         $data = Get-Content -LiteralPath $InventoryPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    } catch { Write-Verbose "Ignored: $($_.Exception.Message)"; return [PSCustomObject]@{ Installed = $installed; Failed = $failed; ManualGuidance = $manual } }
+    } catch {
+        # An inventory that cannot be read is a failed restore: the apps are unknown,
+        # so nothing is installed and the task must not claim success.
+        $failed += [PSCustomObject]@{ App = [string]$InventoryPath; Error = "The app inventory could not be read: $($_.Exception.Message)" }
+        Write-Verbose "Ignored: $($_.Exception.Message)"
+        return [PSCustomObject]@{ Installed = $installed; Failed = $failed; ManualGuidance = $manual }
+    }
     $apps = $data.Apps
     if ($SelectedAppNames) { $apps = $apps | Where-Object { $SelectedAppNames -contains $_.Name } }
     foreach ($a in $apps) {
@@ -263,9 +294,19 @@ function Restore-WinEaseApps {
             if ($DryRun) { $installed += $a; continue }
             try {
                 & winget install --id $a.PackageIdentifier -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
-                $installed += $a
+                # winget reports a failure through its exit code, not through an
+                # exception, so the code is checked before the app counts as installed
+                $wingetExit = $LASTEXITCODE
+                if ($null -eq $wingetExit) { $wingetExit = 0 }
+                if ($wingetExit -eq 0) {
+                    $installed += $a
+                } else {
+                    # The report and the log read the name of the app, so the entry keeps
+                    # the field names they use.
+                    $failed += [PSCustomObject]@{ Id = [string]$a.PackageIdentifier; Name = [string]$a.Name; App = [string]$a.Name; Error = "winget exited with code $wingetExit" }
+                }
             } catch {
-                $failed += [PSCustomObject]@{ App = $a.Name; Error = $_.Exception.Message }
+                $failed += [PSCustomObject]@{ Id = [string]$a.PackageIdentifier; Name = [string]$a.Name; App = [string]$a.Name; Error = $_.Exception.Message }
                 Write-Verbose "Ignored: $($_.Exception.Message)"
             }
         } else {
@@ -385,7 +426,12 @@ function Backup-WinEaseUserData {
         }
         $catRoot = $catCheck.Path
         try {
-            $items = Get-ChildItem -LiteralPath $srcPath -Recurse -File -ErrorAction SilentlyContinue
+            $items = @(Get-ChildItem -LiteralPath $srcPath -Recurse -File -ErrorAction SilentlyContinue -ErrorVariable enumErrors)
+            # A folder that cannot be read completely is reported: a silent partial
+            # backup looks like a complete one.
+            foreach ($enumErr in @($enumErrors)) {
+                $failed += [PSCustomObject]@{ Path = $srcPath; Error = "The folder could not be read completely: $($enumErr.Exception.Message)" }
+            }
         } catch { $items = @() }
         foreach ($it in $items) {
             $rel = Get-WinEaseRelativePath -BasePath $srcPath -FullName $it.FullName
@@ -412,9 +458,20 @@ function Backup-WinEaseUserData {
                 Copy-Item -LiteralPath $it.FullName -Destination $destPath -Force
                 $copied++
                 $totalBytes += $it.Length
+                # The hash is part of the manifest: a file whose hash cannot be computed
+                # is a failed file, not a backed up file with an empty hash.
                 $hash = ''
-                if ($VerifySha256) { try { $hash = (Get-FileHash -LiteralPath $destPath -Algorithm SHA256).Hash } catch { Write-Verbose "Ignored: $($_.Exception.Message)" } }
-                $manifest += [PSCustomObject]@{ RelativePath = $rel; Category = $cat; SizeBytes = $it.Length; Sha256 = $hash; LastWriteTimeUtc = $it.LastWriteTimeUtc.ToString('o') }
+                if ($VerifySha256) {
+                    try {
+                        $hash = (Get-FileHash -LiteralPath $destPath -Algorithm SHA256 -ErrorAction Stop).Hash
+                        if ([string]::IsNullOrWhiteSpace($hash)) { throw 'the hash is empty' }
+                    } catch {
+                        $failed += [PSCustomObject]@{ Path = $it.FullName; Error = "The SHA256 could not be computed: $($_.Exception.Message)" }
+                        Write-Verbose "Ignored: $($_.Exception.Message)"
+                        continue
+                    }
+                }
+                $manifest += [PSCustomObject]@{ RelativePath = $rel; Category = $cat; SizeBytes = $it.Length; Sha256 = $hash; LastWriteTimeUtc = $it.LastWriteTimeUtc.ToString('o'); SourcePath = $srcPath }
             } catch {
                 $failed += [PSCustomObject]@{ Path = $it.FullName; Error = $_.Exception.Message }
                 Write-Verbose "Ignored: $($_.Exception.Message)"
@@ -428,7 +485,12 @@ function Backup-WinEaseUserData {
             $manifestPath = Join-Path -Path $BackupRoot -ChildPath 'migration-manifest.json'
             $manifestObj = [PSCustomObject]@{ Entries = $manifest; Created = (Get-Date).ToString('o') }
             $manifestObj | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
-        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        } catch {
+            # A manifest that cannot be written makes the backup unusable: the restore
+            # would not know what to restore.
+            $failed += [PSCustomObject]@{ Path = (Join-Path -Path $BackupRoot -ChildPath 'migration-manifest.json'); Error = "The manifest could not be written: $($_.Exception.Message)" }
+            Write-Verbose "Ignored: $($_.Exception.Message)"
+        }
     }
 
     return [PSCustomObject]@{ Success = ($failed.Count -eq 0); CopiedFiles = $copied; SkippedFiles = $skipped; FailedFiles = $failed; TotalBytes = $totalBytes; ManifestEntries = $manifest }
@@ -444,7 +506,8 @@ function Restore-WinEaseUserData {
         [string]$ConflictPolicy = 'BackupExisting',
         [switch]$VerifyHashBeforeRestore,
         [switch]$DryRun,
-        [string[]]$Categories
+        [string[]]$Categories,
+        [hashtable]$FolderMap
     )
     if (-not $PSBoundParameters.ContainsKey('VerifyHashBeforeRestore')) { $VerifyHashBeforeRestore = $true }
     $restored = 0
@@ -453,7 +516,19 @@ function Restore-WinEaseUserData {
     $manifestPath = Join-Path -Path $BackupRoot -ChildPath 'migration-manifest.json'
     $entries = @()
     if (Test-Path -LiteralPath $manifestPath) {
-        try { $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json; $entries = $m.Entries } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        try {
+            $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $entries = $m.Entries
+        } catch {
+            # A manifest that cannot be read is a failed restore: without it nothing is
+            # known about the files, and a silent "nothing to do" looks like a success.
+            $failed += [PSCustomObject]@{ Path = $manifestPath; Error = "The manifest could not be read: $($_.Exception.Message)" }
+            Write-Verbose "Ignored: $($_.Exception.Message)"
+        }
+    } else {
+        # Without the manifest there is nothing that could be restored: the backup is
+        # incomplete, so the restore fails instead of reporting success.
+        $failed += [PSCustomObject]@{ Path = $manifestPath; Error = 'Manifest file missing' }
     }
     # Custom paths have their own restore (Restore-WinEaseCustomPaths); an optional category filter narrows the rest.
     # A manifest without entries must not produce an empty entry: an empty relative path
@@ -486,16 +561,50 @@ function Restore-WinEaseUserData {
             if ($fallback.IsSafe -and (Test-Path -LiteralPath $fallback.Path)) { $srcPath = $fallback.Path }
         }
         if (-not (Test-Path -LiteralPath $srcPath)) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Backup file missing' }; continue }
-        # verify hash
-        if ($VerifyHashBeforeRestore -and $entry.Sha256) {
+        # verify hash: without a hash in the manifest the file cannot be verified, so
+        # the restore is refused instead of trusting an unverifiable file.
+        if ($VerifyHashBeforeRestore) {
+            $expectedHash = [string]$entry.Sha256
+            if ([string]::IsNullOrWhiteSpace($expectedHash)) {
+                $failed += [PSCustomObject]@{ Path = $rel; Error = 'Hash missing in manifest' }
+                continue
+            }
             try {
-                $h = (Get-FileHash -LiteralPath $srcPath -Algorithm SHA256).Hash
-                if ($h -ne $entry.Sha256) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Hash mismatch (corrupt)' }; continue }
-            } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+                $h = (Get-FileHash -LiteralPath $srcPath -Algorithm SHA256 -ErrorAction Stop).Hash
+                if ($h -ne $expectedHash) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Hash mismatch (corrupt)' }; continue }
+            } catch {
+                $failed += [PSCustomObject]@{ Path = $rel; Error = "The hash could not be verified: $($_.Exception.Message)" }
+                Write-Verbose "Ignored: $($_.Exception.Message)"
+                continue
+            }
         }
         # The restore target is relative to the user profile home. The relative path is
         # validated again for that root: it must not leave the profile.
-        $destCheck = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $env:USERPROFILE -Label 'restore path'
+        # The category is the name of the profile folder the file belongs to (the
+        # backup stores it as BackupRoot\<Category>\<rel>), so the file has to be
+        # restored into that folder and not next to it.
+        $profileRoot = $env:USERPROFILE
+        $destRel = $rel
+        $catFolder = $null
+        if ($FolderMap -and $FolderMap.Contains($cat)) {
+            # The map of the backup names the profile folder the category stands for
+            $mapped = [string]$FolderMap[$cat]
+            if (-not [string]::IsNullOrWhiteSpace($mapped)) {
+                $mappedName = [System.IO.Path]::GetFileName($mapped.TrimEnd('\'))
+                if ($mappedName) { $catFolder = $mappedName }
+            }
+        } elseif ($entry.PSObject.Properties['SourcePath'] -and $entry.SourcePath) {
+            # The backup recorded the folder the file came from. When it is the profile
+            # folder of the category, the file goes back into it.
+            $sourceFull = ConvertTo-WinEaseComparablePath -Path ([string]$entry.SourcePath)
+            $profileFull = ConvertTo-WinEaseComparablePath -Path $profileRoot
+            if ($sourceFull -and $profileFull) {
+                $expectedSource = Join-Path -Path $profileFull -ChildPath $cat
+                if ($sourceFull -ieq $expectedSource) { $catFolder = $cat }
+            }
+        }
+        if ($catFolder) { $destRel = Join-Path -Path $catFolder -ChildPath $rel }
+        $destCheck = Resolve-WinEaseSafeRelativePath -RelativePath $destRel -Root $profileRoot -Label 'restore path'
         if (-not $destCheck.IsSafe) {
             $failed += [PSCustomObject]@{ Path = $rel; Error = "Refused: $($destCheck.Reason)" }
             Write-Verbose "Ignored: $($destCheck.Reason)"
@@ -523,7 +632,7 @@ function Restore-WinEaseUserData {
             Write-Verbose "Ignored: $($_.Exception.Message)"
         }
     }
-    return [PSCustomObject]@{ RestoredFiles = $restored; SkippedFiles = $skipped; FailedFiles = $failed }
+    return [PSCustomObject]@{ Success = ($failed.Count -eq 0); RestoredFiles = $restored; SkippedFiles = $skipped; FailedFiles = $failed }
 }
 
 # 8. Invoke-WinEaseMigrationRulesBackup
@@ -570,50 +679,112 @@ function Invoke-WinEaseMigrationRulesBackup {
         $backedUp += [PSCustomObject]@{ Id = $rid; Name = $rule.Name }
         if ($rule.CloudSaveNotice) { $notices += [PSCustomObject]@{ RuleId = $rid; Name = $rule.Name; Notice = [string]$rule.CloudSaveNotice } }
         $ruleBackupDir = Join-Path -Path $BackupRoot -ChildPath "rules\$rid"
+        # A rule that is backed up again must not keep the files that were deleted in
+        # the meantime, so the folder of the rule is cleared first.
+        if (Test-Path -LiteralPath $ruleBackupDir) {
+            try { Remove-Item -LiteralPath $ruleBackupDir -Recurse -Force -ErrorAction Stop } catch { $failed += [PSCustomObject]@{ Rule = $rid; Error = "The old backup of the rule could not be removed: $($_.Exception.Message)" } }
+        }
         if (-not (Test-Path -LiteralPath $ruleBackupDir)) { New-Item -ItemType Directory -Force -Path $ruleBackupDir | Out-Null }
+        # The manifest of the rule maps every backed up file to the source it came
+        # from, so a rule with several source paths is restored to the right one.
+        $ruleManifest = @()
         # SourcePaths (files/dirs)
         if ($rule.SourcePaths) {
+            $sourceIndex = 0
             foreach ($sp in $rule.SourcePaths) {
                 $src = Expand-WinEaseMigrationPath -RawPath $sp
-                if (-not (Test-Path -LiteralPath $src)) { continue }
+                if (-not (Test-Path -LiteralPath $src)) { $sourceIndex++; continue }
                 $item = Get-Item -LiteralPath $src
+                # The first source keeps the plain layout, the other ones are stored
+                # in their own folder, so two sources cannot overwrite each other.
+                $sourceFolder = if ($sourceIndex -eq 0) { '' } else { "_src_$sourceIndex" }
                 if ($item.PSIsContainer) {
-                    Get-ChildItem -LiteralPath $src -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
-                        $rel = Get-WinEaseRelativePath -BasePath $src -FullName $_.FullName
-                        if (-not $IncludeSecrets -and $rule.ExcludeSecrets -and (Test-WinEaseSecretPath -FilePath $_.Name -SecretPatterns $secretPatterns)) {
-                            Write-Verbose "Excluded secret: $($_.FullName)"
+                    try {
+                        $files = @(Get-ChildItem -LiteralPath $src -Recurse -File -ErrorAction SilentlyContinue -ErrorVariable enumErrors)
+                        foreach ($enumErr in @($enumErrors)) {
+                            $failed += [PSCustomObject]@{ Rule = $rid; Error = "The source folder could not be read completely: $($enumErr.Exception.Message)" }
+                        }
+                    } catch { $files = @() }
+                    foreach ($f in $files) {
+                        $rel = Get-WinEaseRelativePath -BasePath $src -FullName $f.FullName
+                        if (-not $IncludeSecrets -and $rule.ExcludeSecrets -and (Test-WinEaseSecretPath -FilePath $f.Name -SecretPatterns $secretPatterns)) {
+                            Write-Verbose "Excluded secret: $($f.FullName)"
                             $skipped++
                             $secretExcluded++
-                            return
+                            continue
                         }
                         $exclude = $false
-                        foreach ($pat in @($rule.ExcludePatterns)) { if ($_.Name -like $pat) { $exclude = $true; break } }
-                        if ($exclude) { $skipped++; return }
-                        $dest = Join-Path -Path $ruleBackupDir -ChildPath $rel
+                        foreach ($pat in @($rule.ExcludePatterns)) { if ($f.Name -like $pat) { $exclude = $true; break } }
+                        if ($exclude) { $skipped++; continue }
+                        # the first source keeps the plain layout, the other ones are
+                        # stored in their own folder
+                        $relInBackup = if ($sourceFolder) { Join-Path $sourceFolder $rel } else { $rel }
+                        $dest = Join-Path -Path $ruleBackupDir -ChildPath $relInBackup
                         $destDir = Split-Path -Parent $dest
-                        if (-not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
-                        Copy-Item -LiteralPath $_.FullName -Destination $dest -Force
-                        $copied++
+                        try {
+                            if (-not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
+                            Copy-Item -LiteralPath $f.FullName -Destination $dest -Force -ErrorAction Stop
+                            $copied++
+                            $ruleManifest += [PSCustomObject]@{ RelativePath = $relInBackup; SourceIndex = $sourceIndex; IsFile = $true; SourcePath = $f.FullName }
+                        } catch {
+                            $failed += [PSCustomObject]@{ Rule = $rid; Path = $f.FullName; Error = $_.Exception.Message }
+                            Write-Verbose "Ignored: $($_.Exception.Message)"
+                        }
                     }
                 } else {
                     if (-not $IncludeSecrets -and $rule.ExcludeSecrets -and (Test-WinEaseSecretPath -FilePath $item.Name -SecretPatterns $secretPatterns)) {
-                        Write-Verbose "Excluded secret: $($item.FullName)"; $skipped++; $secretExcluded++; continue
+                        Write-Verbose "Excluded secret: $($item.FullName)"; $skipped++; $secretExcluded++; $sourceIndex++; continue
                     }
                     $exclude = $false
                     foreach ($pat in @($rule.ExcludePatterns)) { if ($item.Name -like $pat) { $exclude = $true; break } }
-                    if ($exclude) { $skipped++; continue }
-                    Copy-Item -LiteralPath $src -Destination (Join-Path -Path $ruleBackupDir -ChildPath $item.Name) -Force
-                    $copied++
+                    if ($exclude) { $skipped++; $sourceIndex++; continue }
+                    $rel = $item.Name
+                    $relInBackup = if ($sourceFolder) { Join-Path $sourceFolder $rel } else { $rel }
+                    $dest = Join-Path -Path $ruleBackupDir -ChildPath $relInBackup
+                    $destDir = Split-Path -Parent $dest
+                    try {
+                        if (-not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
+                        Copy-Item -LiteralPath $src -Destination $dest -Force -ErrorAction Stop
+                        $copied++
+                        $ruleManifest += [PSCustomObject]@{ RelativePath = $relInBackup; SourceIndex = $sourceIndex; IsFile = $true; SourcePath = $src }
+                    } catch {
+                        $failed += [PSCustomObject]@{ Rule = $rid; Path = $src; Error = $_.Exception.Message }
+                        Write-Verbose "Ignored: $($_.Exception.Message)"
+                    }
                 }
+                $sourceIndex++
             }
         }
-        # RegistryPaths
+        # The manifest of the rule is written next to its files
+        if ($ruleManifest.Count -gt 0) {
+            try {
+                $ruleManifestPath = Join-Path -Path $ruleBackupDir -ChildPath 'rule-manifest.json'
+                $ruleManifestObj = [PSCustomObject]@{ RuleId = $rid; Entries = $ruleManifest; Created = (Get-Date).ToString('o') }
+                $ruleManifestObj | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $ruleManifestPath -Encoding UTF8
+            } catch {
+                $failed += [PSCustomObject]@{ Rule = $rid; Error = "The rule manifest could not be written: $($_.Exception.Message)" }
+                Write-Verbose "Ignored: $($_.Exception.Message)"
+            }
+        }
+        # RegistryPaths: every key gets its own file, the first one also keeps the
+        # historical name registry.reg
         if ($rule.RegistryPaths) {
+            $regIndex = 0
             foreach ($rp in $rule.RegistryPaths) {
                 try {
-                    $regFile = Join-Path -Path $ruleBackupDir -ChildPath 'registry.reg'
+                    $regName = if ($regIndex -eq 0) { 'registry.reg' } else { "registry_$regIndex.reg" }
+                    $regFile = Join-Path -Path $ruleBackupDir -ChildPath $regName
                     & reg.exe export $rp $regFile /y 2>&1 | Out-Null
-                } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+                    $regExit = $LASTEXITCODE
+                    if ($null -eq $regExit) { $regExit = 0 }
+                    if ($regExit -ne 0) {
+                        $failed += [PSCustomObject]@{ Rule = $rid; Path = $rp; Error = "reg.exe export exited with code $regExit" }
+                    }
+                } catch {
+                    $failed += [PSCustomObject]@{ Rule = $rid; Path = $rp; Error = $_.Exception.Message }
+                    Write-Verbose "Ignored: $($_.Exception.Message)"
+                }
+                $regIndex++
             }
         }
     }
@@ -644,56 +815,110 @@ function Invoke-WinEaseMigrationRulesRestore {
         if (-not $rule) { $failed += [PSCustomObject]@{ Rule = $rid; Error = 'Rule not found' }; continue }
         $ruleBackupDir = Join-Path -Path $BackupRoot -ChildPath "rules\$rid"
         if (-not (Test-Path -LiteralPath $ruleBackupDir)) { $failed += [PSCustomObject]@{ Rule = $rid; Error = 'Backup not found' }; continue }
-        # Registry restore
+        # Registry restore: every exported key is imported from its own file
         if ($rule.RegistryPaths) {
-            $regFile = Join-Path -Path $ruleBackupDir -ChildPath 'registry.reg'
-            if (Test-Path -LiteralPath $regFile) {
-                try { & reg.exe import $regFile 2>&1 | Out-Null; $restored++ } catch { $failed += [PSCustomObject]@{ Rule = $rid; Error = $_.Exception.Message } }
-            }
-        }
-        # File restore
-        Get-ChildItem -LiteralPath $ruleBackupDir -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'registry.reg' } | ForEach-Object {
-            $rel = Get-WinEaseRelativePath -BasePath $ruleBackupDir -FullName $_.FullName
-            # reconstruct source path from rule SourcePaths (use first existing parent)
-            $src = $null
-            foreach ($sp in @($rule.SourcePaths)) {
-                $expanded = Expand-WinEaseMigrationPath -RawPath $sp
-                if ($expanded) { $src = $expanded; break }
-            }
-            if (-not $src) { return }
-            # rel is relative to the rule's source root; restore under the source root's parent
-            $destPath = $null
-            if ($rule.SourcePaths -and $rule.SourcePaths.Count -gt 0) {
-                $firstSrc = Expand-WinEaseMigrationPath -RawPath $rule.SourcePaths[0]
-                # if source is a file, dest is that file's dir + rel
-                if (Test-Path -LiteralPath $firstSrc -PathType Leaf) {
-                    $destPath = Join-Path -Path (Split-Path -Parent $firstSrc) -ChildPath $rel
-                } else {
-                    $destPath = Join-Path -Path $firstSrc -ChildPath $rel
-                }
-            }
-            if (-not $destPath) { return }
-            try {
-                $destDir = Split-Path -Parent $destPath
-                if (-not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
-                if (Test-Path -LiteralPath $destPath) {
-                    if ($ConflictPolicy -eq 'Skip') { $skipped++; return }
-                    elseif ($ConflictPolicy -eq 'BackupExisting') {
-                        Copy-Item -LiteralPath $destPath -Destination "$destPath.WinEase.bak" -Force
-                    } elseif ($ConflictPolicy -eq 'OverwriteIfNewer') {
-                        $destItem = Get-Item -LiteralPath $destPath
-                        if ($destItem.LastWriteTimeUtc -ge $_.LastWriteTimeUtc) { $skipped++; return }
+            $regIndex = 0
+            foreach ($rp in $rule.RegistryPaths) {
+                $regName = if ($regIndex -eq 0) { 'registry.reg' } else { "registry_$regIndex.reg" }
+                $regFile = Join-Path -Path $ruleBackupDir -ChildPath $regName
+                if (Test-Path -LiteralPath $regFile) {
+                    try {
+                        & reg.exe import $regFile 2>&1 | Out-Null
+                        $regExit = $LASTEXITCODE
+                        if ($null -eq $regExit) { $regExit = 0 }
+                        if ($regExit -eq 0) {
+                            $restored++
+                        } else {
+                            $failed += [PSCustomObject]@{ Rule = $rid; Path = $regName; Error = "reg.exe import exited with code $regExit" }
+                        }
+                    } catch {
+                        $failed += [PSCustomObject]@{ Rule = $rid; Path = $regName; Error = $_.Exception.Message }
                     }
                 }
-                Copy-Item -LiteralPath $_.FullName -Destination $destPath -Force
-                $restored++
+                $regIndex++
+            }
+        }
+        # The manifest of the rule maps every file to the source it came from. Without
+        # it (a legacy backup) the files are restored to the first source of the rule.
+        $ruleManifestPath = Join-Path -Path $ruleBackupDir -ChildPath 'rule-manifest.json'
+        $ruleEntries = @()
+        if (Test-Path -LiteralPath $ruleManifestPath) {
+            try {
+                $ruleManifest = Get-Content -LiteralPath $ruleManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($ruleManifest.Entries) { $ruleEntries = @($ruleManifest.Entries) }
             } catch {
-                $failed += [PSCustomObject]@{ Rule = $rid; Path = $rel; Error = $_.Exception.Message }
+                $failed += [PSCustomObject]@{ Rule = $rid; Error = "The rule manifest could not be read: $($_.Exception.Message)" }
                 Write-Verbose "Ignored: $($_.Exception.Message)"
             }
         }
+        # File restore
+        Get-ChildItem -LiteralPath $ruleBackupDir -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ne 'registry.reg' -and $_.Name -notlike 'registry_*.reg' -and $_.Name -ne 'rule-manifest.json' } |
+            ForEach-Object {
+                $rel = Get-WinEaseRelativePath -BasePath $ruleBackupDir -FullName $_.FullName
+                # The destination comes from the manifest of the rule, so a rule with
+                # several source paths is restored to the one the file came from.
+                $manifestEntry = @($ruleEntries | Where-Object { $_.RelativePath -eq $rel } | Select-Object -First 1)
+                $sourceIndex = 0
+                $sourcePath = $null
+                if ($manifestEntry.Count -gt 0) {
+                    $sourceIndex = [int]$manifestEntry[0].SourceIndex
+                    if ($manifestEntry[0].PSObject.Properties['SourcePath'] -and $manifestEntry[0].SourcePath) { $sourcePath = [string]$manifestEntry[0].SourcePath }
+                }
+                $destPath = $null
+                if ($sourcePath) {
+                    # The file goes back to the place it came from
+                    $destPath = $sourcePath
+                } elseif ($rule.SourcePaths -and $rule.SourcePaths.Count -gt 0) {
+                    $sp = $rule.SourcePaths[[Math]::Min($sourceIndex, $rule.SourcePaths.Count - 1)]
+                    $firstSrc = Expand-WinEaseMigrationPath -RawPath $sp
+                    if ($firstSrc) {
+                        if (Test-Path -LiteralPath $firstSrc -PathType Leaf) {
+                            $destPath = Join-Path -Path (Split-Path -Parent $firstSrc) -ChildPath (Split-Path -Leaf $rel)
+                        } else {
+                            $destPath = Join-Path -Path $firstSrc -ChildPath $rel
+                        }
+                    }
+                }
+                if (-not $destPath) { return }
+                # The destination has to stay inside the source of the rule, and it must
+                # not traverse a symbolic link or a junction on the way.
+                if ($rule.SourcePaths -and $rule.SourcePaths.Count -gt 0) {
+                    $ruleRoot = Expand-WinEaseMigrationPath -RawPath $rule.SourcePaths[0]
+                    $destCheck = Resolve-WinEaseSafeRelativePath -RelativePath (Get-WinEaseRelativePath -BasePath $ruleRoot -FullName $destPath) -Root $ruleRoot -Label 'rule restore path'
+                    if (-not $destCheck.IsSafe) {
+                        $failed += [PSCustomObject]@{ Rule = $rid; Path = $rel; Error = "Refused: $($destCheck.Reason)" }
+                        Write-Verbose "Ignored: $($destCheck.Reason)"
+                        return
+                    }
+                    if (Test-WinEasePathHasReparsePoint -Path $destPath -Root $ruleRoot) {
+                        $failed += [PSCustomObject]@{ Rule = $rid; Path = $rel; Error = "Refused: the destination traverses a symbolic link or junction" }
+                        Write-Verbose "Ignored: the destination traverses a symbolic link or junction"
+                        return
+                    }
+                }
+                try {
+                    $destDir = Split-Path -Parent $destPath
+                    if (-not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
+                    if (Test-Path -LiteralPath $destPath) {
+                        if ($ConflictPolicy -eq 'Skip') { $skipped++; return }
+                        elseif ($ConflictPolicy -eq 'BackupExisting') {
+                            Copy-Item -LiteralPath $destPath -Destination "$destPath.WinEase.bak" -Force
+                        } elseif ($ConflictPolicy -eq 'OverwriteIfNewer') {
+                            $destItem = Get-Item -LiteralPath $destPath
+                            $srcItem = Get-Item -LiteralPath $_.FullName
+                            if ($destItem.LastWriteTimeUtc -ge $srcItem.LastWriteTimeUtc) { $skipped++; return }
+                        }
+                    }
+                    Copy-Item -LiteralPath $_.FullName -Destination $destPath -Force -ErrorAction Stop
+                    $restored++
+                } catch {
+                    $failed += [PSCustomObject]@{ Rule = $rid; Path = $rel; Error = $_.Exception.Message }
+                    Write-Verbose "Ignored: $($_.Exception.Message)"
+                }
+            }
     }
-    return [PSCustomObject]@{ RestoredFiles = $restored; SkippedFiles = $skipped; FailedFiles = $failed }
+    return [PSCustomObject]@{ Success = ($failed.Count -eq 0); RestoredFiles = $restored; SkippedFiles = $skipped; FailedFiles = $failed }
 }
 
 # 9. Start-WinEaseMigrationBackup & Start-WinEaseMigrationRestore
@@ -713,9 +938,14 @@ function Start-WinEaseMigrationBackup {
     $customExpanded = @($CustomPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { Expand-WinEaseMigrationPath -RawPath $_.Trim() })
     Assert-WinEaseBackupRootOutsideSources -BackupRoot $BackupRoot -SourcePaths (@($FolderMap.Values) + $customExpanded)
     if (-not $DryRun -and -not (Test-Path -LiteralPath $BackupRoot)) { New-Item -ItemType Directory -Force -Path $BackupRoot | Out-Null }
-    # App inventory
+    # App inventory. A dry run must not write anything, so the inventory file is only
+    # written when the backup really runs.
     $invPath = Join-Path -Path $BackupRoot -ChildPath 'apps-inventory.json'
-    $inv = Export-WinEaseAppInventory -OutputPath $invPath -OfflineTestMode:$OfflineTestMode
+    if ($DryRun) {
+        $inv = Export-WinEaseAppInventory -OutputPath '' -OfflineTestMode:$OfflineTestMode
+    } else {
+        $inv = Export-WinEaseAppInventory -OutputPath $invPath -OfflineTestMode:$OfflineTestMode
+    }
     # User data backup
     $ud = Backup-WinEaseUserData -FolderMap $FolderMap -BackupRoot $BackupRoot -DryRun:$DryRun
     # Custom paths backup
@@ -775,14 +1005,26 @@ function Start-WinEaseMigrationRestore {
     $statePath = Join-Path -Path $BackupRoot -ChildPath 'restore-state.json'
     $state = [ordered]@{}
     if (Test-Path -LiteralPath $statePath) {
-        try { $raw = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json; foreach ($p in $raw.PSObject.Properties) { $state[$p.Name] = [string]$p.Value } } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        try { $raw = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json; foreach ($p in $raw.PSObject.Properties) { $state[$p.Name] = [string]$p.Value } } catch { Write-Warning "The restore state could not be read: $($_.Exception.Message)" }
     }
 
     # Build the task list from what the backup recorded
     $manifestPath = Join-Path -Path $BackupRoot -ChildPath 'migration-manifest.json'
     $m = $null
+    $manifestError = $null
     if (Test-Path -LiteralPath $manifestPath) {
-        try { $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        try {
+            $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        } catch {
+            # A manifest that cannot be read is a failed restore: the folders, the rules
+            # and the custom paths of the backup are unknown, so they would be skipped
+            # without a word.
+            $manifestError = "The migration manifest could not be read: $($_.Exception.Message)"
+            Write-Warning $manifestError
+        }
+    } else {
+        $manifestError = 'The migration manifest is missing'
+        Write-Warning $manifestError
     }
     $tasks = @()
     $invPath = Join-Path -Path $BackupRoot -ChildPath 'apps-inventory.json'
@@ -793,7 +1035,11 @@ function Start-WinEaseMigrationRestore {
             foreach ($a in @($inv.Apps)) {
                 if ($a -and $a.Name) { $tasks += [PSCustomObject]@{ TaskId = "App_$($a.Name)"; Kind = 'App'; Target = [string]$a.Name } }
             }
-        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        } catch {
+            # An inventory that cannot be read is a failed task: the apps are unknown.
+            $manifestError = "The app inventory could not be read: $($_.Exception.Message)"
+            Write-Warning $manifestError
+        }
     }
     if ($m) {
         foreach ($f in @($m.Folders)) {
@@ -807,14 +1053,26 @@ function Start-WinEaseMigrationRestore {
         }
     }
     if ($tasks.Count -eq 0) {
-        # Older / minimal backups: restore whatever the manifest lists in one task
-        $tasks += [PSCustomObject]@{ TaskId = 'UserData'; Kind = 'UserData'; Target = '' }
+        # Nothing to restore: a backup without a manifest, without an app inventory and
+        # without rules is not a backup. A dummy task would report a success that never
+        # restored anything.
+        $reason = if ($manifestError) { $manifestError } else { 'The backup folder holds nothing that can be restored: no manifest, no app inventory and no rules.' }
+        Write-Warning $reason
+        return [PSCustomObject]@{
+            Results = @([PSCustomObject]@{ TaskId = 'None'; Status = 'Failed'; Detail = $reason })
+            State = $state
+        }
+    }
+    if ($manifestError) {
+        # The manifest could not be read: the folders, the rules and the custom paths of
+        # the backup are unknown, so the restore is reported as failed.
+        $tasks += [PSCustomObject]@{ TaskId = 'Manifest'; Kind = 'Failed'; Target = '' }
     }
 
     # Record every task as Pending up front so an interrupted run shows what is left
     if (-not $DryRun) {
         foreach ($t in $tasks) { if (-not $state.Contains($t.TaskId)) { $state[$t.TaskId] = 'Pending' } }
-        try { $state | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $statePath -Encoding UTF8 } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        try { $state | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $statePath -Encoding UTF8 } catch { Write-Warning "The restore state could not be written: $($_.Exception.Message)" }
     }
 
     $results = @()
@@ -830,6 +1088,11 @@ function Start-WinEaseMigrationRestore {
         $detail = $null
         try {
             switch ($t.Kind) {
+                'Failed' {
+                    # A part of the backup could not be read, so it is not restored
+                    $status = 'Failed'
+                    $detail = $manifestError
+                }
                 'App' {
                     $detail = Restore-WinEaseApps -InventoryPath $invPath -SelectedAppNames @($t.Target) -DryRun:$DryRun
                     if (@($detail.Failed).Count -gt 0) { $status = 'Failed' }
@@ -872,7 +1135,7 @@ function Start-WinEaseMigrationRestore {
         if (-not $DryRun) {
             $state[$id] = $status
             # persist after every task so an interrupted run can be resumed
-            try { $state | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $statePath -Encoding UTF8 } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+            try { $state | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $statePath -Encoding UTF8 } catch { Write-Warning "The restore state could not be written: $($_.Exception.Message)" }
         }
     }
     return [PSCustomObject]@{ Results = @($results); State = $state }
@@ -896,6 +1159,9 @@ function Backup-WinEaseCustomPaths {
     $totalBytes = [int64]0
     $manifest = @()
     $customRoot = Join-Path -Path $BackupRoot -ChildPath 'Custom'
+    # The names that are already used in the backup folder: two files with the same name
+    # from different folders would overwrite each other.
+    $usedNames = @{}
     if (-not $DryRun) {
         if (-not (Test-Path -LiteralPath $customRoot)) { New-Item -ItemType Directory -Force -Path $customRoot | Out-Null }
     }
@@ -913,8 +1179,12 @@ function Backup-WinEaseCustomPaths {
         if ($item.PSIsContainer) {
             # Back up entire folder preserving structure
             try {
-                $files = Get-ChildItem -LiteralPath $expanded -Recurse -File -ErrorAction SilentlyContinue
+                $files = @(Get-ChildItem -LiteralPath $expanded -Recurse -File -ErrorAction SilentlyContinue -ErrorVariable enumErrors)
+                foreach ($enumErr in @($enumErrors)) {
+                    $failed += [PSCustomObject]@{ Path = $expanded; Error = "The folder could not be read completely: $($enumErr.Exception.Message)" }
+                }
             } catch { $files = @() }
+            $usedNames[$item.Name.ToLowerInvariant()] = $true
             foreach ($f in $files) {
                 $rel = Get-WinEaseRelativePath -BasePath $expanded -FullName $f.FullName
                 $destPath = Join-Path -Path (Join-Path -Path $customRoot -ChildPath $item.Name) -ChildPath $rel
@@ -925,25 +1195,50 @@ function Backup-WinEaseCustomPaths {
                     Copy-Item -LiteralPath $f.FullName -Destination $destPath -Force
                     $copied++
                     $totalBytes += $f.Length
+                    # A file whose hash cannot be computed is a failed file, not a backed
+                    # up file with an empty hash.
                     $hash = ''
-                    try { $hash = (Get-FileHash -LiteralPath $destPath -Algorithm SHA256).Hash } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-                    $manifest += [PSCustomObject]@{ RelativePath = (Join-Path $item.Name $rel); Category = 'CustomPath'; SizeBytes = $f.Length; Sha256 = $hash; LastWriteTimeUtc = $f.LastWriteTimeUtc.ToString('o'); SourcePath = $expanded }
+                    try {
+                        $hash = (Get-FileHash -LiteralPath $destPath -Algorithm SHA256 -ErrorAction Stop).Hash
+                        if ([string]::IsNullOrWhiteSpace($hash)) { throw 'the hash is empty' }
+                    } catch {
+                        $failed += [PSCustomObject]@{ Path = $f.FullName; Error = "The SHA256 could not be computed: $($_.Exception.Message)" }
+                        Write-Verbose "Ignored: $($_.Exception.Message)"
+                        continue
+                    }
+                    # The source path of the entry is the file itself, so the restore puts
+                    # it back into the folder it came from (and not next to it).
+                    $manifest += [PSCustomObject]@{ RelativePath = (Join-Path $item.Name $rel); Category = 'CustomPath'; SizeBytes = $f.Length; Sha256 = $hash; LastWriteTimeUtc = $f.LastWriteTimeUtc.ToString('o'); SourcePath = $f.FullName }
                 } catch {
                     $failed += [PSCustomObject]@{ Path = $f.FullName; Error = $_.Exception.Message }
                     Write-Verbose "Ignored: $($_.Exception.Message)"
                 }
             }
         } else {
-            # Back up single file
-            $destPath = Join-Path -Path $customRoot -ChildPath $item.Name
+            # Back up single file. A file whose name is already used in the backup
+            # folder gets a short prefix of the hash of its path, so the two files stay
+            # apart.
+            $storageName = $item.Name
+            if ($usedNames.ContainsKey($storageName.ToLowerInvariant())) {
+                $storageName = (Get-WinEasePathHash8 -Path $expanded) + '_' + $item.Name
+            }
+            $usedNames[$storageName.ToLowerInvariant()] = $true
+            $destPath = Join-Path -Path $customRoot -ChildPath $storageName
             if ($DryRun) { $copied++; $totalBytes += $item.Length; continue }
             try {
                 Copy-Item -LiteralPath $expanded -Destination $destPath -Force
                 $copied++
                 $totalBytes += $item.Length
                 $hash = ''
-                try { $hash = (Get-FileHash -LiteralPath $destPath -Algorithm SHA256).Hash } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-                $manifest += [PSCustomObject]@{ RelativePath = $item.Name; Category = 'CustomPath'; SizeBytes = $item.Length; Sha256 = $hash; LastWriteTimeUtc = $item.LastWriteTimeUtc.ToString('o'); SourcePath = $expanded }
+                try {
+                    $hash = (Get-FileHash -LiteralPath $destPath -Algorithm SHA256 -ErrorAction Stop).Hash
+                    if ([string]::IsNullOrWhiteSpace($hash)) { throw 'the hash is empty' }
+                } catch {
+                    $failed += [PSCustomObject]@{ Path = $expanded; Error = "The SHA256 could not be computed: $($_.Exception.Message)" }
+                    Write-Verbose "Ignored: $($_.Exception.Message)"
+                    continue
+                }
+                $manifest += [PSCustomObject]@{ RelativePath = $storageName; Category = 'CustomPath'; SizeBytes = $item.Length; Sha256 = $hash; LastWriteTimeUtc = $item.LastWriteTimeUtc.ToString('o'); SourcePath = $expanded }
             } catch {
                 $failed += [PSCustomObject]@{ Path = $expanded; Error = $_.Exception.Message }
                 Write-Verbose "Ignored: $($_.Exception.Message)"
@@ -956,13 +1251,29 @@ function Backup-WinEaseCustomPaths {
         try {
             $manifestPath = Join-Path -Path $BackupRoot -ChildPath 'migration-manifest.json'
             $existing = @()
+            $existingReadable = $true
             if (Test-Path -LiteralPath $manifestPath) {
-                try { $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json; if ($m.Entries) { $existing = @($m.Entries) } } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+                try {
+                    $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if ($m.Entries) { $existing = @($m.Entries) }
+                } catch {
+                    # A manifest that cannot be read is not overwritten: the entries it
+                    # holds would be lost for good.
+                    $existingReadable = $false
+                    $failed += [PSCustomObject]@{ Path = $manifestPath; Error = "The manifest could not be read, so it was not overwritten: $($_.Exception.Message)" }
+                    Write-Verbose "Ignored: $($_.Exception.Message)"
+                }
             }
-            $allEntries = $existing + $manifest
-            $manifestObj = [PSCustomObject]@{ Entries = $allEntries; Created = (Get-Date).ToString('o') }
-            $manifestObj | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
-        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+            if ($existingReadable) {
+                $allEntries = $existing + $manifest
+                $manifestObj = [PSCustomObject]@{ Entries = $allEntries; Created = (Get-Date).ToString('o') }
+                $manifestObj | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+            }
+        } catch {
+            # A manifest that cannot be written makes the backup unusable
+            $failed += [PSCustomObject]@{ Path = (Join-Path -Path $BackupRoot -ChildPath 'migration-manifest.json'); Error = "The manifest could not be written: $($_.Exception.Message)" }
+            Write-Verbose "Ignored: $($_.Exception.Message)"
+        }
     }
 
     return [PSCustomObject]@{ Success = ($failed.Count -eq 0); CopiedFiles = $copied; SkippedFiles = $skipped; FailedFiles = $failed; TotalBytes = $totalBytes; ManifestEntries = $manifest }
@@ -992,13 +1303,26 @@ function Restore-WinEaseCustomPaths {
     $skipped = 0
     $failed = @()
     $customRoot = Join-Path -Path $BackupRoot -ChildPath 'Custom'
-    if (-not (Test-Path -LiteralPath $customRoot)) { return [PSCustomObject]@{ RestoredFiles = $restored; SkippedFiles = $skipped; FailedFiles = $failed } }
 
-    # Read manifest for source paths
+    # Read manifest for source paths. The manifest is read before the check for the
+    # custom folder, so a manifest that cannot be read is reported in any case.
     $manifestPath = Join-Path -Path $BackupRoot -ChildPath 'migration-manifest.json'
     $entries = @()
     if (Test-Path -LiteralPath $manifestPath) {
-        try { $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json; if ($m.Entries) { $entries = @($m.Entries | Where-Object { $_.Category -eq 'CustomPath' }) } } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        try {
+            $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $entries = @($m.Entries | Where-Object { $_.Category -eq 'CustomPath' })
+        } catch {
+            # A manifest that cannot be read is a failed restore: the entries of the
+            # custom paths are unknown, so nothing is restored.
+            $failed += [PSCustomObject]@{ Path = $manifestPath; Error = "The manifest could not be read: $($_.Exception.Message)" }
+            Write-Verbose "Ignored: $($_.Exception.Message)"
+        }
+    } else {
+        $failed += [PSCustomObject]@{ Path = $manifestPath; Error = 'Manifest file missing' }
+    }
+    if (-not (Test-Path -LiteralPath $customRoot)) {
+        return [PSCustomObject]@{ Success = ($failed.Count -eq 0); RestoredFiles = $restored; SkippedFiles = $skipped; FailedFiles = $failed }
     }
     # Optional filter: only entries that came from this original path (the root folder/file or something below it)
     if (-not [string]::IsNullOrWhiteSpace($SourcePath)) {
@@ -1016,11 +1340,22 @@ function Restore-WinEaseCustomPaths {
         }
         $srcPath = $srcCheck.Path
         if (-not (Test-Path -LiteralPath $srcPath)) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Backup file missing' }; continue }
-        if ($VerifyHashBeforeRestore -and $entry.Sha256) {
+        # verify hash: without a hash in the manifest the file cannot be verified, so
+        # the restore is refused instead of trusting an unverifiable file.
+        if ($VerifyHashBeforeRestore) {
+            $expectedHash = [string]$entry.Sha256
+            if ([string]::IsNullOrWhiteSpace($expectedHash)) {
+                $failed += [PSCustomObject]@{ Path = $rel; Error = 'Hash missing in manifest' }
+                continue
+            }
             try {
-                $h = (Get-FileHash -LiteralPath $srcPath -Algorithm SHA256).Hash
-                if ($h -ne $entry.Sha256) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Hash mismatch (corrupt)' }; continue }
-            } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+                $h = (Get-FileHash -LiteralPath $srcPath -Algorithm SHA256 -ErrorAction Stop).Hash
+                if ($h -ne $expectedHash) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Hash mismatch (corrupt)' }; continue }
+            } catch {
+                $failed += [PSCustomObject]@{ Path = $rel; Error = "The hash could not be verified: $($_.Exception.Message)" }
+                Write-Verbose "Ignored: $($_.Exception.Message)"
+                continue
+            }
         }
         # Restore target: the location the file came from is only a proposal. It is used
         # when the caller allowed that location for this restore.
@@ -1079,7 +1414,7 @@ function Restore-WinEaseCustomPaths {
             Write-Verbose "Ignored: $($_.Exception.Message)"
         }
     }
-    return [PSCustomObject]@{ RestoredFiles = $restored; SkippedFiles = $skipped; FailedFiles = $failed }
+    return [PSCustomObject]@{ Success = ($failed.Count -eq 0); RestoredFiles = $restored; SkippedFiles = $skipped; FailedFiles = $failed }
 }
 # 10. Export-WinEaseMigrationReport
 function ConvertTo-WinEaseHtmlText {

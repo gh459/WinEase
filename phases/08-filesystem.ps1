@@ -1,10 +1,14 @@
-﻿# Phase 8: 08-filesystem
+# Phase 8: 08-filesystem
 # Extracted from WinEasebuilder.ps1
 # Dot-sourced by the main orchestrator
 
 
 # 8. File system slimming
 $winDir = "$scratchDir\Windows"
+
+# Every removal the user asked for is checked: a file that could not be deleted is
+# reported at the end of the phase instead of disappearing silently.
+$removalFailures = @()
 
 # Non-essential driver cleanup (optional)
 if ($removeDrivers) {
@@ -86,7 +90,8 @@ if ($trimFonts) {
                 }
                 if ($isForeign -or (-not $keepExtraFonts)) {
                     Set-ItemOwnershipAndAccess -Path $fontItem.FullName
-                    Remove-Item -LiteralPath $fontItem.FullName -Force -ErrorAction SilentlyContinue
+                    $err = Remove-WinEaseRequiredPath -Path $fontItem.FullName -Label "font $($fontItem.Name)"
+                    if ($err) { $removalFailures += $err }
                 }
             }
         }
@@ -113,11 +118,13 @@ if ((Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue) 
 if (-not $keepAsianIME) {
     Write-Host "Removing Asian Input Methods (CHS, CHT, KOR, JPN)..." -ForegroundColor Cyan
     $keepImeDirectories = @()
-    Remove-Item -Path (Join-Path -Path $winDir -ChildPath "Speech\Engines\TTS") -Recurse -Force -ErrorAction SilentlyContinue
+    $err = Remove-WinEaseRequiredPath -Path (Join-Path -Path $winDir -ChildPath "Speech\Engines\TTS") -Label 'Windows\Speech\Engines\TTS'
+    if ($err) { $removalFailures += $err }
 }
 foreach ($imeDir in $allImeDirectories) {
     if ($imeDir -notin $keepImeDirectories) {
-        Remove-Item -LiteralPath (Join-Path -Path $winDir -ChildPath "System32\InputMethod\$imeDir") -Recurse -Force -ErrorAction SilentlyContinue
+        $err = Remove-WinEaseRequiredPath -Path (Join-Path -Path $winDir -ChildPath "System32\InputMethod\$imeDir") -Label "InputMethod\$imeDir"
+        if ($err) { $removalFailures += $err }
     }
 }
 if ($keepAsianIME) {
@@ -136,7 +143,8 @@ if ($ultraSlimMode) {
         if (Test-Path -LiteralPath $tp) {
             Get-ChildItem -Path $tp -Include "*.dat", "*.lex", "*.bin" -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
                 Set-ItemOwnershipAndAccess -Path $_.FullName
-                Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+                $err = Remove-WinEaseRequiredPath -Path $_.FullName -Label "speech model $($_.Name)"
+                if ($err) { $removalFailures += $err }
             }
         }
     }
@@ -236,35 +244,50 @@ if (Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue) {
 }
 if ($cleanOfflineCaches -or $cleanEventLogs -or $cleanCrashDumps -or $cleanTempFiles) {
     Write-Host "Cleaning offline system caches, prefetch, and setup logs..." -ForegroundColor Cyan
+    # Every removal here is one the user asked for, so a failure is reported instead of
+    # being hidden: a file that is still in the image is visible in the log.
+    $removalFailures = @()
     if ($cleanTempFiles) {
-        Remove-Item -Path "$scratchDir\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
+        $err = Remove-WinEaseRequiredPath -Path "$scratchDir\Windows\Temp" -Label 'Windows\Temp' -ContentsOnly
+        if ($err) { $removalFailures += $err }
     }
     if ($cleanOfflineCaches) {
-        Remove-Item -Path "$scratchDir\Windows\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "$scratchDir\Windows\System32\LogFiles\*" -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "$scratchDir\Windows\Prefetch\*" -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "$scratchDir\Windows\Panther\*" -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "$scratchDir\Windows\Downloaded Program Files\*" -Recurse -Force -ErrorAction SilentlyContinue
+        foreach ($cache in @('Windows\SoftwareDistribution\Download', 'Windows\System32\LogFiles', 'Windows\Prefetch', 'Windows\Panther', 'Windows\Downloaded Program Files')) {
+            $err = Remove-WinEaseRequiredPath -Path (Join-Path -Path $scratchDir -ChildPath $cache) -Label $cache -ContentsOnly
+            if ($err) { $removalFailures += $err }
+        }
     }
     if ($cleanEventLogs) {
-        Remove-Item -Path "$scratchDir\Windows\System32\winevt\Logs\*" -Recurse -Force -ErrorAction SilentlyContinue
+        $err = Remove-WinEaseRequiredPath -Path "$scratchDir\Windows\System32\winevt\Logs" -Label 'Windows\System32\winevt\Logs' -ContentsOnly
+        if ($err) { $removalFailures += $err }
     }
     if ($cleanCrashDumps) {
-        Remove-Item -Path "$scratchDir\Windows\Minidump\*" -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "$scratchDir\Windows\Memory.dmp" -Force -ErrorAction SilentlyContinue
+        $err = Remove-WinEaseRequiredPath -Path "$scratchDir\Windows\Minidump" -Label 'Windows\Minidump' -ContentsOnly
+        if ($err) { $removalFailures += $err }
+        $err = Remove-WinEaseRequiredPath -Path "$scratchDir\Windows\Memory.dmp" -Label 'Windows\Memory.dmp'
+        if ($err) { $removalFailures += $err }
+    }
+    if ($removalFailures.Count -gt 0) {
+        Write-Warning "  - $($removalFailures.Count) removal(s) of the offline caches failed:"
+        foreach ($failure in $removalFailures) { Write-Warning "      $failure" }
+        if (Get-Variable -Name 'DiagnosticData' -Scope Script -ErrorAction SilentlyContinue) {
+            $script:DiagnosticData.OfflineRemovalFailures = @($removalFailures)
+        }
     }
 }
 if ($trimWallpapers) {
     Write-Host "Trimming 4K default wallpapers and lock screen images (-TrimWallpapers)..." -ForegroundColor Cyan
     Remove-ProtectedDirectory -Path "$scratchDir\Windows\Web\Wallpaper" -ScratchPath $scratchDir
-    Remove-Item "$scratchDir\Windows\Web\Screen\*.jpg" -Force -ErrorAction SilentlyContinue
+    $err = Remove-WinEaseRequiredPath -Path "$scratchDir\Windows\Web\Screen" -Label 'Windows\Web\Screen\*.jpg' -ContentsOnly -Filter '*.jpg'
+    if ($err) { Write-Warning "  - $err" }
 }
 $removeHelpFiles = (Test-TweakEnabled 'RemoveHelpFiles' $true)
 if (-not $removeHelpFiles -and (Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue)) {
     $removeHelpFiles = Test-WinEaseDebloatTarget -Item 'Remove help files [10-20MB]'
 }
 if ($removeHelpFiles) {
-    Remove-Item -Path (Join-Path -Path $winDir -ChildPath "Help") -Recurse -Force -ErrorAction SilentlyContinue
+    $err = Remove-WinEaseRequiredPath -Path (Join-Path -Path $winDir -ChildPath "Help") -Label 'Windows\Help'
+    if ($err) { Write-Warning "  - $err" }
 }
 
 # Edge Browser and OneDrive (Preserve System32 WebView2 runtime for Windows 11 OOBE stability)
@@ -299,7 +322,8 @@ if (Test-Path -LiteralPath $systemAppsDir) {
 # Execution neutralization for OneDriveSetup.exe, VoiceAccess.exe, Livecaptions.exe, and GameBarPresenceWriter.exe is handled via IFEO in Phase 10.
 # Purge Windows Backup scheduled tasks
 if (Test-TweakEnabled 'RemoveWindowsBackup' $true) {
-    Remove-Item -LiteralPath "$scratchDir\Windows\System32\Tasks\Microsoft\Windows\AppListBackup" -Recurse -Force -ErrorAction SilentlyContinue
+    $err = Remove-WinEaseRequiredPath -Path "$scratchDir\Windows\System32\Tasks\Microsoft\Windows\AppListBackup" -Label 'Windows\System32\Tasks\Microsoft\Windows\AppListBackup'
+    if ($err) { $removalFailures += $err }
 }
 
 
@@ -344,6 +368,16 @@ if ($keepRecoveryEnv) {
 # second time.
 if (Get-Command -Name Invoke-WinEaseDebloatTargets -ErrorAction SilentlyContinue) {
     Invoke-WinEaseDebloatTargets -Phase '08-filesystem'
+}
+
+# The removals that failed are reported: a file the user asked to delete is still in
+# the image, and the build report has to show it.
+if ($removalFailures.Count -gt 0) {
+    Write-Warning "  - $($removalFailures.Count) removal(s) of the file system cleanup failed:"
+    foreach ($failure in $removalFailures) { Write-Warning "      $failure" }
+    if (Get-Variable -Name 'DiagnosticData' -Scope Script -ErrorAction SilentlyContinue) {
+        $script:DiagnosticData.OfflineRemovalFailures = @($removalFailures)
+    }
 }
 
 # Feature flags and build traceability manifest are staged comprehensively in Phase 11

@@ -19,6 +19,14 @@ if ($OutputIsoName) {
     $isoFileName = "WinEase.iso"
 }
 $outputIso = Join-Path -Path $scriptDir -ChildPath $isoFileName
+# The ISO name comes from the command line or from a profile: it has to be a plain file
+# name inside the output directory, otherwise the build would write (or delete) a file
+# outside of it.
+$isoNameCheck = Resolve-WinEaseSafeIsoName -IsoName $isoFileName -Root $scriptDir
+if (-not $isoNameCheck.IsSafe) {
+    throw "The output ISO name is refused: $($isoNameCheck.Reason)"
+}
+$outputIso = $isoNameCheck.Path
 
 # Existing output ISO is protected until new temporary ISO is completely verified (Rule 12)
 
@@ -100,6 +108,17 @@ $tempIsoFileName = "WinEase_temp_${profSlug}_$($script:BuildId).iso"
 $tempOutputIso = Join-Path -Path $scriptDir -ChildPath $tempIsoFileName
 $expectedPayloadFile = if ($exportESDMode) { "install.esd" } elseif ($splitWIMMode) { "install.swm" } else { "install.wim" }
 
+# The ISO has to hold the payload and the boot files. A fixed 1.5 GB floor refuses a
+# legitimate ultra-slim or ESD compressed ISO before the payload is even verified, so
+# the threshold follows the size of the payload (phase 15 already enforces a 500 MB
+# floor on install.wim).
+$payloadSizeBytes = 0
+if ($activePayloadPath -and (Test-Path -LiteralPath $activePayloadPath)) {
+    try { $payloadSizeBytes = (Get-Item -LiteralPath $activePayloadPath).Length } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+}
+$isoSizeFloor = [math]::Max(500MB, $payloadSizeBytes)
+Write-Host "ISO size floor: $([math]::Round($isoSizeFloor / 1MB, 0)) MB (payload: $([math]::Round($payloadSizeBytes / 1MB, 0)) MB)" -ForegroundColor Gray
+
 $maxIsoAttempts = 3
 $isoCreationSuccess = $false
 $isoAttempt = 0
@@ -126,7 +145,7 @@ while (-not $isoCreationSuccess -and $isoAttempt -lt $maxIsoAttempts) {
     $oscdimgExit = $LASTEXITCODE
     $script:DiagnosticData.OscdimgExitCode = $oscdimgExit
 
-    if ($oscdimgExit -ne 0 -or (-not (Test-Path -LiteralPath $tempOutputIso)) -or ((Get-Item -LiteralPath $tempOutputIso).Length -lt 1.5GB)) {
+    if ($oscdimgExit -ne 0 -or (-not (Test-Path -LiteralPath $tempOutputIso)) -or ((Get-Item -LiteralPath $tempOutputIso).Length -lt $isoSizeFloor)) {
         Write-Warning "oscdimg failed on attempt $isoAttempt (ExitCode: $oscdimgExit)."
         Start-Sleep -Seconds 2
         continue
@@ -289,6 +308,15 @@ try {
     $reportData['WinSxSBeforeMB']       = if ($script:WinSxsBeforeMB) { $script:WinSxsBeforeMB } else { 0 }
     $reportData['WinSxSAfterMB']        = if ($script:WinSxsAfterMB) { $script:WinSxsAfterMB } else { 0 }
     $reportData['PhaseTimings']        = if ($script:PhaseTimings) { $script:PhaseTimings } else { @{} }
+    # The physical debloat (phase 09): the status and the targets that were asked for,
+    # so the report shows a physical debloat that never ran.
+    $reportData['PhysicalDebloatStatus'] = if ($script:DiagnosticData -and $script:DiagnosticData.PhysicalDebloatStatus) { [string]$script:DiagnosticData.PhysicalDebloatStatus } else { 'NotRequested' }
+    $reportData['PhysicalDebloatRequestedTargets'] = if ($script:DiagnosticData -and $script:DiagnosticData.PhysicalDebloatRequestedTargets) { @($script:DiagnosticData.PhysicalDebloatRequestedTargets) } else { @() }
+    $reportData['PhysicalDebloatDeletedFiles'] = if ($script:DiagnosticData -and $script:DiagnosticData.PhysicalDebloatDeletedFiles) { [int64]$script:DiagnosticData.PhysicalDebloatDeletedFiles } else { 0 }
+    $reportData['PhysicalDebloatDeletedDirs'] = if ($script:DiagnosticData -and $script:DiagnosticData.PhysicalDebloatDeletedDirs) { [int64]$script:DiagnosticData.PhysicalDebloatDeletedDirs } else { 0 }
+    # The removals of the safe engine and of the ISO cleanup that failed
+    $reportData['OfflineRemovalFailures'] = if ($script:DiagnosticData -and $script:DiagnosticData.OfflineRemovalFailures) { @($script:DiagnosticData.OfflineRemovalFailures) } else { @() }
+    $reportData['IsoCleanupFailures'] = if ($script:DiagnosticData -and $script:DiagnosticData.IsoCleanupFailures) { @($script:DiagnosticData.IsoCleanupFailures) } else { @() }
     $depResult = $null
     try { $depResult = Test-WinEaseDependencies -Config $resolvedConfig } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     $reportData['DependencyResult'] = $depResult

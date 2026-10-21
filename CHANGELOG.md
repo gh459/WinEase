@@ -3,6 +3,165 @@
 All notable changes to this fork are documented here. Versions follow the upstream
 WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
+## Unreleased (local fork, 2026-10-21) - the findings of the review are fixed
+
+### Fixed
+- **The custom script check was fail-open.** `UserOnce.ps1` (and the copies embedded in
+  `autounattend.xml`) ran every custom script when the manifest was missing or not valid
+  JSON, and the embedded FirstLogon copy did the same. All four runtime copies now use one
+  shared check (`lib\WinEaseCustomScriptIntegrity.ps1`, deployed to
+  `C:\Windows\Setup\Scripts`): a script runs only with a matching SHA-256 entry; a missing,
+  empty or malformed manifest, a missing hash, an unlisted file, a file outside the script
+  folder, a symbolic link or a missing check refuse it. Copy and hash failures at build
+  time stop the build, and a failed manifest write leaves no partial file.
+- **Extension-engine FirstLogon scripts ran unverified and twice.** Phase 11 registered
+  `Custom\FirstLogon\*.ps1` as separate FirstLogonCommands (with a `<Path>` element that
+  FirstLogonCommands does not have). They now go through the verified pipeline and the
+  manifest; `Custom\UserOnce`, which nothing ran, goes to `UserCustom`.
+- **Switching BypassNRO off had no effect.** The specialize pass of `autounattend.xml` (x64
+  and ARM64) and the `BypassNetworkRequirement` toggle both wrote `OOBE\BypassNRO`
+  regardless of the setting. Phases 10, 11, 14 and the resume path now share
+  `Get-WinEaseBypassNROEnabled`; with BypassNRO or BypassNetworkRequirement off, nothing
+  writes BypassNRO and the specialize command is not part of the answer file.
+- **autounattend.xml is composed instead of trimmed.** The template is now a base with only
+  the mandatory parts (amd64 only, mapped to the target architecture). The optional parts
+  (BypassNRO command, AutoLogon, Japanese time zone and keyboard) are declared in
+  `config\unattend-fragments.psd1` and added by `lib\WinEaseUnattendComposer.ps1` according
+  to the settings; fragments without an existing switch get one on the new GUI tab
+  "10. Answer File". The regular-expression edits of phase 11 are gone; names are set as XML
+  text and the command line now applies the GUI's user/computer name rules.
+- **An injected scripts\FirstLogon.ps1 kept the account name 'User'.** The name replacement
+  ran before the scripts\ injection; it now runs after it.
+- **An amd64-only template produced an empty answer file for arm64.** The architecture step
+  removed every amd64 component before mapping them to the target.
+- **The Rust engine never really took the ownership of a file.** `SetNamedSecurityInfoW`
+  was called with a NULL owner, which leaves the owner alone in Win32 - the owner of a
+  component file (TrustedInstaller) was never changed. The engine now allocates the
+  SID of the built-in Administrators group and passes it as the new owner.
+- **A privilege that was not assigned looked enabled.** `AdjustTokenPrivileges` returns
+  TRUE even when the privilege could not be assigned; the only sign is the last error
+  (`ERROR_NOT_ALL_ASSIGNED`). The error is now read right after the call, so a missing
+  privilege is reported instead of pretending to work.
+- **A junction inside the mounted image could lead the deletion out of the image.**
+  `validate_target_path` only compared the paths textually and `expand_dir_pattern`
+  followed a wildcard into every directory. Every directory between the mount and the
+  target is now checked, and a junction or a symbolic link is never traversed and never
+  matched.
+- **The Defender target only removed the data folder.** `Program Files\Windows Defender`
+  and `Program Files\Windows Defender Advanced Threat Protection` are removed as well.
+- **A physical debloat that never ran was invisible in the report.** Phase 09 records
+  the status now (`BlockedByGate`, `SkippedMissingBinary`, `DryRun`, `Executed`) and the
+  targets that were asked for; the build report shows them, so a missing physical
+  deletion is visible.
+- **The Bluetooth conflict was never found.** The check read the old name of the script
+  variable (`KeepBT`) instead of the name of the component (`KeepBluetooth`).
+- **The output ISO name could write outside of the output directory.** The name comes
+  from the command line or from a profile, so it has to be a plain file name now
+  (`Resolve-WinEaseSafeIsoName`).
+- **The custom scripts of the first logon ran without a verification.** When the
+  manifest was missing or unreadable, every script in the folder was executed without a
+  hash check. The verification is fail-closed now: without a readable manifest that
+  holds a valid hash for every script, nothing is executed. The exit code of the
+  native call (a `.bat`, a `.cmd` and a `reg.exe import`) is read right after the call.
+- **A fixed 1.5 GB floor refused a legitimate ultra-slim ISO.** The threshold follows
+  the size of the payload now (at least the 500 MB of phase 15), and the exact payload
+  is verified by the mount and the hash comparison.
+- **An estimate looked like a measurement in the report.** Every value that was not
+  measured is marked "(Estimated / Unmeasured)" and carries a neutral badge.
+- **The source media of a non-interactive build was picked silently.** The candidate
+  drives are now listed with their payload type and size before the selection.
+- **`winget` failures were counted as installed apps.** The exit code of `winget
+  install` is checked; a non-zero code puts the app into the failed list.
+- **A dry run of the migration backup wrote the app inventory.** The inventory file is
+  only written when the backup really runs.
+- **A file whose hash could not be computed was backed up with an empty hash.** The
+  hash failure is a failed file now, and a manifest that cannot be written makes the
+  backup fail. On the restore side a file without a hash in the manifest is refused
+  instead of restored unverified.
+- **The restore put the profile folders next to the profile.** `Documents\report.txt`
+  was restored as `<profile>\report.txt`; the category is preserved now (the backup
+  records the folder the file came from, and the restore accepts a map of the
+  categories).
+- **Two custom paths with the same file name overwrote each other**, and a backed up
+  folder was restored next to itself instead of into it. The second file gets a short
+  prefix of the hash of its path, and the source path of every file is the file
+  itself.
+- **A rule with several source paths restored everything into the first one.** Every
+  source of a rule is stored in its own folder and the manifest of the rule maps every
+  file to its source. The registry keys are exported one file per key (the exit code of
+  `reg.exe` is checked), a failed copy is not counted, and a rule that is backed up
+  again does not keep the files that were deleted in the meantime.
+- **A backup without anything to restore reported success.** A missing manifest makes
+  the restore fail, and a backup folder without a manifest, an app inventory and rules
+  is reported as a failure instead of a fake completed task.
+- **The secondary input method engines were removed as a folder.** The language list of
+  the image points to the folder of the engine, so a missing folder shows a broken input
+  method in the language options. The Rust engine removes the binaries of the secondary
+  engines now and keeps their folder (the Japanese engine and the engine of the
+  language of the image stay untouched).
+- **The rule restore wrote through a junction.** The destination of a restored rule file
+  is checked against a symbolic link or a junction now, and a folder that cannot be
+  read completely is reported by the backup instead of being skipped silently.
+- **A corrupt manifest was a restore without work instead of a failed one.** The user
+  data, the custom paths, the app inventory and the orchestrator report a manifest (or
+  an inventory) that cannot be read as a failure now, and the restore functions return
+  a `Success` flag that says so. A manifest that cannot be read is not overwritten by
+  the backup either, so the entries it holds are not lost.
+- **The forced deletion never granted the delete right.** The SID of the Administrators
+  group is built with `CreateWellKnownSid`: the first call only asks for the size and
+  fails with `ERROR_INSUFFICIENT_BUFFER`, which was read as a failure - so the ACE that
+  grants the delete right was never added and the ownership was never taken. Both steps
+  work now, which the new Rust tests check (the owner of the file afterwards, the
+  privilege that is not assigned, and a link whose target survives the deletion).
+- **The restore of the migration rules returned nothing.** The function ended without a
+  `return`, so the caller read `$null` as "nothing failed" and the task was reported as
+  completed although no key was imported. The result (with a `Success` flag) is returned
+  again, and a new test checks that every function of the migration engine returns a
+  result.
+- **The removals of the safe engine failed silently.** Every removal the user asked for
+  (the fonts, the input method engines, the speech models, the temporary files, the
+  event logs, the crash dumps, the help files, the wallpapers and the cleanup of the ISO)
+  ran with `-ErrorAction SilentlyContinue`, so a file that could not be deleted was
+  simply left in the image and the build reported success. A new helper
+  (`Remove-WinEaseRequiredPath`) removes the path, checks the result and returns the
+  reason of a failure; the phases collect the failures, warn about them and write them
+  into the build diagnostics. The diagnostic summary and the HTML report list them
+  now, so a file that stayed in the image is visible in both.
+- **The custom scripts of the first logon were only checked in the source.** The
+  pipeline is now run for real in the test suite (the block is taken from the script and
+  its paths point to a temporary folder): without a manifest nothing runs, a wrong hash
+  refuses the script, and the matching hash runs it. The same test covers the forced
+  deletion of the safe engine: the ownership and the delete right are granted on a file
+  without any rule, a protected folder of the mounted image is removed completely, and a
+  folder outside of the mounted image is refused.
+
+### Added
+- The CI builds and tests the Rust engine (`cargo test` and `cargo build --release`)
+  and reports the lints of `cargo clippy`.
+- The issue agent only runs for a comment or a review of a collaborator
+  (`OWNER`, `MEMBER` or `COLLABORATOR`); a comment of an outsider can no longer start
+  a job with write permissions and a shell.
+- Eleven tests for the findings above and four Rust unit tests (the reparse point
+  refusal, the wildcard expansion, the coverage of the Defender target and the input
+  method binaries).
+- Four more tests: a corrupt manifest is a failed restore, a manifest that cannot be
+  read is not overwritten, an unreadable app inventory is a failed restore, and every
+  file without a BOM stays ASCII only (the files that carry Japanese text have a UTF-8
+  BOM, so Windows PowerShell 5.1 reads them correctly).
+- Three more tests: the rules backup exports every registry key of a rule, every
+  function of the migration engine returns a result, and the Rust engine takes the
+  ownership of a file, reports a privilege that is not assigned, and never deletes the
+  target of a symbolic link.
+- Four more tests: the custom scripts of the first logon run only with a matching
+  manifest, the safe engine grants the ownership and the delete right on a protected
+  file, a protected folder of the mounted image is removed completely, and a folder
+  outside of the mounted image is refused.
+- One more test: a removal that the user asked for is reported when it fails (a locked
+  file), a path that is gone is not a failure, and the content of a folder is removed
+  while the folder itself stays.
+- Two more tests: the HTML report lists the removals that failed, and the diagnostic
+  summary names the status of the physical debloat and the failed removals.
+
 ## Unreleased (local fork, 2026-10-21) - every Advanced Debloat target can be removed by the engine it offers
 
 ### Fixed

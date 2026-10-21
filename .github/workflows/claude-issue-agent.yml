@@ -30,14 +30,25 @@ permissions:
 jobs:
   claude:
     name: Run Claude on issue
-    # Only run for an issue assigned to the agent account, or for a comment that mentions @claude.
+    # Only run for an issue assigned to the agent account, or for a comment that
+    # mentions @claude. A comment of an outsider must not be able to start a job with
+    # write permissions and a shell: the author of the trigger has to be a
+    # collaborator of the repository.
     # The assignee check reads the repository variable so the account can be changed without editing this file.
     if: >-
       (github.event_name == 'issues' &&
         github.event.action == 'assigned' &&
-        github.event.assignee.login == (vars.CLAUDE_AGENT_ASSIGNEE || 'claude-agent')) ||
-      (github.event_name != 'issues' &&
-        contains(github.event.comment.body || github.event.review.body || '', '@claude'))
+        github.event.assignee.login == (vars.CLAUDE_AGENT_ASSIGNEE || 'claude-agent') &&
+        contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)) ||
+      (github.event_name == 'issue_comment' &&
+        contains(github.event.comment.body, '@claude') &&
+        contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review_comment' &&
+        contains(github.event.comment.body, '@claude') &&
+        contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review' &&
+        contains(github.event.review.body, '@claude') &&
+        contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

@@ -47,6 +47,22 @@ function Test-WinEasePathWithin {
     return $p.StartsWith($r + '\', [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+# Helper function: whether the build writes BypassNRO (OOBE\BypassNRO in the installed system,
+# Setup\LabConfig\BypassNRO and the specialize command of autounattend.xml). The answer comes from the
+# 'BypassNRO' fragment of config\unattend-fragments.psd1 - the same definition that adds the specialize
+# command - so the registry of the image (phases 10, 14, resume) and the answer file (phase 11) cannot
+# disagree. With the shipped definition: BypassNRO and BypassNetworkRequirement both have to be on.
+function Get-WinEaseBypassNROEnabled {
+    # TweakSettings is a dictionary, or an object with properties once the conflict resolver replaced it.
+    param($TweakSettings)
+    if (-not (Get-Command -Name Test-WinEaseUnattendFragmentEnabled -ErrorAction SilentlyContinue)) {
+        . (Join-Path -Path $PSScriptRoot -ChildPath 'lib\WinEaseUnattendComposer.ps1')
+    }
+    $fragment = @(Import-WinEaseUnattendFragments | Where-Object { $_.Id -eq 'BypassNRO' })
+    if ($fragment.Count -ne 1) { throw "config\unattend-fragments.psd1 defines no 'BypassNRO' fragment" }
+    return [bool](Test-WinEaseUnattendFragmentEnabled -Fragment $fragment[0] -Settings $TweakSettings)
+}
+
 # Helper function: path of an enumerated item relative to the folder it was enumerated from.
 # Get-ChildItem reports long names even when the folder was given in 8.3 form (for example
 # C:\Users\RUNNER~1\... for C:\Users\runneradmin\...), so slicing FullName by the length of the
@@ -232,6 +248,45 @@ function Resolve-WinEaseSafeRelativePath {
     }
     $result.IsSafe = $true
     $result.Path = $full
+    return $result
+}
+
+# Validates the name of the output ISO and returns the absolute path it maps to
+# inside the output directory.
+#
+# The name comes from the command line or from a profile, so it is untrusted input: it
+# has to be a plain file name. A name with a directory separator, a drive or a '..'
+# would write (or delete) a file outside of the output directory.
+#
+# Returns @{ IsSafe = $bool; FileName = <string>; Path = <string>; Reason = <string> }
+function Resolve-WinEaseSafeIsoName {
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$IsoName,
+        [Parameter(Mandatory = $true)]
+        [string]$Root
+    )
+    $result = [PSCustomObject]@{ IsSafe = $false; FileName = $null; Path = $null; Reason = '' }
+    if ([string]::IsNullOrWhiteSpace($IsoName)) {
+        $result.Reason = 'the ISO name is empty'
+        return $result
+    }
+    # A plain file name only: no directory separator, no drive and no '..'
+    if ([System.IO.Path]::GetFileName($IsoName) -ne $IsoName) {
+        $result.Reason = "the ISO name is not a plain file name: '$IsoName'"
+        return $result
+    }
+    $check = Resolve-WinEaseSafeRelativePath -RelativePath $IsoName -Root $Root -Label 'ISO name'
+    if (-not $check.IsSafe) {
+        $result.Reason = $check.Reason
+        return $result
+    }
+    $result.IsSafe = $true
+    $result.FileName = $IsoName
+    $result.Path = $check.Path
     return $result
 }
 
@@ -1540,11 +1595,14 @@ function Test-WinEaseConfigConflicts {
     }
 
     # 6. Bluetooth conflict
-    if (& $getVal 'KeepBT') {
+    # The component is named "KeepBluetooth" (config\schema.psd1, the builder and the
+    # dependency check); "KeepBT" is the name of the script variable. Both are read, so
+    # the conflict is found no matter which one the configuration uses.
+    if ((& $getVal 'KeepBluetooth') -or (& $getVal 'KeepBT')) {
         $stdBT = $stdItems | Where-Object { $_ -match 'Bluetooth' }
         $expBT = $expItems | Where-Object { $_ -match 'Bluetooth' }
         if ($stdBT -or $expBT) {
-            $msg = "KeepBT is true, but debloat contains Bluetooth items."
+            $msg = "KeepBluetooth is true, but debloat contains Bluetooth items."
             $conf = [PSCustomObject]@{ Rule = "Bluetooth"; Type = "Hardware"; Details = $msg; Resolution = "Removed Bluetooth debloat items"; Safeguard = [PSCustomObject]@{ Action = "RemoveItems"; Items = @($stdBT) + @($expBT) } }
             $conflicts.Add($conf)
             $warnings.Add("Conflict: $msg")

@@ -6,7 +6,7 @@
   <settings pass="generalize"></settings>
   <settings pass="specialize">
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-      <ComputerName>WinEase</ComputerName>
+      <ComputerName>{{ComputerName}}</ComputerName>
     </component>
     <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <RunSynchronous xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
@@ -16,37 +16,10 @@
         </RunSynchronousCommand>
         <RunSynchronousCommand wcm:action="add">
           <Order>2</Order>
-          <Path>reg.exe add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v BypassNRO /t REG_DWORD /d 1 /f</Path>
-        </RunSynchronousCommand>
-        <RunSynchronousCommand wcm:action="add">
-          <Order>3</Order>
           <Path>powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File C:\Windows\Setup\Scripts\Specialize.ps1</Path>
         </RunSynchronousCommand>
         <RunSynchronousCommand wcm:action="add">
-          <Order>4</Order>
-          <Path>powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File C:\Windows\Setup\Scripts\ApplyDefaultUser.ps1</Path>
-        </RunSynchronousCommand>
-      </RunSynchronous>
-    </component>
-    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="arm64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-      <ComputerName>WinEase</ComputerName>
-    </component>
-    <component name="Microsoft-Windows-Deployment" processorArchitecture="arm64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-      <RunSynchronous xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-        <RunSynchronousCommand wcm:action="add">
-          <Order>1</Order>
-          <Path>powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File C:\Windows\Setup\Scripts\ExtractUnattend.ps1</Path>
-        </RunSynchronousCommand>
-        <RunSynchronousCommand wcm:action="add">
-          <Order>2</Order>
-          <Path>reg.exe add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v BypassNRO /t REG_DWORD /d 1 /f</Path>
-        </RunSynchronousCommand>
-        <RunSynchronousCommand wcm:action="add">
           <Order>3</Order>
-          <Path>powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File C:\Windows\Setup\Scripts\Specialize.ps1</Path>
-        </RunSynchronousCommand>
-        <RunSynchronousCommand wcm:action="add">
-          <Order>4</Order>
           <Path>powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File C:\Windows\Setup\Scripts\ApplyDefaultUser.ps1</Path>
         </RunSynchronousCommand>
       </RunSynchronous>
@@ -63,8 +36,8 @@
         </AdministratorPassword>
         <LocalAccounts>
           <LocalAccount wcm:action="add">
-            <Name>User</Name>
-            <DisplayName>User</DisplayName>
+            <Name>{{UserName}}</Name>
+            <DisplayName>{{UserName}}</DisplayName>
             <Group>Administrators</Group>
             <Password>
               <Value></Value>
@@ -73,56 +46,6 @@
           </LocalAccount>
         </LocalAccounts>
       </UserAccounts>
-      <AutoLogon>
-        <Username>User</Username>
-        <Enabled>true</Enabled>
-        <LogonCount>1</LogonCount>
-        <Password>
-          <Value></Value>
-          <PlainText>true</PlainText>
-        </Password>
-      </AutoLogon>
-      <OOBE>
-        <HideEULAPage>true</HideEULAPage>
-        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
-        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
-        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
-        <ProtectYourPC>3</ProtectYourPC>
-      </OOBE>
-      <FirstLogonCommands>
-        <SynchronousCommand wcm:action="add">
-          <Order>1</Order>
-          <CommandLine>powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File C:\Windows\Setup\Scripts\RunFirstLogon.ps1</CommandLine>
-        </SynchronousCommand>
-      </FirstLogonCommands>
-    </component>
-    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="arm64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-      <UserAccounts>
-        <AdministratorPassword>
-          <Value></Value>
-          <PlainText>true</PlainText>
-        </AdministratorPassword>
-        <LocalAccounts>
-          <LocalAccount wcm:action="add">
-            <Name>User</Name>
-            <DisplayName>User</DisplayName>
-            <Group>Administrators</Group>
-            <Password>
-              <Value></Value>
-              <PlainText>true</PlainText>
-            </Password>
-          </LocalAccount>
-        </LocalAccounts>
-      </UserAccounts>
-      <AutoLogon>
-        <Username>User</Username>
-        <Enabled>true</Enabled>
-        <LogonCount>1</LogonCount>
-        <Password>
-          <Value></Value>
-          <PlainText>true</PlainText>
-        </Password>
-      </AutoLogon>
       <OOBE>
         <HideEULAPage>true</HideEULAPage>
         <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
@@ -304,12 +227,20 @@ exit 0;
   }
 
   if (Test-Path -LiteralPath $userCustomDir) {
+    # Integrity check (fail-closed), shared with FirstLogon.ps1. When the check or the manifest
+    # cannot be loaded the result is unknown and no user script runs.
     $manifestPath = 'C:\Windows\Setup\Scripts\custom-scripts-manifest.json';
-    $manifest = $null;
-    if (Test-Path -LiteralPath $manifestPath) {
-      try { $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json } catch {
-        Write-UserScriptLog "[SECURITY WARNING] Failed to read custom-scripts-manifest.json: $($_.Exception.Message)";
-      }
+    $integrityHelper = 'C:\Windows\Setup\Scripts\WinEaseCustomScriptIntegrity.ps1';
+    $manifestInfo = @{ Ok = $false; Entries = $null; Error = 'the integrity check could not be loaded' };
+    $integrityLoaded = $false;
+    try {
+      . $integrityHelper;
+      $integrityLoaded = $null -ne (Get-Command -Name Test-WinEaseCustomScriptAllowed -CommandType Function -ErrorAction SilentlyContinue);
+    } catch {
+      Write-UserScriptLog "[ERROR] The integrity check '$integrityHelper' could not be loaded: $($_.Exception.Message)";
+    }
+    if ($integrityLoaded) {
+      $manifestInfo = Read-WinEaseCustomScriptManifest -Path $manifestPath;
     }
 
     $validExts = @('.ps1', '.reg', '.cmd', '.bat');
@@ -337,6 +268,14 @@ exit 0;
       Write-UserScriptLog "Directory: $userCustomDir";
       Write-UserScriptLog "Target Scripts ($($userFiles.Count)): $(($userFiles | ForEach-Object { $_.Name }) -join ', ')";
       Write-UserScriptLog "================================================================================";
+      if ($manifestInfo.Ok) {
+        foreach ($gone in @(Get-WinEaseCustomScriptMissingEntries -Directory $userCustomDir -KeyPrefix 'user/' -Manifest $manifestInfo)) {
+          Write-UserScriptLog "[ERROR] Manifest entry '$gone' has no file in $userCustomDir. Nothing was run for it.";
+        }
+      } else {
+        Write-UserScriptLog "[ERROR] Reason: $($manifestInfo.Error)";
+        Write-UserScriptLog "[ERROR] Custom script manifest is missing or invalid. Refusing to execute custom scripts.";
+      }
 
       $pipelineSw = [System.Diagnostics.Stopwatch]::StartNew();
       $successCount = 0;
@@ -351,32 +290,17 @@ exit 0;
         $startDt = Get-Date;
         $startStr = $startDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
 
-        if ($manifest) {
-          $expected = $manifest."user/$($uf.Name)";
-          if (-not $expected) {
-            $endDt = Get-Date;
-            $endStr = $endDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
-            Write-UserScriptLog "[$idx/$($userFiles.Count)] [SECURITY REFUSAL] Script: $scriptName | Path: $scriptPath | StartTime: $startStr | EndTime: $endStr | Reason: File is not listed in build-time integrity manifest. Execution blocked.";
-            $failCount++;
-            continue;
-          }
-          $actual = try {
-            $fs = [System.IO.File]::OpenRead($uf.FullName);
-            $sha = [System.Security.Cryptography.SHA256]::Create();
-            try {
-              [System.BitConverter]::ToString($sha.ComputeHash($fs)).Replace("-", "");
-            } finally {
-              if ($null -ne $sha) { $sha.Dispose(); }
-              if ($null -ne $fs) { $fs.Dispose(); }
-            }
-          } catch { $null };
-          if ($actual -ine $expected) {
-            $endDt = Get-Date;
-            $endStr = $endDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
-            Write-UserScriptLog "[$idx/$($userFiles.Count)] [SECURITY REFUSAL] Script: $scriptName | Path: $scriptPath | StartTime: $startStr | EndTime: $endStr | Reason: Hash mismatch (Expected: $expected, Got: $actual). Execution blocked.";
-            $failCount++;
-            continue;
-          }
+        # Every file needs a positive verdict; anything else blocks it.
+        $verdict = @{ Allowed = $false; Reason = "The custom script manifest is missing or invalid ($($manifestInfo.Error))" };
+        if ($integrityLoaded) {
+          $verdict = Test-WinEaseCustomScriptAllowed -Path $scriptPath -ExpectedDirectory $userCustomDir -KeyPrefix 'user/' -Manifest $manifestInfo;
+        }
+        if (-not $verdict.Allowed) {
+          $endDt = Get-Date;
+          $endStr = $endDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
+          Write-UserScriptLog "[$idx/$($userFiles.Count)] [SECURITY REFUSAL] Script: $scriptName | Path: $scriptPath | StartTime: $startStr | EndTime: $endStr | Reason: $($verdict.Reason). Execution blocked.";
+          $failCount++;
+          continue;
         }
 
         $scriptSw = [System.Diagnostics.Stopwatch]::StartNew();
@@ -593,16 +517,30 @@ $scripts = @(
 				Write-CustomScriptLog "Target Scripts ($($targetFiles.Count)): $(($targetFiles | ForEach-Object { $_.Name }) -join ', ')";
 				Write-CustomScriptLog "================================================================================";
 
-				# Load SHA256 integrity manifest if present
+				# Integrity check (fail-closed). WinEaseCustomScriptIntegrity.ps1 is the one shared
+				# implementation (also used by UserOnce.ps1). When it or the manifest cannot be
+				# loaded the result is unknown and no custom script runs.
 				$manifestPath = "C:\Windows\Setup\Scripts\custom-scripts-manifest.json";
-				$manifest = $null;
-				if (Test-Path -LiteralPath $manifestPath) {
-					try {
-						$manifest = Get-Content -LiteralPath $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json;
-						Write-CustomScriptLog "Loaded custom scripts integrity manifest ($($manifest.psobject.properties.name.Count) entries).";
-					} catch {
-						Write-CustomScriptLog "[SECURITY WARNING] Failed to read custom-scripts-manifest.json: $($_.Exception.Message)";
+				$integrityHelper = "C:\Windows\Setup\Scripts\WinEaseCustomScriptIntegrity.ps1";
+				$manifestInfo = @{ Ok = $false; Entries = $null; Error = 'the integrity check could not be loaded' };
+				$integrityLoaded = $false;
+				try {
+					. $integrityHelper;
+					$integrityLoaded = $null -ne (Get-Command -Name Test-WinEaseCustomScriptAllowed -CommandType Function -ErrorAction SilentlyContinue);
+				} catch {
+					Write-CustomScriptLog "[ERROR] The integrity check '$integrityHelper' could not be loaded: $($_.Exception.Message)";
+				}
+				if ($integrityLoaded) {
+					$manifestInfo = Read-WinEaseCustomScriptManifest -Path $manifestPath;
+				}
+				if ($manifestInfo.Ok) {
+					Write-CustomScriptLog "Loaded custom scripts integrity manifest ($($manifestInfo.Entries.Count) entries).";
+					foreach ($gone in @(Get-WinEaseCustomScriptMissingEntries -Directory $customDir -KeyPrefix '' -Manifest $manifestInfo)) {
+						Write-CustomScriptLog "[ERROR] Manifest entry '$gone' has no file in $customDir. Nothing was run for it.";
 					}
+				} else {
+					Write-CustomScriptLog "[ERROR] Reason: $($manifestInfo.Error)";
+					Write-CustomScriptLog "[ERROR] Custom script manifest is missing or invalid. Refusing to execute custom scripts.";
 				}
 
 				$pipelineSw = [System.Diagnostics.Stopwatch]::StartNew();
@@ -618,33 +556,17 @@ $scripts = @(
 					$startDt = Get-Date;
 					$startStr = $startDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
 
-					# Enforce SHA256 verification against build-time manifest
-					if ($manifest) {
-						$expectedHash = $manifest."$scriptName";
-						if (-not $expectedHash) {
-							$endDt = Get-Date;
-							$endStr = $endDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
-							Write-CustomScriptLog "[$idx/$($targetFiles.Count)] [SECURITY REFUSAL] Script: $scriptName | Path: $scriptPath | StartTime: $startStr | EndTime: $endStr | Reason: File is not listed in build-time integrity manifest. Execution blocked.";
-							$failCount++;
-							continue;
-						}
-						$actualHash = try {
-							$fs = [System.IO.File]::OpenRead($scriptPath);
-							$sha = [System.Security.Cryptography.SHA256]::Create();
-							try {
-								[System.BitConverter]::ToString($sha.ComputeHash($fs)).Replace("-", "");
-							} finally {
-								if ($null -ne $sha) { $sha.Dispose(); }
-								if ($null -ne $fs) { $fs.Dispose(); }
-							}
-						} catch { $null };
-						if ($actualHash -ine $expectedHash) {
-							$endDt = Get-Date;
-							$endStr = $endDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
-							Write-CustomScriptLog "[$idx/$($targetFiles.Count)] [SECURITY REFUSAL] Script: $scriptName | Path: $scriptPath | StartTime: $startStr | EndTime: $endStr | Reason: Hash mismatch (Expected: $expectedHash, Got: $actualHash). Execution blocked.";
-							$failCount++;
-							continue;
-						}
+					# Every file needs a positive verdict; anything else blocks it.
+					$verdict = @{ Allowed = $false; Reason = "The custom script manifest is missing or invalid ($($manifestInfo.Error))" };
+					if ($integrityLoaded) {
+						$verdict = Test-WinEaseCustomScriptAllowed -Path $scriptPath -ExpectedDirectory $customDir -KeyPrefix '' -Manifest $manifestInfo;
+					}
+					if (-not $verdict.Allowed) {
+						$endDt = Get-Date;
+						$endStr = $endDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
+						Write-CustomScriptLog "[$idx/$($targetFiles.Count)] [SECURITY REFUSAL] Script: $scriptName | Path: $scriptPath | StartTime: $startStr | EndTime: $endStr | Reason: $($verdict.Reason). Execution blocked.";
+						$failCount++;
+						continue;
 					}
 
 					$scriptSw = [System.Diagnostics.Stopwatch]::StartNew();

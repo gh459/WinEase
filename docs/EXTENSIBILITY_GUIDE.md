@@ -296,7 +296,7 @@ With `Warn` / `Ignore`, remaining scripts still run. For `FirstLogon`, failures 
 ### Security notes
 
 - **Custom scripts run with the build user's (administrator) privileges at build time, and with administrator privileges for `FirstLogon`.** Only place scripts whose contents you have reviewed.
-- At build time the SHA-256 of each script is recorded in `custom-scripts-manifest.json` and checked at first logon. A script not in the manifest, or modified afterwards, is refused with `[SECURITY REFUSAL]`.
+- At build time the SHA-256 of each script is recorded in `custom-scripts-manifest.json` and checked at first logon. A script not in the manifest, or modified afterwards, is refused with `[SECURITY REFUSAL]`. The check is fail-closed: with a missing or broken manifest no custom script runs at all. It shows only that the file is unchanged since the build; it does not protect against someone who can change both the script and the manifest (see `docs/SECURITY_OPTIONS.md`).
 - Passwords, tokens, API keys and product keys in the logs are replaced with `[REDACTED]`. Still, do not write them into scripts.
 - Backups contain personal data. Credential-like files are excluded by default (included only with `-IncludeSecrets`). Store backups somewhere safe.
 - A user tweak without `Impact` counts as Unknown, and `-StrictDependencyCheck` stops the build for it.

@@ -1379,7 +1379,9 @@ $phaseText += "`n" + [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "
 # config\schema.psd1 is the master schema: the lookup tables of the options live there
 $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\schema.psd1"))
     $helpersText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "WinEasehelpers.ps1"))
-    $scriptText = (Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "scripts") -Filter "*.ps1" -ErrorAction SilentlyContinue |
+    $helpersAst = [System.Management.Automation.Language.Parser]::ParseInput($helpersText, [ref]$null, [ref]$null)
+    $unattendFragmentDefs = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\unattend-fragments.psd1")
+    $scriptText =(Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "scripts") -Filter "*.ps1" -ErrorAction SilentlyContinue |
         ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"
 
     # The builder derives these tables from config\schema.psd1; build them the same way here
@@ -1404,6 +1406,18 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
             if ($varMap.Contains($k)) {
                 $v = $varMap[$k]
                 if (($phaseText -match "\`$$v\b") -or ($helpersText -match "\`$$v\b")) { continue }
+            }
+            # A key may be read by a shared helper of WinEasehelpers.ps1 (for example
+            # Get-WinEaseBypassNROEnabled): it counts only when a phase really calls that helper
+            # with the TweakSettings table.
+            $helperReaders = @($helpersAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) |
+                Where-Object { $_.Body.Extent.Text -match "'$([regex]::Escape($k))'" })
+            if (@($helperReaders | Where-Object { $phaseText -match "$([regex]::Escape($_.Name))\s+-TweakSettings\s+\`$script:TweakSettings" }).Count -gt 0) { continue }
+            # A key may switch an answer-file fragment (Toggle or When of config\unattend-fragments.psd1);
+            # phase 11 composes every fragment with the TweakSettings.
+            if ($phaseText -match 'Invoke-WinEaseUnattendComposition') {
+                $fragmentKeys = @($unattendFragmentDefs.Fragments | ForEach-Object { $_.Toggle; if ($_.When) { $_.When['AllOf']; $_.When['AnyOf'] } } | Where-Object { $_ })
+                if ($fragmentKeys -contains $k) { continue }
             }
             $unconsumed += $k
         }
@@ -2480,10 +2494,26 @@ Describe "PC Migration & Backup Engine (tools/migrator/WinEaseMigration.ps1)" {
         $bkDir = Join-Path $env:TEMP "migtest_bk4"
         if (Test-Path $bkDir) { Remove-Item $bkDir -Recurse -Force }
         New-Item -ItemType Directory -Force -Path $bkDir | Out-Null
+        # A backup without a manifest, an app inventory and rules holds nothing that
+        # could be restored: the restore reports a failure instead of a fake task.
         @{ Created = (Get-Date).ToString('o') } | ConvertTo-Json | Set-Content (Join-Path $bkDir 'migration-manifest.json') -Encoding UTF8
+        $empty = Start-WinEaseMigrationRestore -BackupRoot $bkDir
+        @($empty.Results | Where-Object { $_.Status -eq 'Failed' }).Count | Should BeGreaterThan 0
+        # a backup with a task: the first run completes it, the second one skips it
+        $srcDir = Join-Path $env:TEMP "migtest_src4"
+        if (Test-Path $srcDir) { Remove-Item $srcDir -Recurse -Force }
+        New-Item -ItemType Directory -Force -Path (Join-Path $srcDir 'Documents') | Out-Null
+        'hello' | Set-Content (Join-Path $srcDir 'Documents\retry.txt')
+        $manifest = [PSCustomObject]@{
+            Created = (Get-Date).ToString('o')
+            Folders = @([PSCustomObject]@{ Category = 'Documents'; SourcePath = (Join-Path $srcDir 'Documents') })
+            Entries = @()
+        }
+        $manifest | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $bkDir 'migration-manifest.json') -Encoding UTF8
         Start-WinEaseMigrationRestore -BackupRoot $bkDir | Out-Null
         $r2 = Start-WinEaseMigrationRestore -BackupRoot $bkDir -RetryFailedOnly
         @($r2.Results | Where-Object { $_.Status -like 'Skipped*' }).Count | Should BeGreaterThan 0
+        Remove-Item $srcDir -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item $bkDir -Recurse -Force -ErrorAction SilentlyContinue
     }
     It "Invoke-WinEaseMigrationRulesBackup excludes secret files by default" {
@@ -3514,7 +3544,7 @@ Describe "GUI display language (English / Japanese)" {
         try {
             $gui.Form.Text | Should Be 'WinEase Builder v2.1 - Next-Gen Windows 11 Modular Optimizer & Reducer'
             $tabs = @($gui.Tabs.TabPages | ForEach-Object { $_.Text })
-            ($tabs -join '|') | Should Be ' 1. Media & Output | 2. Security & Bypass | 3. Privacy & AI | 4. Performance | 5. UI & Shell | 6. Services & Apps | 7. Advanced Debloat | 8. Migration & Backup | 9. User Tweaks '
+            ($tabs -join '|') | Should Be ' 1. Media & Output | 2. Security & Bypass | 3. Privacy & AI | 4. Performance | 5. UI & Shell | 6. Services & Apps | 7. Advanced Debloat | 8. Migration & Backup | 9. User Tweaks | 10. Answer File '
             $gui.Preset.Items[0] | Should Be 'Extreme Slim & Gaming (Max debloat, minimal memory, ultra-low latency)'
             $gui.DryRun.Text | Should Be 'DryRun (Simulation Mode)'
             $gui.TweakCheckboxes['DisableUAC'].Text | Should Be ('DisableUAC - ' + $script:AllTweakDefs['DisableUAC'].Description)
@@ -4367,10 +4397,13 @@ Describe "Security options - the defaults and the execution paths agree" {
     }
 
     It "the blank-password auto-logon follows the option everywhere" {
-        # the unattend file: the AutoLogon section is removed when the option is off
+        # the unattend file: the AutoLogon section is a fragment that follows the option
         $phase11 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\11-unattend.ps1"))
         $phase11 | Should Match 'Test-TweakEnabled ''ConfigureWinlogon'' \$false'
-        $phase11 | Should Match 'local-name\(\)=.AutoLogon.'
+        $fragments = Import-PowerShellDataFile -Path (Join-Path $script:RepoRoot "config\unattend-fragments.psd1")
+        $autoLogon = @($fragments.Fragments | Where-Object { $_.Element -eq 'AutoLogon' })
+        $autoLogon.Count | Should Be 1
+        $autoLogon[0].Toggle | Should Be 'ConfigureWinlogon'
         # the registry phase: the Winlogon values are only written when the option is on
         $phase10 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\10-registry.ps1"))
         $phase10 | Should Match 'Test-TweakEnabled ''ConfigureWinlogon'' \$false'
@@ -4383,14 +4416,16 @@ Describe "Security options - the defaults and the execution paths agree" {
 
     It "the unattend file loses the auto-logon section when the option is off" {
         $raw = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "autounattend.xml"), [System.Text.Encoding]::UTF8)
+        . (Join-Path $script:RepoRoot "lib\WinEaseUnattendComposer.ps1")
+        $fr = @(Import-WinEaseUnattendFragments | Where-Object { $_.Id -eq 'AutoLogon' })
+        # the option is off: no AutoLogon section, the account stays
         $doc = [xml]$raw
-        # the option is off: the AutoLogon section is removed, the account stays
-        $doc = [xml]$raw
-        foreach ($n in @($doc.SelectNodes("//*[local-name()='AutoLogon']"))) { [void]$n.ParentNode.RemoveChild($n) }
+        [void](Invoke-WinEaseUnattendComposition -XmlDocument $doc -Fragments $fr -Settings @{ ConfigureWinlogon = $false } -Architecture 'amd64' -Values @{ UserName = 'User'; ComputerName = '*' })
         @($doc.SelectNodes("//*[local-name()='AutoLogon']")).Count | Should Be 0
         @($doc.SelectNodes("//*[local-name()='LocalAccount']")).Count | Should BeGreaterThan 0
-        # the option is on: the section stays untouched
+        # the option is on: the section is added
         $doc2 = [xml]$raw
+        [void](Invoke-WinEaseUnattendComposition -XmlDocument $doc2 -Fragments $fr -Settings @{ ConfigureWinlogon = $true } -Architecture 'amd64' -Values @{ UserName = 'User'; ComputerName = '*' })
         @($doc2.SelectNodes("//*[local-name()='AutoLogon']")).Count | Should BeGreaterThan 0
     }
 
@@ -4663,5 +4698,1079 @@ Describe "WinEase advanced debloat - the engine choice is explained" {
             # the mark sits left of the engine label
             $mark[0].Right | Should BeLessThan 455
         } finally { $gui.Form.Dispose() }
+    }
+}
+
+Describe "WinEase review hardening" {
+    # The findings of the review of the three documents, one test per finding.
+    . (Join-Path $script:RepoRoot 'WinEasehelpers.ps1')
+
+    It "the Bluetooth conflict is found under the name of the component" {
+        # The component is named KeepBluetooth (schema, builder, dependency check); the
+        # old name of the script variable was read instead, so the conflict was missed.
+        $cfg = [PSCustomObject]@{
+            KeepBluetooth = $true
+            advancedDebloatStandard = @('Remove Bluetooth stack (service + binary) [20-40MB]')
+        }
+        $res = Test-WinEaseConfigConflicts -Config $cfg
+        $res.HasConflicts | Should Be $true
+        $rules = @($res.Conflicts | ForEach-Object { [string]$_.Rule })
+        ($rules -contains 'Bluetooth') | Should Be $true
+    }
+
+    It "the output ISO name has to be a plain file name" {
+        $root = Join-Path $env:TEMP 'winease_isotest'
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        try {
+            (Resolve-WinEaseSafeIsoName -IsoName 'WinEase.iso' -Root $root).IsSafe | Should Be $true
+            (Resolve-WinEaseSafeIsoName -IsoName 'WinEase_2026.iso' -Root $root).IsSafe | Should Be $true
+            foreach ($bad in @('..\evil.iso', 'C:\evil.iso', 'sub\evil.iso', 'a/b.iso', '..\..\evil.iso')) {
+                $r = Resolve-WinEaseSafeIsoName -IsoName $bad -Root $root
+                $r.IsSafe | Should Be $false
+                $r.Reason | Should Not BeNullOrEmpty
+            }
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "the first logon refuses the custom scripts without a usable manifest" {
+        $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'scripts\FirstLogon.ps1'), [System.Text.Encoding]::UTF8)
+        # fail-closed: a missing or unreadable manifest blocks every script
+        $text | Should Match 'Custom script manifest is missing or invalid'
+        # the shared check decides for every file; the default verdict is a refusal
+        $text | Should Match 'Test-WinEaseCustomScriptAllowed'
+        $text | Should Match '\$verdict = @\{ Allowed = \$false'
+        $text | Should Not Match 'if \(\$manifest\) \{'
+        # a manifest entry without a valid hash is refused (in the shared check)
+        $helperText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseCustomScriptIntegrity.ps1'), [System.Text.Encoding]::UTF8)
+        $helperText | Should Match ([regex]::Escape("notmatch '^[0-9A-Fa-f]{64}$'"))
+        # the exit code of the native call decides whether the script succeeded
+        $text | Should Match '\$scriptExitCode'
+    }
+
+    It "the first logon executes a custom script only with a matching manifest" {
+        # The custom script pipeline of the first logon is run here with the paths of the
+        # image replaced by a temporary folder, so the fail-closed behaviour is checked
+        # for real and not only in the source.
+        $firstLogon = Join-Path $script:RepoRoot 'scripts\FirstLogon.ps1'
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($firstLogon, [ref]$null, [ref]$null)
+        $blocks = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.ScriptBlockExpressionAst] }, $true)
+        $customBlock = @($blocks | Where-Object { $_.Extent.Text -match 'Custom Post-Install User Scripts Execution Hook' })
+        $customBlock.Count | Should Be 1
+        # the text of the script block still has the braces around it: only the body is
+        # executed
+        $blockText = $customBlock[0].Extent.Text
+        $blockBody = $blockText.Substring(1, $blockText.Length - 2)
+
+        $tempRoot = Join-Path $env:TEMP ('winease_custom_' + [guid]::NewGuid().ToString('N'))
+        $customDir = Join-Path $tempRoot 'Custom'
+        $logDir = Join-Path $tempRoot 'Logs'
+        New-Item -ItemType Directory -Force -Path $customDir | Out-Null
+        New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+        $marker = Join-Path $tempRoot 'marker.txt'
+        $script = Join-Path $customDir 'hello.ps1'
+        Set-Content -LiteralPath $script -Value ("Set-Content -LiteralPath '$marker' -Value 'ran'")
+        $manifestPath = Join-Path $tempRoot 'custom-scripts-manifest.json'
+        # the build deploys the shared integrity check next to the manifest
+        Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'lib\WinEaseCustomScriptIntegrity.ps1') -Destination (Join-Path $tempRoot 'WinEaseCustomScriptIntegrity.ps1')
+        $runBlock = $blockBody.Replace('C:\Windows\Setup\Scripts', $tempRoot).Replace('C:\ProgramData\WinEase\Logs', $logDir)
+        try {
+            # 1. without a manifest nothing is executed
+            & ([scriptblock]::Create($runBlock))
+            Test-Path -LiteralPath $marker | Should Be $false
+            $log = Get-Content -LiteralPath (Join-Path $logDir 'custom-scripts.log') -Raw
+            $log | Should Match 'Custom script manifest is missing or invalid'
+
+            # 2. a manifest with the wrong hash refuses the script
+            @{ 'hello.ps1' = ('0' * 64) } | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+            & ([scriptblock]::Create($runBlock))
+            Test-Path -LiteralPath $marker | Should Be $false
+            $log = Get-Content -LiteralPath (Join-Path $logDir 'custom-scripts.log') -Raw
+            $log | Should Match 'Hash mismatch'
+
+            # 3. a manifest with the matching hash runs the script
+            $hash = (Get-FileHash -LiteralPath $script -Algorithm SHA256).Hash
+            @{ 'hello.ps1' = $hash } | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+            & ([scriptblock]::Create($runBlock))
+            Test-Path -LiteralPath $marker | Should Be $true
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "a failing winget is a failed app, not an installed one" {
+        $fake = Join-Path $env:TEMP 'winease_fakewinget'
+        New-Item -ItemType Directory -Force -Path $fake | Out-Null
+        $cmd = Join-Path $fake 'winget.cmd'
+        "@echo off`r`nexit /b 3" | Set-Content -LiteralPath $cmd -Encoding ascii
+        $inv = Join-Path $env:TEMP 'winease_winget_inventory.json'
+        $oldPath = $env:PATH
+        $env:PATH = "$fake;$oldPath"
+        try {
+            @{ Apps = @(@{ Name = 'Fake App'; AutoReinstallable = $true; ReinstallCommand = 'winget install'; PackageIdentifier = 'Fake.App' }) } |
+                ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $inv -Encoding UTF8
+            $r = Restore-WinEaseApps -InventoryPath $inv
+            @($r.Installed).Count | Should Be 0
+            @($r.Failed).Count | Should Be 1
+            [string]$r.Failed[0].Error | Should Match 'winget exited with code 3'
+        } finally {
+            $env:PATH = $oldPath
+            Remove-Item -LiteralPath $fake -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $inv -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "a dry run of the migration backup writes nothing" {
+        $bkDir = Join-Path $env:TEMP ('migtest_dry_' + [guid]::NewGuid().ToString('N'))
+        $srcDir = Join-Path $env:TEMP ('migtest_dry_src_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path (Join-Path $srcDir 'Documents') | Out-Null
+        'hello' | Set-Content (Join-Path $srcDir 'Documents\dry.txt')
+        try {
+            Start-WinEaseMigrationBackup -FolderMap @{ Documents = (Join-Path $srcDir 'Documents') } -BackupRoot $bkDir -DryRun -OfflineTestMode | Out-Null
+            # not even the backup folder is created
+            Test-Path -LiteralPath $bkDir | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $srcDir -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $bkDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "the custom path backup keeps the folder structure and the file names apart" {
+        $src = Join-Path $env:TEMP 'migtest_custom_src'
+        $bk = Join-Path $env:TEMP 'migtest_custom_bk'
+        foreach ($d in @($src, $bk)) { if (Test-Path $d) { Remove-Item $d -Recurse -Force } }
+        New-Item -ItemType Directory -Force -Path (Join-Path $src 'A') | Out-Null
+        New-Item -ItemType Directory -Force -Path (Join-Path $src 'B') | Out-Null
+        New-Item -ItemType Directory -Force -Path (Join-Path $src 'Folder\sub') | Out-Null
+        'a' | Set-Content (Join-Path $src 'A\config.ini')
+        'b' | Set-Content (Join-Path $src 'B\config.ini')
+        'note' | Set-Content (Join-Path $src 'Folder\sub\note.txt')
+        try {
+            $r = Backup-WinEaseCustomPaths -Paths @((Join-Path $src 'A\config.ini'), (Join-Path $src 'B\config.ini'), (Join-Path $src 'Folder')) -BackupRoot $bk
+            $names = @($r.ManifestEntries | ForEach-Object { [string]$_.RelativePath })
+            $names.Count | Should Be 3
+            # two files with the same name do not overwrite each other
+            @($names | Select-Object -Unique).Count | Should Be $names.Count
+            # the folder structure is kept
+            ($names -contains (Join-Path 'Folder' 'sub\note.txt')) | Should Be $true
+            # every entry has a hash
+            foreach ($e in $r.ManifestEntries) { [string]$e.Sha256 | Should Not Be '' }
+            # the restore puts every file back where it came from
+            $rr = Restore-WinEaseCustomPaths -BackupRoot $bk -AllowedSourcePaths @($src)
+            @($rr.FailedFiles).Count | Should Be 0
+            Test-Path -LiteralPath (Join-Path $src 'Folder\sub\note.txt') | Should Be $true
+        } finally {
+            Remove-Item -LiteralPath $src -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $bk -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "the rules backup keeps the sources of a rule apart" {
+        $userRulesPath = Join-Path $script:RepoRoot 'config\user\user-migration-rules.psd1'
+        $original = [System.IO.File]::ReadAllText($userRulesPath, [System.Text.Encoding]::UTF8)
+        $bk = Join-Path $env:TEMP 'migtest_rules_bk'
+        $srcA = Join-Path $env:TEMP 'migtest_rules_a'
+        $srcB = Join-Path $env:TEMP 'migtest_rules_b'
+        if (Test-Path $bk) { Remove-Item $bk -Recurse -Force }
+        New-Item -ItemType Directory -Force -Path $srcA | Out-Null
+        New-Item -ItemType Directory -Force -Path $srcB | Out-Null
+        'one' | Set-Content (Join-Path $srcA 'first.cfg')
+        'two' | Set-Content (Join-Path $srcB 'second.cfg')
+        try {
+            # a user rule with two source folders
+            $rule = @"
+@{
+    SchemaVersion = '1.0'
+    DefaultSecretExcludePatterns = @()
+    GameRules = @()
+    CustomPathRules = @()
+    AppConfigRules = @(
+        @{
+            Id = 'TestMultiSource'
+            Name = 'Test Multi Source'
+            Category = 'AppConfig'
+            SourcePaths = @('$srcA', '$srcB')
+            ExcludePatterns = @()
+            ProcessNames = @()
+            ExcludeSecrets = `$false
+            RegistryPaths = @()
+            RestoreHint = ''
+        }
+    )
+}
+"@
+            [System.IO.File]::WriteAllText($userRulesPath, $rule, (New-Object System.Text.UTF8Encoding($false)))
+            $r = Invoke-WinEaseMigrationRulesBackup -RuleIds 'TestMultiSource' -BackupRoot $bk
+            @($r.FailedFiles).Count | Should Be 0
+            $r.CopiedFiles | Should Be 2
+            # the second source is stored in its own folder
+            Test-Path -LiteralPath (Join-Path $bk 'rules\TestMultiSource\_src_1') | Should Be $true
+            # the manifest of the rule maps every file to its source
+            $manifestPath = Join-Path $bk 'rules\TestMultiSource\rule-manifest.json'
+            Test-Path -LiteralPath $manifestPath | Should Be $true
+            $ruleManifest = ([System.IO.File]::ReadAllText($manifestPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json)
+            @($ruleManifest.Entries).Count | Should Be 2
+            $indexes = @($ruleManifest.Entries | ForEach-Object { [int]$_.SourceIndex } | Sort-Object -Unique)
+            $indexes.Count | Should Be 2
+        } finally {
+            [System.IO.File]::WriteAllText($userRulesPath, $original, (New-Object System.Text.UTF8Encoding($false)))
+            Remove-Item -LiteralPath $bk -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $srcA -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $srcB -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "the report shows the status of the physical debloat" {
+        . (Join-Path $script:RepoRoot 'lib\WinEaseReport.ps1')
+        $out = Join-Path $env:TEMP ('winease_report_' + [guid]::NewGuid().ToString('N') + '.html')
+        try {
+            Export-WinEaseHtmlReport -OutputPath $out -BuildInfo @{
+                Title = 'Test'
+                PhysicalDebloatStatus = 'BlockedByGate'
+                PhysicalDebloatRequestedTargets = @('Physical: Defender (complete removal) [~50MB]')
+            }
+            $html = [System.IO.File]::ReadAllText($out, [System.Text.Encoding]::UTF8)
+            $html | Should Match 'Blocked \(-AllowPhysicalDebloat missing\)'
+            $html | Should Match 'Physical: Defender'
+        } finally {
+            Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "the PowerShell engine takes the ownership and the delete right of a protected file" {
+        . (Join-Path $script:RepoRoot 'lib\WinEaseFileSystem.ps1')
+        $root = Join-Path $env:TEMP ('winease_acl_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        try {
+            $file = Join-Path $root 'protected.dll'
+            Set-Content -LiteralPath $file -Value 'x'
+            # a DACL without any rule: the file could not be deleted before
+            $acl = Get-Acl -LiteralPath $file
+            $acl.SetAccessRuleProtection($true, $false)
+            foreach ($r in @($acl.Access)) { [void]$acl.RemoveAccessRule($r) }
+            Set-Acl -LiteralPath $file -AclObject $acl
+            Set-ItemOwnershipAndAccess -Path $file
+            $after = Get-Acl -LiteralPath $file
+            $adminName = ([System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')).Translate([System.Security.Principal.NTAccount]).Value
+            $granted = @($after.Access | Where-Object { $_.IdentityReference.Value -eq $adminName -and $_.AccessControlType -eq 'Allow' })
+            $granted.Count | Should BeGreaterThan 0
+            # the owner is the Administrators group
+            $after.Owner | Should Be $adminName
+            # the file can be deleted now
+            Remove-Item -LiteralPath $file -Force -ErrorAction Stop
+            Test-Path -LiteralPath $file | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "the PowerShell engine removes a protected folder of the mounted image" {
+        . (Join-Path $script:RepoRoot 'lib\WinEaseFileSystem.ps1')
+        $root = Join-Path $env:TEMP ('winease_rmdir_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $script:DismMountDir = $root
+        try {
+            $folder = Join-Path $root 'Windows Defender'
+            New-Item -ItemType Directory -Force -Path (Join-Path $folder 'sub') | Out-Null
+            $file = Join-Path $folder 'sub\payload.bin'
+            Set-Content -LiteralPath $file -Value 'x'
+            (Get-Item -LiteralPath $file).IsReadOnly = $true
+            Remove-ProtectedDirectory -Path $folder -ScratchPath $root
+            Test-Path -LiteralPath $folder | Should Be $false
+        } finally {
+            $script:DismMountDir = $null
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "the removal of a folder outside of the mounted image is refused" {
+        . (Join-Path $script:RepoRoot 'lib\WinEaseFileSystem.ps1')
+        $root = Join-Path $env:TEMP ('winease_guard_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $script:DismMountDir = $root
+        try {
+            { Remove-ProtectedDirectory -Path $env:TEMP -ScratchPath $root } | Should Throw
+        } finally {
+            $script:DismMountDir = $null
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "a removal that the user asked for is reported when it fails" {
+        . (Join-Path $script:RepoRoot 'lib\WinEaseFileSystem.ps1')
+        $root = Join-Path $env:TEMP ('winease_required_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        try {
+            # a path that does not exist is not a failure
+            $err = Remove-WinEaseRequiredPath -Path (Join-Path $root 'nothing.dll') -Label 'nothing.dll'
+            $err | Should BeNullOrEmpty
+            # a path that is removed has no failure either
+            $file = Join-Path $root 'payload.bin'
+            Set-Content -LiteralPath $file -Value 'x'
+            $err = Remove-WinEaseRequiredPath -Path $file -Label 'payload.bin'
+            $err | Should BeNullOrEmpty
+            Test-Path -LiteralPath $file | Should Be $false
+            # a locked file is a failure that is reported
+            $locked = Join-Path $root 'locked.bin'
+            Set-Content -LiteralPath $locked -Value 'x'
+            $stream = [System.IO.File]::Open($locked, 'Open', 'ReadWrite', 'None')
+            try {
+                $err = Remove-WinEaseRequiredPath -Path $locked -Label 'locked.bin'
+                $err | Should Not BeNullOrEmpty
+                $err | Should Match 'locked.bin'
+            } finally {
+                $stream.Close()
+            }
+            # the content of a folder is removed, the folder itself stays
+            $folder = Join-Path $root 'cache'
+            New-Item -ItemType Directory -Force -Path $folder | Out-Null
+            Set-Content -LiteralPath (Join-Path $folder 'a.bin') -Value 'x'
+            Set-Content -LiteralPath (Join-Path $folder 'b.txt') -Value 'x'
+            $err = Remove-WinEaseRequiredPath -Path $folder -Label 'cache' -ContentsOnly -Filter '*.bin'
+            $err | Should BeNullOrEmpty
+            Test-Path -LiteralPath $folder | Should Be $true
+            Test-Path -LiteralPath (Join-Path $folder 'a.bin') | Should Be $false
+            Test-Path -LiteralPath (Join-Path $folder 'b.txt') | Should Be $true
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "the physical debloat status is part of the build diagnostics" {
+        $builder = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'WinEasebuilder.ps1'), [System.Text.Encoding]::UTF8)
+        $builder | Should Match 'PhysicalDebloatStatus'
+        $builder | Should Match 'PhysicalDebloatRequestedTargets'
+        $phase09 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\09-physical-debloat.ps1'), [System.Text.Encoding]::UTF8)
+        $phase09 | Should Match "PhysicalDebloatStatus = 'BlockedByGate'"
+        $phase09 | Should Match "PhysicalDebloatStatus = 'SkippedMissingBinary'"
+        $phase09 | Should Match "'DryRun'"
+    }
+
+    It "the CI builds and tests the Rust engine" {
+        $ci = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot '.github\workflows\ci.yml'), [System.Text.Encoding]::UTF8)
+        $ci | Should Match 'cargo test --manifest-path tools/winease-physical-debloat/Cargo.toml'
+        $ci | Should Match 'cargo build --release --manifest-path tools/winease-physical-debloat/Cargo.toml'
+        $ci | Should Match 'cargo clippy --manifest-path tools/winease-physical-debloat/Cargo.toml'
+    }
+
+    It "the issue agent only runs for a collaborator" {
+        $wf = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot '.github\workflows\claude-issue-agent.yml'), [System.Text.Encoding]::UTF8)
+        $wf | Should Match 'author_association'
+        $wf | Should Match 'OWNER","MEMBER","COLLABORATOR'
+    }
+
+    It "the rule restore refuses a destination behind a junction" {
+        $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'tools\migrator\WinEaseMigration.ps1'), [System.Text.Encoding]::UTF8)
+        $text | Should Match 'Test-WinEasePathHasReparsePoint -Path \$destPath -Root \$ruleRoot'
+        $text | Should Match 'the destination traverses a symbolic link or junction'
+    }
+
+    It "a folder that cannot be read completely is reported by the backup" {
+        $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'tools\migrator\WinEaseMigration.ps1'), [System.Text.Encoding]::UTF8)
+        $text | Should Match '-ErrorVariable enumErrors'
+        $text | Should Match 'The folder could not be read completely'
+    }
+
+    It "the Rust engine removes the IME binaries but keeps the folder of the engine" {
+        $rustSrc = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'tools\winease-physical-debloat\src\main.rs'), [System.Text.Encoding]::UTF8)
+        $rustSrc | Should Match 'fn delete_secondary_ime_binaries'
+        $rustSrc | Should Match 'fn delete_non_essential_fonts'
+        $rustSrc | Should Match 'fn delete_directory_contents'
+    }
+
+    It "a corrupt manifest is a failed restore, not an empty one" {
+        $bkDir = Join-Path $env:TEMP ('migtest_corrupt_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $bkDir | Out-Null
+        try {
+            # a manifest that is not valid JSON
+            '{ this is not json' | Set-Content -LiteralPath (Join-Path $bkDir 'migration-manifest.json') -Encoding UTF8
+            $r = Restore-WinEaseUserData -BackupRoot $bkDir
+            $r.Success | Should Be $false
+            @($r.FailedFiles).Count | Should BeGreaterThan 0
+            # the custom paths restore fails as well
+            $c = Restore-WinEaseCustomPaths -BackupRoot $bkDir -AllowedSourcePaths @($env:TEMP)
+            @($c.FailedFiles).Count | Should BeGreaterThan 0
+            # the orchestrator reports the manifest as a failed task
+            $o = Start-WinEaseMigrationRestore -BackupRoot $bkDir
+            @($o.Results | Where-Object { $_.Status -eq 'Failed' }).Count | Should BeGreaterThan 0
+        } finally {
+            Remove-Item -LiteralPath $bkDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "a manifest that cannot be read is not overwritten by the backup" {
+        $bkDir = Join-Path $env:TEMP ('migtest_keepmanifest_' + [guid]::NewGuid().ToString('N'))
+        $srcDir = Join-Path $env:TEMP ('migtest_keepmanifest_src_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $bkDir | Out-Null
+        New-Item -ItemType Directory -Force -Path $srcDir | Out-Null
+        'payload' | Set-Content -LiteralPath (Join-Path $srcDir 'keep.ini')
+        $manifestPath = Join-Path $bkDir 'migration-manifest.json'
+        '{ this is not json' | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+        try {
+            $r = Backup-WinEaseCustomPaths -Paths @($srcDir) -BackupRoot $bkDir
+            @($r.FailedFiles).Count | Should BeGreaterThan 0
+            # the old manifest is still there
+            [System.IO.File]::ReadAllText($manifestPath) | Should Match 'this is not json'
+        } finally {
+            Remove-Item -LiteralPath $bkDir -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $srcDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "an app inventory that cannot be read is a failed restore" {
+        $inv = Join-Path $env:TEMP ('migtest_badinventory_' + [guid]::NewGuid().ToString('N') + '.json')
+        '{ this is not json' | Set-Content -LiteralPath $inv -Encoding UTF8
+        try {
+            $r = Restore-WinEaseApps -InventoryPath $inv
+            @($r.Installed).Count | Should Be 0
+            @($r.Failed).Count | Should Be 1
+            [string]$r.Failed[0].Error | Should Match 'could not be read'
+        } finally {
+            Remove-Item -LiteralPath $inv -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "the rules backup exports every registry key of a rule" {
+        $userRulesPath = Join-Path $script:RepoRoot 'config\user\user-migration-rules.psd1'
+        $original = [System.IO.File]::ReadAllText($userRulesPath, [System.Text.Encoding]::UTF8)
+        $bk = Join-Path $env:TEMP 'migtest_rules_reg_bk'
+        if (Test-Path $bk) { Remove-Item $bk -Recurse -Force }
+        $key1 = 'HKCU:\Software\WinEaseRuleTest1'
+        $key2 = 'HKCU:\Software\WinEaseRuleTest2'
+        try {
+            New-Item -Path $key1 -Force | Out-Null
+            New-Item -Path $key2 -Force | Out-Null
+            $rule = @"
+@{
+    SchemaVersion = '1.0'
+    DefaultSecretExcludePatterns = @()
+    GameRules = @()
+    CustomPathRules = @()
+    AppConfigRules = @(
+        @{
+            Id = 'TestMultiRegistry'
+            Name = 'Test Multi Registry'
+            Category = 'AppConfig'
+            SourcePaths = @()
+            ExcludePatterns = @()
+            ProcessNames = @()
+            ExcludeSecrets = `$false
+            RegistryPaths = @('HKCU\Software\WinEaseRuleTest1', 'HKCU\Software\WinEaseRuleTest2')
+            RestoreHint = ''
+        }
+    )
+}
+"@
+            [System.IO.File]::WriteAllText($userRulesPath, $rule, (New-Object System.Text.UTF8Encoding($false)))
+            $r = Invoke-WinEaseMigrationRulesBackup -RuleIds 'TestMultiRegistry' -BackupRoot $bk
+            @($r.FailedFiles).Count | Should Be 0
+            # every key is exported, the first one keeps the historical name
+            Test-Path -LiteralPath (Join-Path $bk 'rules\TestMultiRegistry\registry.reg') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $bk 'rules\TestMultiRegistry\registry_1.reg') | Should Be $true
+            # the restore imports both of them and reports every one of them
+            $rr = Invoke-WinEaseMigrationRulesRestore -RuleIds 'TestMultiRegistry' -BackupRoot $bk
+            $rr | Should Not BeNullOrEmpty
+            ($rr.RestoredFiles + @($rr.FailedFiles).Count) | Should Be 2
+        } finally {
+            [System.IO.File]::WriteAllText($userRulesPath, $original, (New-Object System.Text.UTF8Encoding($false)))
+            Remove-Item -LiteralPath $bk -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path $key1 -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path $key2 -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "every function of the migration engine returns a result" {
+        # A function without a return statement hands $null to its caller, and the caller
+        # reads the result as "nothing failed" - a silent success.
+        $path = Join-Path $script:RepoRoot 'tools\migrator\WinEaseMigration.ps1'
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$null)
+        $funcs = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)
+        $funcs.Count | Should BeGreaterThan 15
+        foreach ($f in $funcs) {
+            # the assertion helper reports a violation by throwing
+            if ($f.Name -eq 'Assert-WinEaseBackupRootOutsideSources') { continue }
+            $returns = $f.Body.FindAll({ param($n) $n -is [System.Management.Automation.Language.ReturnStatementAst] }, $true)
+            if ($returns.Count -eq 0) { throw "the function '$($f.Name)' has no return statement" }
+        }
+    }
+
+    It "the report shows the removals that failed" {
+        . (Join-Path $script:RepoRoot 'lib\WinEaseReport.ps1')
+        $out = Join-Path $env:TEMP ('winease_report_fail_' + [guid]::NewGuid().ToString('N') + '.html')
+        try {
+            Export-WinEaseHtmlReport -OutputPath $out -BuildInfo @{
+                Title = 'Test'
+                OfflineRemovalFailures = @('the removal of ''Windows\Temp'' failed: the file is locked')
+                IsoCleanupFailures = @('the removal of ''sources\sxs'' did not remove the path')
+            }
+            $html = [System.IO.File]::ReadAllText($out, [System.Text.Encoding]::UTF8)
+            $html | Should Match 'Failed Removals'
+            $html | Should Match 'the file is locked'
+            $html | Should Match 'did not remove the path'
+        } finally {
+            Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "the diagnostic summary lists the physical debloat and the failed removals" {
+        $builder = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'WinEasebuilder.ps1'), [System.Text.Encoding]::UTF8)
+        $builder | Should Match 'Physical Debloat Status:'
+        $builder | Should Match 'Physical Debloat Targets:'
+        $builder | Should Match 'Offline Removal Failures:'
+        $builder | Should Match 'ISO Cleanup Failures:'
+    }
+
+    It "every file without a BOM stays ASCII only" {
+        # A file without a BOM is read with the code page of the system by Windows
+        # PowerShell 5.1, so a non-ASCII character in it is garbled. The files that carry
+        # Japanese text have a UTF-8 BOM.
+        $files = Get-ChildItem -Path $script:RepoRoot -Recurse -File -Include *.ps1, *.psd1 | Where-Object {
+            $_.FullName -notmatch '\\(bin|obj|target|logs|build_diagnostics)\\' -and $_.FullName -notmatch '\\\.git\\'
+        }
+        $files.Count | Should BeGreaterThan 20
+        $bad = @()
+        foreach ($f in $files) {
+            $b = [System.IO.File]::ReadAllBytes($f.FullName)
+            $hasBom = ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)
+            if ($hasBom) { continue }
+            if (@($b | Where-Object { $_ -gt 127 }).Count -gt 0) { $bad += $f.FullName }
+        }
+        ($bad -join ',') | Should Be ''
+    }
+}
+
+# --- Custom script integrity (fail-closed) ---
+# The four runtime copies of the custom script pipelines (scripts\ and the copies embedded in
+# autounattend.xml, for FirstLogon and UserOnce) are executed here against a temporary folder that stands
+# in for C:\Windows\Setup\Scripts. Each case checks that a refused script really did not run (its marker
+# file is absent), not only that something was logged.
+Describe "Custom script integrity - fail-closed manifest check" {
+    $script:IntegrityHelperPath = Join-Path $script:RepoRoot 'lib\WinEaseCustomScriptIntegrity.ps1'
+    . $script:IntegrityHelperPath
+
+    function Get-WinEaseTestPipelineBlock {
+        param([string]$Source)
+        if ($Source -like 'xml:*') {
+            $doc = [xml]([System.IO.File]::ReadAllText($script:UnattendPath, [System.Text.Encoding]::UTF8))
+            $leaf = $Source.Substring(4)
+            $node = @($doc.unattend.Extensions.File | Where-Object { $_.path -like "*\$leaf" })[0]
+            $text = [string]$node.InnerText
+        } else {
+            $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot $Source), [System.Text.Encoding]::UTF8)
+        }
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$null, [ref]$null)
+        if ($Source -like '*FirstLogon.ps1') {
+            $blk = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.ScriptBlockExpressionAst] }, $true) |
+                Where-Object { $_.Extent.Text -match 'Custom Post-Install User Scripts Execution Hook' })
+            if ($blk.Count -ne 1) { throw "custom script block not found in $Source" }
+            $bt = $blk[0].Extent.Text
+            return $bt.Substring(1, $bt.Length - 2)
+        }
+        $funcs = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('Redact-WinEaseUserSecret', 'Write-UserScriptLog') }, $true))
+        $ifs = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -match 'userCustomDir' }, $true))
+        if ($funcs.Count -ne 2 -or $ifs.Count -lt 1) { throw "user script pipeline not found in $Source" }
+        $prelude = "`$userCustomDir = 'C:\Windows\Setup\Scripts\UserCustom';`n`$userLogFile = 'C:\Windows\Setup\Scripts\UserOnce-custom.log';`n"
+        return $prelude + (($funcs | ForEach-Object { $_.Extent.Text }) -join "`n") + "`n" + $ifs[0].Extent.Text
+    }
+
+    function Invoke-WinEaseTestPipeline {
+        # Runs one pipeline copy. $Manifest: $null = no manifest file, a string = raw file content,
+        # a hashtable = name -> hash ('<HASH>' is replaced with the real hash of hello.ps1).
+        param([string]$Source, $Manifest, [switch]$NoHelper, [switch]$NoScripts, [switch]$ExtraUnlisted)
+        $isUser = $Source -like '*UserOnce.ps1'
+        $prefix = if ($isUser) { 'user/' } else { '' }
+        $root = Join-Path $env:TEMP ('winease_integrity_' + [guid]::NewGuid().ToString('N'))
+        $scriptDirName = if ($isUser) { 'UserCustom' } else { 'Custom' }
+        $sDir = Join-Path $root $scriptDirName
+        New-Item -ItemType Directory -Force -Path $sDir | Out-Null
+        New-Item -ItemType Directory -Force -Path (Join-Path $root 'Logs') | Out-Null
+        $marker = Join-Path $root 'hello.ran'
+        $evilMarker = Join-Path $root 'evil.ran'
+        $hello = Join-Path $sDir 'hello.ps1'
+        if (-not $NoScripts) {
+            Set-Content -LiteralPath $hello -Value ("Set-Content -LiteralPath '$marker' -Value 'ran'") -Encoding ASCII
+            if ($ExtraUnlisted) {
+                Set-Content -LiteralPath (Join-Path $sDir 'evil.ps1') -Value ("Set-Content -LiteralPath '$evilMarker' -Value 'ran'") -Encoding ASCII
+            }
+        }
+        if (-not $NoHelper) { Copy-Item -LiteralPath $script:IntegrityHelperPath -Destination (Join-Path $root 'WinEaseCustomScriptIntegrity.ps1') }
+        $manifestPath = Join-Path $root 'custom-scripts-manifest.json'
+        if ($Manifest -is [string]) {
+            [System.IO.File]::WriteAllText($manifestPath, $Manifest)
+        } elseif ($Manifest -is [hashtable]) {
+            $real = if (Test-Path -LiteralPath $hello) { (Get-FileHash -LiteralPath $hello -Algorithm SHA256).Hash } else { '' }
+            $m = [ordered]@{}
+            foreach ($k in $Manifest.Keys) { $m["$prefix$k"] = ([string]$Manifest[$k]).Replace('<HASH>', $real) }
+            [System.IO.File]::WriteAllText($manifestPath, ($m | ConvertTo-Json))
+        }
+        $block = (Get-WinEaseTestPipelineBlock -Source $Source).Replace('C:\Windows\Setup\Scripts', $root).Replace('C:\ProgramData\WinEase\Logs', (Join-Path $root 'Logs'))
+        try {
+            & ([scriptblock]::Create($block)) *> $null
+            $logPath = if ($isUser) { Join-Path $root 'UserOnce-custom.log' } else { Join-Path $root 'Logs\custom-scripts.log' }
+            $log = if (Test-Path -LiteralPath $logPath) { [System.IO.File]::ReadAllText($logPath) } else { '' }
+            return @{ Ran = (Test-Path -LiteralPath $marker); EvilRan = (Test-Path -LiteralPath $evilMarker); Log = $log }
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $sources = @('scripts\FirstLogon.ps1', 'xml:FirstLogon.ps1', 'scripts\UserOnce.ps1', 'xml:UserOnce.ps1')
+
+    foreach ($src in $sources) {
+        It "[$src] runs a script whose hash matches the manifest" {
+            $r = Invoke-WinEaseTestPipeline -Source $src -Manifest @{ 'hello.ps1' = '<HASH>' }
+            $r.Ran | Should Be $true
+            $r.Log | Should Not Match 'SECURITY REFUSAL'
+        }
+        It "[$src] refuses every script when the manifest is missing" {
+            $r = Invoke-WinEaseTestPipeline -Source $src -Manifest $null
+            $r.Ran | Should Be $false
+            $r.Log | Should Match 'Custom script manifest is missing or invalid'
+            $r.Log | Should Match 'SECURITY REFUSAL'
+        }
+        It "[$src] refuses every script when the manifest is empty" {
+            $r = Invoke-WinEaseTestPipeline -Source $src -Manifest '   '
+            $r.Ran | Should Be $false
+            $r.Log | Should Match 'the manifest is empty'
+        }
+        It "[$src] refuses every script when the manifest is not valid JSON" {
+            $r = Invoke-WinEaseTestPipeline -Source $src -Manifest '{ "hello.ps1": '
+            $r.Ran | Should Be $false
+            $r.Log | Should Match 'not valid JSON'
+        }
+        It "[$src] refuses a script whose hash does not match" {
+            $r = Invoke-WinEaseTestPipeline -Source $src -Manifest @{ 'hello.ps1' = ('0' * 64) }
+            $r.Ran | Should Be $false
+            $r.Log | Should Match 'Hash mismatch'
+        }
+        It "[$src] refuses every script when a manifest entry has no hash" {
+            $r = Invoke-WinEaseTestPipeline -Source $src -Manifest @{ 'hello.ps1' = '' }
+            $r.Ran | Should Be $false
+            $r.Log | Should Match 'no valid SHA-256'
+        }
+        It "[$src] refuses a script that is not listed in the manifest" {
+            $r = Invoke-WinEaseTestPipeline -Source $src -Manifest @{ 'other.ps1' = ('A' * 64) }
+            $r.Ran | Should Be $false
+            $r.Log | Should Match 'not listed in build-time integrity manifest'
+            # the listed script without a file is reported
+            $r.Log | Should Match "Manifest entry '.*other\.ps1' has no file"
+        }
+        It "[$src] runs the listed script but not an unlisted file next to it" {
+            $r = Invoke-WinEaseTestPipeline -Source $src -Manifest @{ 'hello.ps1' = '<HASH>' } -ExtraUnlisted
+            $r.Ran | Should Be $true
+            $r.EvilRan | Should Be $false
+            $r.Log | Should Match 'evil\.ps1.*not listed in build-time integrity manifest'
+        }
+        It "[$src] refuses every script when the manifest holds a path traversal entry" {
+            $r = Invoke-WinEaseTestPipeline -Source $src -Manifest @{ 'hello.ps1' = '<HASH>'; '..\hello.ps1' = '<HASH>' }
+            $r.Ran | Should Be $false
+            $r.Log | Should Match 'invalid file name entry'
+        }
+        It "[$src] refuses every script when the integrity check itself is missing" {
+            $r = Invoke-WinEaseTestPipeline -Source $src -Manifest @{ 'hello.ps1' = '<HASH>' } -NoHelper
+            $r.Ran | Should Be $false
+            $r.Log | Should Match 'integrity check .* could not be loaded'
+        }
+        It "[$src] does nothing and reports nothing when there is no custom script and no manifest" {
+            $r = Invoke-WinEaseTestPipeline -Source $src -Manifest $null -NoScripts
+            $r.Ran | Should Be $false
+            $r.Log | Should Not Match 'SECURITY REFUSAL'
+            $r.Log | Should Not Match '\[ERROR\]'
+        }
+    }
+
+    It "all four runtime copies use the shared check and none keeps the old optional check" {
+        foreach ($src in $sources) {
+            $block = Get-WinEaseTestPipelineBlock -Source $src
+            $block | Should Match 'WinEaseCustomScriptIntegrity\.ps1'
+            $block | Should Match 'Test-WinEaseCustomScriptAllowed'
+            $block | Should Match 'Read-WinEaseCustomScriptManifest'
+            $block | Should Not Match 'if \(\$manifest\) \{'
+        }
+    }
+
+    It "the check refuses a file outside the expected folder even with a matching hash" {
+        $root = Join-Path $env:TEMP ('winease_integrity_' + [guid]::NewGuid().ToString('N'))
+        $dir = Join-Path $root 'Custom'
+        $sub = Join-Path $dir 'sub'
+        New-Item -ItemType Directory -Force -Path $sub | Out-Null
+        try {
+            $f = Join-Path $sub 'hello.ps1'
+            Set-Content -LiteralPath $f -Value 'Write-Output 1' -Encoding ASCII
+            $mf = Join-Path $root 'm.json'
+            @{ 'hello.ps1' = (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash } | ConvertTo-Json | Set-Content -LiteralPath $mf -Encoding ASCII
+            $m = Read-WinEaseCustomScriptManifest -Path $mf
+            $m.Ok | Should Be $true
+            $v = Test-WinEaseCustomScriptAllowed -Path $f -ExpectedDirectory $dir -KeyPrefix '' -Manifest $m
+            $v.Allowed | Should Be $false
+            $v.Reason | Should Match 'not directly inside'
+            $v2 = Test-WinEaseCustomScriptAllowed -Path (Join-Path $dir '..\Custom\sub\hello.ps1') -ExpectedDirectory $dir -KeyPrefix '' -Manifest $m
+            $v2.Allowed | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "the check refuses a symbolic link even when its target matches the hash" {
+        $root = Join-Path $env:TEMP ('winease_integrity_' + [guid]::NewGuid().ToString('N'))
+        $dir = Join-Path $root 'Custom'
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        try {
+            $target = Join-Path $root 'real.ps1'
+            Set-Content -LiteralPath $target -Value 'Write-Output 1' -Encoding ASCII
+            $link = Join-Path $dir 'hello.ps1'
+            $made = $false
+            try { New-Item -ItemType SymbolicLink -Path $link -Target $target -ErrorAction Stop | Out-Null; $made = $true } catch { $made = $false }
+            if (-not $made) { Set-TestInconclusive -Message 'symbolic links cannot be created here (needs administrator or developer mode)'; return }
+            $mf = Join-Path $root 'm.json'
+            @{ 'hello.ps1' = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash } | ConvertTo-Json | Set-Content -LiteralPath $mf -Encoding ASCII
+            $m = Read-WinEaseCustomScriptManifest -Path $mf
+            $v = Test-WinEaseCustomScriptAllowed -Path $link -ExpectedDirectory $dir -KeyPrefix '' -Manifest $m
+            $v.Allowed | Should Be $false
+            $v.Reason | Should Match 'reparse point'
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "the manifest reader rejects JSON that is not an object of name to hash" {
+        $root = Join-Path $env:TEMP ('winease_integrity_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        try {
+            $mf = Join-Path $root 'm.json'
+            foreach ($bad in @('[1,2]', '"text"', '{}', '{"a.ps1": 5}', '{"a.ps1": null}', '{"sub/a.ps1": "' + ('A' * 64) + '"}', '{"user/..": "' + ('A' * 64) + '"}', '{"a.ps1": "' + ('G' * 64) + '"}')) {
+                [System.IO.File]::WriteAllText($mf, $bad)
+                $m = Read-WinEaseCustomScriptManifest -Path $mf
+                $m.Ok | Should Be $false
+                $m.Error | Should Not BeNullOrEmpty
+            }
+            [System.IO.File]::WriteAllText($mf, '{"a.ps1": "' + ('a' * 64) + '", "user/b.cmd": "' + ('B' * 64) + '"}')
+            $ok = Read-WinEaseCustomScriptManifest -Path $mf
+            $ok.Ok | Should Be $true
+            $ok.Entries.Count | Should Be 2
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # Build side (phase 11): the functions are taken from the phase source and run against temp folders.
+    $phase11Text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\11-unattend.ps1'), [System.Text.Encoding]::UTF8)
+    $phase11Ast = [System.Management.Automation.Language.Parser]::ParseInput($phase11Text, [ref]$null, [ref]$null)
+    foreach ($fn in @($phase11Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('Add-WinEaseCustomScriptToImage', 'Write-WinEaseCustomScriptManifest') }, $true))) {
+        . ([scriptblock]::Create($fn.Extent.Text))
+    }
+
+    It "the build records the hash of the copy and the runtime check accepts the written manifest" {
+        $root = Join-Path $env:TEMP ('winease_integrity_' + [guid]::NewGuid().ToString('N'))
+        $srcDir = Join-Path $root 'src'
+        New-Item -ItemType Directory -Force -Path $srcDir | Out-Null
+        try {
+            Set-Content -LiteralPath (Join-Path $srcDir 'a.ps1') -Value 'Write-Output a' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $srcDir 'b.cmd') -Value '@echo b' -Encoding ASCII
+            $script:WinEaseCustomManifest = [ordered]@{}
+            $script:WinEaseCustomManifestPath = Join-Path $root 'custom-scripts-manifest.json'
+            Add-WinEaseCustomScriptToImage -SourcePath (Join-Path $srcDir 'a.ps1') -TargetDir (Join-Path $root 'Custom') -KeyPrefix ''
+            Add-WinEaseCustomScriptToImage -SourcePath (Join-Path $srcDir 'b.cmd') -TargetDir (Join-Path $root 'UserCustom') -KeyPrefix 'user/'
+            Write-WinEaseCustomScriptManifest
+            $m = Read-WinEaseCustomScriptManifest -Path $script:WinEaseCustomManifestPath
+            $m.Ok | Should Be $true
+            (Test-WinEaseCustomScriptAllowed -Path (Join-Path $root 'Custom\a.ps1') -ExpectedDirectory (Join-Path $root 'Custom') -KeyPrefix '' -Manifest $m).Allowed | Should Be $true
+            (Test-WinEaseCustomScriptAllowed -Path (Join-Path $root 'UserCustom\b.cmd') -ExpectedDirectory (Join-Path $root 'UserCustom') -KeyPrefix 'user/' -Manifest $m).Allowed | Should Be $true
+            # a user script is not accepted in the elevated folder under its bare name
+            $m.Entries.ContainsKey('b.cmd') | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "the build stops when two different scripts share a name" {
+        $root = Join-Path $env:TEMP ('winease_integrity_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path (Join-Path $root 'one'), (Join-Path $root 'two') | Out-Null
+        try {
+            Set-Content -LiteralPath (Join-Path $root 'one\a.ps1') -Value 'Write-Output 1' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $root 'two\a.ps1') -Value 'Write-Output 2' -Encoding ASCII
+            $script:WinEaseCustomManifest = [ordered]@{}
+            Add-WinEaseCustomScriptToImage -SourcePath (Join-Path $root 'one\a.ps1') -TargetDir (Join-Path $root 'Custom') -KeyPrefix ''
+            # the same content again is fine (bundled and staged copies of one file)
+            Add-WinEaseCustomScriptToImage -SourcePath (Join-Path $root 'one\a.ps1') -TargetDir (Join-Path $root 'Custom') -KeyPrefix ''
+            $threw = $false
+            try { Add-WinEaseCustomScriptToImage -SourcePath (Join-Path $root 'two\a.ps1') -TargetDir (Join-Path $root 'Custom') -KeyPrefix '' } catch { $threw = $true }
+            $threw | Should Be $true
+            # the first copy was not replaced by the second one
+            (Get-Content -LiteralPath (Join-Path $root 'Custom\a.ps1') -Raw).Trim() | Should Be 'Write-Output 1'
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "the build writes no manifest without scripts and leaves no partial manifest when the write fails" {
+        $root = Join-Path $env:TEMP ('winease_integrity_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        try {
+            $script:WinEaseCustomManifest = [ordered]@{}
+            $script:WinEaseCustomManifestPath = Join-Path $root 'custom-scripts-manifest.json'
+            Write-WinEaseCustomScriptManifest
+            Test-Path -LiteralPath $script:WinEaseCustomManifestPath | Should Be $false
+
+            # a write that leaves half a file behind and then fails (for example a full disk)
+            function Write-WinEaseTextFileAtomic { param($Path, $Content) [System.IO.File]::WriteAllText($Path, $Content.Substring(0, [Math]::Min(10, $Content.Length))); throw 'simulated write failure' }
+            $script:WinEaseCustomManifest = [ordered]@{ 'a.ps1' = ('A' * 64) }
+            $threw = $false
+            try { Write-WinEaseCustomScriptManifest } catch { $threw = $true }
+            $threw | Should Be $true
+            Test-Path -LiteralPath $script:WinEaseCustomManifestPath | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "phase 11 deploys the shared check and no longer registers unverified FirstLogonCommands" {
+        $phase11Text | Should Match 'lib\\WinEaseCustomScriptIntegrity\.ps1'
+        $phase11Text | Should Not Match 'Custom FirstLogon script:'
+        $phase11Text | Should Not Match 'CreateElement\("Path"'
+        # the copy and hash failures are no longer ignored
+        $phase11Text | Should Not Match 'Copy-Item -LiteralPath \$f\.FullName -Destination \$target\w+Dir -Force -ErrorAction SilentlyContinue'
+    }
+}
+
+# --- autounattend.xml: base template + fragments (config\unattend-fragments.psd1) ---
+# BypassNRO and the other optional parts are added to the base template only when their setting is on;
+# the image registry (phases 10 / 14 / resume) asks the same fragment definition.
+Describe "Unattend composer - base template plus fragments" {
+    if (-not (Get-Command -Name Get-WinEaseBypassNROEnabled -ErrorAction SilentlyContinue)) {
+        . (Join-Path -Path $script:RepoRoot -ChildPath "WinEasehelpers.ps1")
+    }
+    . (Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseUnattendComposer.ps1")
+
+    $schema = Import-PowerShellDataFile -Path (Join-Path $script:RepoRoot 'config\schema.psd1')
+    $knownKeys = @($schema.Tweaks | ForEach-Object { $_.Key }) + @($schema.Components | ForEach-Object { $_.Key })
+    $script:ComposerDefaults = @{}
+    foreach ($t in $schema.Tweaks) { $script:ComposerDefaults[$t.Key] = [bool]$t.Default }
+    foreach ($c in $schema.Components) { if ($c.Type -eq 'Bool' -and $null -ne $c.Default) { $script:ComposerDefaults[$c.Key] = [bool]$c.Default } }
+
+    function New-ComposedUnattend {
+        # The same steps as phase 11: architecture mapping of the amd64 template, then the composition.
+        param([hashtable]$Overrides = @{}, [string]$Arch = 'amd64')
+        $settings = @{}
+        foreach ($k in $script:ComposerDefaults.Keys) { $settings[$k] = $script:ComposerDefaults[$k] }
+        foreach ($k in $Overrides.Keys) { $settings[$k] = $Overrides[$k] }
+        $doc = [xml]([System.IO.File]::ReadAllText($script:UnattendPath, [System.Text.Encoding]::UTF8))
+        foreach ($comp in @($doc.SelectNodes("//*[local-name()='component']"))) {
+            if ($comp.GetAttribute('processorArchitecture') -eq 'amd64') { $comp.SetAttribute('processorArchitecture', $Arch) }
+        }
+        $fr = Import-WinEaseUnattendFragments -KnownKeys $knownKeys
+        $res = Invoke-WinEaseUnattendComposition -XmlDocument $doc -Fragments $fr -Settings $settings -Architecture $Arch -Values @{ UserName = 'Tester'; ComputerName = 'PC-1' }
+        return @{ Doc = $doc; Result = $res }
+    }
+    function Get-SpecializeCommands {
+        param([xml]$Doc)
+        @($Doc.SelectNodes("//*[local-name()='settings'][@pass='specialize']//*[local-name()='RunSynchronousCommand']") | ForEach-Object {
+                [PSCustomObject]@{ Order = [int]$_.SelectSingleNode("*[local-name()='Order']").InnerText; Path = $_.SelectSingleNode("*[local-name()='Path']").InnerText }
+            })
+    }
+
+    It "the base template carries no optional part and no fixed name" {
+        $raw = [System.IO.File]::ReadAllText($script:UnattendPath, [System.Text.Encoding]::UTF8)
+        $doc = [xml]$raw
+        @($doc.SelectNodes("//*[local-name()='RunSynchronousCommand']/*[local-name()='Path'][contains(., 'BypassNRO')]")).Count | Should Be 0
+        @($doc.SelectNodes("//*[local-name()='AutoLogon']")).Count | Should Be 0
+        @($doc.SelectNodes("//*[local-name()='TimeZone' or local-name()='InputLocale']")).Count | Should Be 0
+        @($doc.SelectNodes("//*[local-name()='component'][@processorArchitecture!='amd64']")).Count | Should Be 0
+        $doc.SelectSingleNode("//*[local-name()='ComputerName']").InnerText | Should Be '{{ComputerName}}'
+        $doc.SelectSingleNode("//*[local-name()='LocalAccount']/*[local-name()='Name']").InnerText | Should Be '{{UserName}}'
+    }
+
+    It "the shipped definition file is valid" {
+        $fr = @(Import-WinEaseUnattendFragments -KnownKeys $knownKeys)
+        $fr.Count | Should BeGreaterThan 0
+        ($fr | Where-Object { $_.Id -eq 'BypassNRO' }).ToggleKey | Should Be 'BypassNRO'
+    }
+
+    It "an invalid definition stops instead of being skipped" {
+        $dir = Join-Path $env:TEMP ('winease_frag_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        try {
+            $f = Join-Path $dir 'f.psd1'
+            $cases = @(
+                "@{ Fragments = @( @{ Id='A'; Description='d'; Pass='specialize'; Component='C'; Kind='Bogus' } ) }",
+                "@{ Fragments = @( @{ Id='A'; Description='d'; Pass='nopass'; Component='C'; Kind='Element'; Element='E' } ) }",
+                "@{ Fragments = @( @{ Id='A'; Description='d'; Pass='specialize'; Component='C'; Kind='Element'; Element='E' }, @{ Id='A'; Description='d'; Pass='specialize'; Component='C'; Kind='Element'; Element='F' } ) }",
+                "@{ Fragments = @( @{ Id='A'; Toggle='NoSuchKey'; Description='d'; Pass='specialize'; Component='C'; Kind='Element'; Element='E' } ) }",
+                "@{ Fragments = @( @{ Id='A'; Toggle='BypassNRO'; When=@{ AllOf=@('NoSuchKey') }; Description='d'; Pass='specialize'; Component='C'; Kind='Element'; Element='E' } ) }",
+                "@{ Fragments = @( @{ Id='A'; Description='d'; Pass='specialize'; Component='C'; Kind='RunSynchronousCommand' } ) }"
+            )
+            foreach ($c in $cases) {
+                Set-Content -LiteralPath $f -Value $c -Encoding ASCII
+                $threw = $false
+                try { Import-WinEaseUnattendFragments -Path $f -KnownKeys $knownKeys | Out-Null } catch { $threw = $true }
+                "$c threw=$threw" | Should Be "$c threw=True"
+            }
+        } finally {
+            Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "BypassNRO is on by default and off when either BypassNRO or BypassNetworkRequirement is off" {
+        Get-WinEaseBypassNROEnabled -TweakSettings $null | Should Be $true
+        Get-WinEaseBypassNROEnabled -TweakSettings $script:ComposerDefaults | Should Be $true
+        Get-WinEaseBypassNROEnabled -TweakSettings @{ BypassNRO = $false } | Should Be $false
+        Get-WinEaseBypassNROEnabled -TweakSettings @{ BypassNetworkRequirement = $false } | Should Be $false
+        Get-WinEaseBypassNROEnabled -TweakSettings ([PSCustomObject]@{ BypassNRO = $false }) | Should Be $false
+        Get-WinEaseBypassNROEnabled -TweakSettings ([PSCustomObject]@{ BypassNRO = $true }) | Should Be $true
+    }
+
+    foreach ($arch in @('amd64', 'arm64')) {
+        It "[$arch] BypassNRO on: the command is added after ExtractUnattend and the order is 1..n" {
+            $r = New-ComposedUnattend -Arch $arch
+            $cmds = @(Get-SpecializeCommands -Doc $r.Doc | Sort-Object Order)
+            (@($cmds | ForEach-Object { $_.Order }) -join ',') | Should Be '1,2,3,4'
+            $cmds[0].Path | Should Match 'ExtractUnattend\.ps1'
+            $cmds[1].Path | Should Match 'BypassNRO'
+            $cmds[2].Path | Should Match 'Specialize\.ps1'
+            $node = $r.Doc.SelectSingleNode("//*[local-name()='RunSynchronousCommand'][*[local-name()='Path'][contains(., 'BypassNRO')]]")
+            $node.GetAttribute('action', 'http://schemas.microsoft.com/WMIConfig/2002/State') | Should Be 'add'
+            $node.ParentNode.ParentNode.GetAttribute('processorArchitecture') | Should Be $arch
+        }
+        foreach ($off in @('BypassNRO', 'BypassNetworkRequirement')) {
+            It "[$arch] $off off: no command writes BypassNRO and the order stays 1..n" {
+                $r = New-ComposedUnattend -Arch $arch -Overrides @{ $off = $false }
+                $cmds = @(Get-SpecializeCommands -Doc $r.Doc | Sort-Object Order)
+                @($cmds | Where-Object { $_.Path -match 'BypassNRO' }).Count | Should Be 0
+                (@($cmds | ForEach-Object { $_.Order }) -join ',') | Should Be '1,2,3'
+                $sw = New-Object System.IO.StringWriter; $r.Doc.Save($sw)
+                $sw.ToString() | Should Not Match 'BypassNRO'
+            }
+        }
+        It "[$arch] AutoLogon follows ConfigureWinlogon" {
+            $off = New-ComposedUnattend -Arch $arch
+            @($off.Doc.SelectNodes("//*[local-name()='AutoLogon']")).Count | Should Be 0
+            $on = New-ComposedUnattend -Arch $arch -Overrides @{ ConfigureWinlogon = $true }
+            $al = $on.Doc.SelectSingleNode("//*[local-name()='AutoLogon']")
+            $al | Should Not Be $null
+            $al.SelectSingleNode("*[local-name()='Username']").InnerText | Should Be 'Tester'
+            $al.PreviousSibling.LocalName | Should Be 'UserAccounts'
+            $al.SelectSingleNode("*[local-name()='Password']/*[local-name()='PlainText']").InnerText | Should Be 'true'
+            # the blank password is written as <Value></Value>, never as a self-closing <Value />
+            $sw = New-Object System.IO.StringWriter; $on.Doc.Save($sw)
+            $sw.ToString() | Should Not Match '<Value\s*/>'
+            # the local account is created in both cases
+            @($off.Doc.SelectNodes("//*[local-name()='LocalAccount']")).Count | Should Be 1
+        }
+        It "[$arch] the Japanese keyboard parts follow SetJapaneseKeyboard" {
+            $on = New-ComposedUnattend -Arch $arch -Overrides @{ SetJapaneseKeyboard = $true }
+            $on.Doc.SelectSingleNode("//*[local-name()='settings'][@pass='specialize']//*[local-name()='TimeZone']").InnerText | Should Be 'Tokyo Standard Time'
+            $ic = $on.Doc.SelectSingleNode("//*[local-name()='component'][@name='Microsoft-Windows-International-Core']")
+            $ic.GetAttribute('processorArchitecture') | Should Be $arch
+            $ic.GetAttribute('publicKeyToken') | Should Be '31bf3856ad364e35'
+            $ic.SelectSingleNode("*[local-name()='InputLocale']").InnerText | Should Be '0411:00000411'
+            $off = New-ComposedUnattend -Arch $arch -Overrides @{ SetJapaneseKeyboard = $false }
+            @($off.Doc.SelectNodes("//*[local-name()='TimeZone' or local-name()='InputLocale']")).Count | Should Be 0
+        }
+    }
+
+    It "names are set as text: no placeholder is left and markup cannot be injected" {
+        $r = New-ComposedUnattend
+        $sw = New-Object System.IO.StringWriter; $r.Doc.Save($sw)
+        $sw.ToString() | Should Not Match '\{\{'
+        $r.Doc.SelectSingleNode("//*[local-name()='ComputerName']").InnerText | Should Be 'PC-1'
+        $doc = [xml]'<unattend xmlns="urn:schemas-microsoft-com:unattend"><settings pass="specialize"><component name="X" processorArchitecture="amd64"><A>{{UserName}}</A></component></settings></unattend>'
+        Set-WinEaseUnattendPlaceholders -XmlDocument $doc -Values @{ UserName = '<b>&x' }
+        $doc.DocumentElement.SelectSingleNode("//*[local-name()='A']").InnerText | Should Be '<b>&x'
+        @($doc.SelectNodes("//*[local-name()='b']")).Count | Should Be 0
+        $threw = $false
+        try { Set-WinEaseUnattendPlaceholders -XmlDocument ([xml]'<r><a>{{Nope}}</a></r>') -Values @{} } catch { $threw = $true }
+        $threw | Should Be $true
+    }
+
+    It "a fragment never overwrites an element that is already there" {
+        $doc = [xml]'<unattend xmlns="urn:schemas-microsoft-com:unattend"><settings pass="specialize"><component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64"><TimeZone>UTC</TimeZone></component></settings></unattend>'
+        $fr = @(Import-WinEaseUnattendFragments -KnownKeys $knownKeys | Where-Object { $_.Id -eq 'JapaneseTimeZone' })
+        $threw = $false
+        try { Add-WinEaseUnattendFragment -XmlDocument $doc -Fragment $fr[0] -Architecture 'amd64' -Values @{} } catch { $threw = $true }
+        $threw | Should Be $true
+        $doc.SelectSingleNode("//*[local-name()='TimeZone']").InnerText | Should Be 'UTC'
+    }
+
+    It "an old full template that already carries an optional part is rejected, whatever the setting" {
+        $fr = Import-WinEaseUnattendFragments -KnownKeys $knownKeys
+        foreach ($inject in @(
+                @{ XPath = "//*[local-name()='settings'][@pass='oobeSystem']/*[local-name()='component']"; Xml = '<AutoLogon xmlns="urn:schemas-microsoft-com:unattend"><Enabled>true</Enabled></AutoLogon>' },
+                @{ XPath = "//*[local-name()='settings'][@pass='specialize']//*[local-name()='RunSynchronous']"; Xml = '<RunSynchronousCommand xmlns="urn:schemas-microsoft-com:unattend"><Order>9</Order><Path>reg.exe add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v BypassNRO /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>' })) {
+            foreach ($on in @($true, $false)) {
+                $doc = [xml]([System.IO.File]::ReadAllText($script:UnattendPath, [System.Text.Encoding]::UTF8))
+                $frag = $doc.CreateDocumentFragment(); $frag.InnerXml = $inject.Xml
+                [void]$doc.SelectSingleNode($inject.XPath).AppendChild($frag)
+                $threw = $false
+                try { Invoke-WinEaseUnattendComposition -XmlDocument $doc -Fragments $fr -Settings @{ ConfigureWinlogon = $on; BypassNRO = $on } -Architecture 'amd64' -Values @{ UserName = 'U'; ComputerName = '*' } | Out-Null } catch { $threw = $true }
+                $threw | Should Be $true
+            }
+        }
+    }
+
+    It "the user and computer names follow the GUI rules on the command line as well" {
+        { Test-WinEaseUnattendIdentity -UserName 'User' -MachineName '*' } | Should Not Throw
+        { Test-WinEaseUnattendIdentity -UserName 'Taro Yamada' -MachineName 'PC-1' } | Should Not Throw
+        { Test-WinEaseUnattendIdentity -UserName 'a"b' -MachineName '*' } | Should Throw
+        { Test-WinEaseUnattendIdentity -UserName 'User' -MachineName 'bad_name!' } | Should Throw
+    }
+
+    It "every place that writes BypassNRO into the image asks Get-WinEaseBypassNROEnabled" {
+        foreach ($rel in @('phases\10-registry.ps1', 'phases\14-bootwim.ps1', 'lib\WinEaseResume.ps1')) {
+            $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot $rel), [System.Text.Encoding]::UTF8)
+            $ast = [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$null, [ref]$null)
+            $adds = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.Extent.Text -match '^reg\.exe add .*"BypassNRO"' }, $true))
+            $adds.Count | Should BeGreaterThan 0
+            foreach ($a in $adds) {
+                $guarded = $false
+                $p = $a.Parent
+                while ($p) {
+                    if ($p -is [System.Management.Automation.Language.IfStatementAst] -and $p.Clauses[0].Item1.Extent.Text -match 'Get-WinEaseBypassNROEnabled' -and
+                        $p.Clauses[0].Item2.Extent.StartOffset -le $a.Extent.StartOffset -and $p.Clauses[0].Item2.Extent.EndOffset -ge $a.Extent.EndOffset) { $guarded = $true; break }
+                    $p = $p.Parent
+                }
+                "$rel :: $($a.Extent.Text) guarded=$guarded" | Should Be "$rel :: $($a.Extent.Text) guarded=True"
+            }
+        }
+        $p11 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\11-unattend.ps1'), [System.Text.Encoding]::UTF8)
+        $p11 | Should Match 'Invoke-WinEaseUnattendComposition'
+        # the old subtractive edits of the template are gone
+        $p11 | Should Not Match "-replace '<Name>User</Name>'"
+        $p11 | Should Not Match 'RemoveChild\(\$alNode\)'
+    }
+
+    It "the GUI lists every fragment on the answer-file tab without a second checkbox for an existing switch" {
+        $gui = [System.IO.File]::ReadAllText($script:GuiPath, [System.Text.Encoding]::UTF8)
+        $gui | Should Match 'function New-WinEaseUnattendTab'
+        $gui | Should Match 'New-WinEaseUnattendTab -Gui \$Gui'
+        $gui | Should Match "\`$builtinTabCategories = @\('Security', 'Privacy', 'Performance', 'UI', 'Unattend'\)"
+        $builder = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        # GUI result and CLI switches both land in $script:TweakSettings[<key>]
+        $builder | Should Match '\$script:TweakSettings\[\$tk\] = \[bool\]\$GuiResult\.TweakSettings\[\$tk\]'
+        $builder | Should Match '\$script:TweakSettings\[\$tk\] = \[bool\]\$bound\[\$tk\]'
+        $builder | Should Match 'Import-WinEaseUnattendFragments \| Where-Object \{ \$_\.OwnToggle \}'
+        foreach ($lang in 'en', 'ja') {
+            $json = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\ui-strings\$lang.json"), [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+            foreach ($k in 'Tab.Unattend', 'Unattend.Caption', 'Unattend.Follows') { [string]$json.$k | Should Not BeNullOrEmpty }
+        }
+    }
+
+    It "a fragment with its own toggle is registered once as 'Unattend.<Id>'" {
+        $dir = Join-Path $env:TEMP ('winease_frag_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        try {
+            $f = Join-Path $dir 'f.psd1'
+            Set-Content -LiteralPath $f -Encoding ASCII -Value "@{ Fragments = @( @{ Id='Extra'; Default=`$false; Description='d'; Pass='oobeSystem'; Component='Microsoft-Windows-Shell-Setup'; Kind='Attribute'; Target='OOBE'; Attributes=@{ 'wcm:keyValue'='x' } }, @{ Id='Tied'; Toggle='BypassNRO'; Description='d'; Pass='specialize'; Component='C'; Kind='Element'; Element='E' } ) }"
+            $fr = @(Import-WinEaseUnattendFragments -Path $f -KnownKeys $knownKeys)
+            @($fr | Where-Object { $_.OwnToggle } | ForEach-Object { $_.ToggleKey }) -join ',' | Should Be 'Unattend.Extra'
+            # off by its own default, on when the toggle is set
+            $doc = [xml]([System.IO.File]::ReadAllText($script:UnattendPath, [System.Text.Encoding]::UTF8))
+            (Invoke-WinEaseUnattendComposition -XmlDocument $doc -Fragments @($fr[0]) -Settings @{} -Architecture 'amd64' -Values @{ UserName = 'U'; ComputerName = '*' }).Applied.Count | Should Be 0
+            $res = Invoke-WinEaseUnattendComposition -XmlDocument $doc -Fragments @($fr[0]) -Settings @{ 'Unattend.Extra' = $true } -Architecture 'amd64' -Values @{ UserName = 'U'; ComputerName = '*' }
+            $res.Applied -join ',' | Should Be 'Extra'
+            $doc.SelectSingleNode("//*[local-name()='OOBE']").GetAttribute('keyValue', 'http://schemas.microsoft.com/WMIConfig/2002/State') | Should Be 'x'
+        } finally {
+            Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }

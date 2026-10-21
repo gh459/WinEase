@@ -54,41 +54,28 @@ if (-not (Test-Path -LiteralPath $unattendSource)) {
 }
 
 if (Test-Path -LiteralPath $unattendSource) {
+    # autounattend.xml is the base template: it holds only what every build needs. The optional parameters
+    # and attributes are declared in config\unattend-fragments.psd1 and added below by
+    # lib\WinEaseUnattendComposer.ps1 according to the GUI / CLI / profile settings. Nothing is stripped from
+    # the template afterwards, so a value left in the template can no longer overrule a setting.
+    $unattendUserName = if ($UserName) { $UserName } else { 'User' }
+    $unattendComputerName = if ($ComputerName) { $ComputerName } else { 'WinEase' }
+    # The names end up in XML text and in the embedded scripts: the CLI gets the same rules as the GUI.
+    Test-WinEaseUnattendIdentity -UserName $unattendUserName -MachineName $unattendComputerName
     $xmlContent = Get-Content -LiteralPath $unattendSource -Raw -Encoding utf8
-    # Dynamically sanitize invalid ProductKey tags that cause Setup to abort with "cannot read <ProductKey>"
-    $xmlContent = $xmlContent -replace '(?s)<ProductKey>\s*<WillShowUI>[^<]*</WillShowUI>\s*</ProductKey>', ''
-    # Dynamically normalize all Password and AdministratorPassword Value tags to single-line empty values (prevents blank-password login failure)
-    $xmlContent = $xmlContent -replace '(?s)<Value>\s+</Value>', '<Value></Value>'
-    # Dynamically purge any harmful ChildCompletion or SystemSetupInProgress forging that breaks Setup state machine
-    $xmlContent = $xmlContent -replace '(?s)<RunSynchronousCommand[^>]*>\s*<Order>\d+</Order>\s*<Path>[^<]*ChildCompletion[^<]*</Path>\s*</RunSynchronousCommand>', ''
-    $xmlContent = $xmlContent -replace '(?s)\t*\{\s*#[^\r\n]*Zero-Click Setup Completion[^\}]*\}\s*;\r?\n', ''
-    # Dynamically parameterize ComputerName and UserName
-    $xmlContent = $xmlContent -replace '<ComputerName>WinEase</ComputerName>', "<ComputerName>$ComputerName</ComputerName>"
-    $xmlContent = $xmlContent -replace '<Username>User</Username>', "<Username>$UserName</Username>"
-    $xmlContent = $xmlContent -replace '<Name>User</Name>', "<Name>$UserName</Name>"
-    $xmlContent = $xmlContent -replace '<DisplayName>User</DisplayName>', "<DisplayName>$UserName</DisplayName>"
-    $xmlContent =$xmlContent -replace 'net\.exe user User ', "net.exe user `"$UserName`" "
-    $xmlContent =$xmlContent -replace 'Set-LocalUser -Name "User"', "Set-LocalUser -Name `"$UserName`""
-    $xmlContent = $xmlContent -replace "-Name 'DefaultUserName' -Type 'String' -Force -Value 'User'", "-Name 'DefaultUserName' -Type 'String' -Force -Value '$UserName'"
 
-    # Clean and match target architecture via XML DOM (Resolves P0-07 Duplicate Component Bug)
     try {
         $xmlDoc = [xml]$xmlContent
         $nsMgr = New-Object System.Xml.XmlNamespaceManager($xmlDoc.NameTable)
         $nsMgr.AddNamespace("u", $xmlDoc.DocumentElement.NamespaceURI)
 
-        # The blank-password auto-logon is only armed when the user asked for it
-        # (ConfigureWinlogon). Without that option the AutoLogon section is removed
-        # from the unattend file: setup then does not log in automatically any more.
-        # The password of the local account is left untouched on purpose: an account
-        # without a password element is not documented, and a setup that cannot create
-        # the account would leave the machine unusable. The empty password of the local
-        # account is therefore only a console login; the user sets a password after the
-        # first sign-in (docs\SECURITY_OPTIONS.md).
-        if (-not (Test-TweakEnabled 'ConfigureWinlogon' $false)) {
-            $autoLogonNodes = @($xmlDoc.SelectNodes("//*[local-name()='AutoLogon']"))
-            foreach ($alNode in $autoLogonNodes) { [void]$alNode.ParentNode.RemoveChild($alNode) }
-            Write-Host "  [AutoLogon] ConfigureWinlogon is off: the auto-logon section was removed from autounattend.xml (no automatic logon)." -ForegroundColor Yellow
+        # The template is maintained here, so content that used to be stripped by regular expressions is
+        # rejected instead: a template carrying it is broken and must not reach a setup.
+        if (@($xmlDoc.SelectNodes("//*[local-name()='ProductKey']")).Count -gt 0) {
+            throw "autounattend.xml template contains a <ProductKey> element (Setup aborts with 'cannot read <ProductKey>')"
+        }
+        foreach ($rscPath in @($xmlDoc.SelectNodes("//*[local-name()='RunSynchronousCommand']/*[local-name()='Path']"))) {
+            if ($rscPath.InnerText -match 'ChildCompletion') { throw "autounattend.xml template forges the Setup state (ChildCompletion): $($rscPath.InnerText)" }
         }
 
         # A2: External script injection - if scripts/ folder exists, override embedded File node contents
@@ -107,77 +94,58 @@ if (Test-Path -LiteralPath $unattendSource) {
             }
         }
 
-        # 1. Prune components matching other architectures if target architecture is explicitly present
-        $allComponents = $xmlDoc.SelectNodes("//u:component", $nsMgr)
-        $compNodesToRemove = @()
-        foreach ($comp in $allComponents) {
+        # The embedded scripts name the account 'User'. The names are replaced after the injection above:
+        # the replacement used to run on the raw text before it, so an injected scripts\FirstLogon.ps1 kept
+        # 'net.exe user User' and acted on an account that does not exist.
+        foreach ($fn in @($xmlDoc.SelectNodes("//*[local-name()='Extensions']/*[local-name()='File']"))) {
+            $body = $fn.InnerText
+            if ($body -match 'Zero-Click Setup Completion') { throw "Embedded script '$($fn.GetAttribute('path'))' forges the Setup completion state" }
+            $body = $body.Replace('net.exe user User ', "net.exe user `"$unattendUserName`" ")
+            $body = $body.Replace('Set-LocalUser -Name "User"', "Set-LocalUser -Name `"$unattendUserName`"")
+            $body = $body.Replace("-Name 'DefaultUserName' -Type 'String' -Force -Value 'User'", "-Name 'DefaultUserName' -Type 'String' -Force -Value '$unattendUserName'")
+            if ($body -ne $fn.InnerText) { $fn.InnerText = $body }
+        }
+
+        # 1. Architecture: keep the components of the target architecture. A template written for amd64
+        # only is mapped to the target. (The old pruning removed every amd64 component before the mapping
+        # looked for one, so an amd64-only template produced an empty answer file for arm64.)
+        $hasTargetComp = @($xmlDoc.SelectNodes("//u:component[@processorArchitecture='$architecture']", $nsMgr)).Count -gt 0
+        foreach ($comp in @($xmlDoc.SelectNodes("//u:component", $nsMgr))) {
             $compArch = $comp.GetAttribute("processorArchitecture")
-            if ($compArch -and ($compArch -notin @($architecture, "neutral", "wow64"))) {
-                $compNodesToRemove += $comp
-            }
-        }
-        foreach ($c in $compNodesToRemove) {
-            [void]$c.ParentNode.RemoveChild($c)
-        }
-
-        # 2. If target architecture has no specific components but amd64 exists, map amd64 to target
-        $hasTargetComp = $false
-        foreach ($comp in $xmlDoc.SelectNodes("//u:component", $nsMgr)) {
-            if ($comp.GetAttribute("processorArchitecture") -eq $architecture) {
-                $hasTargetComp = $true
-                break
-            }
-        }
-        if (-not $hasTargetComp) {
-            foreach ($comp in $xmlDoc.SelectNodes("//u:component[@processorArchitecture='amd64']", $nsMgr)) {
+            if (-not $compArch -or $compArch -in @($architecture, "neutral", "wow64")) { continue }
+            if (-not $hasTargetComp -and $compArch -eq 'amd64') {
                 $comp.SetAttribute("processorArchitecture", $architecture)
+            } else {
+                [void]$comp.ParentNode.RemoveChild($comp)
             }
         }
 
-        # 3. Inject Japanese 106/109 Keyboard & Tokyo TimeZone if enabled
-        if ($setJapaneseKeyboard) {
-            $shellComp = $xmlDoc.SelectSingleNode("//u:component[@name='Microsoft-Windows-Shell-Setup']", $nsMgr)
-            if ($shellComp) {
-                $tzNode = $shellComp.SelectSingleNode("u:TimeZone", $nsMgr)
-                if (-not $tzNode) {
-                    $newTz = $xmlDoc.CreateElement("TimeZone", $xmlDoc.DocumentElement.NamespaceURI)
-                    $newTz.InnerText = "Tokyo Standard Time"
-                    [void]$shellComp.AppendChild($newTz)
-                }
-            }
-            $specPass = $xmlDoc.SelectSingleNode("//u:settings[@pass='specialize']", $nsMgr)
-            if ($specPass) {
-                $intlComp = $specPass.SelectSingleNode("u:component[@name='Microsoft-Windows-International-Core']", $nsMgr)
-                if (-not $intlComp) {
-                    $newComp = $xmlDoc.CreateElement("component", $xmlDoc.DocumentElement.NamespaceURI)
-                    $newComp.SetAttribute("name", "Microsoft-Windows-International-Core")
-                    $newComp.SetAttribute("processorArchitecture", $architecture)
-                    $newComp.SetAttribute("publicKeyToken", "31bf3856ad364e35")
-                    $newComp.SetAttribute("language", "neutral")
-                    $newComp.SetAttribute("versionScope", "nonSxS")
-                    $inpLoc = $xmlDoc.CreateElement("InputLocale", $xmlDoc.DocumentElement.NamespaceURI)
-                    $inpLoc.InnerText = "0411:00000411"
-                    [void]$newComp.AppendChild($inpLoc)
-                    [void]$specPass.AppendChild($newComp)
-                }
+        # 2. Optional fragments. Tweak keys and component keys (for example SetJapaneseKeyboard) are both
+        # settings a fragment can follow.
+        $unattendSettings = @{}
+        if ($script:TweakSettings) {
+            if ($script:TweakSettings -is [System.Collections.IDictionary]) {
+                foreach ($k in @($script:TweakSettings.Keys)) { $unattendSettings[$k] = $script:TweakSettings[$k] }
+            } else {
+                foreach ($prop in @($script:TweakSettings.PSObject.Properties)) { $unattendSettings[$prop.Name] = $prop.Value }
             }
         }
-
-        # Parameterize ComputerName in specialize pass via DOM (robust against template variations)
-        if ($ComputerName) {
-            $specPass = $xmlDoc.SelectSingleNode("//u:settings[@pass='specialize']", $nsMgr)
-            if ($specPass) {
-                foreach ($comp in $specPass.SelectNodes("u:component[@name='Microsoft-Windows-Shell-Setup']", $nsMgr)) {
-                    $cnNode = $comp.SelectSingleNode("u:ComputerName", $nsMgr)
-                    if ($cnNode) {
-                        $cnNode.InnerText = $ComputerName
-                    } else {
-                        $newCn = $xmlDoc.CreateElement("ComputerName", $xmlDoc.DocumentElement.NamespaceURI)
-                        $newCn.InnerText = $ComputerName
-                        [void]$comp.AppendChild($newCn)
-                    }
-                }
+        foreach ($cd in @($script:ComponentDefs.Values)) {
+            if ($cd.Type -eq 'Bool' -and $cd.Variable -and -not $unattendSettings.ContainsKey($cd.Key)) {
+                $cdVar = Get-Variable -Name $cd.Variable -ErrorAction SilentlyContinue
+                if ($null -ne $cdVar) { $unattendSettings[$cd.Key] = [bool]$cdVar.Value }
             }
+        }
+        $knownUnattendKeys = @($script:AllTweakDefs.Keys) + @($script:ComponentDefs.Keys)
+        $unattendFragments = Import-WinEaseUnattendFragments -KnownKeys $knownUnattendKeys
+        $composition = Invoke-WinEaseUnattendComposition -XmlDocument $xmlDoc -Fragments $unattendFragments -Settings $unattendSettings -Architecture $architecture -Values @{ UserName = $unattendUserName; ComputerName = $unattendComputerName }
+        Write-Host "  [Unattend] fragments added: $(if ($composition.Applied.Count) { $composition.Applied -join ', ' } else { '(none)' })" -ForegroundColor Green
+        Write-Host "  [Unattend] fragments left out: $(if ($composition.Skipped.Count) { $composition.Skipped -join ', ' } else { '(none)' })" -ForegroundColor DarkGray
+        if ($composition.Skipped -contains 'AutoLogon') {
+            # The password of the local account is left untouched on purpose: an account without a password
+            # element is not documented, and a setup that cannot create the account would leave the machine
+            # unusable (docs\SECURITY_OPTIONS.md).
+            Write-Host "  [AutoLogon] ConfigureWinlogon is off: no AutoLogon section in autounattend.xml (no automatic logon)." -ForegroundColor Yellow
         }
 
         # 4. Safe windowsPE pass normalization:
@@ -1195,36 +1163,94 @@ exit 0
 
 # Bundle Custom Post-Install Scripts if provided in tools\custom-scripts (FirstLogon\ and the older top-level files
 # run at first logon; UserOnce\ and the older user\ folder run as the user)
-$customScriptsDir = Join-Path -Path $scriptDir -ChildPath "tools\custom-scripts"
-if (Test-Path -LiteralPath $customScriptsDir) {
-    $targetCustomDir = Join-Path -Path $scratchDir -ChildPath "Windows\Setup\Scripts\Custom"
-    New-Item -Path $targetCustomDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-    $customManifest = [ordered]@{}
-    foreach ($f in @(Get-WinEaseCustomScriptFiles -RepoRoot $scriptDir -Stage 'FirstLogon' -IncludeLegacy)) {
-        Copy-Item -LiteralPath $f.FullName -Destination $targetCustomDir -Force -ErrorAction SilentlyContinue
-        $hash = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash
-        $customManifest[$f.Name] = $hash
+#
+# Every file placed in Custom\ or UserCustom\ is recorded in custom-scripts-manifest.json. FirstLogon.ps1 and
+# UserOnce.ps1 refuse any file without a matching entry and refuse everything when the manifest is missing
+# (fail-closed), so a copy or hash that fails here stops the build instead of producing an image whose
+# scripts silently do not run or run unverified. The manifest itself is written once, after the M2 stage
+# staging further down has added its files (Write-WinEaseCustomScriptManifest).
+$setupScriptsRoot = Join-Path -Path $scratchDir -ChildPath "Windows\Setup\Scripts"
+$script:WinEaseCustomManifest = [ordered]@{}
+$script:WinEaseCustomManifestPath = Join-Path -Path $setupScriptsRoot -ChildPath "custom-scripts-manifest.json"
+# A manifest left over from an earlier run must never describe this run's files.
+Remove-Item -LiteralPath $script:WinEaseCustomManifestPath -Force -ErrorAction SilentlyContinue
+if (Test-Path -LiteralPath $script:WinEaseCustomManifestPath) {
+    throw "Custom scripts: the old manifest '$($script:WinEaseCustomManifestPath)' could not be removed."
+}
+
+# The shared runtime integrity check, dot-sourced by FirstLogon.ps1 and UserOnce.ps1. It is always deployed:
+# without it both scripts refuse every custom script.
+$integritySource = Join-Path -Path $scriptDir -ChildPath "lib\WinEaseCustomScriptIntegrity.ps1"
+if (-not (Test-Path -LiteralPath $integritySource)) {
+    throw "Custom scripts: the integrity check '$integritySource' is missing."
+}
+New-Item -Path $setupScriptsRoot -ItemType Directory -Force -ErrorAction Stop | Out-Null
+Copy-Item -LiteralPath $integritySource -Destination (Join-Path -Path $setupScriptsRoot -ChildPath "WinEaseCustomScriptIntegrity.ps1") -Force -ErrorAction Stop
+
+function Add-WinEaseCustomScriptToImage {
+    # Copies one custom script into the image and records the hash of the copy. The copy has to equal the
+    # source; a name already recorded with other content is an error (one of the two would run unverified
+    # or not at all).
+    param(
+        [Parameter(Mandatory = $true)][string]$SourcePath,
+        [Parameter(Mandatory = $true)][string]$TargetDir,
+        [AllowEmptyString()][string]$KeyPrefix = ''
+    )
+    $name = [System.IO.Path]::GetFileName($SourcePath)
+    if ($name -notmatch '^[^\\/:*?"<>|]+$' -or $name -eq '.' -or $name -eq '..') {
+        throw "Custom scripts: the file name '$name' is not allowed."
     }
-    $userFiles = @(Get-WinEaseCustomScriptFiles -RepoRoot $scriptDir -Stage 'UserOnce' -IncludeLegacy)
-    if ($userFiles.Count -gt 0) {
-        $targetUserDir = Join-Path -Path $scratchDir -ChildPath "Windows\Setup\Scripts\UserCustom"
-        New-Item -Path $targetUserDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-        foreach ($f in $userFiles) {
-            Copy-Item -LiteralPath $f.FullName -Destination $targetUserDir -Force -ErrorAction SilentlyContinue
-            $hash = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash
-            $customManifest["user/$($f.Name)"] = $hash
+    $key = "$KeyPrefix$name"
+    $sourceHash = (Get-FileHash -LiteralPath $SourcePath -Algorithm SHA256 -ErrorAction Stop).Hash
+    if ($script:WinEaseCustomManifest.Contains($key)) {
+        if ($script:WinEaseCustomManifest[$key] -ne $sourceHash) {
+            throw "Custom scripts: two different scripts are named '$key'. Rename one of them."
         }
+        return
     }
-    if ($customManifest.Count -gt 0) {
-        $manifestPath = Join-Path -Path $scratchDir -ChildPath "Windows\Setup\Scripts\custom-scripts-manifest.json"
-        $manifestJson = $customManifest | ConvertTo-Json -Depth 2
+    New-Item -Path $TargetDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
+    $dest = Join-Path -Path $TargetDir -ChildPath $name
+    Copy-Item -LiteralPath $SourcePath -Destination $dest -Force -ErrorAction Stop
+    $destHash = (Get-FileHash -LiteralPath $dest -Algorithm SHA256 -ErrorAction Stop).Hash
+    if ($destHash -ne $sourceHash) {
+        throw "Custom scripts: the copy of '$SourcePath' in the image differs from the source."
+    }
+    $script:WinEaseCustomManifest[$key] = $destHash
+}
+
+function Write-WinEaseCustomScriptManifest {
+    # Writes the manifest when at least one script was placed. Without any script no manifest is needed:
+    # the runtime scripts find no candidate file and run nothing. A failed write removes the partial file
+    # and stops the build.
+    if ($script:WinEaseCustomManifest.Count -eq 0) { return }
+    $manifestJson = $script:WinEaseCustomManifest | ConvertTo-Json -Depth 2
+    try {
         if (Get-Command -Name "Write-WinEaseTextFileAtomic" -ErrorAction SilentlyContinue) {
-            Write-WinEaseTextFileAtomic -Path $manifestPath -Content $manifestJson | Out-Null
+            Write-WinEaseTextFileAtomic -Path $script:WinEaseCustomManifestPath -Content $manifestJson | Out-Null
         } else {
-            [System.IO.File]::WriteAllText($manifestPath, $manifestJson, [System.Text.Encoding]::UTF8)
+            [System.IO.File]::WriteAllText($script:WinEaseCustomManifestPath, $manifestJson, (New-Object System.Text.UTF8Encoding($false)))
         }
+        $check = Get-Content -LiteralPath $script:WinEaseCustomManifestPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if (@($check.psobject.Properties).Count -ne $script:WinEaseCustomManifest.Count) {
+            throw "the written manifest holds $(@($check.psobject.Properties).Count) entries instead of $($script:WinEaseCustomManifest.Count)"
+        }
+    } catch {
+        Remove-Item -LiteralPath $script:WinEaseCustomManifestPath -Force -ErrorAction SilentlyContinue
+        throw "Custom scripts: the manifest could not be written: $($_.Exception.Message)"
     }
-    Write-Host "  - Bundled custom post-install scripts ($($customManifest.Count) files) with SHA256 manifest to Windows\Setup\Scripts\Custom" -ForegroundColor Green
+}
+
+$customScriptsDir = Join-Path -Path $scriptDir -ChildPath "tools\custom-scripts"
+$targetCustomDir = Join-Path -Path $setupScriptsRoot -ChildPath "Custom"
+$targetUserDir = Join-Path -Path $setupScriptsRoot -ChildPath "UserCustom"
+if (Test-Path -LiteralPath $customScriptsDir) {
+    foreach ($f in @(Get-WinEaseCustomScriptFiles -RepoRoot $scriptDir -Stage 'FirstLogon' -IncludeLegacy)) {
+        Add-WinEaseCustomScriptToImage -SourcePath $f.FullName -TargetDir $targetCustomDir -KeyPrefix ''
+    }
+    foreach ($f in @(Get-WinEaseCustomScriptFiles -RepoRoot $scriptDir -Stage 'UserOnce' -IncludeLegacy)) {
+        Add-WinEaseCustomScriptToImage -SourcePath $f.FullName -TargetDir $targetUserDir -KeyPrefix 'user/'
+    }
+    Write-Host "  - Bundled custom post-install scripts ($($script:WinEaseCustomManifest.Count) files) to Windows\Setup\Scripts\Custom and UserCustom" -ForegroundColor Green
 }
 
 # Deploy Zero-Footprint Browser Grabber and WinEase Control Center to Public Desktop & Setup Tools
@@ -1750,57 +1776,24 @@ if (Get-Command -Name Invoke-WinEaseCustomScriptsStage -ErrorAction SilentlyCont
     } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
 
-# M2: Register custom FirstLogon scripts in autounattend.xml FirstLogonCommands
-try {
-    $customScripts = @()
-    if (Test-Path -LiteralPath $customFirstLogonDir) {
-        $customScripts = @(Get-ChildItem -LiteralPath $customFirstLogonDir -Filter '*.ps1' -File -ErrorAction SilentlyContinue)
+# M2: the stage runner staged its FirstLogon / UserOnce scripts in Custom\FirstLogon and Custom\UserOnce.
+# They are moved into the folders the verified pipelines of FirstLogon.ps1 (Custom\) and UserOnce.ps1
+# (UserCustom\) read, and recorded in the manifest. They used to be registered as separate
+# FirstLogonCommands: that ran them without any hash check, ran tools\custom-scripts\FirstLogon\ scripts a
+# second time (they are bundled above as well), and wrote a <Path> element that FirstLogonCommands does not
+# have (it uses <CommandLine>). Custom\UserOnce was staged but never run by anything.
+foreach ($staged in @(
+        @{ Dir = $customFirstLogonDir; Target = $targetCustomDir; Prefix = '' },
+        @{ Dir = $customUserOnceDir; Target = $targetUserDir; Prefix = 'user/' })) {
+    if (-not (Test-Path -LiteralPath $staged.Dir)) { continue }
+    foreach ($sf in @(Get-ChildItem -LiteralPath $staged.Dir -File -Force -ErrorAction Stop)) {
+        Add-WinEaseCustomScriptToImage -SourcePath $sf.FullName -TargetDir $staged.Target -KeyPrefix $staged.Prefix
     }
-    if ($customScripts.Count -gt 0 -and -not $DryRun) {
-        $firstLogonPass = $xmlDoc.SelectSingleNode("//u:settings[@pass='oobeSystem']", $nsMgr)
-        if ($firstLogonPass) {
-            $shellComp = $firstLogonPass.SelectSingleNode("u:component[@name='Microsoft-Windows-Shell-Setup']", $nsMgr)
-            if ($shellComp) {
-                $flc = $shellComp.SelectSingleNode("u:FirstLogonCommands", $nsMgr)
-                if (-not $flc) {
-                    $flc = $xmlDoc.CreateElement("FirstLogonCommands", $xmlDoc.DocumentElement.NamespaceURI)
-                    [void]$shellComp.AppendChild($flc)
-                }
-                # Determine next order number
-                $existingOrders = @($flc.SelectNodes("u:SynchronousCommand/u:Order", $nsMgr) | ForEach-Object { [int]$_.InnerText })
-                $nextOrder = if ($existingOrders.Count -gt 0) { ($existingOrders | Measure-Object -Maximum).Maximum + 1 } else { 1 }
-                foreach ($cs in $customScripts) {
-                    $relPath = "C:\Windows\Setup\Scripts\Custom\FirstLogon\$($cs.Name)"
-                    $cmd = $xmlDoc.CreateElement("SynchronousCommand", $xmlDoc.DocumentElement.NamespaceURI)
-                    $cmd.SetAttribute("wcm:action", "add", "http://schemas.microsoft.com/WMIConfig/2002/State")
-                    $orderNode = $xmlDoc.CreateElement("Order", $xmlDoc.DocumentElement.NamespaceURI)
-                    $orderNode.InnerText = "$nextOrder"
-                    [void]$cmd.AppendChild($orderNode)
-                    $descNode = $xmlDoc.CreateElement("Description", $xmlDoc.DocumentElement.NamespaceURI)
-                    $descNode.InnerText = "Custom FirstLogon script: $($cs.Name)"
-                    [void]$cmd.AppendChild($descNode)
-                    $pathNode = $xmlDoc.CreateElement("Path", $xmlDoc.DocumentElement.NamespaceURI)
-                    $pathNode.InnerText = "powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File `"$relPath`""
-                    [void]$cmd.AppendChild($pathNode)
-                    [void]$flc.AppendChild($cmd)
-                    $nextOrder++
-                }
-                Write-Host "  Registered $($customScripts.Count) custom FirstLogon script(s) in autounattend.xml" -ForegroundColor Green
-                # AUD-01: the nodes added above only exist in the in-memory DOM. The document
-                # was written to disk much earlier in this phase, so without an explicit save
-                # here the custom FirstLogon commands were silently dropped and never ran.
-                foreach ($dest in $script:UnattendSaveTargets) {
-                    try {
-                        Save-WinEaseUnattendXml -XmlDocument $xmlDoc -DestinationPath $dest
-                    } catch {
-                        Write-Warning "  - Could not persist the custom FirstLogon commands to '$dest': $($_.Exception.Message)"
-                    }
-                }
-            }
-        }
-    }
-} catch {
-    Write-Verbose "Ignored: $($_.Exception.Message)"
+    Remove-Item -LiteralPath $staged.Dir -Recurse -Force -ErrorAction Stop
+}
+Write-WinEaseCustomScriptManifest
+if ($script:WinEaseCustomManifest.Count -gt 0) {
+    Write-Host "  - Custom script integrity manifest written ($($script:WinEaseCustomManifest.Count) entries)" -ForegroundColor Green
 }
 
 # Migration Assistant bundle: tool + engine + rule files only (no personal data) and a desktop launcher

@@ -375,6 +375,14 @@ if (Test-Path -LiteralPath $debloatModuleEarly) {
 } else {
     throw "Required debloat module not found: $debloatModuleEarly"
 }
+# autounattend.xml composer: base template + config\unattend-fragments.psd1 (phase 11, and the BypassNRO
+# answer of phases 10 / 14 / resume)
+$unattendComposerEarly = Join-Path -Path $scriptDirEarly -ChildPath "lib\WinEaseUnattendComposer.ps1"
+if (Test-Path -LiteralPath $unattendComposerEarly) {
+    . $unattendComposerEarly
+} else {
+    throw "Required unattend composer not found: $unattendComposerEarly"
+}
 
 # Normalize -TweakGroupOverrides to a hashtable of [bool]
 if ($null -ne $TweakGroupOverrides -and $TweakGroupOverrides -isnot [System.Collections.IDictionary]) {
@@ -590,6 +598,12 @@ foreach ($td in $script:WinEaseSettingsDef.Tweaks) {
     $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description }
     foreach ($alias in @($td.Aliases)) { if ($alias) { $script:TweakKeyAliases[$alias] = $td.Key } }
     if ($td.Variable) { $script:TweakVariableMap[$td.Key] = $td.Variable }
+}
+# Answer-file fragments without a Toggle of their own get the toggle 'Unattend.<Id>' (GUI "Answer file"
+# tab, profiles, -TweakSettings). Fragments tied to an existing key (BypassNRO, ConfigureWinlogon, ...)
+# follow that key and add no second checkbox.
+foreach ($uf in @(Import-WinEaseUnattendFragments | Where-Object { $_.OwnToggle })) {
+    $script:AllTweakDefs[$uf.ToggleKey] = @{ Category = $uf.Category; Default = [bool]$uf.Default; Description = $uf.Description }
 }
 
 # M2: Import user-defined tweaks/presets/custom scripts (in-place, preserves single-assignment contract)
@@ -2018,6 +2032,12 @@ $script:DiagnosticData = [ordered]@{
     FailureMessage           = $null
     FailureStackTrace        = $null
     PreservedArtifacts       = @()
+    # The physical debloat (phase 09): the status of the run and the targets that were
+    # asked for, so the report shows a physical debloat that never ran
+    PhysicalDebloatStatus    = 'NotRequested'
+    PhysicalDebloatRequestedTargets = @()
+    PhysicalDebloatDeletedFiles = 0
+    PhysicalDebloatDeletedDirs = 0
 }
 
 function Write-WinEaseDiagnosticReport {
@@ -2059,6 +2079,14 @@ function Write-WinEaseDiagnosticReport {
             "Oscdimg Exit Code:        $($script:DiagnosticData.OscdimgExitCode)",
             "ISO Embedded WIM SHA256:  $($script:DiagnosticData.IsoEmbeddedWimSha256)",
             "ISO Payload Match:        $($script:DiagnosticData.IsoPayloadMatch)",
+            "---------------------------------------------------------",
+            "Physical Debloat Status:   $($script:DiagnosticData.PhysicalDebloatStatus)",
+            "Physical Debloat Targets:  $(@($script:DiagnosticData.PhysicalDebloatRequestedTargets) -join ', ')",
+            "Physical Debloat Deleted:  $($script:DiagnosticData.PhysicalDebloatDeletedFiles) file(s), $($script:DiagnosticData.PhysicalDebloatDeletedDirs) directory(ies)",
+            "Offline Removal Failures:  $(@($script:DiagnosticData.OfflineRemovalFailures).Count)",
+            (@($script:DiagnosticData.OfflineRemovalFailures) | ForEach-Object { "  - $_" }),
+            "ISO Cleanup Failures:      $(@($script:DiagnosticData.IsoCleanupFailures).Count)",
+            (@($script:DiagnosticData.IsoCleanupFailures) | ForEach-Object { "  - $_" }),
             "---------------------------------------------------------",
             "Preserved Artifacts:",
             ($script:DiagnosticData.PreservedArtifacts | ForEach-Object { "  - $_" }),

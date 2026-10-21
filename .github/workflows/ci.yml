@@ -15,6 +15,35 @@ permissions:
   contents: read
 
 jobs:
+  rust:
+    name: Rust physical debloat engine
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install the Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Build and test the physical debloat engine
+        shell: pwsh
+        run: |
+          cargo test --manifest-path tools/winease-physical-debloat/Cargo.toml --locked
+          if ($LASTEXITCODE -ne 0) { throw "cargo test failed with exit code $LASTEXITCODE" }
+          cargo build --release --manifest-path tools/winease-physical-debloat/Cargo.toml --locked
+          if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE" }
+
+      - name: Lint the physical debloat engine
+        # The lints are reported but they do not fail the build: a newer toolchain can
+        # add a lint, and a new lint must not break the pipeline of a pull request. The
+        # compiler errors still fail the step.
+        shell: pwsh
+        run: |
+          cargo clippy --manifest-path tools/winease-physical-debloat/Cargo.toml --all-targets --locked
+          if ($LASTEXITCODE -ne 0) { throw "cargo clippy failed with exit code $LASTEXITCODE" }
+
   self-test:
     name: Self-test (AST + unattend schema + presets)
     runs-on: windows-latest

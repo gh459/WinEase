@@ -82,9 +82,19 @@ if (Test-TweakEnabled 'BypassHardwareRequirements' $true) {
 # ============================================================================
 # 2. OOBE & Local Account Setup
 # ============================================================================
-if (Test-TweakEnabled 'BypassNRO' $true) {
+# BypassNRO and BypassNetworkRequirement are one setting (Get-WinEaseBypassNROEnabled); phase 11 removes
+# the specialize command of autounattend.xml with the same answer.
+if (Get-WinEaseBypassNROEnabled -TweakSettings $script:TweakSettings) {
     Write-Host "Enabling Local Account bypass on OOBE (BypassNRO)..." -ForegroundColor Green
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v "BypassNRO" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSYSTEM\Setup\LabConfig" /v "BypassNRO" /t REG_DWORD /d 1 /f > $null 2>&1
+} else {
+    Write-Host "BypassNRO is off: OOBE keeps its network requirement (no BypassNRO is written)." -ForegroundColor Yellow
+    # an image that went through an earlier run may already carry the values
+    reg.exe delete "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v "BypassNRO" /f > $null 2>&1
+    reg.exe delete "HKLM\zSYSTEM\Setup\LabConfig" /v "BypassNRO" /f > $null 2>&1
+}
+if (Test-TweakEnabled 'BypassNRO' $true) {
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\ReserveManager" /v "ShippedWithReserves" /t REG_DWORD /d 0 /f > $null 2>&1
 }
 
@@ -789,10 +799,8 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
 # ============================================================================
 # GUI tweak toggles (keys match $script:AllTweakDefs in WinEasebuilder.ps1)
 # ============================================================================
-if (Test-TweakEnabled 'BypassNetworkRequirement' $true) {
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v "BypassNRO" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\Setup\LabConfig" /v "BypassNRO" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+# BypassNetworkRequirement: written together with BypassNRO in section 2 (Get-WinEaseBypassNROEnabled).
+# It used to write the same OOBE\BypassNRO value here a second time, so switching BypassNRO off had no effect.
 
 if (Test-TweakEnabled 'DisableAdvertisingId' $true) {
     reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" /v "Enabled" /t REG_DWORD /d 0 /f > $null 2>&1

@@ -125,6 +125,52 @@ function Assert-WinEaseDirectoryEmpty {
     }
 }
 
+# Helper function: Removes a path of the mounted image and reports the failure.
+#
+# A removal that the user asked for must not disappear silently: when the file is
+# locked or the permission is missing, the build would continue and the payload would
+# still be in the image. The caller shows the warning, so the failure is visible in the
+# log and in the build report.
+#
+# -ContentsOnly removes the content of the path and keeps the folder itself.
+# -Filter limits the removal to the files of that name pattern.
+#
+# Returns $null when the path is gone, otherwise a one-line error message.
+function Remove-WinEaseRequiredPath {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path,
+        [string]$Label = '',
+        [switch]$ContentsOnly,
+        [string]$Filter = ''
+    )
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $name = if ($Label) { $Label } else { $Path }
+    try {
+        if ($ContentsOnly) {
+            $items = @(Get-ChildItem -LiteralPath $Path -Force -ErrorAction Stop)
+            if ($Filter) { $items = @($items | Where-Object { $_.Name -like $Filter }) }
+            foreach ($item in $items) {
+                Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction Stop
+            }
+        } else {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+        }
+    } catch {
+        return "the removal of '$name' failed: $(($_ -split "`n")[0])"
+    }
+    if ($ContentsOnly) {
+        $left = @(Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue)
+        if ($Filter) { $left = @($left | Where-Object { $_.Name -like $Filter }) }
+        if ($left.Count -gt 0) {
+            return "the removal of '$name' left $($left.Count) item(s) behind"
+        }
+        return $null
+    }
+    if (Test-Path -LiteralPath $Path) { return "the removal of '$name' did not remove the path" }
+    return $null
+}
+
 # Helper function: Take ownership and grant FullControl using PowerShell .NET ACL (Locale-independent via direct SID)
 function Set-ItemOwnershipAndAccess {
     param(

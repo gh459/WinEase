@@ -54,7 +54,9 @@ if (Test-Path -LiteralPath $bootWimPath) {
             foreach ($key in $labConfigKeys) {
                 reg.exe add "HKLM\zSYSTEM\Setup\LabConfig" /v $key /t REG_DWORD /d 1 /f > $null 2>&1
             }
-            reg.exe add "HKLM\zSYSTEM\Setup\LabConfig" /v "BypassNRO" /t REG_DWORD /d 1 /f > $null 2>&1
+            if (Get-WinEaseBypassNROEnabled -TweakSettings $script:TweakSettings) {
+                reg.exe add "HKLM\zSYSTEM\Setup\LabConfig" /v "BypassNRO" /t REG_DWORD /d 1 /f > $null 2>&1
+            }
             reg.exe add "HKLM\zSYSTEM\Setup\MoSetup" /v "AllowUpgradesWithUnsupportedTPMOrCPU" /t REG_DWORD /d 1 /f > $null 2>&1
             reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\BitLocker" /v "PreventDeviceEncryption" /t REG_DWORD /d 1 /f > $null 2>&1
             # CurrentControlSet is dynamically linked by the Windows kernel at boot; leave hive untouched.

@@ -43,17 +43,20 @@ function Export-WinEaseHtmlReport {
     $finPayloadBytes = if ($BuildInfo.ContainsKey('FinalPayloadSizeBytes')) { [long]$BuildInfo.FinalPayloadSizeBytes } else { 0 }
     $guestBench = if ($BuildInfo.ContainsKey('GuestBenchmark')) { $BuildInfo.GuestBenchmark } else { $null }
 
-    $srcIsoGBText = if ($srcIsoBytes -gt 0) { "$([math]::Round($srcIsoBytes / 1GB, 2)) GB" } else { "~5.5 - 6.2 GB (Stock Win11 ISO)" }
+    $srcIsoGBText = if ($srcIsoBytes -gt 0) { "$([math]::Round($srcIsoBytes / 1GB, 2)) GB" } else { "~5.5 - 6.2 GB (Stock Win11 ISO, Estimated / Unmeasured)" }
     $finIsoGBText = if ($finIsoBytes -gt 0) { "$([math]::Round($finIsoBytes / 1GB, 2)) GB" } else { "N/A" }
     $isoDiffText = if ($srcIsoBytes -gt 0 -and $finIsoBytes -gt 0) {
         $savedIso = [math]::Round(($srcIsoBytes - $finIsoBytes) / 1GB, 2)
         $pctIso = [math]::Round((($srcIsoBytes - $finIsoBytes) / $srcIsoBytes) * 100, 1)
         "&#9660; ${savedIso} GB (-${pctIso}%)"
     } else {
-        "&#9660; ~50% Saved"
+        "&#9660; ~50% Saved (Estimated / Unmeasured)"
     }
+    # The badge of a value that was not measured must not look like a measured result
+    $isoDiffBadge = if ($srcIsoBytes -gt 0 -and $finIsoBytes -gt 0) { 'status-enabled' } else { 'status-warn' }
+    $isoDiffCardClass = if ($isoDiffBadge -eq 'status-enabled') { 'diff' } else { 'diff diff-estimated' }
 
-    $srcPayloadGBText = if ($srcPayloadBytes -gt 0) { "$([math]::Round($srcPayloadBytes / 1GB, 2)) GB" } else { "~4.6 - 5.1 GB (Stock install.wim)" }
+    $srcPayloadGBText = if ($srcPayloadBytes -gt 0) { "$([math]::Round($srcPayloadBytes / 1GB, 2)) GB" } else { "~4.6 - 5.1 GB (Stock install.wim, Estimated / Unmeasured)" }
     $finPayloadGBText = if ($finPayloadBytes -gt 0) { "$([math]::Round($finPayloadBytes / 1GB, 2)) GB" } else { $finalGBText }
     $payloadDiffText = if ($srcPayloadBytes -gt 0 -and $finPayloadBytes -gt 0) {
         $savedPl = [math]::Round(($srcPayloadBytes - $finPayloadBytes) / 1GB, 2)
@@ -62,12 +65,14 @@ function Export-WinEaseHtmlReport {
     } else {
         $diffText
     }
+    $payloadDiffBadge = if ($srcPayloadBytes -gt 0 -and $finPayloadBytes -gt 0) { 'status-enabled' } else { 'status-warn' }
+    $payloadDiffCardClass = if ($payloadDiffBadge -eq 'status-enabled') { 'diff' } else { 'diff diff-estimated' }
 
-    $installedDiskSource = "22.0 - 28.0 GB (Stock Clean Install)"
+    $installedDiskSource = "22.0 - 28.0 GB (Stock Clean Install, Reference)"
     $installedDiskTarget = if ($guestBench -and $guestBench.DiskFootprint -and $guestBench.DiskFootprint.UsedSpaceGB) {
         "$([math]::Round($guestBench.DiskFootprint.UsedSpaceGB, 2)) GB (Measured)"
     } else {
-        "~8.5 - 11.2 GB (Target Estimate)"
+        "~8.5 - 11.2 GB (Target Estimate, Estimated / Unmeasured)"
     }
     $installedDiskDelta = if ($guestBench -and $guestBench.DiskFootprint -and $guestBench.DiskFootprint.UsedSpaceGB) {
         $usedG = [double]$guestBench.DiskFootprint.UsedSpaceGB
@@ -75,8 +80,34 @@ function Export-WinEaseHtmlReport {
         $pctG = [math]::Round(($savedG / 24.0) * 100, 0)
         "&#9660; ${savedG} GB (-${pctG}%)"
     } else {
-        "&#9660; ~14.0 GB (~58% Footprint Reduction)"
+        "&#9660; ~14.0 GB (~58% Footprint Reduction, Estimated / Unmeasured)"
     }
+    $installedDiskBadge = if ($guestBench -and $guestBench.DiskFootprint -and $guestBench.DiskFootprint.UsedSpaceGB) { 'status-enabled' } else { 'status-warn' }
+
+    # The physical debloat (phase 09): the status of the run and the targets that were
+    # asked for. A physical debloat that was blocked or skipped is shown as such, so a
+    # missing physical deletion is visible in the report.
+    $physStatus = if ($BuildInfo.ContainsKey('PhysicalDebloatStatus')) { [string]$BuildInfo.PhysicalDebloatStatus } else { 'NotRequested' }
+    $physTargets = if ($BuildInfo.ContainsKey('PhysicalDebloatRequestedTargets') -and $BuildInfo.PhysicalDebloatRequestedTargets) { @($BuildInfo.PhysicalDebloatRequestedTargets) } else { @() }
+    $physFiles = if ($BuildInfo.ContainsKey('PhysicalDebloatDeletedFiles')) { [int64]$BuildInfo.PhysicalDebloatDeletedFiles } else { 0 }
+    $physDirs = if ($BuildInfo.ContainsKey('PhysicalDebloatDeletedDirs')) { [int64]$BuildInfo.PhysicalDebloatDeletedDirs } else { 0 }
+    $physBadge = switch ($physStatus) {
+        'Executed'  { '<span class="status-tag status-enabled">Executed</span>' }
+        'DryRun'    { '<span class="status-tag status-retained">Dry Run (nothing deleted)</span>' }
+        'BlockedByGate' { '<span class="status-tag status-warn">Blocked (-AllowPhysicalDebloat missing)</span>' }
+        'SkippedMissingBinary' { '<span class="status-tag status-warn">Skipped (Rust binary missing)</span>' }
+        default     { '<span class="status-tag status-retained">Not Requested</span>' }
+    }
+    $physTargetText = if ($physTargets.Count -gt 0) { ($physTargets -join ', ') } else { 'None' }
+    $physDetail = "$physFiles file(s), $physDirs directory(ies) removed"
+
+    # The removals of the safe engine and of the ISO cleanup that failed: a file the user
+    # asked to delete is still in the image, so the report has to show it.
+    $offlineFailures = if ($BuildInfo.ContainsKey('OfflineRemovalFailures') -and $BuildInfo.OfflineRemovalFailures) { @($BuildInfo.OfflineRemovalFailures) } else { @() }
+    $isoFailures = if ($BuildInfo.ContainsKey('IsoCleanupFailures') -and $BuildInfo.IsoCleanupFailures) { @($BuildInfo.IsoCleanupFailures) } else { @() }
+    $removalFailures = @($offlineFailures) + @($isoFailures)
+    $removalFailureRows = ''
+    foreach ($f in $removalFailures) { $removalFailureRows += "        <tr><td>$(& $enc $f)</td></tr>" }
 
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine('<!DOCTYPE html>')
@@ -99,6 +130,7 @@ function Export-WinEaseHtmlReport {
     [void]$sb.AppendLine('  .stat-card .label { font-size: 13px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; }')
     [void]$sb.AppendLine('  .stat-card .value { font-size: 26px; font-weight: 700; color: #fff; margin-top: 4px; }')
     [void]$sb.AppendLine('  .stat-card .diff { font-size: 13px; color: var(--badge-pass); font-weight: 600; }')
+    [void]$sb.AppendLine('  .stat-card .diff-estimated { font-size: 13px; color: var(--badge-warn); font-weight: 600; }')
     [void]$sb.AppendLine('  .section-card { background: var(--bg-card); border: 1px solid var(--border-card); border-radius: 10px; padding: 22px 24px; margin-bottom: 24px; }')
     [void]$sb.AppendLine('  .section-card h2 { font-size: 18px; margin-bottom: 16px; color: var(--accent); border-bottom: 1px solid var(--border-card); padding-bottom: 8px; display: flex; align-items: center; gap: 8px; }')
     [void]$sb.AppendLine('  table { width: 100%; border-collapse: collapse; margin-top: 10px; }')
@@ -135,12 +167,12 @@ function Export-WinEaseHtmlReport {
     [void]$sb.AppendLine('    <div class="stat-card">')
     [void]$sb.AppendLine('      <div class="label">Bootable ISO Size</div>')
     [void]$sb.AppendLine("      <div class=`"value`">$(& $enc $finIsoGBText)</div>")
-    [void]$sb.AppendLine("      <div class=`"diff`">$(& $enc $isoDiffText)</div>")
+    [void]$sb.AppendLine("      <div class=`"$isoDiffCardClass`">$(& $enc $isoDiffText)</div>")
     [void]$sb.AppendLine('    </div>')
     [void]$sb.AppendLine('    <div class="stat-card">')
     [void]$sb.AppendLine('      <div class="label">Compressed Payload</div>')
     [void]$sb.AppendLine("      <div class=`"value`">$(& $enc $finPayloadGBText)</div>")
-    [void]$sb.AppendLine("      <div class=`"diff`">$(& $enc $payloadDiffText)</div>")
+    [void]$sb.AppendLine("      <div class=`"$payloadDiffCardClass`">$(& $enc $payloadDiffText)</div>")
     [void]$sb.AppendLine('    </div>')
     [void]$sb.AppendLine('    <div class="stat-card">')
     [void]$sb.AppendLine('      <div class="label">Active Profile</div>')
@@ -160,9 +192,9 @@ function Export-WinEaseHtmlReport {
     [void]$sb.AppendLine('    <table>')
     [void]$sb.AppendLine('      <thead><tr><th>Metric Axis</th><th>Source Baseline</th><th>Optimized WinEase</th><th>Delta / Reduction</th></tr></thead>')
     [void]$sb.AppendLine('      <tbody>')
-    [void]$sb.AppendLine("        <tr><td><strong>Axis 1: Bootable ISO Medium</strong></td><td>$(& $enc $srcIsoGBText)</td><td>$(& $enc $finIsoGBText)</td><td><span class=`"status-tag status-enabled`">$(& $enc $isoDiffText)</span></td></tr>")
-    [void]$sb.AppendLine("        <tr><td><strong>Axis 2: Compressed Image Payload ($(& $enc $payloadFormat))</strong></td><td>$(& $enc $srcPayloadGBText)</td><td>$(& $enc $finPayloadGBText)</td><td><span class=`"status-tag status-enabled`">$(& $enc $payloadDiffText)</span></td></tr>")
-    [void]$sb.AppendLine("        <tr><td><strong>Axis 3: Installed Target Footprint (Drive C:)</strong></td><td>$(& $enc $installedDiskSource)</td><td>$(& $enc $installedDiskTarget)</td><td><span class=`"status-tag status-enabled`">$(& $enc $installedDiskDelta)</span></td></tr>")
+    [void]$sb.AppendLine("        <tr><td><strong>Axis 1: Bootable ISO Medium</strong></td><td>$(& $enc $srcIsoGBText)</td><td>$(& $enc $finIsoGBText)</td><td><span class=`"status-tag $isoDiffBadge`">$(& $enc $isoDiffText)</span></td></tr>")
+    [void]$sb.AppendLine("        <tr><td><strong>Axis 2: Compressed Image Payload ($(& $enc $payloadFormat))</strong></td><td>$(& $enc $srcPayloadGBText)</td><td>$(& $enc $finPayloadGBText)</td><td><span class=`"status-tag $payloadDiffBadge`">$(& $enc $payloadDiffText)</span></td></tr>")
+    [void]$sb.AppendLine("        <tr><td><strong>Axis 3: Installed Target Footprint (Drive C:)</strong></td><td>$(& $enc $installedDiskSource)</td><td>$(& $enc $installedDiskTarget)</td><td><span class=`"status-tag $installedDiskBadge`">$(& $enc $installedDiskDelta)</span></td></tr>")
     [void]$sb.AppendLine('      </tbody>')
     [void]$sb.AppendLine('    </table>')
     [void]$sb.AppendLine('  </div>')
@@ -237,9 +269,25 @@ function Export-WinEaseHtmlReport {
     [void]$sb.AppendLine('        <tr><td><strong>Japanese &amp; Regional IME Support</strong></td><td>106/109 Keyboard layout auto-detected, IME telemetry opted-out</td><td><span class="status-tag status-enabled">Verified</span></td></tr>')
     [void]$sb.AppendLine('        <tr><td><strong>Post-Setup App Automation</strong></td><td>winget package list auto-import (tools/winget-packages.json)</td><td><span class="status-tag status-enabled">Automated</span></td></tr>')
     [void]$sb.AppendLine('        <tr><td><strong>Custom Post-Install Hook</strong></td><td>Verified SHA256 manifest execution (tools/custom-scripts/)</td><td><span class="status-tag status-enabled">Active Hook (Verified)</span></td></tr>')
+    if ($physTargets.Count -gt 0) {
+        [void]$sb.AppendLine("        <tr><td><strong>Advanced Debloat Physical Deletion</strong></td><td>$(& $enc $physTargetText)<br>$(& $enc $physDetail)</td><td>$physBadge</td></tr>")
+    }
+    if ($removalFailures.Count -gt 0) {
+        [void]$sb.AppendLine("        <tr><td><strong>Failed Removals</strong></td><td>The files below are still in the image (the safe engine and the ISO cleanup could not delete them)</td><td><span class=`"status-tag status-warn`">$($removalFailures.Count) item(s)</span></td></tr>")
+    }
     [void]$sb.AppendLine('      </tbody>')
     [void]$sb.AppendLine('    </table>')
     [void]$sb.AppendLine('  </div>')
+
+    if ($removalFailures.Count -gt 0) {
+        [void]$sb.AppendLine('  <div class="section-card">')
+        [void]$sb.AppendLine('    <h2>&#9888; Failed Removals</h2>')
+        [void]$sb.AppendLine('    <p>These files could not be deleted and are still in the image:</p>')
+        [void]$sb.AppendLine('    <table><tr><th>Item</th></tr><tbody>')
+        [void]$sb.AppendLine($removalFailureRows)
+        [void]$sb.AppendLine('    </tbody></table>')
+        [void]$sb.AppendLine('  </div>')
+    }
 
     # Granular Tweaks Breakdown
     $tweakSettings = if ($settings -is [System.Collections.IDictionary] -and $settings.Contains('TweakSettings')) { $settings['TweakSettings'] } elseif ($settings.PSObject.Properties['TweakSettings']) { $settings.PSObject.Properties['TweakSettings'].Value } else { $null }

@@ -4,8 +4,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
-    CloseHandle, GetLastError, LocalFree, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, HANDLE, HLOCAL,
-    LUID,
+    CloseHandle, GetLastError, LocalFree, ERROR_FILE_NOT_FOUND, ERROR_NOT_ALL_ASSIGNED,
+    ERROR_PATH_NOT_FOUND, HANDLE, HLOCAL, LUID,
 };
 use windows::Win32::Security::Authorization::{
     GetNamedSecurityInfoW, SetEntriesInAclW, SetNamedSecurityInfoW, EXPLICIT_ACCESS_W, GRANT_ACCESS,
@@ -106,7 +106,43 @@ struct RemovalOutcome {
 
 // --- Privilege escalation ---
 
-fn enable_privilege(priv_name: &str) -> bool {
+/// The SID of the built-in Administrators group (S-1-5-32-544).
+fn administrators_sid() -> Option<Vec<u8>> {
+    unsafe {
+        let mut sid_len: u32 = 0;
+        // The first call only asks for the size. It fails with
+        // ERROR_INSUFFICIENT_BUFFER and writes the needed size - the return value must
+        // not be checked here, otherwise the SID is never built.
+        let _ = CreateWellKnownSid(
+            WinBuiltinAdministratorsSid,
+            None,
+            PSID(std::ptr::null_mut()),
+            &mut sid_len,
+        );
+        if sid_len == 0 {
+            return None;
+        }
+        let mut sid = vec![0u8; sid_len as usize];
+        if CreateWellKnownSid(
+            WinBuiltinAdministratorsSid,
+            None,
+            PSID(sid.as_mut_ptr() as *mut core::ffi::c_void),
+            &mut sid_len,
+        )
+        .is_err()
+        {
+            return None;
+        }
+        Some(sid)
+    }
+}
+
+/// Enable a privilege of the process token.
+///
+/// `AdjustTokenPrivileges` returns TRUE even when the privilege could not be assigned:
+/// the only sign is the last error (ERROR_NOT_ALL_ASSIGNED). A privilege that was not
+/// assigned looks enabled, so the error is checked right after the call.
+fn enable_privilege(priv_name: &str) -> Result<(), String> {
     unsafe {
         let mut token: HANDLE = HANDLE::default();
         if OpenProcessToken(
@@ -116,24 +152,35 @@ fn enable_privilege(priv_name: &str) -> bool {
         )
         .is_err()
         {
-            return false;
+            return Err(format!("the process token cannot be opened for {}", priv_name));
         }
         let mut luid = LUID::default();
         let wide: Vec<u16> = priv_name.encode_utf16().chain(std::iter::once(0)).collect();
         if LookupPrivilegeValueW(None, PCWSTR(wide.as_ptr()), &mut luid).is_err() {
             let _ = CloseHandle(token);
-            return false;
+            return Err(format!("the privilege {} does not exist", priv_name));
         }
-        let mut tp = TOKEN_PRIVILEGES {
+        let tp = TOKEN_PRIVILEGES {
             PrivilegeCount: 1,
             Privileges: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
                 Luid: luid,
                 Attributes: SE_PRIVILEGE_ENABLED,
             }],
         };
-        let result = AdjustTokenPrivileges(token, false, Some(&mut tp), 0, None, None);
+        let result = AdjustTokenPrivileges(token, false, Some(&tp), 0, None, None);
+        // The last error has to be read immediately, before any other call
+        let last_error = GetLastError();
         let _ = CloseHandle(token);
-        result.is_ok()
+        if result.is_err() {
+            return Err(format!("AdjustTokenPrivileges failed for {}", priv_name));
+        }
+        if last_error == ERROR_NOT_ALL_ASSIGNED {
+            return Err(format!(
+                "the privilege {} is not assigned to this token",
+                priv_name
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -144,10 +191,9 @@ fn escalate_privileges() {
         "SeTakeOwnershipPrivilege",
     ];
     for p in &privs {
-        if enable_privilege(p) {
-            println!("[PRIV] Enabled: {}", p);
-        } else {
-            println!("[PRIV] Failed to enable: {}", p);
+        match enable_privilege(p) {
+            Ok(()) => println!("[PRIV] Enabled: {}", p),
+            Err(e) => println!("[PRIV] Failed to enable {}: {}", p, e),
         }
     }
 }
@@ -160,24 +206,35 @@ fn escalate_privileges() {
 /// `OWNER_SECURITY_INFORMATION` performs the actual ownership change. Without this step
 /// every protected component file fails to delete with ERROR_ACCESS_DENIED, and the
 /// failures used to be swallowed by the caller.
-fn take_ownership(path: &str) -> bool {
+///
+/// The owner is set to the built-in Administrators group explicitly: a NULL owner does
+/// not assign the ownership in Win32, it leaves the owner alone. Setting the owner of
+/// an object to another account needs `SeRestorePrivilege`, which the engine enables.
+fn take_ownership(path: &str) -> Result<(), String> {
+    let mut sid = match administrators_sid() {
+        Some(sid) => sid,
+        None => return Err("the SID of the Administrators group cannot be built".to_string()),
+    };
     let wide = to_wide(path);
     unsafe {
-        // A NULL owner with OWNER_SECURITY_INFORMATION assigns the current user.
         let result = SetNamedSecurityInfoW(
             PCWSTR(wide.as_ptr()),
             SE_FILE_OBJECT,
             OWNER_SECURITY_INFORMATION,
-            None,
-            None,
+            PSID(sid.as_mut_ptr() as *mut core::ffi::c_void),
+            PSID(std::ptr::null_mut()),
             None,
             None,
         );
-        result.is_ok()
+        if result.is_ok() {
+            return Ok(());
+        }
+        Err(format!(
+            "SetNamedSecurityInfoW failed with the error {}",
+            GetLastError().0
+        ))
     }
 }
-
-/// FILE_ALL_ACCESS (winnt.h): STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0x1FF.
 const FILE_ALL_ACCESS: u32 = 0x001F_01FF;
 
 /// Give the built-in Administrators group full control over the path.
@@ -189,31 +246,11 @@ const FILE_ALL_ACCESS: u32 = 0x001F_01FF;
 /// DACL as well. The ACEs that are already on the path are kept.
 fn grant_full_control(path: &str) -> bool {
     let wide = to_wide(path);
+    let mut sid = match administrators_sid() {
+        Some(sid) => sid,
+        None => return false,
+    };
     unsafe {
-        // The SID of BUILTIN\Administrators (S-1-5-32-544).
-        let mut sid_len: u32 = 0;
-        if CreateWellKnownSid(
-            WinBuiltinAdministratorsSid,
-            None,
-            PSID(std::ptr::null_mut()),
-            &mut sid_len,
-        )
-        .is_err()
-        {
-            return false;
-        }
-        let mut sid = vec![0u8; sid_len as usize];
-        if CreateWellKnownSid(
-            WinBuiltinAdministratorsSid,
-            None,
-            PSID(sid.as_mut_ptr() as *mut core::ffi::c_void),
-            &mut sid_len,
-        )
-        .is_err()
-        {
-            return false;
-        }
-
         // Read the current DACL so that the ACEs that are already there stay. When the
         // DACL cannot be read, the grant is skipped: replacing a DACL that was never
         // read would drop the access of the other accounts (SYSTEM) for good.
@@ -287,7 +324,7 @@ fn grant_full_control(path: &str) -> bool {
 /// refused by `DeleteFileW` and by `RemoveDirectoryW` until the process owns the path
 /// and may delete it.
 fn force_access(path: &str) -> bool {
-    let owned = take_ownership(path);
+    let owned = take_ownership(path).is_ok();
     let granted = grant_full_control(path);
     owned || granted
 }
@@ -514,6 +551,10 @@ pub fn validate_mount_path(mount: &str) -> Result<PathBuf, String> {
 }
 
 /// Validate that a relative target path stays strictly inside the mounted image root.
+///
+/// The check is not only lexical: every directory between the mount and the target has
+/// to be a real directory. A junction or a symbolic link inside the mounted image
+/// would let the deletion leave the image and remove a file of the host.
 pub fn validate_target_path(mount: &Path, rel_path: &str) -> Result<PathBuf, String> {
     let trimmed = rel_path
         .trim()
@@ -534,6 +575,27 @@ pub fn validate_target_path(mount: &Path, rel_path: &str) -> Result<PathBuf, Str
             "Target path escapes mount directory: {}",
             full.display()
         ));
+    }
+    // Every directory between the mount and the target has to be a real directory: a
+    // junction or a symbolic link would let the deletion leave the mounted image.
+    // The target itself may be a reparse point - the deletion never follows it.
+    let components: Vec<&str> = trimmed
+        .split(['\\', '/'])
+        .filter(|c| !c.is_empty())
+        .collect();
+    let mut current = mount.to_path_buf();
+    for (index, component) in components.iter().enumerate() {
+        current.push(component);
+        if index + 1 == components.len() {
+            break;
+        }
+        if is_reparse_point(&current) {
+            return Err(format!(
+                "Target path '{}' traverses a reparse point at '{}'",
+                trimmed,
+                current.display()
+            ));
+        }
     }
     Ok(full)
 }
@@ -584,9 +646,8 @@ fn delete_file(path: &str, dry_run: bool) -> Result<bool, String> {
         // right and retry the plain delete before falling back to the delete-on-close
         // disposition below.
         force_access(path);
-        match DeleteFileW(PCWSTR(wide.as_ptr())) {
-            Ok(()) => return Ok(true),
-            Err(_) => {}
+        if let Ok(()) = DeleteFileW(PCWSTR(wide.as_ptr())) {
+            return Ok(true);
         }
         delete_by_handle(path)
             .map(|_| true)
@@ -780,18 +841,42 @@ fn expand_dir_pattern(mount: &str, rel_pattern: &str) -> Vec<PathBuf> {
         let mut next: Vec<PathBuf> = Vec::new();
         if has_wildcard(comp) {
             for base in &bases {
+                // A junction or a symbolic link is never traversed and never matched
+                if is_reparse_point(base) {
+                    println!(
+                        "  [SKIP] Reparse point (junction/symlink) not traversed: {}",
+                        base.display()
+                    );
+                    continue;
+                }
                 if let Ok(rd) = fs::read_dir(base) {
                     for entry in rd.flatten() {
+                        let path = entry.path();
+                        if is_reparse_point(&path) {
+                            println!(
+                                "  [SKIP] Reparse point (junction/symlink) not traversed: {}",
+                                path.display()
+                            );
+                            continue;
+                        }
                         let name = entry.file_name().to_string_lossy().into_owned();
                         if wildcard_match(comp, &name) {
-                            next.push(entry.path());
+                            next.push(path);
                         }
                     }
                 }
             }
         } else {
             for base in &bases {
-                next.push(base.join(comp));
+                let candidate = base.join(comp);
+                if is_reparse_point(&candidate) {
+                    println!(
+                        "  [SKIP] Reparse point (junction/symlink) not traversed: {}",
+                        candidate.display()
+                    );
+                    continue;
+                }
+                next.push(candidate);
             }
         }
         bases = next;
@@ -857,7 +942,11 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
         targets.push(DeletionTarget {
             name: "Defender",
             files: vec![],
-            dirs: vec!["ProgramData\\Microsoft\\Windows Defender"],
+            dirs: vec![
+                "ProgramData\\Microsoft\\Windows Defender",
+                "Program Files\\Windows Defender",
+                "Program Files\\Windows Defender Advanced Threat Protection",
+            ],
             ..Default::default()
         });
     }
@@ -1316,7 +1405,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
         .unwrap_or(false)
     {
         targets.push(DeletionTarget {
-            name: "Non-Japanese IME",
+            name: "Secondary IME Binaries",
             files: vec![],
             dirs: vec![],
             kind: TargetKind::Ime,
@@ -1380,7 +1469,7 @@ fn ime_directory_for_language(primary_ime_lang: Option<&str>) -> Option<&'static
 }
 
 /// Remove the fonts that the image does not need.
-fn remove_non_essential_fonts(mount: &Path, config: &DebloatConfig) -> RemovalOutcome {
+fn delete_non_essential_fonts(mount: &Path, config: &DebloatConfig) -> RemovalOutcome {
     let mut outcome = RemovalOutcome::default();
     let fonts_dir = mount.join("Windows").join("Fonts");
     if !fonts_dir.is_dir() {
@@ -1417,11 +1506,13 @@ fn remove_non_essential_fonts(mount: &Path, config: &DebloatConfig) -> RemovalOu
     outcome
 }
 
-/// Remove the input method engines of the other languages.
+/// Delete the binaries of the input method engines of the other languages.
 ///
 /// The Japanese engine and the engine of the primary language of the image stay, so
-/// the keyboard of the image keeps working.
-fn remove_non_japanese_ime(mount: &Path, config: &DebloatConfig) -> RemovalOutcome {
+/// the keyboard of the image keeps working. The folder of a removed engine stays as
+/// well: the language list of the image points to it, and a missing folder would
+/// show a broken input method in the language options.
+fn delete_secondary_ime_binaries(mount: &Path, config: &DebloatConfig) -> RemovalOutcome {
     let mut outcome = RemovalOutcome::default();
     let mut keep = vec!["JPN"];
     if let Some(dir) = ime_directory_for_language(config.primary_ime_lang.as_deref()) {
@@ -1434,13 +1525,31 @@ fn remove_non_japanese_ime(mount: &Path, config: &DebloatConfig) -> RemovalOutco
             continue;
         }
         let path = ime_root.join(dir);
-        if !path.exists() {
+        if !path.is_dir() {
             continue;
         }
-        match delete_directory(&path.to_string_lossy(), config.dry_run) {
-            Ok(true) => outcome.dirs += 1,
-            Ok(false) => {}
-            Err(e) => outcome.errors.push(e),
+        let entries: Vec<PathBuf> = match fs::read_dir(&path) {
+            Ok(rd) => rd.flatten().map(|e| e.path()).collect(),
+            Err(e) => {
+                outcome.errors.push(format!("cannot read {}: {}", path.display(), e));
+                continue;
+            }
+        };
+        for entry in entries {
+            if entry.is_dir() {
+                // a subfolder of the engine keeps its own binaries
+                match delete_directory(&entry.to_string_lossy(), config.dry_run) {
+                    Ok(true) => outcome.dirs += 1,
+                    Ok(false) => {}
+                    Err(e) => outcome.errors.push(e),
+                }
+                continue;
+            }
+            match delete_file(&entry.to_string_lossy(), config.dry_run) {
+                Ok(true) => outcome.files += 1,
+                Ok(false) => {}
+                Err(e) => outcome.errors.push(e),
+            }
         }
     }
     outcome
@@ -1572,7 +1681,7 @@ fn main() {
         // paths, so they are removed by their own handler.
         match target.kind {
             TargetKind::Fonts => {
-                let outcome = remove_non_essential_fonts(&mount_path, &config);
+                let outcome = delete_non_essential_fonts(&mount_path, &config);
                 result.deleted_files += outcome.files;
                 if !config.dry_run {
                     println!("  [OK] Removed {} font file(s)", outcome.files);
@@ -1585,10 +1694,14 @@ fn main() {
                 continue;
             }
             TargetKind::Ime => {
-                let outcome = remove_non_japanese_ime(&mount_path, &config);
+                let outcome = delete_secondary_ime_binaries(&mount_path, &config);
+                result.deleted_files += outcome.files;
                 result.deleted_dirs += outcome.dirs;
                 if !config.dry_run {
-                    println!("  [OK] Removed {} IME engine folder(s)", outcome.dirs);
+                    println!(
+                        "  [OK] Removed {} IME binary file(s) in {} folder(s)",
+                        outcome.files, outcome.dirs
+                    );
                 }
                 for e in outcome.errors {
                     result.errors.push(format!("[{}] ime: {}", target.name, e));
@@ -1762,6 +1875,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
 
     #[test]
     fn test_empty_mount_rejected() {
@@ -1838,7 +1952,85 @@ mod tests {
         }
     }
 
-    /// The nine targets that were previously empty must now delete real binaries.
+    /// The Defender target has to remove the whole payload: the data folder and the
+    /// two program folders (the engine and the advanced threat protection).
+    #[test]
+    fn test_physical_defender_covers_the_whole_payload() {
+        let mut experimental = std::collections::HashMap::new();
+        experimental.insert("physical_defender".to_string(), true);
+        let config = DebloatConfig {
+            dry_run: true,
+            mount_path: "C:\\nonexistent-mount".to_string(),
+            log_path: String::new(),
+            confirm_offline_image: false,
+            experimental,
+            primary_ime_lang: None,
+        };
+        let targets = get_targets(&config);
+        let defender = targets
+            .iter()
+            .find(|t| t.name == "Defender")
+            .expect("the Defender target was not produced");
+        for folder in [
+            "ProgramData\\Microsoft\\Windows Defender",
+            "Program Files\\Windows Defender",
+            "Program Files\\Windows Defender Advanced Threat Protection",
+        ] {
+            assert!(
+                defender.dirs.contains(&folder),
+                "the Defender target does not remove {}",
+                folder
+            );
+        }
+    }
+
+    /// A target that reaches a junction or a symbolic link inside the mounted image
+    /// would delete a file of the host, so the path is refused.
+    #[test]
+    fn test_validate_target_path_refuses_a_reparse_point_in_the_way() {
+        let dir = test_temp_dir("reparse");
+        let mount = dir.join("mount");
+        let outside = dir.join("outside");
+        fs::create_dir_all(&mount).expect("the mount directory must be creatable");
+        fs::create_dir_all(&outside).expect("the directory must be creatable");
+        let link = mount.join("junction");
+        // A symbolic link needs the developer mode or the SeCreateSymbolicLink
+        // privilege; when it cannot be created the test has nothing to check
+        if std::os::windows::fs::symlink_dir(&outside, &link).is_err() {
+            let _ = fs::remove_dir_all(&dir);
+            return;
+        }
+        let err = validate_target_path(&mount, "junction\\payload.dll")
+            .expect_err("the path through the reparse point must be refused");
+        assert!(
+            err.contains("reparse point"),
+            "the error does not name the reparse point: {}",
+            err
+        );
+        // a path that does not go through the link is still accepted
+        assert!(validate_target_path(&mount, "Windows\\System32\\x.dll").is_ok());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The wildcard expansion never follows a junction and never matches one.
+    #[test]
+    fn test_expand_dir_pattern_never_matches_a_reparse_point() {
+        let dir = test_temp_dir("expand");
+        let real = dir.join("real");
+        fs::create_dir_all(&real).expect("the directory must be creatable");
+        fs::write(real.join("MicrosoftEdge-1.0"), b"x").expect("the file must be writable");
+        let link = dir.join("MicrosoftEdge-link");
+        if std::os::windows::fs::symlink_dir(&real, &link).is_ok() {
+            let matches = expand_dir_pattern(&dir.to_string_lossy(), "MicrosoftEdge-*");
+            assert!(
+                matches.iter().all(|m| !is_reparse_point(m)),
+                "the expansion matched a reparse point"
+            );
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The six targets that were previously empty must now delete real binaries.
     #[test]
     fn test_previously_unimplemented_targets_delete_real_files() {
         let mut experimental = std::collections::HashMap::new();
@@ -1985,6 +2177,36 @@ mod tests {
         assert_eq!(ime_directory_for_language(Some("zh-hk")), Some("CHT"));
     }
 
+    /// The binaries of the secondary input method engines are removed, but the folder
+    /// of the engine stays: the language list of the image points to it.
+    #[test]
+    fn test_the_secondary_ime_binaries_are_removed_but_the_folder_stays() {
+        let dir = test_temp_dir("ime");
+        let mount = dir.join("mount");
+        let chs = mount.join("Windows").join("System32").join("InputMethod").join("CHS");
+        let jpn = mount.join("Windows").join("System32").join("InputMethod").join("JPN");
+        fs::create_dir_all(&chs).expect("the folder must be creatable");
+        fs::create_dir_all(&jpn).expect("the folder must be creatable");
+        fs::write(chs.join("chs.dll"), b"x").expect("the file must be writable");
+        fs::write(chs.join("chs.dat"), b"x").expect("the file must be writable");
+        fs::write(jpn.join("jpn.dll"), b"x").expect("the file must be writable");
+        let config = DebloatConfig {
+            dry_run: false,
+            mount_path: mount.to_string_lossy().to_string(),
+            log_path: String::new(),
+            confirm_offline_image: true,
+            experimental: HashMap::new(),
+            primary_ime_lang: None,
+        };
+        let outcome = delete_secondary_ime_binaries(&mount, &config);
+        assert!(outcome.errors.is_empty(), "the removal reported errors");
+        assert_eq!(outcome.files, 2, "the binaries of the Chinese engine stay");
+        assert!(chs.is_dir(), "the folder of the removed engine is gone");
+        assert!(!chs.join("chs.dll").exists(), "the binary of the Chinese engine stays");
+        assert!(jpn.join("jpn.dll").exists(), "the Japanese engine was touched");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// The forced deletion removes a read-only file. The plain delete call refuses it,
     /// so the file only goes away when the attributes are cleared and the delete right
     /// is granted.
@@ -2056,5 +2278,110 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("the test directory must be creatable");
         dir
+    }
+
+    /// The owner of a path as the string of its SID.
+    fn file_owner(path: &Path) -> String {
+        unsafe {
+            let wide = to_wide(&path.to_string_lossy());
+            let mut owner = PSID(std::ptr::null_mut());
+            let mut sd = PSECURITY_DESCRIPTOR(std::ptr::null_mut());
+            let read = GetNamedSecurityInfoW(
+                PCWSTR(wide.as_ptr()),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION,
+                Some(&mut owner),
+                None,
+                None,
+                None,
+                &mut sd,
+            );
+            if read.is_err() {
+                if !sd.0.is_null() {
+                    let _ = LocalFree(HLOCAL(sd.0));
+                }
+                return String::new();
+            }
+            let mut sid_text = PWSTR::null();
+            let mut owner_text = String::new();
+            if ConvertSidToStringSidW(owner, &mut sid_text).is_ok() {
+                owner_text = sid_text.to_string().unwrap_or_default();
+                let _ = LocalFree(HLOCAL(sid_text.0 as *mut core::ffi::c_void));
+            }
+            if !sd.0.is_null() {
+                let _ = LocalFree(HLOCAL(sd.0));
+            }
+            owner_text
+        }
+    }
+
+    /// The ownership change is real: a NULL owner would leave the owner alone, so the
+    /// owner of a protected file has to be the built-in Administrators group
+    /// afterwards.
+    #[test]
+    fn test_take_ownership_changes_the_owner() {
+        // The ownership of a file of somebody else needs SeTakeOwnershipPrivilege, and
+        // the owner may only be set to another account with SeRestorePrivilege.
+        if enable_privilege("SeTakeOwnershipPrivilege").is_err()
+            || enable_privilege("SeRestorePrivilege").is_err()
+        {
+            return;
+        }
+        let dir = test_temp_dir("owner");
+        let file = dir.join("component.dll");
+        fs::write(&file, b"x").expect("the file must be writable");
+        let before = file_owner(&file);
+        let taken = take_ownership(&file.to_string_lossy());
+        if let Err(e) = &taken {
+            println!("take_ownership failed: {}", e);
+        }
+        assert!(taken.is_ok(), "the ownership was not taken");
+        // The owner is the built-in Administrators group afterwards. A file of an
+        // administrator already belongs to the group, so only the owner itself is
+        // checked here.
+        let after = file_owner(&file);
+        assert_eq!(
+            after, "S-1-5-32-544",
+            "the owner is not the Administrators group (before: {})",
+            before
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A privilege that does not exist is an error, and a privilege that the token does
+    /// not carry is reported instead of pretending to be enabled.
+    #[test]
+    fn test_enable_privilege_reports_a_missing_privilege() {
+        assert!(
+            enable_privilege("SeThisPrivilegeDoesNotExist").is_err(),
+            "a privilege that does not exist was accepted"
+        );
+        let real = enable_privilege("SeBackupPrivilege");
+        assert!(
+            real.is_ok() || real.unwrap_err().contains("not assigned"),
+            "the real privilege was neither enabled nor reported"
+        );
+    }
+
+    /// A link is deleted, its target is not: the deletion never follows a symbolic link
+    /// out of the mounted image.
+    #[test]
+    fn test_delete_file_removes_a_link_and_not_its_target() {
+        let dir = test_temp_dir("symlink");
+        let target = dir.join("target.dll");
+        let link = dir.join("link.dll");
+        fs::write(&target, b"x").expect("the file must be writable");
+        if std::os::windows::fs::symlink_file(&target, &link).is_err() {
+            // the symbolic link needs the developer mode or the privilege
+            let _ = fs::remove_dir_all(&dir);
+            return;
+        }
+        assert!(
+            delete_file(&link.to_string_lossy(), false).expect("the delete failed"),
+            "the link was not deleted"
+        );
+        assert!(!link.exists(), "the link is still there");
+        assert!(target.exists(), "the target of the link was deleted");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

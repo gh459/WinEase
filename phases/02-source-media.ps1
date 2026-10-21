@@ -122,6 +122,25 @@ if (-not $DriveLetter) {
     })
 
     if ($NonInteractive -and $detectedMediaDrives.Count -gt 0) {
+        # The candidates are listed before the one that is picked, so the automatic
+        # choice can be checked afterwards.
+        Write-Host "Windows installation media drives found:" -ForegroundColor Gray
+        for ($i = 0; $i -lt $detectedMediaDrives.Count; $i++) {
+            $candRoot = $detectedMediaDrives[$i].Root.TrimEnd('\')
+            $candVol = Get-Volume -DriveLetter ($candRoot.TrimEnd(':')) -ErrorAction SilentlyContinue
+            $candLabel = if ($candVol -and $candVol.FileSystemLabel) { " [$($candVol.FileSystemLabel)]" } else { "" }
+            $candWim = Join-Path -Path "$candRoot\sources" -ChildPath "install.wim"
+            $candEsd = Join-Path -Path "$candRoot\sources" -ChildPath "install.esd"
+            $candType = if (Test-Path -LiteralPath $candWim) {
+                "WIM ($([math]::Round((Get-Item -LiteralPath $candWim).Length / 1GB, 2)) GB)"
+            } elseif (Test-Path -LiteralPath $candEsd) {
+                "ESD ($([math]::Round((Get-Item -LiteralPath $candEsd).Length / 1GB, 2)) GB)"
+            } else {
+                "no payload"
+            }
+            $candMark = if ($i -eq 0) { " <- selected" } else { "" }
+            Write-Host "  $candRoot$candLabel : $candType$candMark" -ForegroundColor Gray
+        }
         $DriveLetter = $detectedMediaDrives[0].Root.TrimEnd('\')
         Write-Host "Auto-detected Windows installation media on: $DriveLetter" -ForegroundColor Green
     } elseif ($detectedMediaDrives.Count -eq 1) {

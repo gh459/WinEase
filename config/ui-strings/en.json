@@ -168,7 +168,10 @@
   "Tab.Services": " 6. Services & Apps ",
   "Tab.TweakCaption": "Switches: {0}",
   "Tab.UI": " 5. UI & Shell ",
+  "Tab.Unattend": " 10. Answer File ",
   "Tab.UserTweaks": " 9. User Tweaks ",
+  "Unattend.Caption": "Optional parts of autounattend.xml (config\\unattend-fragments.psd1). They are added to the base template when switched on.",
+  "Unattend.Follows": "{0} - {1} (follows the switch '{2}')",
   "UserTweaks.Caption": "User-defined switches (config\\user\\user-tweaks.psd1)",
   "UserTweaks.None": "No user-defined switches with a category outside Security / Privacy / Performance / UI."
 }

@@ -157,6 +157,44 @@ reached through the GUI ("Services & Apps" tab), the command line, a preset
 prerequisites of the unattended setup (`BypassHardwareRequirements`,
 `BypassNetworkRequirement`, `BypassNRO`) stay enabled.
 
+`BypassNRO` and `BypassNetworkRequirement` control one and the same setting: the
+`OOBE\BypassNRO` value of the installed system, the matching command in the specialize
+pass of `autounattend.xml` (x64 and ARM64) and `Setup\LabConfig\BypassNRO`. Both default to
+on. When either of them is switched off (GUI, `-BypassNRO:$false`,
+`-BypassNetworkRequirement:$false`, `-TweakSettings` or a profile), none of these is written
+and the specialize command is not added to the generated answer file.
+
+### How autounattend.xml is built
+
+`autounattend.xml` in the repository is a base template with only what every build
+needs (no BypassNRO command, no AutoLogon section, no time zone or keyboard, and
+`{{UserName}}` / `{{ComputerName}}` placeholders). Every optional parameter or attribute
+is declared in `config\unattend-fragments.psd1` and added through the XML DOM by
+`lib\WinEaseUnattendComposer.ps1` when its switch is on. A fragment tied to an existing
+switch (BypassNRO, ConfigureWinlogon, SetJapaneseKeyboard) follows it; a fragment
+without one gets its own switch `Unattend.<Id>` on the GUI tab "10. Answer File". A
+fragment never overwrites an element that is already there, and an invalid definition
+stops the build. The user and computer names are checked with the same rules as in the
+GUI and are written as XML text, never as markup.
+
+## Custom post-install scripts (integrity manifest)
+
+Scripts from `tools\custom-scripts` (and the `FirstLogon` / `UserOnce` scripts of the
+extension engine) are copied into the image, and their SHA-256 values are written to
+`C:\Windows\Setup\Scripts\custom-scripts-manifest.json`. `FirstLogon.ps1` (elevated) and
+`UserOnce.ps1` (standard user) both use the same check,
+`C:\Windows\Setup\Scripts\WinEaseCustomScriptIntegrity.ps1`. A script runs only when the
+manifest is readable and valid as a whole and lists that file with the same hash. Anything else is
+refused and logged as `[SECURITY REFUSAL]` (fail-closed), including a missing or broken copy of the check
+itself. A build without custom scripts writes no manifest; the pipelines then find no file and
+run nothing.
+
+**What it guarantees:** the file that runs is byte for byte the file the build recorded.
+**What it does not guarantee:** that the author is trustworthy, or protection against anyone who can
+change both a script and the manifest (an administrator of the installed system, or whoever can
+modify the ISO). The manifest is not signed. Keep the ISO in trusted storage and compare its
+checksum if that matters for you.
+
 ## What the build prints
 
 The builder prints the active configuration before it starts and warns about the

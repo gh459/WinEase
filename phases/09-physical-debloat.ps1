@@ -108,6 +108,11 @@ $rustTargetItems = @($allSelectedItems | Where-Object { (Resolve-WinEaseDebloatE
 
 # --- Process the targets with the Rust engine ---
 if ($rustTargetItems.Count -gt 0) {
+    # The status of the physical debloat is recorded, so the build report shows a
+    # physical debloat that never ran (blocked by the gate, binary missing, dry run).
+    if (Get-Variable -Name 'DiagnosticData' -Scope Script -ErrorAction SilentlyContinue) {
+        $script:DiagnosticData.PhysicalDebloatRequestedTargets = @($rustTargetItems)
+    }
     if (-not $physGateAllowed) {
         $reqExpCount = $rustTargetItems.Count
         Write-Host ""
@@ -115,12 +120,18 @@ if ($rustTargetItems.Count -gt 0) {
         Write-Host "  [Physical Debloat] $reqExpCount experimental items were NOT executed (experimental physical deletion is strictly opt-in)." -ForegroundColor Yellow
         Write-Host "  [Physical Debloat] Re-run with -AllowPhysicalDebloat to authorize physical deletion (test environments only)." -ForegroundColor DarkYellow
         Write-Host ""
+        if (Get-Variable -Name 'DiagnosticData' -Scope Script -ErrorAction SilentlyContinue) {
+            $script:DiagnosticData.PhysicalDebloatStatus = 'BlockedByGate'
+        }
         return
     }
 
     if (-not (Test-Path -LiteralPath $rustBinary)) {
         Write-Host "  [Physical Debloat] BLOCKED: Rust binary not found at $rustBinary" -ForegroundColor Red
         Write-Host "  [Physical Debloat] Experimental items skipped to avoid unsafe unverified deletion." -ForegroundColor Yellow
+        if (Get-Variable -Name 'DiagnosticData' -Scope Script -ErrorAction SilentlyContinue) {
+            $script:DiagnosticData.PhysicalDebloatStatus = 'SkippedMissingBinary'
+        }
         return
     }
 
@@ -179,10 +190,17 @@ if ($rustTargetItems.Count -gt 0) {
 
     if ($exitCode -eq 0) {
         Write-Host "  [Physical Debloat] Completed successfully (Exit code: 0)" -ForegroundColor Green
+        if (Get-Variable -Name 'DiagnosticData' -Scope Script -ErrorAction SilentlyContinue) {
+            $script:DiagnosticData.PhysicalDebloatStatus = if ($isDryRunMode) { 'DryRun' } else { 'Executed' }
+        }
         if (Test-Path -LiteralPath $resultLogPath) {
             $result = Get-Content -LiteralPath $resultLogPath -Raw | ConvertFrom-Json
             $deletedLabel = if ($isDryRunMode) { 'Would delete' } else { 'Deleted' }
             Write-Host "  [Physical Debloat] $deletedLabel files: $($result.deleted_files), dirs: $($result.deleted_dirs), reg keys: $($result.deleted_registry_keys), errors: $($result.errors.Count)" -ForegroundColor Gray
+            if (Get-Variable -Name 'DiagnosticData' -Scope Script -ErrorAction SilentlyContinue) {
+                $script:DiagnosticData.PhysicalDebloatDeletedFiles = [int64]$result.deleted_files
+                $script:DiagnosticData.PhysicalDebloatDeletedDirs = [int64]$result.deleted_dirs
+            }
             if ($result.errors.Count -gt 0) {
                 foreach ($err in $result.errors) {
                     Write-Host "    [ERROR] $err" -ForegroundColor Red

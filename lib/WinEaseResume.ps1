@@ -130,7 +130,9 @@ function Invoke-WinEaseResumeIsoBuild {
             foreach ($key in $resumeLabConfigKeys) {
                 reg.exe add "HKLM\zSYSTEM\Setup\LabConfig" /v $key /t REG_DWORD /d 1 /f > $null 2>&1
             }
-            reg.exe add "HKLM\zSYSTEM\Setup\LabConfig" /v "BypassNRO" /t REG_DWORD /d 1 /f > $null 2>&1
+            if (Get-WinEaseBypassNROEnabled -TweakSettings $script:TweakSettings) {
+                reg.exe add "HKLM\zSYSTEM\Setup\LabConfig" /v "BypassNRO" /t REG_DWORD /d 1 /f > $null 2>&1
+            }
             reg.exe add "HKLM\zSYSTEM\Setup\MoSetup" /v "AllowUpgradesWithUnsupportedTPMOrCPU" /t REG_DWORD /d 1 /f > $null 2>&1
             reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\BitLocker" /v "PreventDeviceEncryption" /t REG_DWORD /d 1 /f > $null 2>&1
         } finally {
@@ -225,11 +227,18 @@ function Invoke-WinEaseResumeIsoBuild {
     # 8. Phase 18 equivalent: master bootable ISO + in-ISO payload verification (up to 3 attempts)
     $profSlugResume = if ($selectedProfile) { ($selectedProfile -replace '[^\w\-]', '_').Trim('_') } else { "custom" }
     $resumeOutputIsoName = if ($OutputIsoName) {
-        "$OutputIsoName.iso"
+        if ($OutputIsoName.EndsWith('.iso', [System.StringComparison]::OrdinalIgnoreCase)) { $OutputIsoName } else { "$OutputIsoName.iso" }
     } elseif ($TimestampIso) {
         "WinEase_${profSlugResume}_$(Get-Date -Format 'yyyyMMdd_HHmm').iso"
     } else { "WinEase.iso" }
     $resumeOutputIso = Join-Path -Path $scriptDir -ChildPath $resumeOutputIsoName
+    # The ISO name comes from the command line or from a profile: it has to be a plain
+    # file name inside the output directory.
+    $resumeIsoNameCheck = Resolve-WinEaseSafeIsoName -IsoName $resumeOutputIsoName -Root $scriptDir
+    if (-not $resumeIsoNameCheck.IsSafe) {
+        throw "ResumeIsoOnly: the output ISO name is refused: $($resumeIsoNameCheck.Reason)"
+    }
+    $resumeOutputIso = $resumeIsoNameCheck.Path
     $resumeTempIso = Join-Path -Path $scriptDir -ChildPath "WinEase_temp_resume_$($script:BuildId).iso"
 
     # Boot sector discovery (workspace-only candidates; source media is not mounted in resume mode)
@@ -272,7 +281,10 @@ function Invoke-WinEaseResumeIsoBuild {
         & "$resumeOscdimg" @resumeOscdimgArgs
         $resumeOscdimgExit = $LASTEXITCODE
         if ($script:DiagnosticData) { $script:DiagnosticData.OscdimgExitCode = $resumeOscdimgExit }
-        if ($resumeOscdimgExit -ne 0 -or (-not (Test-Path -LiteralPath $resumeTempIso)) -or ((Get-Item -LiteralPath $resumeTempIso).Length -lt 1.5GB)) {
+        # The floor is the 500 MB of phase 15 (the WIM cannot be smaller); the exact
+        # payload is verified by the mount and the hash comparison below, so a fixed
+        # 1.5 GB would only refuse a legitimate ultra-slim ISO.
+        if ($resumeOscdimgExit -ne 0 -or (-not (Test-Path -LiteralPath $resumeTempIso)) -or ((Get-Item -LiteralPath $resumeTempIso).Length -lt 500MB)) {
             Write-Warning "oscdimg failed on attempt $resumeIsoAttempt (ExitCode: $resumeOscdimgExit). Retrying after cooldown..."
             [GC]::Collect(); [GC]::WaitForPendingFinalizers()
             Start-Sleep -Seconds 5
@@ -356,6 +368,14 @@ function Invoke-WinEaseResumeIsoBuild {
             Settings          = (Get-WinEaseCurrentConfig -ProfileName $selectedProfile)
             ApplyVerified     = $script:FinalPayloadVerified
             IsoPayloadMatch   = $script:IsoPayloadVerified
+            # the physical debloat and the removals that failed (the resume mode does not
+            # run the phases, so the values of the diagnostic data are used)
+            PhysicalDebloatStatus = if ($script:DiagnosticData -and $script:DiagnosticData.PhysicalDebloatStatus) { [string]$script:DiagnosticData.PhysicalDebloatStatus } else { 'NotRequested' }
+            PhysicalDebloatRequestedTargets = if ($script:DiagnosticData -and $script:DiagnosticData.PhysicalDebloatRequestedTargets) { @($script:DiagnosticData.PhysicalDebloatRequestedTargets) } else { @() }
+            PhysicalDebloatDeletedFiles = if ($script:DiagnosticData -and $script:DiagnosticData.PhysicalDebloatDeletedFiles) { [int64]$script:DiagnosticData.PhysicalDebloatDeletedFiles } else { 0 }
+            PhysicalDebloatDeletedDirs = if ($script:DiagnosticData -and $script:DiagnosticData.PhysicalDebloatDeletedDirs) { [int64]$script:DiagnosticData.PhysicalDebloatDeletedDirs } else { 0 }
+            OfflineRemovalFailures = if ($script:DiagnosticData -and $script:DiagnosticData.OfflineRemovalFailures) { @($script:DiagnosticData.OfflineRemovalFailures) } else { @() }
+            IsoCleanupFailures = if ($script:DiagnosticData -and $script:DiagnosticData.IsoCleanupFailures) { @($script:DiagnosticData.IsoCleanupFailures) } else { @() }
         }
         Write-Host "Visual Build Report generated: $resumeReportPath" -ForegroundColor Cyan
     } catch { Write-Warning "Could not export visual build report: $_" }

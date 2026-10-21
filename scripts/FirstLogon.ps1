@@ -144,16 +144,30 @@ $scripts = @(
 				Write-CustomScriptLog "Target Scripts ($($targetFiles.Count)): $(($targetFiles | ForEach-Object { $_.Name }) -join ', ')";
 				Write-CustomScriptLog "================================================================================";
 
-				# Load SHA256 integrity manifest if present
+				# Integrity check (fail-closed). WinEaseCustomScriptIntegrity.ps1 is the one shared
+				# implementation (also used by UserOnce.ps1). When it or the manifest cannot be
+				# loaded the result is unknown and no custom script runs.
 				$manifestPath = "C:\Windows\Setup\Scripts\custom-scripts-manifest.json";
-				$manifest = $null;
-				if (Test-Path -LiteralPath $manifestPath) {
-					try {
-						$manifest = Get-Content -LiteralPath $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json;
-						Write-CustomScriptLog "Loaded custom scripts integrity manifest ($($manifest.psobject.properties.name.Count) entries).";
-					} catch {
-						Write-CustomScriptLog "[SECURITY WARNING] Failed to read custom-scripts-manifest.json: $($_.Exception.Message)";
+				$integrityHelper = "C:\Windows\Setup\Scripts\WinEaseCustomScriptIntegrity.ps1";
+				$manifestInfo = @{ Ok = $false; Entries = $null; Error = 'the integrity check could not be loaded' };
+				$integrityLoaded = $false;
+				try {
+					. $integrityHelper;
+					$integrityLoaded = $null -ne (Get-Command -Name Test-WinEaseCustomScriptAllowed -CommandType Function -ErrorAction SilentlyContinue);
+				} catch {
+					Write-CustomScriptLog "[ERROR] The integrity check '$integrityHelper' could not be loaded: $($_.Exception.Message)";
+				}
+				if ($integrityLoaded) {
+					$manifestInfo = Read-WinEaseCustomScriptManifest -Path $manifestPath;
+				}
+				if ($manifestInfo.Ok) {
+					Write-CustomScriptLog "Loaded custom scripts integrity manifest ($($manifestInfo.Entries.Count) entries).";
+					foreach ($gone in @(Get-WinEaseCustomScriptMissingEntries -Directory $customDir -KeyPrefix '' -Manifest $manifestInfo)) {
+						Write-CustomScriptLog "[ERROR] Manifest entry '$gone' has no file in $customDir. Nothing was run for it.";
 					}
+				} else {
+					Write-CustomScriptLog "[ERROR] Reason: $($manifestInfo.Error)";
+					Write-CustomScriptLog "[ERROR] Custom script manifest is missing or invalid. Refusing to execute custom scripts.";
 				}
 
 				$pipelineSw = [System.Diagnostics.Stopwatch]::StartNew();
@@ -169,33 +183,17 @@ $scripts = @(
 					$startDt = Get-Date;
 					$startStr = $startDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
 
-					# Enforce SHA256 verification against build-time manifest
-					if ($manifest) {
-						$expectedHash = $manifest."$scriptName";
-						if (-not $expectedHash) {
-							$endDt = Get-Date;
-							$endStr = $endDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
-							Write-CustomScriptLog "[$idx/$($targetFiles.Count)] [SECURITY REFUSAL] Script: $scriptName | Path: $scriptPath | StartTime: $startStr | EndTime: $endStr | Reason: File is not listed in build-time integrity manifest. Execution blocked.";
-							$failCount++;
-							continue;
-						}
-						$actualHash = try {
-							$fs = [System.IO.File]::OpenRead($scriptPath);
-							$sha = [System.Security.Cryptography.SHA256]::Create();
-							try {
-								[System.BitConverter]::ToString($sha.ComputeHash($fs)).Replace("-", "");
-							} finally {
-								if ($null -ne $sha) { $sha.Dispose(); }
-								if ($null -ne $fs) { $fs.Dispose(); }
-							}
-						} catch { $null };
-						if ($actualHash -ine $expectedHash) {
-							$endDt = Get-Date;
-							$endStr = $endDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
-							Write-CustomScriptLog "[$idx/$($targetFiles.Count)] [SECURITY REFUSAL] Script: $scriptName | Path: $scriptPath | StartTime: $startStr | EndTime: $endStr | Reason: Hash mismatch (Expected: $expectedHash, Got: $actualHash). Execution blocked.";
-							$failCount++;
-							continue;
-						}
+					# Every file needs a positive verdict; anything else blocks it.
+					$verdict = @{ Allowed = $false; Reason = "The custom script manifest is missing or invalid ($($manifestInfo.Error))" };
+					if ($integrityLoaded) {
+						$verdict = Test-WinEaseCustomScriptAllowed -Path $scriptPath -ExpectedDirectory $customDir -KeyPrefix '' -Manifest $manifestInfo;
+					}
+					if (-not $verdict.Allowed) {
+						$endDt = Get-Date;
+						$endStr = $endDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
+						Write-CustomScriptLog "[$idx/$($targetFiles.Count)] [SECURITY REFUSAL] Script: $scriptName | Path: $scriptPath | StartTime: $startStr | EndTime: $endStr | Reason: $($verdict.Reason). Execution blocked.";
+						$failCount++;
+						continue;
 					}
 
 					$scriptSw = [System.Diagnostics.Stopwatch]::StartNew();
@@ -209,21 +207,28 @@ $scripts = @(
 					$prevEap = $ErrorActionPreference;
 					$ErrorActionPreference = 'Continue';
 					try {
+						# The exit code of the native call is read right after it, so a
+						# failing .bat/.cmd or a failing reg.exe import is a failure.
+						$scriptExitCode = 0;
 						$output = switch ($ext) {
 							'.ps1' {
 								& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -NoProfile -NonInteractive -Command "& { `$ErrorActionPreference = 'Stop'; & '$scriptPath'; if (`$null -ne `$LASTEXITCODE -and `$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE } }" 2>&1
+								$scriptExitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
 							}
 							'.bat' {
 								& "$env:SystemRoot\System32\cmd.exe" /c "`"$scriptPath`"" 2>&1
+								$scriptExitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
 							}
 							'.cmd' {
 								& "$env:SystemRoot\System32\cmd.exe" /c "`"$scriptPath`"" 2>&1
+								$scriptExitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
 							}
 							'.reg' {
 								& "$env:SystemRoot\System32\reg.exe" import "$scriptPath" 2>&1
+								$scriptExitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
 							}
 						}
-						$exitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 };
+						$exitCode = $scriptExitCode;
 
 						if ($exitCode -eq 0) {
 							$isSuccess = $true;

@@ -1942,7 +1942,7 @@ function New-WinEaseUserTweaksTab {
     # =========================================================================
     # TAB 9: user-defined switches whose Category has no tab above (System / Gaming / UserCustom ...)
     # =========================================================================
-    $builtinTabCategories = @('Security', 'Privacy', 'Performance', 'UI')
+    $builtinTabCategories = @('Security', 'Privacy', 'Performance', 'UI', 'Unattend')
     $pageUser = New-WinEaseToggleTab -Text (Get-WinEaseUiString 'Tab.UserTweaks') -TabControl $tabControl -Caption (Get-WinEaseUiString 'UserTweaks.Caption')
     $userTweakCount = 0
     foreach ($tk in $script:AllTweakDefs.Keys) {
@@ -1962,6 +1962,42 @@ function New-WinEaseUserTweaksTab {
     if ($userTweakCount -eq 0) {
         [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'UserTweaks.None') -X 0 -Y 0 -AutoSize -Parent $pageUser.Flow)
     }
+}
+
+# Tab 10: the optional parts of autounattend.xml (config\unattend-fragments.psd1). A fragment with its own
+# toggle ('Unattend.<Id>') gets a checkbox here; a fragment tied to an existing switch (BypassNRO,
+# ConfigureWinlogon, SetJapaneseKeyboard, ...) is listed with that switch, so no key has two checkboxes.
+function New-WinEaseUnattendTab {
+    param(
+        [hashtable]$Gui,
+        [System.Windows.Forms.TabControl]$TabControl,
+        [hashtable]$InitialSettings,
+        [System.Windows.Forms.ToolTip]$ToolTip
+    )
+    $page = New-WinEaseToggleTab -Text (Get-WinEaseUiString 'Tab.Unattend') -TabControl $tabControl -Caption (Get-WinEaseUiString 'Unattend.Caption')
+    $tabCheckboxes = [System.Collections.Generic.List[System.Windows.Forms.CheckBox]]::new()
+    if (-not (Get-Command -Name Import-WinEaseUnattendFragments -ErrorAction SilentlyContinue)) {
+        . (Join-Path -Path $script:WinEaseGuiRepoRoot -ChildPath 'lib\WinEaseUnattendComposer.ps1')
+    }
+    foreach ($f in @(Import-WinEaseUnattendFragments)) {
+        $where = "$($f.Pass) / $($f.Component) / $($f.Kind)"
+        if ($f.OwnToggle -and $script:AllTweakDefs.Contains($f.ToggleKey)) {
+            $tk = $f.ToggleKey
+            $initVal = [bool]$script:AllTweakDefs[$tk].Default
+            if ($InitialSettings.TweakSettings -and $InitialSettings.TweakSettings.Contains($tk)) {
+                $initVal = [bool]$InitialSettings.TweakSettings[$tk]
+            } elseif ($InitialSettings.ContainsKey($tk)) {
+                $initVal = [bool]$InitialSettings[$tk]
+            }
+            $chk = New-WinEaseToggleCheckBox -Parent $page.Flow -Key $tk -Text "$($f.Id) - $($f.Description)" -ToolTip $toolTip -ToolTipText $where -Checked $initVal
+            $gui.TweakCheckboxes[$tk] = $chk
+            $tabCheckboxes.Add($chk)
+        } else {
+            $lbl = New-WinEaseLabel -Text (Get-WinEaseUiString 'Unattend.Follows' -Format @($f.Id, $f.Description, $f.ToggleKey)) -X 0 -Y 0 -AutoSize -Parent $page.Flow
+            if ($toolTip -and $lbl) { $toolTip.SetToolTip($lbl, $where) }
+        }
+    }
+    if ($tabCheckboxes.Count -gt 0) { [void](Add-WinEaseSelectButtons -Parent $page.Bar -Target $tabCheckboxes -X 15 -Y 7) }
 }
 
 # =========================================================================
@@ -2080,6 +2116,7 @@ function Initialize-WinEaseGuiContent {
     New-WinEaseDebloatTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -UiFontName $UiFontName -ToolTip $toolTip
     New-WinEaseMigrationTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
     New-WinEaseUserTweaksTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
+    New-WinEaseUnattendTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
     $cmbPreset = $Gui.Preset
 
     # =========================================================================

@@ -42,12 +42,20 @@
   }
 
   if (Test-Path -LiteralPath $userCustomDir) {
+    # Integrity check (fail-closed), shared with FirstLogon.ps1. When the check or the manifest
+    # cannot be loaded the result is unknown and no user script runs.
     $manifestPath = 'C:\Windows\Setup\Scripts\custom-scripts-manifest.json';
-    $manifest = $null;
-    if (Test-Path -LiteralPath $manifestPath) {
-      try { $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json } catch {
-        Write-UserScriptLog "[SECURITY WARNING] Failed to read custom-scripts-manifest.json: $($_.Exception.Message)";
-      }
+    $integrityHelper = 'C:\Windows\Setup\Scripts\WinEaseCustomScriptIntegrity.ps1';
+    $manifestInfo = @{ Ok = $false; Entries = $null; Error = 'the integrity check could not be loaded' };
+    $integrityLoaded = $false;
+    try {
+      . $integrityHelper;
+      $integrityLoaded = $null -ne (Get-Command -Name Test-WinEaseCustomScriptAllowed -CommandType Function -ErrorAction SilentlyContinue);
+    } catch {
+      Write-UserScriptLog "[ERROR] The integrity check '$integrityHelper' could not be loaded: $($_.Exception.Message)";
+    }
+    if ($integrityLoaded) {
+      $manifestInfo = Read-WinEaseCustomScriptManifest -Path $manifestPath;
     }
 
     $validExts = @('.ps1', '.reg', '.cmd', '.bat');
@@ -75,6 +83,14 @@
       Write-UserScriptLog "Directory: $userCustomDir";
       Write-UserScriptLog "Target Scripts ($($userFiles.Count)): $(($userFiles | ForEach-Object { $_.Name }) -join ', ')";
       Write-UserScriptLog "================================================================================";
+      if ($manifestInfo.Ok) {
+        foreach ($gone in @(Get-WinEaseCustomScriptMissingEntries -Directory $userCustomDir -KeyPrefix 'user/' -Manifest $manifestInfo)) {
+          Write-UserScriptLog "[ERROR] Manifest entry '$gone' has no file in $userCustomDir. Nothing was run for it.";
+        }
+      } else {
+        Write-UserScriptLog "[ERROR] Reason: $($manifestInfo.Error)";
+        Write-UserScriptLog "[ERROR] Custom script manifest is missing or invalid. Refusing to execute custom scripts.";
+      }
 
       $pipelineSw = [System.Diagnostics.Stopwatch]::StartNew();
       $successCount = 0;
@@ -89,32 +105,17 @@
         $startDt = Get-Date;
         $startStr = $startDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
 
-        if ($manifest) {
-          $expected = $manifest."user/$($uf.Name)";
-          if (-not $expected) {
-            $endDt = Get-Date;
-            $endStr = $endDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
-            Write-UserScriptLog "[$idx/$($userFiles.Count)] [SECURITY REFUSAL] Script: $scriptName | Path: $scriptPath | StartTime: $startStr | EndTime: $endStr | Reason: File is not listed in build-time integrity manifest. Execution blocked.";
-            $failCount++;
-            continue;
-          }
-          $actual = try {
-            $fs = [System.IO.File]::OpenRead($uf.FullName);
-            $sha = [System.Security.Cryptography.SHA256]::Create();
-            try {
-              [System.BitConverter]::ToString($sha.ComputeHash($fs)).Replace("-", "");
-            } finally {
-              if ($null -ne $sha) { $sha.Dispose(); }
-              if ($null -ne $fs) { $fs.Dispose(); }
-            }
-          } catch { $null };
-          if ($actual -ine $expected) {
-            $endDt = Get-Date;
-            $endStr = $endDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
-            Write-UserScriptLog "[$idx/$($userFiles.Count)] [SECURITY REFUSAL] Script: $scriptName | Path: $scriptPath | StartTime: $startStr | EndTime: $endStr | Reason: Hash mismatch (Expected: $expected, Got: $actual). Execution blocked.";
-            $failCount++;
-            continue;
-          }
+        # Every file needs a positive verdict; anything else blocks it.
+        $verdict = @{ Allowed = $false; Reason = "The custom script manifest is missing or invalid ($($manifestInfo.Error))" };
+        if ($integrityLoaded) {
+          $verdict = Test-WinEaseCustomScriptAllowed -Path $scriptPath -ExpectedDirectory $userCustomDir -KeyPrefix 'user/' -Manifest $manifestInfo;
+        }
+        if (-not $verdict.Allowed) {
+          $endDt = Get-Date;
+          $endStr = $endDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
+          Write-UserScriptLog "[$idx/$($userFiles.Count)] [SECURITY REFUSAL] Script: $scriptName | Path: $scriptPath | StartTime: $startStr | EndTime: $endStr | Reason: $($verdict.Reason). Execution blocked.";
+          $failCount++;
+          continue;
         }
 
         $scriptSw = [System.Diagnostics.Stopwatch]::StartNew();
