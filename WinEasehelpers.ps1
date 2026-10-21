@@ -2414,3 +2414,20 @@ function Test-WinEaseRecoveryReadiness {
         Recommendations     = $recs
     }
 }
+
+function Format-WinEasePhaseDuration {
+    param(
+        [Parameter(Mandatory = $true)]
+        [double]$TotalSeconds
+    )
+    $roundedSec = [math]::Round($TotalSeconds, 1)
+    if ($roundedSec -lt 60) { return "${roundedSec}s" }
+    $mins = [math]::Floor($roundedSec / 60)
+    $secs = [math]::Round($roundedSec % 60, 1)
+    if ($secs -eq 60) {
+        $mins++
+        $secs = 0
+    }
+    if ($secs -gt 0) { return "${mins}m ${secs}s" }
+    return "${mins}m"
+}
