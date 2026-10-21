@@ -3,8 +3,8 @@
 # Dot-sourced by the main orchestrator
 
 # Helper function to evaluate individual toggle settings.
-# The same helper is defined in phase 10; it is repeated here because the phases are
-# dot-sourced independently and phase 11 reads the same TweakSettings table.
+# The canonical definition lives in WinEasebuilder.ps1; this copy only matters when
+# the phase is dot-sourced on its own (the phases share the script scope otherwise).
 if (-not (Get-Command -Name Test-TweakEnabled -ErrorAction SilentlyContinue)) {
     function Test-TweakEnabled {
         param(

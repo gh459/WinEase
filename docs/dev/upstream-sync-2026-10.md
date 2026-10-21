@@ -216,3 +216,132 @@ enables it).
 | Sophia-Community/SophiApp | 1.0.97 (2023-07-27) | no change since the baseline |
 | hellzerg/optimizer | 16.7 (2024-08-18) | no change since the baseline |
 | undergroundwires/privacy.sexy | 0.13.8 (2025-03-13) | no change since the baseline |
+
+---
+
+# Second pass (2026-10-22)
+
+The first pass above compared the releases up to 2026-10-21. This pass re-checked the
+same list on 2026-10-22 and added the tools that publish their tweak catalogue at run
+time (WinUtil's `config/tweaks.json`, Crapfixer's `Wintweak2.ini` / `Winappx.ini`,
+Bloatynosy's `Data\*.ini`, Sophia's module and the ReviOS playbook), because those
+catalogues are what the tools actually apply on a running system. The upstream code was
+again read as data and never run.
+
+## Release status on 2026-10-22
+
+| Tool | README (reviewed 2026-10-21) | Latest release | Default branch | Result |
+|---|---|---|---|---|
+| ChrisTitusTech/winutil | 26.10.07 | 26.10.07 | 30 commits ahead | 4 changes, see below |
+| farag2/Sophia-Script-for-Windows | 8.0.0 | 8.0.0 | 17 commits ahead | no new tweaks |
+| Sophia-Community/SophiApp | 1.0.97 | 1.0.97 | ahead | no tweak content |
+| hellzerg/optimizer | 16.7 | 16.7 | ahead of the tag | 2 changes, see below |
+| builtbybel/Bloatynosy | 1.01.103 | 1.01.103 | 2 commits ahead | no rule changed |
+| meetrevision/revision-tool | 2.14.1 | **2.14.3** | ahead | new release, see below |
+| meetrevision/playbook (ReviOS) | not reviewed | **26.10** | ahead | first review, see below |
+| atlas-os/atlas | 0.5.0-hotfix | 0.5.0-hotfix | ahead | 1 change, see below |
+| raphire/win11debloat | 2026.08.24 | 2026.08.24 | ahead | 1 change, see below |
+| ionuttbara/windows-defender-remover | release13-rev1 | release13-rev1 | unchanged | nothing new |
+| undergroundwires/privacy.sexy | 0.13.8 | 0.13.8 | unchanged | nothing new |
+| builtbybel/Crapfixer | 2.01.41 | 2.01.41 | unchanged since 2026-10-08 | catalogue unchanged |
+| builtbybel/FluentCleaner | 26.09.01 | 26.09.01 | unchanged | nothing new |
+| SysAdminDoc/Debloat-Win11 | v2.3.8 | v2.3.8 | ahead | 2 changes, see below |
+| HotCakeX/Harden-Windows-Security | HardenSystemSecurity-v1.0.97.0 | same | ahead | only UI files |
+
+## meetrevision/revision-tool 2.14.1 -> 2.14.3
+
+Source: the diff of `src/lib/core/services/win_registry_command.dart`,
+`win_registry_service.dart` and `src/lib/features/winsxs/domain/win_package_service.dart`.
+
+| Item | Decision | Where |
+|---|---|---|
+| The feature IDs `61199980` (WindowsAppRuntime_FallbackToStableFix) and `40012896` (Servicing_FileExplorerRibbonFallbackFix) added to the AI removal | skipped | WinEase keeps `Microsoft.AIFabric.CBS`, so Explorer never falls back to the legacy ribbon; `MicrosoftWindows.Client.CBS` and `*CoreAI*` are on the protection list of phase 05 |
+| The feature override mechanism itself (an obfuscated ID written to `FeatureManagement\Overrides`) | adopted (partly) | `WinEasehelpers.ps1` (`ConvertTo-WinEaseFeatureIdOverride`), `phases/10-registry.ps1` (`DisableSearchWebView2`) |
+| `deleteFeatureOverride` renamed to `resetFeature`, the new `registry feature enable/disable/reset` CLI | skipped | WinEase only ever disables a feature inside the image; it never has to re-enable one |
+
+## meetrevision/playbook (ReviOS) 26.04 -> 26.10 -> main
+
+Source: `src/Configuration/Tasks/registry/**/*.yml`, `src/Configuration/Tasks/packages/*.yml`
+and the `meetrevision/packages` catalogue. The playbook had never been reviewed before (the
+first pass only read the Revision Tool's Dart sources), so the whole 26.04 -> 26.10 range
+was compared.
+
+| Item | Decision | Where |
+|---|---|---|
+| `FeatureManagement\Overrides` `3369582732` = 0 (SearchWebView2_Master, feature 43998308) | adopted | 10-registry, `DisableSearchWebView2` |
+| `FeatureManagement\Overrides` `1694661260` = 0 (feature 37926450, main branch) | adopted | 10-registry, `DisableSearchWebView2` |
+| `ShellUIHosts\CrossDeviceResumeHost\ProcessPath` = `%SystemRoot%\system32\ShellHost.exe` | adopted | 10-registry, DisableCrossDevice |
+| `Spynet\SubmitSamplesConsent` = 2 | adopted (fix) | 10-registry, DisableDiagnosticData and RemoveDefender; the old value 0 meant "always prompt" |
+| `AppPrivacy\LetAppsAccessSystemAIModels` = 2, `LetAppsAccessGenerativeAI` = 2 | adopted | 10-registry, DisableWindowsAI |
+| `SearchSettings\IsWebSuggestionsEnabled` = 0, `IsStoreSuggestionsEnabled` = 0 | adopted | 10-registry, DisableWebSearch |
+| `WinStore.Tasks.WindowsSearchTask` `ActivationType` = 0xFFFFFFFF, `Server` = '' | adopted | 10-registry, DisableWebSearch |
+| `MRT\DontReportInfectionInformation` = 1 | adopted | 10-registry, DisableDiagnosticData |
+| `WindowsMediaPlayer\DisableAutoUpdate` = 1 | adopted | 10-registry, DisableCloudContent |
+| `FeatureManagement\Overrides` `1387020943` (CrossDeviceResume) and the IFEO redirect of `CrossDeviceResume.exe` | skipped | 26.10 replaced both with the shell host redirect above; WinEase keeps the IFEO block as the second layer |
+| `DisableAutomaticRestartSignOn` = 1 | skipped | 26.10 removed it and WinEase never had it |
+| The `telemetry-removal` package (utcapi / utcutil / sqmapi stubs) | skipped | needs signed stub binaries; an offline image cannot ship them |
+| The `ai-removal` package (`Microsoft-AIFabric-CBS-1-6`, `Microsoft-OneCore-IsoEnvBroker`, the `Microsoft-Windows-AIComponentMgmt` component) | skipped | WinEase removes the FoD packages instead of replacing them with CBS components |
+| The Appx removal moved from `APPX-REMOVER.ps1` to `revitool.exe` | skipped | infrastructure of the upstream tool, not a tweak |
+
+## ChrisTitusTech/winutil (main, 30 commits ahead of 26.10.07)
+
+Source: `config/tweaks.json` and `config/applications.json`.
+
+| Item | Decision | Where |
+|---|---|---|
+| The new tweak `WPFTweaksSvcHostSplitting` (`SvcHostSplitThresholdInKB`) | present | WinEase sets the same value in 10-registry (SvcHostConsolidation). WinUtil derives it from the memory of the running machine, WinEase uses a fixed 64 GB, because the value has to fit the target PC and not the build host |
+| `Siuf\Rules\PeriodInNanoSeconds` removed | adopted | 10-registry, DisableDiagnosticData |
+| `Control Panel\Keyboard\KeyboardDelay` changed from REG_DWORD to REG_SZ | adopted | 10-registry, `DisableKeyboardDelay` (new, off by default) |
+| `Control Panel\Mouse\MouseSpeed` / `MouseThreshold1` / `MouseThreshold2` changed from REG_DWORD to REG_SZ | adopted | 10-registry, `DisableMouseAcceleration` (new, off by default) |
+| `WPFTweaksDisplay` / `WPFTweaksServices` / `WPFOOSUbutton`: the descriptions changed | skipped | no behaviour change |
+| `applications.json`: `imhex`, `opencode` and `pstools` added, package ids corrected | skipped | the catalogue of the software installer, not part of an image build |
+
+## hellzerg/optimizer (master, ahead of the 16.7 tag)
+
+| Item | Decision | Where |
+|---|---|---|
+| `Edge\Edge3PSerpTelemetryEnabled` = 0 | adopted | 10-registry, DisableTelemetryAndDiagnostics |
+| `Edge\ExtensionManifestV2Availability` = 2 | skipped | allows Manifest V2 extensions - a feature, not a debloat |
+| `Chrome\ExtensionManifestV2Availability` = 2 | skipped | Chrome is not part of the image |
+| `Session Manager\Configuration Manager\EnablePeriodicBackup` = 1 | skipped | enables a feature of the running system |
+
+## atlas-os/atlas (main, ahead of 0.5.0-hotfix)
+
+| Item | Decision | Where |
+|---|---|---|
+| `Qol.psm1`: the accessibility `Flags` and the keyboard hotkeys changed from REG_DWORD to REG_SZ | adopted | 10-registry, `DisableAccessibilityHotkeys` (new, off by default) |
+| `Qol.psm1`: `Control Panel\Accessibility\HighContrast\Flags` = 0 | skipped | High Contrast is a visual accessibility mode and not a hotkey; switching it off would work against the users who need it |
+| `DISABLEPNP.ps1` and the network discovery command file | skipped | quoting and file format only |
+
+## SysAdminDoc/Debloat-Win11 (main, ahead of v2.3.8)
+
+Source: the new `Modules/PolicyCatalog.psd1` and the changed modules.
+
+| Item | Decision | Where |
+|---|---|---|
+| `DisableAgentConnectors` / `DisableAgentWorkspaces` / `DisableRemoteAgentConnectors` = 2 | adopted (fix) | 10-registry, DisableWindowsAI; the value was 1 |
+| `Shell\Copilot\IsCopilotAvailable` = 0 (user scope) | adopted | 10-registry, DisableCopilot |
+| `InputPersonalization\RestrictImplicitTextCollection` / `RestrictImplicitInkCollection` = 1 | present | 10-registry, DisableTelemetryAndDiagnostics |
+| `PolicyCatalog.psd1` consolidates the values of the old `WindowsAiPolicies.psd1` and `HkcuTweaks.psd1` | skipped | structure of the upstream tool |
+| The error handling, the hive mounting and the new test tooling | skipped | infrastructure of the upstream tool |
+
+## raphire/win11debloat (master, ahead of 2026.08.24)
+
+| Item | Decision | Where |
+|---|---|---|
+| The new feature `DisableChromeAI` (16 Chrome policies) | skipped | Chrome is not part of the image |
+| `Disable_Search_Highlights.reg` and `Disable_Search_History.reg` removed | skipped | the values moved into the GUI of the tool; WinEase already writes them |
+| The localisation refactor (`Config\Languages\*`) | skipped | structure of the upstream tool |
+
+## No change since the last review
+
+| Tool | Latest release | Note |
+|---|---|---|
+| Sophia-Community/SophiApp | 1.0.97 (2023-07-27) | WPF front end, no tweak content |
+| undergroundwires/privacy.sexy | 0.13.8 (2025-03-13) | no change since the baseline |
+| builtbybel/FluentCleaner | 26.09.01 | no change since the baseline |
+| builtbybel/Bloatynosy | 1.01.103 | the rule catalogue `Data\WinRules.ini` and `Data\AppRules.ini` is byte identical to the release |
+| builtbybel/Crapfixer | 2.01.41 | the catalogue it downloads at run time (`Wintweak2.ini`, `Winappx.ini`) has not changed since 2026-10-08 |
+| ionuttbara/windows-defender-remover | release13-rev1 | no change since the baseline |
+| HotCakeX/Harden-Windows-Security | HardenSystemSecurity-v1.0.97.0 | only the UI files of the app changed |
+| farag2/Sophia-Script-for-Windows | 8.0.0 | only the supported build number (26300) and the localisations changed |

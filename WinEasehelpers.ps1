@@ -2414,3 +2414,59 @@ function Test-WinEaseRecoveryReadiness {
         Recommendations     = $recs
     }
 }
+
+# ---------------------------------------------------------------------------
+# FeatureManagement override IDs
+#
+# Windows stores the on/off state of some shell features as an obfuscated
+# 32-bit ID under two locations of the SYSTEM hive:
+#   HKLM\SYSTEM\CurrentControlSet\Control\FeatureManagement\Overrides\8\<id>
+#       EnabledState = 1 (disabled) / 2 (enabled)
+#       EnabledStateOptions, Variant, VariantPayload, VariantPayloadKind = 0
+#   HKLM\SYSTEM\ControlSet001\Policies\Microsoft\FeatureManagement\Overrides\<id>
+#       0 (disabled) / 1 (enabled)
+#
+# The obfuscation is a fixed XOR (seed 0x447F3700) followed by a bit-slice
+# transform. The same algorithm is used by the ReviOS playbook and by the
+# Revision Tool (meetrevision/revision-tool), so the IDs computed here match
+# the values those tools write.
+# ---------------------------------------------------------------------------
+function ConvertTo-WinEaseFeatureIdOverride {
+    param(
+        [Parameter(Mandatory=$true)]
+        [int64]$FeatureId
+    )
+    # The mask is built from the type itself: PowerShell 5.1 parses 0xFFFFFFFF as
+    # a signed Int32 (-1).
+    [int64]$uint32Max = [int64][uint32]::MaxValue
+    [int64]$seed = 0x447F3700
+    if ($FeatureId -lt 0 -or $FeatureId -gt $uint32Max) {
+        throw "Feature ID must be a 32-bit unsigned integer: $FeatureId"
+    }
+    [int64]$w = (($FeatureId -bxor $seed) -band $uint32Max)
+    [int64]$b0 = $w -band 0xFF
+    [int64]$b1 = ($w -shr 8) -band 0xFF
+    [int64]$b2 = ($w -shr 16) -band 0xFF
+    [int64]$b3 = ($w -shr 24) -band 0xFF
+    [int64]$r = (((((($b0 -band 0x7F) -shl 25) -bor ($b0 -shr 7))) -bor ($b1 -shl 17)) -bor ($b2 -shl 9)) -bor ($b3 -shl 1)
+    return [uint32]($r -band $uint32Max)
+}
+
+function ConvertFrom-WinEaseFeatureIdOverride {
+    param(
+        [Parameter(Mandatory=$true)]
+        [int64]$OverrideId
+    )
+    [int64]$uint32Max = [int64][uint32]::MaxValue
+    [int64]$seed = 0x447F3700
+    if ($OverrideId -lt 0 -or $OverrideId -gt $uint32Max) {
+        throw "Override ID must be a 32-bit unsigned integer: $OverrideId"
+    }
+    [int64]$v = $OverrideId -band $uint32Max
+    [int64]$b0 = (($v -shr 25) -band 0x7F) -bor (($v -band 1) -shl 7)
+    [int64]$b1 = ($v -shr 17) -band 0xFF
+    [int64]$b2 = ($v -shr 9) -band 0xFF
+    [int64]$b3 = ($v -shr 1) -band 0xFF
+    [int64]$w = ($b0 -bor ($b1 -shl 8) -bor ($b2 -shl 16) -bor ($b3 -shl 24))
+    return [int64](($w -bxor $seed) -band $uint32Max)
+}

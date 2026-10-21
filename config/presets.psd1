@@ -120,6 +120,10 @@
                 AlwaysShowScrollbars = $false
                 DisableLogonBlur = $false
                 HideOneDriveNavPane = $false
+                DisableSearchWebView2 = $false
+                DisableAccessibilityHotkeys = $false
+                DisableMouseAcceleration = $false
+                DisableKeyboardDelay = $false
                 RemoveHelpFiles = $false
                 RemoveEdge = $false
                 RemoveWindowsBackup = $false

@@ -225,6 +225,7 @@ param(
     [switch]$NetworkTuning,
     [switch]$DisableIdleMaintenance,
     [switch]$SvcHostConsolidation,
+    [switch]$DisableSearchWebView2,
     [switch]$HideSearchBox,
     [switch]$MenuShowDelayZero,
     [switch]$DisableSnapAssist,
@@ -238,6 +239,9 @@ param(
     [switch]$AlwaysShowScrollbars,
     [switch]$DisableLogonBlur,
     [switch]$HideOneDriveNavPane,
+    [switch]$DisableAccessibilityHotkeys,
+    [switch]$DisableMouseAcceleration,
+    [switch]$DisableKeyboardDelay,
     # Removal options (polarity: OFF = keep, ON = remove). These used to run
     # unconditionally on every build.
     [switch]$RemoveHelpFiles,
@@ -656,6 +660,38 @@ function Sync-WinEaseTweakVariables {
             Set-Variable -Name $script:TweakVariableMap[$tk] -Scope Script -Value ([bool]$script:TweakSettings[$tk])
         }
     }
+}
+
+# Helper function to evaluate individual toggle settings.
+# This is the single canonical definition of the helper. It has to live here, in the
+# builder's script scope, and not in one of the phases: phases 05, 06 and 08 and
+# lib\WinEaseDebloat.ps1 call it, but phase 10 (which carries a guarded fallback copy)
+# runs long after them - a helper that is only defined in phase 10 is therefore not
+# resolvable when phase 05 asks for it.
+# Phases 10 and 11 keep their own guarded copy so that they still work when they are
+# dot-sourced on their own; during a normal build the guard keeps them from
+# redefining this one.
+function Test-TweakEnabled {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Name,
+        [bool]$Default = $true
+    )
+    if ($null -ne $script:TweakSettings -and $script:TweakSettings.Contains($Name)) {
+        return [bool]$script:TweakSettings[$Name]
+    }
+    # Legacy key names (older profiles / -TweakSettings hashtables) that map onto this GUI key
+    if ($null -ne $script:TweakSettings -and $script:TweakKeyAliases) {
+        foreach ($alias in $script:TweakKeyAliases.Keys) {
+            if ($script:TweakKeyAliases[$alias] -eq $Name -and $script:TweakSettings.Contains($alias)) {
+                return [bool]$script:TweakSettings[$alias]
+            }
+        }
+    }
+    $varName = "Tweak_$Name"
+    $v = Get-Variable -Name $varName -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $v) { return [bool]$v.Value }
+    return $Default
 }
 
 # Profile key order: component settings first, then every tweak key (-SaveProfile writes these,

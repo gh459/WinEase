@@ -59,6 +59,17 @@ pub const KNOWN_EXPERIMENTAL_KEYS: &[&str] = &[
     "physical_event_logs",
     "physical_fonts",
     "physical_ime",
+    // The packages the safe engine removes with DISM: the forced engine removes their
+    // payload instead. The package itself stays registered for DISM, only the files are
+    // gone - the same trade the other dual-engine targets make.
+    "physical_dotnet35",
+    "physical_powershell_ise",
+    "physical_steps_recorder",
+    "physical_telnet_tftp",
+    "physical_snmp_client",
+    "physical_identity_foundation",
+    "physical_fax",
+    "physical_xps_viewer",
 ];
 // The paging files (hiberfil.sys, pagefile.sys, swapfile.sys) are not part of a
 // mounted image: Windows creates them on the running system. The safe engine disables
@@ -1324,6 +1335,148 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
         });
     }
 
+    // The packages below are removed by the safe engine with DISM (the optional feature
+    // or the capability is unregistered). The forced engine removes the payload of the
+    // package instead, so the files are really gone from the image.
+
+    if config
+        .experimental
+        .get("physical_dotnet35")
+        .copied()
+        .unwrap_or(false)
+    {
+        targets.push(DeletionTarget {
+            name: ".NET Framework 3.5",
+            files: vec![],
+            dirs: vec![
+                "Windows\\Microsoft.NET\\Framework\\v3.0",
+                "Windows\\Microsoft.NET\\Framework64\\v3.0",
+            ],
+            ..Default::default()
+        });
+    }
+
+    if config
+        .experimental
+        .get("physical_powershell_ise")
+        .copied()
+        .unwrap_or(false)
+    {
+        targets.push(DeletionTarget {
+            name: "Windows PowerShell ISE",
+            files: vec![
+                "Windows\\System32\\WindowsPowerShell\\v1.0\\powershell_ise.exe",
+                "Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell_ise.exe",
+            ],
+            dirs: vec![
+                "Windows\\System32\\WindowsPowerShell\\v1.0\\Modules\\Microsoft.PowerShellISE",
+                "Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\Modules\\Microsoft.PowerShellISE",
+            ],
+            ..Default::default()
+        });
+    }
+
+    if config
+        .experimental
+        .get("physical_steps_recorder")
+        .copied()
+        .unwrap_or(false)
+    {
+        targets.push(DeletionTarget {
+            name: "Steps Recorder",
+            files: vec!["Windows\\System32\\psr.exe"],
+            dirs: vec![],
+            ..Default::default()
+        });
+    }
+
+    if config
+        .experimental
+        .get("physical_telnet_tftp")
+        .copied()
+        .unwrap_or(false)
+    {
+        targets.push(DeletionTarget {
+            name: "Telnet/TFTP client",
+            files: vec![
+                "Windows\\System32\\telnet.exe",
+                "Windows\\System32\\tftp.exe",
+            ],
+            dirs: vec![],
+            ..Default::default()
+        });
+    }
+
+    if config
+        .experimental
+        .get("physical_snmp_client")
+        .copied()
+        .unwrap_or(false)
+    {
+        targets.push(DeletionTarget {
+            name: "SNMP client",
+            files: vec![
+                "Windows\\System32\\snmpapi.dll",
+                "Windows\\System32\\snmp.exe",
+                "Windows\\System32\\wmisnmp.dll",
+            ],
+            dirs: vec![],
+            ..Default::default()
+        });
+    }
+
+    if config
+        .experimental
+        .get("physical_identity_foundation")
+        .copied()
+        .unwrap_or(false)
+    {
+        targets.push(DeletionTarget {
+            name: "Windows Identity Foundation",
+            files: vec![],
+            dirs: vec![
+                "Windows\\Microsoft.NET\\Framework\\v3.0\\WCF",
+                "Windows\\Microsoft.NET\\assembly\\GAC_MSIL\\Microsoft.IdentityModel*",
+            ],
+            ..Default::default()
+        });
+    }
+
+    if config
+        .experimental
+        .get("physical_fax")
+        .copied()
+        .unwrap_or(false)
+    {
+        targets.push(DeletionTarget {
+            name: "Fax service",
+            files: vec![
+                "Windows\\System32\\fxssvc.exe",
+                "Windows\\System32\\WinFax.dll",
+            ],
+            dirs: vec![],
+            ..Default::default()
+        });
+    }
+
+    if config
+        .experimental
+        .get("physical_xps_viewer")
+        .copied()
+        .unwrap_or(false)
+    {
+        targets.push(DeletionTarget {
+            name: "XPS Viewer",
+            files: vec![
+                "Windows\\System32\\xpsrch.exe",
+                "Windows\\System32\\xpsviewer.exe",
+            ],
+            // the viewer is an optional app package on Windows 11
+            dirs: vec!["Program Files\\WindowsApps\\Microsoft.Windows.XPSViewer*"],
+            ..Default::default()
+        });
+    }
+
     targets
 }
 
@@ -1939,6 +2092,53 @@ mod tests {
                 ),
                 _ => unreachable!(),
             }
+        }
+    }
+
+    /// The packages the safe engine removes with DISM have a forced physical deletion
+    /// now: every one of them names the files it removes, so the user can pick the
+    /// engine of the target in the Advanced Debloat tab.
+    #[test]
+    fn test_the_packages_without_a_forced_deletion_have_one_now() {
+        for key in [
+            "physical_dotnet35",
+            "physical_powershell_ise",
+            "physical_steps_recorder",
+            "physical_telnet_tftp",
+            "physical_snmp_client",
+            "physical_identity_foundation",
+            "physical_fax",
+            "physical_xps_viewer",
+        ] {
+            assert!(
+                KNOWN_EXPERIMENTAL_KEYS.contains(&key),
+                "the key {} is not in the allowlist of the binary",
+                key
+            );
+            let mut experimental = std::collections::HashMap::new();
+            experimental.insert(key.to_string(), true);
+            let config = DebloatConfig {
+                dry_run: true,
+                mount_path: "C:\\nonexistent-mount".to_string(),
+                log_path: String::new(),
+                confirm_offline_image: false,
+                experimental,
+                primary_ime_lang: None,
+            };
+
+            let targets = get_targets(&config);
+            assert_eq!(
+                targets.len(),
+                1,
+                "the key {} did not produce a target",
+                key
+            );
+            let target = &targets[0];
+            assert!(
+                !target.files.is_empty() || !target.dirs.is_empty(),
+                "the target for {} names no file and no directory, so it would do nothing",
+                key
+            );
         }
     }
 
