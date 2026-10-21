@@ -1,0 +1,70 @@
+name: Workflow security audit
+
+# Static checks of .github/workflows:
+#   actionlint - syntax, expressions, triggers, runner labels and shellcheck of run: blocks
+#   zizmor     - security: permissions, dangerous triggers, template injection, unpinned
+#                actions, credential persistence (accepted findings: .github/zizmor.yml and
+#                inline "zizmor: ignore[...]" comments, each with its reason)
+# Both tools are pinned and downloaded with a checksum / from PyPI by exact version.
+
+on:
+  push:
+    branches: [main, master]
+    paths: ['.github/**']
+  pull_request:
+    branches: [main, master]
+    paths: ['.github/**']
+  workflow_dispatch:
+  # release.yml runs the audit on the tagged commit before it publishes anything
+  workflow_call:
+
+concurrency:
+  group: workflow-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ACTIONLINT_VERSION: '1.7.7'
+  ACTIONLINT_SHA256: '023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757'
+  ZIZMOR_VERSION: '1.31.1'
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install actionlint
+        run: |
+          url="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tgz" "$url"
+          echo "${ACTIONLINT_SHA256}  $RUNNER_TEMP/actionlint.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/actionlint.tgz" -C "$RUNNER_TEMP" actionlint
+
+      - name: Run actionlint
+        run: '"$RUNNER_TEMP/actionlint" -color'
+
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install zizmor
+        run: python3 -m pip install --user "zizmor==${ZIZMOR_VERSION}"
+
+      - name: Run zizmor
+        # --offline: no GitHub API token is handed to the tool; the online-only audits
+        # (known-vulnerable action versions, impostor commits) are covered by Dependabot.
+        run: |
+          zizmor --version
+          zizmor --offline --format=github --config .github/zizmor.yml .github/workflows

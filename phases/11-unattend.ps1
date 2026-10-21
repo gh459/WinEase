@@ -1239,7 +1239,7 @@ try {
     if ([Enum]::IsDefined([Net.SecurityProtocolType], 'Tls13')) {
         [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]'Tls13'
     }
-} catch {}
+} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 $ErrorActionPreference = 'Stop'
 
 Clear-Host
@@ -1800,7 +1800,7 @@ try {
         }
     }
 } catch {
-    Write-Verbose "Ignored: $($_.Exception.Message)"
+    Write-Warning "Failed to register custom FirstLogon scripts in autounattend.xml: $($_.Exception.Message)"
 }
 
 # Migration Assistant bundle: tool + engine + rule files only (no personal data) and a desktop launcher

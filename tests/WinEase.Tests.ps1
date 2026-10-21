@@ -1347,6 +1347,37 @@ Describe "WinEase helpers - Statistical Analysis and Benchmark Comparison" {
     }
 }
 
+Describe "WinEase helpers - Format-WinEasePhaseDuration" {
+    BeforeAll {
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+    }
+
+    It "formats durations under 60 seconds as rounded seconds" {
+        Format-WinEasePhaseDuration -TotalSeconds 0 | Should Be "0s"
+        Format-WinEasePhaseDuration -TotalSeconds 0.5 | Should Be "0.5s"
+        Format-WinEasePhaseDuration -TotalSeconds 42.3 | Should Be "42.3s"
+        Format-WinEasePhaseDuration -TotalSeconds 59.9 | Should Be "59.9s"
+    }
+
+    It "formats exact minutes without trailing seconds" {
+        Format-WinEasePhaseDuration -TotalSeconds 60 | Should Be "1m"
+        Format-WinEasePhaseDuration -TotalSeconds 120 | Should Be "2m"
+        Format-WinEasePhaseDuration -TotalSeconds 3600 | Should Be "60m"
+    }
+
+    It "formats durations over 60 seconds with minutes and remaining seconds" {
+        Format-WinEasePhaseDuration -TotalSeconds 65.4 | Should Be "1m 5.4s"
+        Format-WinEasePhaseDuration -TotalSeconds 125.1 | Should Be "2m 5.1s"
+        Format-WinEasePhaseDuration -TotalSeconds 3615.8 | Should Be "60m 15.8s"
+    }
+
+    It "handles rounding boundary at 60 seconds correctly" {
+        Format-WinEasePhaseDuration -TotalSeconds 59.96 | Should Be "1m"
+        Format-WinEasePhaseDuration -TotalSeconds 119.96 | Should Be "2m"
+    }
+}
+
 Describe "WinEase setup scripts - Custom Scripts Logging" {
     It "scripts/FirstLogon.ps1 contains dual-log recording and stop preference wrapper" {
         $firstLogonPath = Join-Path $script:RepoRoot "scripts\FirstLogon.ps1"

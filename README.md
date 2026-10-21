@@ -466,6 +466,26 @@ This working copy carries the following changes on top of the upstream fork:
 - **New AI, search and telemetry policies**: the "let apps use text and image generation" capabilities are force-denied, the agent connectors are disabled with the value the upstream tools use, the Cross Device Resume shell host is redirected to `ShellHost.exe`, the web and Microsoft Store suggestions of the search box are switched off, the Defender sample submission is never accepted and the Media Player no longer updates itself.
 - **Fix**: `SubmitSamplesConsent` was `0` ("always prompt"); it is `2` ("never send") now, and it is applied whether Defender is removed or kept.
 
+## 🔒 Development & Release Automation
+
+| Workflow | Runs on | What it does |
+|---|---|---|
+| `ci.yml` | push / PR to `main` | `-TestSelf` (PowerShell 5.1 + 7), Pester (`tests\WinEase.Tests.ps1`, `tests\WinEase.Regression.Tests.ps1`), dry-runs of extreme / balanced / none / vm, Rust engine build |
+| `lint.yml` | push / PR to `main` | PSScriptAnalyzer (errors fail) |
+| `workflow-audit.yml` | changes under `.github/` | actionlint + zizmor security audit of the workflows |
+| `release.yml` | `v*` tag | runs all of the above on the tagged commit, verifies the tag did not move, builds and checks the ZIP, publishes it with a `.sha256` file and a build provenance attestation |
+| `claude-issue-agent.yml` | issue assigned / `@claude` from a collaborator | implements the request on a branch and opens a **draft** PR |
+| `claude-pr-review.yml` | PR from a branch of this repository | **read-only, advisory** AI review comments; never approves or merges |
+
+Verify a downloaded release: `sha256sum -c WinEase-<tag>.zip.sha256` (or `Get-FileHash`) and
+`gh attestation verify WinEase-<tag>.zip -R gh459/WinEase`.
+
+Dependency updates: Dependabot opens monthly PRs for GitHub Actions (SHA-pinned), Cargo
+(`tools/winease-physical-debloat`) and NuGet (`gui/winui`). Each one goes through the full CI and
+a human review; nothing is merged automatically. Security alerts: enable Dependabot alerts in
+the repository settings and handle them the same way. Audit, risks and the settings that must be
+made on GitHub: [`docs/dev/github-automation-audit.md`](docs/dev/github-automation-audit.md).
+
 ---
 
 ## 📁 Repository Structure

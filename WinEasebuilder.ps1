@@ -1045,6 +1045,9 @@ function Apply-ProfileSettings {
             $tweakOverride[$k] = [bool]$val
         }
     }
+    $resolvedTweaks = Resolve-WinEaseConfiguration -TweakBase $tweakBase -TweakPreset $tweakPreset -TweakOverrides $tweakOverride
+    foreach ($k in $resolvedTweaks.Tweaks.Keys) { $script:TweakSettings[$k] = [bool]$resolvedTweaks.Tweaks[$k] }
+    Sync-WinEaseTweakVariables
     return $targetPreset
 }
 
@@ -1084,6 +1087,24 @@ function Import-WinEaseProfile {
         }
         if ($unknownKeys.Count -gt 0) {
             Write-Warning "Profile '$([System.IO.Path]::GetFileName($FilePath))' contains unrecognized setting(s): $($unknownKeys -join ', '). Please check for typos."
+        }
+
+        # Value types: Apply-ProfileSettings casts with [bool], and [bool]"false" is $true, so a
+        # quoted or nested value would silently switch a removal option on. Refuse such a file.
+        $typeErrors = @()
+        foreach ($cd in $script:ComponentDefs.Values) {
+            if ($cd.Type -ne 'Bool') { continue }
+            $prop = $settings.PSObject.Properties[$cd.Key]
+            if ($prop -and $null -ne $prop.Value -and $prop.Value -isnot [bool]) { $typeErrors += "$($cd.Key) (expected true/false, got '$($prop.Value)')" }
+        }
+        $tsProp = $settings.PSObject.Properties['TweakSettings']
+        if ($tsProp -and $null -ne $tsProp.Value) {
+            foreach ($prop in $tsProp.Value.PSObject.Properties) {
+                if ($null -ne $prop.Value -and $prop.Value -isnot [bool]) { $typeErrors += "TweakSettings.$($prop.Name) (expected true/false, got '$($prop.Value)')" }
+            }
+        }
+        if ($typeErrors.Count -gt 0) {
+            throw "Profile '$([System.IO.Path]::GetFileName($FilePath))' has setting(s) of the wrong type: $($typeErrors -join '; ')"
         }
 
         return $settings

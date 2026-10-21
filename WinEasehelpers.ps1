@@ -2470,3 +2470,20 @@ function ConvertFrom-WinEaseFeatureIdOverride {
     [int64]$w = ($b0 -bor ($b1 -shl 8) -bor ($b2 -shl 16) -bor ($b3 -shl 24))
     return [int64](($w -bxor $seed) -band $uint32Max)
 }
+
+function Format-WinEasePhaseDuration {
+    param(
+        [Parameter(Mandatory = $true)]
+        [double]$TotalSeconds
+    )
+    $roundedSec = [math]::Round($TotalSeconds, 1)
+    if ($roundedSec -lt 60) { return "${roundedSec}s" }
+    $mins = [math]::Floor($roundedSec / 60)
+    $secs = [math]::Round($roundedSec % 60, 1)
+    if ($secs -eq 60) {
+        $mins++
+        $secs = 0
+    }
+    if ($secs -gt 0) { return "${mins}m ${secs}s" }
+    return "${mins}m"
+}

@@ -33,11 +33,11 @@
     "HibernateMode": { "type": "string", "enum": ["Off", "Reduced", "Keep"], "default": "Keep" },
     "CrashDumpMode": { "type": "string", "enum": ["Automatic", "Small", "None"], "default": "Automatic" },
     "DisableCPUMitigations": { "type": "boolean", "default": false },
-    "MMCSSGaming": { "type": "boolean", "default": true },
+    "MMCSSGaming": { "type": "boolean", "default": false },
     "DAWMode": { "type": "boolean", "default": false },
     "DisableMemCompression": { "type": "boolean", "default": true },
-    "DisableFSE": { "type": "boolean", "default": true },
-    "NvidiaLowLatency": { "type": "boolean", "default": true },
+    "DisableFSE": { "type": "boolean", "default": false },
+    "NvidiaLowLatency": { "type": "boolean", "default": false },
     "NoKernelPaging": { "type": "boolean", "default": true },
     "DisableUSBSuspend": { "type": "boolean", "default": true },
     "NoHypervisor": { "type": "boolean", "default": true },
@@ -79,6 +79,15 @@
       "type": "object",
       "description": "Granular individual registry and system customization toggles",
       "additionalProperties": { "type": "boolean" }
+    },
+    "Settings": {
+      "$ref": "#",
+      "description": "The settings block of a profile written by -SaveProfile (ProfileName, Version and Timestamp stay at the top level)"
+    },
+    "DebloatEngineSelection": {
+      "type": "object",
+      "description": "The engine chosen per Advanced Debloat target (written by -SaveProfile)",
+      "additionalProperties": { "type": "string", "enum": ["PowerShell", "Rust"] }
     },
     "DebloatEngines": {
       "type": "object",
@@ -146,7 +155,7 @@
     "CleanContextMenus": { "type": "boolean", "default": true },
     "DisableCortana": { "type": "boolean", "default": true },
     "DisableDiagnosticData": { "type": "boolean", "default": true },
-    "ConfigureWinlogon": { "type": "boolean", "default": true },
+    "ConfigureWinlogon": { "type": "boolean", "default": false },
     "EnableScripts": { "type": "boolean", "default": true },
     "DisableWindowsAI": { "type": "boolean", "default": true },
     "DisableDeliveryOptimization": { "type": "boolean", "default": true },
