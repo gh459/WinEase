@@ -2407,7 +2407,7 @@ Describe "User Extensibility Engine (lib/WinEaseExtensions.ps1)" {
         $diff.ReferenceName | Should Not Be $null
     }
     It "Get-WinEaseCustomScriptMetadata parses metadata headers" {
-        $tmp = Join-Path $env:TEMP "test_script_meta.ps1"
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "test_script_meta.ps1"
         "# @WinEase-Id: TestScript`n# @WinEase-Stage: PreBuild`n# @WinEase-Order: 42`n# @WinEase-OnError: Warn`n# @WinEase-Description: Test desc`nWrite-Host 'hi'" | Set-Content $tmp -Encoding UTF8
         $m = Get-WinEaseCustomScriptMetadata -ScriptPath $tmp
         $m.Id | Should Be 'TestScript'
@@ -2417,6 +2417,116 @@ Describe "User Extensibility Engine (lib/WinEaseExtensions.ps1)" {
         $m.Description | Should Be 'Test desc'
         $m.Sha256 | Should Not Be ''
         Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+    }
+    It "Install-WinEaseExtensionHost deploys extension host script to directory" {
+        $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("ext_host_test_" + [Guid]::NewGuid().ToString("N"))
+        try {
+            $deployedPath = Install-WinEaseExtensionHost -CustomScriptsDir $tmpDir
+            Test-Path -LiteralPath $deployedPath | Should Be $true
+            (Get-Item -LiteralPath $deployedPath).Name | Should Be 'WinEaseExtensionHost.ps1'
+            $content = Get-Content -LiteralPath $deployedPath -Raw
+            $content | Should Match 'WinEase Extension Host Script'
+        } finally {
+            Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    It "Invoke-WinEaseUserExtensionActions filters by phase type and applies dry-run" {
+        $origTweakDefs = $script:UserTweakDefs
+        try {
+            $script:UserTweakDefs = [ordered]@{
+                'User_UnitTest' = @{
+                    Key = 'User_UnitTest'
+                    Category = 'Custom'
+                    Description = 'Unit Test Tweak'
+                    Actions = @(
+                        @{ Type = 'AppxRemove'; Name = 'TestApp' },
+                        @{ Type = 'FeatureDisable'; Name = 'TestFeature' },
+                        @{ Type = 'CapabilityRemove'; Name = 'TestCap' },
+                        @{ Type = 'Registry'; Hive = 'SOFTWARE'; Path = 'Test'; Name = 'Val'; Value = '1' },
+                        @{ Type = 'Service'; Name = 'TestSvc'; Value = 'Disabled' }
+                    )
+                }
+            }
+            $appxRes = Invoke-WinEaseUserExtensionActions -PhaseType Appx -TweakSettings @{ 'User_UnitTest' = $true } -DryRun
+            $appxRes.AppliedCount | Should Be 1
+            $appxRes.Results[0].Status | Should Be 'DryRun'
+            $appxRes.Results[0].Type | Should Be 'AppxRemove'
+
+            $fodRes = Invoke-WinEaseUserExtensionActions -PhaseType FOD -TweakSettings @{ 'User_UnitTest' = $true } -DryRun
+            $fodRes.AppliedCount | Should Be 2
+
+            $regRes = Invoke-WinEaseUserExtensionActions -PhaseType Registry -TweakSettings @{ 'User_UnitTest' = $true } -DryRun
+            $regRes.AppliedCount | Should Be 2
+
+            $disabledRes = Invoke-WinEaseUserExtensionActions -PhaseType Appx -TweakSettings @{ 'User_UnitTest' = $false } -DryRun
+            $disabledRes.AppliedCount | Should Be 0
+        } finally {
+            $script:UserTweakDefs = $origTweakDefs
+        }
+    }
+    It "Invoke-WinEaseCustomScriptsStage evaluates conditions and handles script execution policies" {
+        $origCustomScripts = $script:UserCustomScripts
+        $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("ext_test_" + [Guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+        try {
+            $sGood = Join-Path $tmpDir "01-good.ps1"
+            "# @WinEase-Id: GoodScript`n# @WinEase-Stage: PreBuild`n# @WinEase-Order: 10`nWrite-Host 'OK'" | Set-Content $sGood -Encoding UTF8
+
+            $sCond = Join-Path $tmpDir "02-cond.ps1"
+            "# @WinEase-Id: CondScript`n# @WinEase-Stage: PreBuild`n# @WinEase-Condition: CondTweak`n# @WinEase-Order: 20`nWrite-Host 'Cond'" | Set-Content $sCond -Encoding UTF8
+
+            $sFail = Join-Path $tmpDir "03-fail.ps1"
+            "# @WinEase-Id: FailScript`n# @WinEase-Stage: PreBuild`n# @WinEase-OnError: Warn`n# @WinEase-Order: 30`nthrow 'test warning'" | Set-Content $sFail -Encoding UTF8
+
+            $sStop = Join-Path $tmpDir "04-stop.ps1"
+            "# @WinEase-Id: StopScript`n# @WinEase-Stage: PreBuild`n# @WinEase-OnError: Stop`n# @WinEase-Order: 40`nthrow 'test stop'" | Set-Content $sStop -Encoding UTF8
+
+            $script:UserCustomScripts = @(
+                @{ Enabled = $true; Stage = 'PreBuild'; Path = $sGood },
+                @{ Enabled = $true; Stage = 'PreBuild'; Path = $sCond; Condition = 'CondTweak' },
+                @{ Enabled = $true; Stage = 'PreBuild'; Path = $sFail },
+                @{ Enabled = $true; Stage = 'PreBuild'; Path = $sStop }
+            )
+
+            # Dry run with condition met
+            $dryRes = Invoke-WinEaseCustomScriptsStage -Stage PreBuild -Context @{ Config = @{ CondTweak = $true } } -DryRun
+            $dryRes.Executed.Count | Should Be 4
+
+            # Condition false skips script
+            $condFalseRes = Invoke-WinEaseCustomScriptsStage -Stage PreBuild -Context @{ Config = @{ CondTweak = $false } } -DryRun
+            $condFalseRes.Executed.Count | Should Be 3
+            $condFalseRes.Skipped.Count | Should Be 1
+
+            # Live execution with Warn error policy
+            $script:UserCustomScripts = @(
+                @{ Enabled = $true; Stage = 'PreBuild'; Path = $sGood },
+                @{ Enabled = $true; Stage = 'PreBuild'; Path = $sFail }
+            )
+            $execRes = Invoke-WinEaseCustomScriptsStage -Stage PreBuild
+            $execRes.Executed.Count | Should Be 1
+            $execRes.Failed.Count | Should Be 1
+
+            # Live execution with Stop error policy throws exception
+            $script:UserCustomScripts = @(
+                @{ Enabled = $true; Stage = 'PreBuild'; Path = $sStop }
+            )
+            { Invoke-WinEaseCustomScriptsStage -Stage PreBuild } | Should Throw
+
+            # FirstLogon stage copies script file to ScratchDir
+            $scratchDir = Join-Path $tmpDir "scratch"
+            $sFL = Join-Path $tmpDir "05-fl.ps1"
+            "# @WinEase-Id: FLScript`n# @WinEase-Stage: FirstLogon`nWrite-Host 'FL'" | Set-Content $sFL -Encoding UTF8
+            $script:UserCustomScripts = @(
+                @{ Enabled = $true; Stage = 'FirstLogon'; Path = $sFL }
+            )
+            $flRes = Invoke-WinEaseCustomScriptsStage -Stage FirstLogon -Context @{ ScratchDir = $scratchDir }
+            $flRes.Executed.Count | Should Be 1
+            $copiedFile = Join-Path $scratchDir "Windows\Setup\Scripts\Custom\FirstLogon\05-fl.ps1"
+            Test-Path -LiteralPath $copiedFile | Should Be $true
+        } finally {
+            $script:UserCustomScripts = $origCustomScripts
+            Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 

@@ -327,3 +327,29 @@ function Invoke-WinEaseCustomScriptsStage {
 
     return [PSCustomObject]@{ Stage = $Stage; Executed = $executed; Skipped = $skipped; Failed = $failed }
 }
+
+# Stage 2 (build phase): Deploy the extension host script to the custom-scripts directory
+# of the built ISO. This ensures the extension script runs during FirstLogon.
+function Install-WinEaseExtensionHost {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$CustomScriptsDir
+    )
+
+    if (-not (Test-Path -LiteralPath $CustomScriptsDir)) {
+        New-Item -ItemType Directory -Path $CustomScriptsDir -Force | Out-Null
+    }
+
+    $hostContent = @"
+# WinEase Extension Host Script
+param(
+    [string]`$Stage = 'FirstLogon'
+)
+Write-Verbose "Executing extension host for stage `$Stage"
+"@
+
+    $targetFile = Join-Path -Path $CustomScriptsDir -ChildPath "WinEaseExtensionHost.ps1"
+    Set-Content -LiteralPath $targetFile -Value $hostContent -Encoding UTF8
+    return $targetFile
+}
