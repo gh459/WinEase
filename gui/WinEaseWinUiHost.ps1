@@ -88,8 +88,8 @@ function New-WinEaseWinUiInitMessage {
     $initComponents = [ordered]@{}
     foreach ($c in $components) { if ($InitialSettings.ContainsKey($c.Key)) { $initComponents[$c.Key] = [bool]$InitialSettings[$c.Key] } }
     $initial['Components'] = $initComponents
-    $initial['AdvancedDebloatStandard'] = @($InitialSettings.AdvancedDebloatStandard | Where-Object { $_ })
-    $initial['AdvancedDebloatExperimental'] = @($InitialSettings.AdvancedDebloatExperimental | Where-Object { $_ })
+    $initial['AdvancedDebloatStandard'] = @(($InitialSettings.AdvancedDebloatStandard).Where({ $_ }))
+    $initial['AdvancedDebloatExperimental'] = @(($InitialSettings.AdvancedDebloatExperimental).Where({ $_ }))
     # The engine the user picked for a target (the rest runs on the registered default)
     $initEngines = [ordered]@{}
     if ($InitialSettings.DebloatEngineSelection) {
@@ -303,8 +303,8 @@ function ConvertFrom-WinEaseWinUiResult {
     $tweaks = [ordered]@{}
     if ($r.TweakSettings) { foreach ($k in $r.TweakSettings.Keys) { $tweaks[$k] = [bool]$r.TweakSettings[$k] } }
     $out.TweakSettings = $tweaks
-    $out.AdvancedDebloatStandard = @($r.AdvancedDebloatStandard | Where-Object { $_ } | ForEach-Object { "$_" })
-    $out.AdvancedDebloatExperimental = @($r.AdvancedDebloatExperimental | Where-Object { $_ } | ForEach-Object { "$_" })
+    $out.AdvancedDebloatStandard = @(($r.AdvancedDebloatStandard).Where({ $_ }).ForEach({ "$_" }))
+    $out.AdvancedDebloatExperimental = @(($r.AdvancedDebloatExperimental).Where({ $_ }).ForEach({ "$_" }))
     # The engine per Advanced Debloat target (PowerShell / Rust)
     $engines = [ordered]@{}
     if ($r.DebloatEngineSelection) {
