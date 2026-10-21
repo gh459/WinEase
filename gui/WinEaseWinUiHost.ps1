@@ -267,7 +267,8 @@ function Invoke-WinEaseWinUiRequest {
         'wizard' {
             $migratorPath = Join-Path $repo 'tools\migrator\WinEase-Migrator.ps1'
             if (-not (Test-Path -LiteralPath $migratorPath)) { return @{ Kind = 'Warning'; Title = (Get-WinEaseUiString 'Mig.Wizard.Title'); Text = (Get-WinEaseUiString 'Mig.Wizard.NotFound') } }
-            Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$migratorPath`" -GUI -BackupRoot `"$root`" -UiLanguage $($script:WinEaseUiLanguage)" -WindowStyle Normal
+            $migratorArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $migratorPath, '-GUI', '-BackupRoot', $root, '-UiLanguage', "$($script:WinEaseUiLanguage)")
+            Start-Process powershell.exe -ArgumentList $migratorArgs -WindowStyle Normal
             return @{}
         }
         'guide' {
