@@ -418,13 +418,35 @@ fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// True when `p` itself (not its target) is a reparse point: junction, mount point or
-/// symlink. Traversal must never descend into these, and they are never deleted through.
+/// True when `p` is a link that must never be traversed and never deleted through:
+/// a junction, a mount point or a symlink that points at a directory.
+///
+/// A *file* inside a mounted WIM carries the reparse attribute when the same file
+/// also has a hardlink in the component store (WinSxS): the mount materializes it
+/// as a sparse placeholder. Such a placeholder is an ordinary file and has to be
+/// deleted like one. It used to be skipped like a junction, so it stayed in the
+/// image, the folder could never be emptied and the removal of the folder was
+/// reported as a failure ("not fully removed ... contains preserved reparse
+/// points"). The folders that hold such files are `Windows\Provisioning`,
+/// `Windows\System32\spool` and `Windows\System32\lxss`.
+///
+/// A directory that is a reparse point is still skipped: its target can be outside
+/// the mounted image, and traversing it would delete files that do not belong to
+/// the image.
 fn is_reparse_point(p: &Path) -> bool {
     use std::os::windows::fs::MetadataExt;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
     match fs::symlink_metadata(p) {
-        Ok(md) => (md.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT) != 0,
+        Ok(md) => {
+            let attrs = md.file_attributes();
+            if (attrs & FILE_ATTRIBUTE_REPARSE_POINT) == 0 {
+                return false;
+            }
+            // symlink_metadata does not follow the link, so a symlink to a
+            // directory carries the directory bit as well.
+            (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0
+        }
         Err(_) => false,
     }
 }
@@ -636,27 +658,37 @@ fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
     }
     let mut entries: Vec<PathBuf> = Vec::new();
     fn collect(path: &Path, entries: &mut Vec<PathBuf>) {
-        if let Ok(rd) = fs::read_dir(path) {
-            for entry in rd.flatten() {
-                let ep = entry.path();
-                if is_reparse_point(&ep) {
-                    println!(
-                        "  [SKIP] Reparse point (junction/symlink) not traversed: {}",
-                        ep.to_string_lossy()
-                    );
-                    continue;
-                }
-                if ep.is_dir() {
-                    collect(&ep, entries);
-                }
-                entries.push(ep);
+        // The ownership is taken and the delete right granted before the folder is
+        // read. A component folder that is owned by TrustedInstaller refuses the
+        // listing, and the refused listing was swallowed before, so the entries of
+        // such a folder were never collected and the folder survived the removal.
+        let _ = force_access(&path.to_string_lossy());
+        let rd = match fs::read_dir(path) {
+            Ok(rd) => rd,
+            Err(e) => {
+                println!("  [ERR] cannot list {}: {}", path.to_string_lossy(), e);
+                return;
             }
+        };
+        for entry in rd.flatten() {
+            let ep = entry.path();
+            if is_reparse_point(&ep) {
+                println!(
+                    "  [SKIP] Reparse point (junction/symlink) not traversed: {}",
+                    ep.to_string_lossy()
+                );
+                continue;
+            }
+            if ep.is_dir() {
+                collect(&ep, entries);
+            }
+            entries.push(ep);
         }
     }
-    collect(p, &mut entries);
     // Take ownership of the directory itself first: without it the child deletions
     // below fail on TrustedInstaller-owned component folders.
     let _ = force_access(&p.to_string_lossy());
+    collect(p, &mut entries);
     for entry in &entries {
         if entry.is_dir() {
             // The subdirectory is removed with the forced ladder as well. The plain
@@ -1943,6 +1975,51 @@ mod tests {
         ));
         assert!(wildcard_match("*.exe", "cmd.exe"));
         assert!(!wildcard_match("*.exe", "cmd.dll"));
+    }
+
+    /// A junction is a reparse point that points at a directory, and it must never be
+    /// traversed: its target can be outside the mounted image. A plain file is not a
+    /// link, even when it carries the reparse attribute - inside a mounted WIM that
+    /// is the sparse placeholder of a file that also has a hardlink in the component
+    /// store, and it has to be deleted like any other file.
+    #[test]
+    fn test_only_a_directory_link_is_treated_as_a_link() {
+        use std::os::windows::fs::MetadataExt;
+        use std::os::windows::process::CommandExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        let tmp = std::env::temp_dir().join(format!(
+            "winease_reparse_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let target = tmp.join("target");
+        fs::create_dir_all(&target).unwrap();
+        let file = tmp.join("placeholder.dat");
+        fs::write(&file, b"x").unwrap();
+
+        // A plain file is not a link.
+        assert!(!is_reparse_point(&file));
+
+        // A junction is a directory link and stays a link.
+        let junction = tmp.join("junction");
+        let rc = std::process::Command::new("cmd")
+            .args(["/C", &format!("mklink /J \"{}\" \"{}\"", junction.display(), target.display())])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .output();
+        if rc.is_ok() && junction.exists() {
+            let attrs = fs::symlink_metadata(&junction).unwrap().file_attributes();
+            assert!(
+                (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0,
+                "the test junction is not a reparse point"
+            );
+            assert!(
+                is_reparse_point(&junction),
+                "a directory junction must stay a link so it is never traversed"
+            );
+        }
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]

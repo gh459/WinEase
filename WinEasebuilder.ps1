@@ -374,6 +374,11 @@ param(
 # The helper module contains only pure functions and the BuildContext class
 # (no top-level state), so loading it this early is safe.
 $scriptDirEarly = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+# The moment this builder was started. The rotation of the build_diagnostics folders
+# uses it to tell the diagnostic directory of a build that is still running from an
+# abandoned one: a build that starts while another one is still running must not
+# delete the diagnostic directory of that other build.
+$script:BuilderStartTime = Get-Date
 $helperModuleEarly = Join-Path -Path $scriptDirEarly -ChildPath "WinEasehelpers.ps1"
 if (Test-Path -LiteralPath $helperModuleEarly) {
     . $helperModuleEarly
@@ -1188,12 +1193,18 @@ try {
         Write-Warning "Log compression skipped: $_"
     }
     # D: rotate build_diagnostics folders - drop empty (aborted) dirs first, then keep newest $KeepLogs runs
+    # A build that starts while another one is still running must not delete the diagnostic
+    # directory of that other build: the directory of a running build is still empty, so the
+    # "drop empty dirs" rule would pick it up and the report of the running build would be
+    # lost. Only the directories that existed before this build started are rotated.
     $diagRootDir = Join-Path -Path $scriptDir -ChildPath "build_diagnostics"
     if (Test-Path -LiteralPath $diagRootDir) {
-        Get-ChildItem -LiteralPath $diagRootDir -Directory -ErrorAction SilentlyContinue |
+        $rotatableDirs = @(Get-ChildItem -LiteralPath $diagRootDir -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -lt $script:BuilderStartTime })
+        $rotatableDirs |
             Where-Object { -not (Get-ChildItem -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue) } |
             Remove-Item -Force -ErrorAction SilentlyContinue
-        Get-ChildItem -LiteralPath $diagRootDir -Directory -ErrorAction SilentlyContinue |
+        $rotatableDirs |
             Sort-Object Name -Descending |
             Select-Object -Skip $KeepLogs |
             Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
@@ -2093,6 +2104,13 @@ function Write-WinEaseDiagnosticReport {
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'StatusMessage', Justification = 'Callers pass a status message; kept for compatibility')]
     param([string]$StatusMessage = "")
     try {
+        # The diagnostic directory is created when the build starts, but it can be
+        # removed again while the build runs (the rotation of a build that starts in
+        # parallel). It is therefore created again before the report is written, so a
+        # failed build always leaves its report behind.
+        if (-not (Test-Path -LiteralPath $script:DiagDir)) {
+            New-Item -ItemType Directory -Path $script:DiagDir -Force | Out-Null
+        }
         $jsonPath = Join-Path -Path $script:DiagDir -ChildPath "build_diagnostic_report.json"
         $script:DiagnosticData | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $jsonPath -Encoding utf8
 

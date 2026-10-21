@@ -177,24 +177,37 @@ if ($rustTargetItems.Count -gt 0) {
     $proc = Start-Process -FilePath $rustBinary -ArgumentList $rustArgs -PassThru -Wait -NoNewWindow
     $exitCode = $proc.ExitCode
 
+    # The result file is read for every exit code. When the engine fails, the errors
+    # it collected are the only place that says which target did not go through, and
+    # they were not shown at all before: the build only reported "exit code 1".
+    $physResult = $null
+    if (Test-Path -LiteralPath $resultLogPath) {
+        try {
+            $physResult = Get-Content -LiteralPath $resultLogPath -Raw | ConvertFrom-Json
+        } catch {
+            Write-Warning "  [Physical Debloat] The result file could not be read: $_"
+        }
+    }
+    $physErrors = @()
+    if ($physResult -and $physResult.errors) { $physErrors = @($physResult.errors) }
+
+    if ($physResult) {
+        $deletedLabel = if ($isDryRunMode) { 'Would delete' } else { 'Deleted' }
+        Write-Host "  [Physical Debloat] $deletedLabel files: $($physResult.deleted_files), dirs: $($physResult.deleted_dirs), reg keys: $($physResult.deleted_registry_keys), errors: $($physErrors.Count)" -ForegroundColor Gray
+    }
+    foreach ($physError in $physErrors) {
+        Write-Host "    [ERROR] $physError" -ForegroundColor Red
+    }
+
     if ($exitCode -eq 0) {
         Write-Host "  [Physical Debloat] Completed successfully (Exit code: 0)" -ForegroundColor Green
-        if (Test-Path -LiteralPath $resultLogPath) {
-            $result = Get-Content -LiteralPath $resultLogPath -Raw | ConvertFrom-Json
-            $deletedLabel = if ($isDryRunMode) { 'Would delete' } else { 'Deleted' }
-            Write-Host "  [Physical Debloat] $deletedLabel files: $($result.deleted_files), dirs: $($result.deleted_dirs), reg keys: $($result.deleted_registry_keys), errors: $($result.errors.Count)" -ForegroundColor Gray
-            if ($result.errors.Count -gt 0) {
-                foreach ($err in $result.errors) {
-                    Write-Host "    [ERROR] $err" -ForegroundColor Red
-                }
-            }
-        }
     } elseif ($exitCode -eq 2) {
         throw "Physical debloat aborted: one or more experimental targets were rejected by the allowlist (exit code 2)."
     } elseif ($exitCode -eq 3) {
         throw "Physical debloat aborted: mount directory failed safety validation in Rust tool (exit code 3)."
     } else {
-        throw "Physical debloat failed with exit code $exitCode. Aborting build to maintain image integrity."
+        $physDetail = if ($physErrors.Count -gt 0) { " The engine reported: " + ($physErrors -join ' | ') } else { "" }
+        throw "Physical debloat failed with exit code $exitCode. Aborting build to maintain image integrity.$physDetail"
     }
 
     # Save summary to physical-debloat.log

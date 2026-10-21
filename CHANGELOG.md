@@ -186,6 +186,26 @@ default off); no changed default.
   the profile files - every editor that validates a profile against it rejected them) and not
   to the `none` preset of `config\presets.psd1` (which has to name every tweak). The self-test
   check "Granular Tweak Schema Alignment" failed because of it.
+- **The physical debloat aborted the build on three folders that could not be emptied.**
+  `tools\winease-physical-debloat` skipped every file that carries the reparse attribute,
+  because it treated them as junctions. Inside a mounted WIM every file that also has a
+  hardlink in the component store (WinSxS) is materialized as a *sparse placeholder* that
+  carries the same attribute, so the files of `Windows\Provisioning`,
+  `Windows\System32\spool` and `Windows\System32\lxss` were never deleted, the folders could
+  never be emptied and the engine exited with 1 - which aborted the build. Only a reparse
+  point that is a *directory* is a link now (its target can be outside the image and is
+  never traversed); a file that carries the attribute is deleted like any other file. The
+  ownership is also taken before a folder is read, because a refused listing was swallowed
+  and left the folder untouched.
+- **The diagnostic report of a failed build was not written.** The rotation of the
+  `build_diagnostics` folders drops the empty ones, and the folder of a build stays empty
+  until the build ends: a build that started while another one was still running therefore
+  deleted the folder of that other build, and every write of the report failed with "part of
+  the path could not be found". The rotation now only touches the folders that existed
+  before the build started, and the report creates its folder again before it writes.
+- **The errors of a failed physical debloat run were not shown.** The result file of the
+  engine is now read for every exit code, so the build log names the target that did not go
+  through instead of only reporting "exit code 1".
 
 ## Unreleased (local fork, 2026-10-21) - every Advanced Debloat target can be removed by the engine it offers
 

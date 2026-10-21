@@ -4863,6 +4863,34 @@ Describe "WinEase helpers - FeatureManagement override IDs" {
     }
 }
 
+Describe "WinEase builder - the diagnostic report survives a parallel build" {
+    # The diagnostic directory of a build is empty until the build ends, so the rotation
+    # of build_diagnostics (which drops the empty folders) used to delete the directory
+    # of a build that was still running: the report of that build was then written into
+    # a folder that no longer existed and every write failed.
+    $script:BuilderSource = [System.IO.File]::ReadAllText($script:BuilderPath)
+
+    It "the report writer creates the diagnostic directory before it writes" {
+        $script:BuilderSource | Should Match 'if\s*\(-not\s*\(Test-Path\s+-LiteralPath\s+\$script:DiagDir\)\)'
+        $script:BuilderSource | Should Match 'New-Item\s+-ItemType\s+Directory\s+-Path\s+\$script:DiagDir'
+    }
+
+    It "the rotation leaves the directory of a running build alone" {
+        # only the folders that existed before this build started are rotated
+        $script:BuilderSource | Should Match '\$script:BuilderStartTime'
+        $script:BuilderSource | Should Match '\$_\.LastWriteTime\s+-lt\s+\$script:BuilderStartTime'
+    }
+
+    It "the physical debloat phase reports the errors of a failed engine run" {
+        # the errors of the engine are the only place that says which target did not go
+        # through, and they were only read when the engine exited with 0
+        $phase = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\09-physical-debloat.ps1"))
+        $phase | Should Match '\$physErrors\s*=\s*@\(\)'
+        $phase | Should Match '\[ERROR\]\s+\$physError'
+        $phase | Should Match 'The engine reported:'
+    }
+}
+
 Describe "WinEase builder - upstream registry additions (sync 2026-10-22)" {
     BeforeAll {
         $script:RegistryPhasePath = Join-Path $script:RepoRoot "phases\10-registry.ps1"
