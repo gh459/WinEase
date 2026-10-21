@@ -900,7 +900,7 @@ function Update-WinEaseGuiSources {
 
 # Detected Windows 11 media drives and ISO files (shared by the WinForms and WinUI 3 windows)
 function Get-WinEaseGuiSourceCandidates {
-    $detectedSources = @()
+    $detectedSources = [System.Collections.Generic.List[string]]::new()
     foreach ($psd in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
         if (-not $psd.Root) { continue }
         $r = $psd.Root.TrimEnd('\')
@@ -909,9 +909,9 @@ function Get-WinEaseGuiSourceCandidates {
         $vol = Get-Volume -DriveLetter ($r.TrimEnd(':')) -ErrorAction SilentlyContinue
         $volLabel = if ($vol -and $vol.FileSystemLabel) { " [$($vol.FileSystemLabel)]" } else { "" }
         if ((Test-Path -LiteralPath $wim) -and ((Get-Item -LiteralPath $wim).Length -gt 500MB)) {
-            $detectedSources += "$r\$volLabel (Windows 11 Media - install.wim)"
+            $detectedSources.Add("$r\$volLabel (Windows 11 Media - install.wim)")
         } elseif ((Test-Path -LiteralPath $esd) -and ((Get-Item -LiteralPath $esd).Length -gt 500MB)) {
-            $detectedSources += "$r\$volLabel (Windows 11 Media - install.esd)"
+            $detectedSources.Add("$r\$volLabel (Windows 11 Media - install.esd)")
         }
     }
     $desktopDir = Join-Path -Path $env:USERPROFILE -ChildPath "Desktop"
@@ -920,7 +920,7 @@ function Get-WinEaseGuiSourceCandidates {
         if (Test-Path -LiteralPath $p) {
             $foundIsos = Get-ChildItem -Path $p -Filter "*.iso" -File -ErrorAction SilentlyContinue |
                 Where-Object { $_.Length -gt 3GB -and ($_.Name -like "*Win11*" -or $_.Name -like "*Windows11*" -or $_.Name -like "*26300*" -or $_.Name -like "*24H2*") -and $_.Name -notlike "*WinEase*" }
-            foreach ($iso in $foundIsos) { $detectedSources += $iso.FullName }
+            foreach ($iso in $foundIsos) { $detectedSources.Add($iso.FullName) }
         }
     }
     return ,$detectedSources
