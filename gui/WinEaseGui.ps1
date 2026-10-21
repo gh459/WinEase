@@ -1768,7 +1768,7 @@ function New-WinEaseMigrationActionsGroup {
             # The custom paths of the backup are only restored to the locations that are
             # listed in the custom path box: the manifest alone never decides where a
             # file is written to.
-            $allowed = @($g.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            $allowed = @(($g.CustomPaths.Text -split "`n").ForEach({ $_.Trim() }).Where({ $_ }))
             if ($allowed.Count -gt 0) { $ra['AllowedCustomPaths'] = $allowed }
             if ($retry) { $ra['RetryFailedOnly'] = $true }
             $o = Invoke-WinEaseGuiMigrationJob -Button $btn -Form $f -RepoRoot $script:WinEaseGuiRepoRoot -Arguments $ra -Script 'param($a) Start-WinEaseMigrationRestore @a'
