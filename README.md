@@ -542,6 +542,9 @@ WinEase/
   - [Bloatynosy](https://github.com/builtbybel/Bloatynosy) - Windows 11 feature debloater and AI manager by Builtbybel
   - [ReviOS & Revision Tool](https://github.com/meetrevision) - Low-latency OS playbook & standalone performance optimizer
   - [AtlasOS](https://github.com/atlas-os/atlas) - Open-source gaming & low-latency Windows modification playbook
+  - [Win11Debloat](https://github.com/raphire/win11debloat) - Lightweight PowerShell script for removing preinstalled apps and disabling telemetry by Raphire
+  - [Windows Defender Remover](https://github.com/ionuttbara/windows-defender-remover) - Script for removing Windows Defender and related components by ionuttbara
+  - [privacy.sexy](https://github.com/undergroundwires/privacy.sexy) - Open-source privacy and security hardening script generator by undergroundwires
 - **Contributors:**
   - [Tinnitus97](https://github.com/Tinnitus97) (PR #6: Universal language support, robocopy WinSxS fix)
   - Community bug reports and feature requests from [nano11 Issues](https://github.com/ntdevlabs/nano11/issues)
