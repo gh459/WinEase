@@ -429,6 +429,16 @@ Use either method below (GUI or single-line command) to update the registry:
 
 ---
 
+## 📝 Local Fork Revision Notes (2026-10-21)
+
+- **Custom scripts are verified before they run**: a script runs only when its SHA-256 matches the manifest. A missing or malformed manifest now refuses to run instead of running everything (`lib/WinEaseCustomScriptIntegrity.ps1`).
+- **Unattend file is composed**: `autounattend.xml` is built from a base plus fragments (`config/unattend-fragments.psd1`, `lib/WinEaseUnattendComposer.ps1`), which fixes the arm64 empty-answer-file case and the BypassNRO setting.
+- **Advanced Debloat**: the engine column only offers engines that can remove the target, and forced physical deletion now also takes ownership and grants the delete right.
+- **Safer defaults**: security options (e.g. `RemoveDefender`) default to conservative values; the `none` preset means no removals.
+- **Migration hardening**: restore no longer writes outside its target or through junctions, and corrupt or empty manifests fail instead of reporting success.
+- **Japanese GUI strings** are fixed (previously garbled).
+- **Release packaging**: `.gitattributes` excludes `.git*`, `.github/` and `.jules/` from `git archive` source packages.
+
 ## 📝 Local Fork Revision Notes (2026-10-17)
 
 This working copy carries the following changes on top of the upstream fork:
@@ -473,7 +483,10 @@ WinEase-main/
 │   ├── WinEaseReport.ps1       # HTML build report (WinEase_report.html)
 │   ├── WinEaseResume.ps1       # Resume-ISO mode and phase checkpoints
 │   ├── WinEaseSelfTest.ps1     # Self-test suite (loaded only for -TestSelf)
-│   └── WinEaseExtensions.ps1   # User extensibility engine (user tweaks, presets, custom scripts, config diff, recovery readiness)
+│   ├── WinEaseExtensions.ps1   # User extensibility engine (user tweaks, presets, custom scripts, config diff, recovery readiness)
+│   ├── WinEaseDebloat.ps1      # Advanced Debloat engine (PowerShell / Rust execution engine and per-target handlers)
+│   ├── WinEaseCustomScriptIntegrity.ps1  # SHA-256 manifest check for custom scripts (fail-closed)
+│   └── WinEaseUnattendComposer.ps1       # Composes autounattend.xml from base + fragments
 ├── gui/
 │   ├── WinEaseGui.ps1          # Classic WinForms GUI, one function per tab (loaded only for -GUI / menu [7]); the migrator window reuses its parts
 │   ├── WinEaseWinUiHost.ps1    # Starts the WinUI 3 window and answers its requests (JSON lines over stdin/stdout)
@@ -481,7 +494,10 @@ WinEase-main/
 ├── phases/                    # 18 build phases (dot-sourced by orchestrator)
 │   └── 01-environment.ps1 ... 18-iso.ps1   # 09 has two files: 09-physical-debloat.ps1 and 09-winsxs.ps1
 ├── config/
-│   ├── tweaks.psd1            # Single source of truth for every tweak/component setting and CLI switch pair
+│   ├── schema.psd1            # Single source of truth for every tweak/component setting and CLI switch pair
+│   ├── presets.psd1           # Built-in build presets (data, not code)
+│   ├── unattend-fragments.psd1 # Fragments composed into autounattend.xml
+│   ├── ui-strings/            # GUI strings (en.json, ja.json)
 │   ├── dependencies.psd1      # Dependency & feature-impact catalog (conflicts, impacts, unknowns)
 │   ├── WinEase.config.schema.json  # JSON Schema for profile validation
 │   └── user/                  # User-edited files (all optional)
