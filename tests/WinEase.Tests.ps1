@@ -841,6 +841,44 @@ Describe "WinEase helpers - BuildContext advanced debloat lists" {
     }
 }
 
+Describe "WinEase helpers - Test-WinEaseAbsoluteLocalPath" {
+    BeforeAll {
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+    }
+
+    It "returns true for valid absolute local drive paths with backslashes or forward slashes" {
+        Test-WinEaseAbsoluteLocalPath -Path "C:\Windows" | Should Be $true
+        Test-WinEaseAbsoluteLocalPath -Path "C:\Windows\System32\drivers" | Should Be $true
+        Test-WinEaseAbsoluteLocalPath -Path "D:/Data/Subfolder" | Should Be $true
+    }
+
+    It "returns true for valid UNC share paths" {
+        Test-WinEaseAbsoluteLocalPath -Path "\\server\share" | Should Be $true
+        Test-WinEaseAbsoluteLocalPath -Path "\\server\share\subfolder\file.txt" | Should Be $true
+        Test-WinEaseAbsoluteLocalPath -Path "//server/share/file.txt" | Should Be $true
+        Test-WinEaseAbsoluteLocalPath -Path "\\192.168.1.100\Public" | Should Be $true
+    }
+
+    It "returns false for null, empty, or whitespace path" {
+        Test-WinEaseAbsoluteLocalPath -Path $null | Should Be $false
+        Test-WinEaseAbsoluteLocalPath -Path "" | Should Be $false
+        Test-WinEaseAbsoluteLocalPath -Path "   " | Should Be $false
+    }
+
+    It "returns false for relative paths, drive-relative paths, and root-relative paths" {
+        Test-WinEaseAbsoluteLocalPath -Path "relative\path\file.txt" | Should Be $false
+        Test-WinEaseAbsoluteLocalPath -Path "C:Windows" | Should Be $false
+        Test-WinEaseAbsoluteLocalPath -Path "\Windows\System32" | Should Be $false
+        Test-WinEaseAbsoluteLocalPath -Path "/Windows/System32" | Should Be $false
+    }
+
+    It "returns false for incomplete UNC paths" {
+        Test-WinEaseAbsoluteLocalPath -Path "\\server" | Should Be $false
+        Test-WinEaseAbsoluteLocalPath -Path "\\server\" | Should Be $false
+    }
+}
+
 Describe "WinEase helpers - ConvertTo-WinEaseNormalizedPath" {
     BeforeAll {
         $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
