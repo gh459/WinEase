@@ -623,6 +623,20 @@ public sealed partial class MainWindow : Window
             boxes.Add(cb);
             row.Children.Add(cb);
 
+            // A target with a single engine has nothing to pick: show its name instead of a dead combo
+            if (DebloatEnginesFor(value).Count <= 1)
+            {
+                row.Children.Add(new TextBlock
+                {
+                    Text = DebloatEngineOf(value),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(12, 0, 0, 0),
+                    Foreground = Res("TextFillColorSecondaryBrush"),
+                });
+                panel.Children.Add(row);
+                continue;
+            }
+
             var combo = new ComboBox { MinWidth = 120, HorizontalAlignment = HorizontalAlignment.Left };
             foreach (string eng in DebloatEnginesFor(value)) combo.Items.Add(eng);
             combo.SelectedIndex = 0;

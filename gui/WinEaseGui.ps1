@@ -752,7 +752,11 @@ function New-WinEaseDebloatGrid {
         $row.Tag = $item
         $row.Cells['On'].Value = ($Selected -contains $item)
         $row.Cells['Target'].Value = (Get-WinEaseDebloatItemText -Item $item)
-        $row.Cells['Engine'].Value = (Get-WinEaseDebloatEngine -Item $item -EngineDefs $EngineDefs -EngineSelection $EngineSelection)
+        # A target with a single engine has nothing to pick: plain text instead of a dead drop-down
+        if ($EngineDefs.Contains($item) -and @($EngineDefs[$item].Engines).Count -le 1) {
+            $row.Cells['Engine'] = New-Object System.Windows.Forms.DataGridViewTextBoxCell
+        }
+        $row.Cells['Engine'].Value =(Get-WinEaseDebloatEngine -Item $item -EngineDefs $EngineDefs -EngineSelection $EngineSelection)
         $row.Cells['Target'].ToolTipText = $item
     }
 
