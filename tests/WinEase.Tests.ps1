@@ -694,6 +694,79 @@ Describe "WinEase helpers - configuration conflict resolution (Test-WinEaseConfi
     }
 }
 
+Describe "WinEase helpers - Resolve-WinEaseConfigForDiff" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+    }
+
+    It "resolves configuration from a valid JSON file" {
+        $tmp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "test_config_valid_$([System.Guid]::NewGuid().ToString('N')).json"
+        try {
+            '{"ComponentA": true, "TweakSettings": {"DisableUAC": true}}' | Set-Content -LiteralPath $tmp -Encoding UTF8
+            $resolved = Resolve-WinEaseConfigForDiff -InputConfig $tmp -NameHint "HintName"
+            $resolved.Data | Should Not Be $null
+            $resolved.Data.ComponentA | Should Be $true
+            $resolved.Name | Should Match '^test_config_valid_'
+        } finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "handles malformed JSON file gracefully by returning empty data and name hint" {
+        $tmp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "test_config_bad_$([System.Guid]::NewGuid().ToString('N')).json"
+        try {
+            '{ invalid json content ...' | Set-Content -LiteralPath $tmp -Encoding UTF8
+            $resolved = Resolve-WinEaseConfigForDiff -InputConfig $tmp -NameHint "BadJsonHint"
+            $resolved.Data.Count | Should Be 0
+            $resolved.Name | Should Be "BadJsonHint"
+        } finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "resolves a built-in preset when string matches script:BuiltInPresets" {
+        $script:BuiltInPresets = @{ "gaming_test" = @{ "DisableWU" = $true } }
+        try {
+            $resolved = Resolve-WinEaseConfigForDiff -InputConfig "gaming_test" -NameHint "FallbackHint"
+            $resolved.Data.DisableWU | Should Be $true
+            $resolved.Name | Should Be "gaming_test"
+        } finally {
+            $script:BuiltInPresets = $null
+        }
+    }
+
+    It "handles non-existent preset or string path by returning empty data and string as name" {
+        $resolved = Resolve-WinEaseConfigForDiff -InputConfig "NonExistentPresetName" -NameHint "UnusedHint"
+        $resolved.Data.Count | Should Be 0
+        $resolved.Name | Should Be "NonExistentPresetName"
+    }
+
+    It "resolves configuration from a hashtable or IDictionary" {
+        $dict = @{ "TweakSettings" = @{ "DisableDefender" = $true } }
+        $resolved = Resolve-WinEaseConfigForDiff -InputConfig $dict -NameHint "MyHashtable"
+        $resolved.Data.TweakSettings.DisableDefender | Should Be $true
+        $resolved.Name | Should Be "MyHashtable"
+    }
+
+    It "resolves configuration from a PSCustomObject" {
+        $obj = [PSCustomObject]@{ OptionX = $true }
+        $resolved = Resolve-WinEaseConfigForDiff -InputConfig $obj -NameHint "MyObject"
+        $resolved.Data.OptionX | Should Be $true
+        $resolved.Name | Should Be "MyObject"
+    }
+
+    It "falls back to default name Config when NameHint is not supplied for object or null input" {
+        $dict = @{ "OptionY" = $false }
+        $resolved = Resolve-WinEaseConfigForDiff -InputConfig $dict
+        $resolved.Name | Should Be "Config"
+
+        $nullResolved = Resolve-WinEaseConfigForDiff -InputConfig $null
+        $nullResolved.Name | Should Be "Config"
+        $nullResolved.Data.Count | Should Be 0
+    }
+}
+
 Describe "WinEase helpers - build resume integrity (Test-WinEaseResumeIntegrity)" {
     BeforeAll {
         if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
