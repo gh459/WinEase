@@ -554,6 +554,55 @@ Describe "WinEase helpers - process token privileges (Enable-WinEaseTokenPrivile
     }
 }
 
+Describe "Get-WinEaseHtmlTemplate HTML report template loader" {
+    BeforeAll {
+        . (Join-Path $script:RepoRoot "lib\WinEaseReport.ps1")
+    }
+
+    It "loads template from an existing custom TemplatePath" {
+        $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("template_test_" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+        $customTemplateFile = Join-Path $tempDir "custom_template.html"
+        $customContent = '<html><body><h1>Custom Template {{TITLE}}</h1></body></html>'
+        [System.IO.File]::WriteAllText($customTemplateFile, $customContent, [System.Text.Encoding]::UTF8)
+
+        try {
+            $template = Get-WinEaseHtmlTemplate -TemplatePath $customTemplateFile
+            $template | Should Be $customContent
+        } finally {
+            if (Test-Path -LiteralPath $tempDir) {
+                Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "falls back to default template when custom TemplatePath does not exist" {
+        $nonExistentPath = Join-Path ([System.IO.Path]::GetTempPath()) ("nonexistent_template_" + [guid]::NewGuid().ToString('N') + ".html")
+        $template = Get-WinEaseHtmlTemplate -TemplatePath $nonExistentPath
+        $template | Should Not BeNullOrEmpty
+        $template | Should Match '\{\{TITLE\}\}'
+    }
+
+    It "falls back to default template when TemplatePath is null, empty, or whitespace" {
+        $templateNull = Get-WinEaseHtmlTemplate -TemplatePath $null
+        $templateNull | Should Not BeNullOrEmpty
+        $templateNull | Should Match '\{\{TITLE\}\}'
+
+        $templateEmpty = Get-WinEaseHtmlTemplate -TemplatePath ""
+        $templateEmpty | Should Not BeNullOrEmpty
+
+        $templateWS = Get-WinEaseHtmlTemplate -TemplatePath "   "
+        $templateWS | Should Not BeNullOrEmpty
+    }
+
+    It "loads repository report.html template when templates/report.html exists" {
+        $template = Get-WinEaseHtmlTemplate
+        $template | Should Not BeNullOrEmpty
+        $template | Should Match '\{\{TITLE\}\}'
+        $template | Should Match '\{\{TIMESTAMP\}\}'
+    }
+}
+
 Describe "WinEase helpers - Repair-WinEaseDeniedAcl" {
     BeforeAll {
         if (-not (Get-Command -Name Repair-WinEaseDeniedAcl -ErrorAction SilentlyContinue)) {
@@ -2407,7 +2456,8 @@ Describe "User Extensibility Engine (lib/WinEaseExtensions.ps1)" {
         $diff.ReferenceName | Should Not Be $null
     }
     It "Get-WinEaseCustomScriptMetadata parses metadata headers" {
-        $tmp = Join-Path $env:TEMP "test_script_meta.ps1"
+        $tempPath = if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() }
+        $tmp = Join-Path $tempPath "test_script_meta.ps1"
         "# @WinEase-Id: TestScript`n# @WinEase-Stage: PreBuild`n# @WinEase-Order: 42`n# @WinEase-OnError: Warn`n# @WinEase-Description: Test desc`nWrite-Host 'hi'" | Set-Content $tmp -Encoding UTF8
         $m = Get-WinEaseCustomScriptMetadata -ScriptPath $tmp
         $m.Id | Should Be 'TestScript'
