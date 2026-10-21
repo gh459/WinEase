@@ -431,6 +431,8 @@ Use either method below (GUI or single-line command) to update the registry:
 
 ## 📝 Local Fork Revision Notes (2026-10-21)
 
+Release: [v2.1.0-fork.20261021](https://github.com/gh459/WinEase/releases/tag/v2.1.0-fork.20261021) (pre-release, source zip without `.git`/`.github`/`.jules`). Full list: [CHANGELOG.md](CHANGELOG.md).
+
 - **Custom scripts are verified before they run**: a script runs only when its SHA-256 matches the manifest. A missing or malformed manifest now refuses to run instead of running everything (`lib/WinEaseCustomScriptIntegrity.ps1`).
 - **Unattend file is composed**: `autounattend.xml` is built from a base plus fragments (`config/unattend-fragments.psd1`, `lib/WinEaseUnattendComposer.ps1`), which fixes the arm64 empty-answer-file case and the BypassNRO setting.
 - **Advanced Debloat**: the engine column only offers engines that can remove the target, and forced physical deletion now also takes ownership and grants the delete right.
