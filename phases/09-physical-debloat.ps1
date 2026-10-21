@@ -20,9 +20,10 @@ if (-not $hasStandardItems -and -not $hasExperimentalItems) {
 
 # Every selected target, in list order and without duplicates. The engine binding decides
 # which engine handles a target, so both lists are handled by the same dispatch.
-$allSelectedItems = @()
-if ($hasStandardItems) { $allSelectedItems += @($script:advancedDebloatStandard) }
-if ($hasExperimentalItems) { $allSelectedItems += @($script:advancedDebloatExperimental) }
+$allSelectedItems = @(
+    if ($hasStandardItems) { $script:advancedDebloatStandard }
+    if ($hasExperimentalItems) { $script:advancedDebloatExperimental }
+)
 $allSelectedItems = @($allSelectedItems | Select-Object -Unique)
 
 # --- Execution engine selection (PowerShell <-> Rust) ---------------------------------
