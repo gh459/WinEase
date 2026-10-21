@@ -291,9 +291,29 @@ function Get-WinEaseMigrationSizeEstimate {
         $p = Expand-WinEaseMigrationPath -RawPath $fp
         if (Test-Path -LiteralPath $p) {
             try {
-                $items = Get-ChildItem -LiteralPath $p -Recurse -File -ErrorAction SilentlyContinue
-                $totalFiles += $items.Count
-                foreach ($it in $items) { $totalBytes += $it.Length }
+                if (Test-Path -LiteralPath $p -PathType Leaf) {
+                    $item = Get-Item -LiteralPath $p -ErrorAction SilentlyContinue
+                    if ($item) {
+                        $totalFiles++
+                        $totalBytes += $item.Length
+                    }
+                } else {
+                    if ('System.IO.EnumerationOptions' -as [type]) {
+                        $di = New-Object System.IO.DirectoryInfo($p)
+                        $enumOptions = New-Object System.IO.EnumerationOptions
+                        $enumOptions.RecurseSubdirectories = $true
+                        $enumOptions.IgnoreInaccessible = $true
+                        $files = $di.EnumerateFiles('*', $enumOptions)
+                        foreach ($fi in $files) {
+                            $totalFiles++
+                            $totalBytes += $fi.Length
+                        }
+                    } else {
+                        $items = Get-ChildItem -LiteralPath $p -Recurse -File -ErrorAction SilentlyContinue
+                        $totalFiles += $items.Count
+                        foreach ($it in $items) { $totalBytes += $it.Length }
+                    }
+                }
             } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         }
     }
