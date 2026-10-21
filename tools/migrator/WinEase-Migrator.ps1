@@ -397,9 +397,10 @@ function Switch-MigratorLanguage {
     $g = $Form.Tag
     if (-not $Language) { $Language = "$($g.PendingLanguage)" }
     if ($script:WinEaseUiLanguages -notcontains $Language -or $Language -eq $script:WinEaseUiLanguage) { return }
-    $folders = @()
-    for ($i = 0; $i -lt $g.Folders.Items.Count; $i++) { $folders += , @("$($g.Folders.Items[$i])", $g.Folders.GetItemChecked($i)) }
-    $checkedRules = @(); foreach ($lb in @($g.GameRules, $g.AppRules)) { foreach ($i in $lb.CheckedItems) { $checkedRules += "$i" } }
+    $folders = [System.Collections.Generic.List[object]]::new()
+    for ($i = 0; $i -lt $g.Folders.Items.Count; $i++) { $folders.Add(@("$($g.Folders.Items[$i])", $g.Folders.GetItemChecked($i))) }
+    $checkedRules = [System.Collections.Generic.List[string]]::new()
+    foreach ($lb in @($g.GameRules, $g.AppRules)) { foreach ($i in $lb.CheckedItems) { $checkedRules.Add("$i") } }
     $state = @{
         BackupRoot = $g.BackupRoot.Text; RestoreRoot = $g.RestoreRoot.Text; Policy = $g.Policy.SelectedIndex
         ExcludeSecrets = [bool]$g.ExcludeSecrets.Checked; Folders = $folders; Rules = $checkedRules
