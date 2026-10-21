@@ -203,7 +203,10 @@ public sealed partial class MainWindow : Window
         NavigationViewItem? selected = null;
         foreach (var (tag, text, glyph) in items)
         {
-            var item = new NavigationViewItem { Content = CleanTabText(text), Tag = tag, Icon = new FontIcon { Glyph = glyph } };
+            string cleanText = CleanTabText(text);
+            var item = new NavigationViewItem { Content = cleanText, Tag = tag, Icon = new FontIcon { Glyph = glyph } };
+            AutomationProperties.SetName(item, cleanText);
+            ToolTipService.SetToolTip(item, cleanText);
             Nav.MenuItems.Add(item);
             if (tag == _page) selected = item;
         }
@@ -438,6 +441,7 @@ public sealed partial class MainWindow : Window
         // Preset
         PageHost.Children.Add(Section(_s.Get("Media.Group.Preset")));
         var preset = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+        AutomationProperties.SetName(preset, _s.Get("Media.Group.Preset").Trim());
         foreach (string k in PresetLabelKeys) preset.Items.Add(_s.Get(k));
         preset.SelectedIndex = _presetIndex;
         preset.SelectionChanged += (_, _) =>
@@ -577,6 +581,7 @@ public sealed partial class MainWindow : Window
         allRow.Children.Add(new TextBlock { Text = _s.Get("Debloat.Engine.All"), VerticalAlignment = VerticalAlignment.Center });
         var allCombo = new ComboBox { MinWidth = 140, SelectedIndex = 0 };
         ToolTipService.SetToolTip(allCombo, _s.Get("Debloat.Engine.Help"));
+        AutomationProperties.SetName(allCombo, _s.Get("Debloat.Engine.All").TrimEnd(':', '：', ' '));
         allCombo.Items.Add("PowerShell");
         allCombo.Items.Add("Rust");
         allCombo.SelectionChanged += (_, _) =>
@@ -617,7 +622,8 @@ public sealed partial class MainWindow : Window
         {
             string value = item;
             var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 0, 0, 2) };
-            var cb = new CheckBox { Content = _s.Get("Debloat:" + item, item), IsChecked = selected.Contains(item), MinWidth = 380 };
+            string translatedItem = _s.Get("Debloat:" + item, item);
+            var cb = new CheckBox { Content = translatedItem, IsChecked = selected.Contains(item), MinWidth = 380 };
             cb.Checked += (_, _) => { selected.Add(value); UpdateDebloatEngineState(value); };
             cb.Unchecked += (_, _) => { selected.Remove(value); UpdateDebloatEngineState(value); };
             boxes.Add(cb);
@@ -627,6 +633,7 @@ public sealed partial class MainWindow : Window
             foreach (string eng in DebloatEnginesFor(value)) combo.Items.Add(eng);
             combo.SelectedIndex = 0;
             combo.SelectionChanged += (_, _) => { if (combo.SelectedIndex >= 0) SetDebloatEngine(value, (string)combo.SelectedItem, combo); };
+            AutomationProperties.SetName(combo, $"{translatedItem} - {_s.Get("Debloat.Column.Engine", "Engine")}");
             row.Children.Add(combo);
             _debloatEngineRows[value] = (combo, cb);
             panel.Children.Add(row);
@@ -775,6 +782,7 @@ public sealed partial class MainWindow : Window
         var custom = new StackPanel { Spacing = 6 };
         custom.Children.Add(new TextBlock { Text = _s.Get("Mig.Label.CustomPaths").Trim() });
         var paths = new TextBox { Text = _migCustomPaths, AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap, MinHeight = 90, FontFamily = new FontFamily("Cascadia Mono, Consolas") };
+        AutomationProperties.SetName(paths, _s.Get("Mig.Label.CustomPaths").TrimEnd(':', '：', ' '));
         paths.TextChanged += (_, _) => _migCustomPaths = paths.Text;
         custom.Children.Add(paths);
         var customButtons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
