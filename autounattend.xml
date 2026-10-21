@@ -389,9 +389,10 @@ exit 0;
         $global:LASTEXITCODE = 0;
         $prevEap = $ErrorActionPreference;
         $ErrorActionPreference = 'Continue';
+        $escapedScriptPath = $scriptPath -replace "'", "''";
         try {
           $output = switch ($ext) {
-            '.ps1' { &amp; "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -NoProfile -NonInteractive -Command "&amp; { `$ErrorActionPreference = 'Stop'; &amp; '$scriptPath'; if (`$null -ne `$LASTEXITCODE -and `$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE } }" 2&gt;&amp;1 }
+            '.ps1' { &amp; "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -NoProfile -NonInteractive -Command "&amp; { `$ErrorActionPreference = 'Stop'; &amp; '$escapedScriptPath'; if (`$null -ne `$LASTEXITCODE -and `$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE } }" 2&gt;&amp;1 }
             '.reg' { &amp; "$env:SystemRoot\System32\reg.exe" import "$scriptPath" 2&gt;&amp;1 }
             '.cmd' { &amp; "$env:SystemRoot\System32\cmd.exe" /c "`"$scriptPath`"" 2&gt;&amp;1 }
             '.bat' { &amp; "$env:SystemRoot\System32\cmd.exe" /c "`"$scriptPath`"" 2&gt;&amp;1 }
@@ -657,10 +658,11 @@ $scripts = @(
 					$global:LASTEXITCODE = 0;
 					$prevEap = $ErrorActionPreference;
 					$ErrorActionPreference = 'Continue';
+					$escapedScriptPath = $scriptPath -replace "'", "''";
 					try {
 						$output = switch ($ext) {
 							'.ps1' {
-								&amp; "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -NoProfile -NonInteractive -Command "&amp; { `$ErrorActionPreference = 'Stop'; &amp; '$scriptPath'; if (`$null -ne `$LASTEXITCODE -and `$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE } }" 2&gt;&amp;1
+								&amp; "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -NoProfile -NonInteractive -Command "&amp; { `$ErrorActionPreference = 'Stop'; &amp; '$escapedScriptPath'; if (`$null -ne `$LASTEXITCODE -and `$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE } }" 2&gt;&amp;1
 							}
 							'.bat' {
 								&amp; "$env:SystemRoot\System32\cmd.exe" /c "`"$scriptPath`"" 2&gt;&amp;1
