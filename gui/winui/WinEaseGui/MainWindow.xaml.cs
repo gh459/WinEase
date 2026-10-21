@@ -613,7 +613,8 @@ public sealed partial class MainWindow : Window
         PageHost.Children.Add(bar);
 
         var panel = new StackPanel { Spacing = 0 };
-        foreach (string item in items.Distinct())
+        // Targets with an engine choice first, then the single-engine ones (original order kept within each)
+        foreach (string item in items.Distinct().OrderBy(i => DebloatEnginesFor(i).Count > 1 ? 0 : 1))
         {
             string value = item;
             var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 0, 0, 2) };

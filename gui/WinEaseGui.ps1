@@ -746,7 +746,10 @@ function New-WinEaseDebloatGrid {
     [void]$grid.Columns.Add($colTarget)
     [void]$grid.Columns.Add($colEngine)
 
-    foreach ($item in $Items) {
+    # Targets with an engine choice first, then the single-engine ones (original order kept within each)
+    $isSingle = { param($i) $EngineDefs.Contains($i) -and @($EngineDefs[$i].Engines).Count -le 1 }
+    $ordered = @($Items | Where-Object { -not (& $isSingle $_) }) + @($Items | Where-Object { & $isSingle $_ })
+    foreach ($item in $ordered) {
         $idx = $grid.Rows.Add()
         $row = $grid.Rows[$idx]
         $row.Tag = $item
