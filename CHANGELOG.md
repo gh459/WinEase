@@ -3,6 +3,111 @@
 All notable changes to this fork are documented here. Versions follow the upstream
 WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
+## Unreleased (local fork, 2026-10-21) - every Advanced Debloat target can be removed by the engine it offers
+
+### Fixed
+- **The engine column of the Advanced Debloat tab offered engines that could not
+  remove the target.** A target declares the engines that may remove it
+  (`config\schema.psd1` -> `DebloatEngines` -> `Engines`), and the window locks the
+  engine cell when a target supports only one engine. Several targets advertised both
+  engines although only one of them did the work:
+  - The paging files (`hiberfil.sys`, `pagefile.sys`, `swapfile.sys`) are created by
+    Windows on the running system and are **not part of the mounted image**, so the Rust
+    engine could only ever report "file not found". The three targets are now the safe
+    engine's alone, and the Rust engine lost the three keys and the three targets.
+  - The services of the "service + binary" targets (Print Spooler, Bluetooth stack,
+    Remote Desktop host, touch/pen/ink, BitLocker) were only disabled when the safe
+    engine ran, so the forced physical deletion of the binaries left a service behind
+    whose file was gone. The services are now disabled for the target itself, no matter
+    which engine removes the payload.
+  - The temp files of the target "Physical: Temp files" were never removed by the safe
+    engine: phase 08 asked for an item name that does not exist ("Remove Temp files
+    [varies]"), so the check never matched. The name is correct now.
+  - The non-essential fonts and the non-Japanese input method engines were only removed
+    by their option, not by the target of the Advanced Debloat tab. Both are now an
+    explicit trigger of phase 08.
+  - The accessibility tools were only blocked when the option
+    `DisableAccessibilityTools` was on, not when the target of the Advanced Debloat tab
+    was selected. Phase 11 asks the option mechanism now, so the target switches the
+    IFEO block on as well.
+  - The swap file is created together with the paging file, so the target now stages
+    the same post-install switch as the page file (there is no separate switch for it).
+- **Two toggles that no engine could remove are gone.** "Remove WinRE (reagentc /
+  disable + file delete)" did nothing: the post-install cleanup of the recovery
+  environment is done by the `KeepRecoveryEnv` option, and the Rust engine must not
+  touch `winre.wim` (the setup needs it for the SafeOS staging). "Remove Windows Store
+  cache" did nothing either: the cache lives in the user profile and does not exist in
+  the offline image. Both were removed from the schema, from the window, from the
+  dependency catalog and from the Japanese table.
+
+### Added
+- Six tests that keep the engine table honest: every target that offers the Rust
+  engine has a key the binary accepts, every target that offers the PowerShell engine is
+  removed by the shared library or by the phase that owns it, the paging files belong to
+  the safe engine alone, the swap file is removed with the page file, the services of
+  the service targets are disabled on both engines, and a target that no engine can
+  remove does not exist.
+
+## Unreleased (local fork, 2026-10-21) - the Japanese GUI strings were read with the wrong code page
+
+### Fixed
+- **Seven Japanese strings of the GUI were garbled.** The strings of
+  `config\ui-strings\ja.json` had been read with Shift-JIS instead of UTF-8 at some
+  point, so the window showed the mojibake instead of the text:
+  | Key | The text the GUI shows now |
+  |---|---|
+  | `Debloat.Column.Engine` | エンジン |
+  | `Debloat.Column.Target` | 対象 |
+  | `Debloat.Engine.All` | 全対象のエンジン: |
+  | `Tweak.RemoveLanguageJaJP.Description` | 日本語の言語パックを削除できる状態にする (OFF = 保護して残す) |
+  | `Tweak.RemoveLanguageKoKR.Description` | 韓国語の言語パックを削除できる状態にする (OFF = 保護して残す) |
+  | `Tweak.RemoveLanguageZhCN.Description` | 簡体字中国語の言語パックを削除できる状態にする (OFF = 保護して残す) |
+  | `Tweak.RemoveLanguageZhTW.Description` | 繁体字中国語の言語パックを削除できる状態にする (OFF = 保護して残す) |
+  The original text was recovered from the mangled bytes (the mis-decoded byte stream
+  was decoded again and compared against the candidates), not rewritten, so the wording
+  is the one the author wrote. Two tests keep the table free of that kind of damage:
+  one rejects every string that carries the fingerprint of a wrong code page (the
+  halfwidth katakana and the C1 controls), the other pins the seven texts above.
+
+## Unreleased (local fork, 2026-10-21) - forced physical deletion for the rest of the components
+
+### Added
+- **The components that had no forced physical deletion now have one.** The Rust engine
+  is the forced engine of the Advanced Debloat tab: it takes the ownership of a path
+  and deletes the payload even when the file belongs to TrustedInstaller. Three
+  components were still removed by the safe engine only, so their payload stayed in the
+  image:
+  | Target | Rust key | What the Rust engine removes |
+  |---|---|---|
+  | `Remove event logs [10-50MB]` | `physical_event_logs` | the log files of `Windows\System32\winevt\Logs` (the folder itself stays, the event log service needs it) |
+  | `Remove non-essential fonts (file delete) [50-100MB]` | `physical_fonts` | every font of `Windows\Fonts` that is not a system font, not a Japanese font and not a font of the primary language of the image |
+  | `Remove non-Japanese IME [5-15MB]` | `physical_ime` | the input method engine folders of the other languages (`CHS`, `CHT`, `KOR`); the Japanese engine and the engine of the primary language of the image stay |
+  The three targets keep the safe engine as their default, so a build that does not
+  select the Rust engine behaves exactly as before. The primary language of the image
+  reaches the binary through the new `primary_ime_lang` field of its configuration
+  file, so the Japanese and the own-language rendering never breaks.
+
+### Fixed
+- **The forced physical deletion of the Rust engine was not forced everywhere.** The
+  directories were removed with a bare `RemoveDirectoryW` whose result was discarded
+  (`let _ =`), so every component folder that is owned by TrustedInstaller survived the
+  removal and the run reported success anyway. The subdirectories and the directory
+  itself now use the same ladder as the files: the plain call, then the ownership and
+  the delete right, then the delete-on-close disposition of a handle.
+- **Taking the ownership did not grant the delete right.** The owner of an object only
+  gets `READ_CONTROL` and `WRITE_DAC` implicitly, so a component file with a
+  restrictive DACL still failed with `ERROR_ACCESS_DENIED` after the ownership was
+  taken. The engine now grants full control to the built-in Administrators group
+  (the existing ACEs are kept) before it retries the deletion.
+- **A read-only component file could not be deleted at all.** The read-only, hidden and
+  system attributes are now cleared before the deletion, and the delete-on-close step
+  uses `FILE_DISPOSITION_INFO_EX` with `FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE`
+  (the older `FILE_DISPOSITION_INFO` stays as the fallback).
+- **The Edge removal left the updater and the core of the browser in the image.** The
+  Rust target `physical_edge` now removes `Program Files (x86)\Microsoft\EdgeUpdate`
+  and `Program Files (x86)\Microsoft\EdgeCore` as well, the folders that the safe
+  engine already removed.
+
 ## Unreleased (local fork, 2026-10-21) - safety and quality pass
 
 ### Fixed

@@ -1955,8 +1955,6 @@ function Test-WinEaseDependencies {
     if ($Config -and $Config.ContainsKey('WSLSupport')) { $wsl = [bool]$Config['WSLSupport'] }
     $noHyp = $false
     if ($Config -and $Config.ContainsKey('NoHypervisor')) { $noHyp = [bool]$Config['NoHypervisor'] }
-    $keepRec = $false
-    if ($Config -and $Config.ContainsKey('KeepRecoveryEnv')) { $keepRec = [bool]$Config['KeepRecoveryEnv'] }
     $keepSearch = $false
     if ($Config -and $Config.ContainsKey('KeepSearchIndex')) { $keepSearch = [bool]$Config['KeepSearchIndex'] }
     $disableSearch = $false
@@ -1970,7 +1968,6 @@ function Test-WinEaseDependencies {
 
     $btRemoved = ($stdSelected -contains 'Remove Bluetooth stack (service + binary) [20-40MB]') -or ($expSelected -contains 'Physical: Bluetooth stack (complete removal) [~20-40MB]')
     $wslRemoved = ($stdSelected -contains 'Remove WSL / VM Platform [20-40MB]') -or ($expSelected -contains 'Physical: WSL / VM Platform (complete removal) [~20-40MB]') -or ($expSelected -contains 'Physical: Hyper-V / Virtualization stack [~200-400MB]')
-    $winreRemoved = ($stdSelected -contains 'Remove WinRE (reagentc /disable + file delete) [500-700MB]')
     $searchRemoved = ($expSelected -contains 'Physical: Cortana / Search (complete removal) [~100MB]') -or ($expSelected -contains 'Physical: Windows Search index (complete removal) [varies]')
 
     if ($wuKept -and $expSelected.Count -gt 0) {
@@ -1984,9 +1981,6 @@ function Test-WinEaseDependencies {
     }
     if ($wsl -and ($noHyp -or $wslRemoved)) {
         & $addConflict 'Component' 'WSLSupport' 'WSL support is enabled but hypervisor is disabled or WSL/Hyper-V removal is selected.' 'NoHypervisor / WSL removal'
-    }
-    if ($keepRec -and $winreRemoved) {
-        & $addConflict 'Component' 'KeepRecoveryEnv' 'Recovery environment is kept but WinRE removal is selected.' 'Remove WinRE'
     }
     if ($keepSearch -and ($disableSearch -or $searchRemoved)) {
         & $addConflict 'Component' 'KeepSearchIndex' 'Search indexing is kept but search disabling/removal is selected.' 'DisableWindowsSearchIndexing / search removal'

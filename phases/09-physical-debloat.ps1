@@ -149,6 +149,9 @@ if ($rustTargetItems.Count -gt 0) {
         mount_path   = "$scratchDir"
         log_path     = $resultLogPath
         experimental = $experimentalMap
+        # The primary input method language of the image: the Rust engine keeps the
+        # input method engine and the fonts of that language.
+        primary_ime_lang = "$script:primaryImeLang"
     }
 
     $configPath = Join-Path -Path $logDir -ChildPath "experimental-debloat.json"
