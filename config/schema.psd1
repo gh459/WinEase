@@ -486,15 +486,17 @@
     )
     DebloatEngines = @(
         # --- Standard targets (safe engine by default) ---
-        @{ Item = 'Remove WinRE (reagentc /disable + file delete) [500-700MB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '08-filesystem' }
         @{ Item = 'Remove PatchCache (dir delete) [200-500MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_patchcache'; Legacy = @('Physical: Installer cache PatchCache (complete removal) [varies]'); SupportsRustPhysical = $true; Phase = '08-filesystem' }
         @{ Item = 'Remove Delivery Optimization cache (dir delete) [100-500MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_delivery_optimization'; Legacy = @('Physical: Delivery Optimization (complete removal) [varies]'); SupportsRustPhysical = $true; Phase = '08-filesystem' }
         @{ Item = 'Remove non-Japanese language packs (DISM) [200-500MB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '06-fod' }
         @{ Item = 'Remove non-essential fonts (file delete) [50-100MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_fonts'; SupportsRustPhysical = $true; Phase = '08-filesystem' }
         @{ Item = 'WinSxS cleanup (/StartComponentCleanup /ResetBase) [1-3GB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '09-winsxs' }
-        @{ Item = 'Remove pagefile.sys (pagefile disable) [4-16GB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_pagefile'; Legacy = @('Physical: pagefile.sys (disable + delete) [4-16GB]'); SupportsRustPhysical = $true; Phase = '11-unattend' }
-        @{ Item = 'Remove hiberfil.sys (powercfg /h off) [4-16GB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_hiberfil'; Legacy = @('Physical: hiberfil.sys (disable + delete) [4-16GB]'); SupportsRustPhysical = $true; Phase = '11-unattend' }
-        @{ Item = 'Remove swapfile.sys (pagefile disable) [256MB-1GB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_swapfile'; Legacy = @('Physical: swapfile.sys (disable + delete) [256MB-1GB]'); SupportsRustPhysical = $true; Phase = '11-unattend' }
+        # The paging files are created by Windows on the running system and are not part
+        # of the mounted image, so the Rust engine can never delete them: the safe engine
+        # disables them after the setup (the post-install flag of phase 11).
+        @{ Item = 'Remove pagefile.sys (pagefile disable) [4-16GB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '11-unattend' }
+        @{ Item = 'Remove hiberfil.sys (powercfg /h off) [4-16GB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '11-unattend' }
+        @{ Item = 'Remove swapfile.sys (pagefile disable) [256MB-1GB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '11-unattend' }
         @{ Item = 'Remove Provisioned AppX (list-based) [100-300MB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '05-appx' }
         @{ Item = 'Remove Windows Media Player (component) [50-100MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_media_player'; Legacy = @('Physical: Windows Media Player (complete removal) [~50-100MB]'); SupportsRustPhysical = $true; Phase = '06-fod'  ; Option = 'RemoveMediaPlayerFeature' }
         @{ Item = 'Remove Remote Desktop host (service + binary) [30-50MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_rdp'; Legacy = @('Physical: Remote Desktop host (complete removal) [~30-50MB]'); SupportsRustPhysical = $true; Phase = '10-registry' }
@@ -506,7 +508,6 @@
         @{ Item = 'Remove non-Japanese IME [5-15MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_ime'; SupportsRustPhysical = $true; Phase = '08-filesystem' }
         @{ Item = 'Remove event logs [10-50MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_event_logs'; SupportsRustPhysical = $true; Phase = '08-filesystem'  ; Option = 'RemoveOfflineCacheFiles' }
         @{ Item = 'Remove crash dumps [varies]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_crash_dumps'; Legacy = @('Physical: Crash dumps (complete removal) [varies]'); SupportsRustPhysical = $true; Phase = '08-filesystem'  ; Option = 'RemoveOfflineCacheFiles' }
-        @{ Item = 'Remove Windows Store cache [varies]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '08-filesystem' }
         @{ Item = 'Remove Provisioning packages [5-10MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_provisioning'; Legacy = @('Physical: Provisioning packages (complete removal) [~5-10MB]'); SupportsRustPhysical = $true; Phase = '08-filesystem' }
         @{ Item = 'Remove Windows Sandbox [10-20MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_sandbox'; Legacy = @('Physical: Windows Sandbox (complete removal) [~10-20MB]'); SupportsRustPhysical = $true; Phase = '06-fod' }
         @{ Item = 'Remove WSL / VM Platform [20-40MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_wsl'; Legacy = @('Physical: WSL / VM Platform (complete removal) [~20-40MB]'); SupportsRustPhysical = $true; Phase = '06-fod' }

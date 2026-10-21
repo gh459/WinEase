@@ -34,9 +34,6 @@ pub const KNOWN_EXPERIMENTAL_KEYS: &[&str] = &[
     "physical_crash_dumps",
     "physical_help",
     "physical_temp_files",
-    "physical_hiberfil",
-    "physical_pagefile",
-    "physical_swapfile",
     "physical_patchcache",
     "physical_delivery_optimization",
     "physical_search_index",
@@ -63,6 +60,10 @@ pub const KNOWN_EXPERIMENTAL_KEYS: &[&str] = &[
     "physical_fonts",
     "physical_ime",
 ];
+// The paging files (hiberfil.sys, pagefile.sys, swapfile.sys) are not part of a
+// mounted image: Windows creates them on the running system. The safe engine disables
+// them after the setup (the post-install flag of phase 11), so the Rust engine must not
+// offer a target for them - it could only ever report "file not found".
 
 #[derive(Debug, Deserialize, Default, Clone)]
 struct DebloatConfig {
@@ -905,42 +906,14 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
 
     if config
         .experimental
-        .get("physical_hiberfil")
+        .get("physical_help")
         .copied()
         .unwrap_or(false)
     {
         targets.push(DeletionTarget {
-            name: "Hiberfil",
-            files: vec!["hiberfil.sys"],
-            dirs: vec![],
-            ..Default::default()
-        });
-    }
-
-    if config
-        .experimental
-        .get("physical_pagefile")
-        .copied()
-        .unwrap_or(false)
-    {
-        targets.push(DeletionTarget {
-            name: "Pagefile",
-            files: vec!["pagefile.sys"],
-            dirs: vec![],
-            ..Default::default()
-        });
-    }
-
-    if config
-        .experimental
-        .get("physical_swapfile")
-        .copied()
-        .unwrap_or(false)
-    {
-        targets.push(DeletionTarget {
-            name: "Swapfile",
-            files: vec!["swapfile.sys"],
-            dirs: vec![],
+            name: "Help Files",
+            files: vec![],
+            dirs: vec!["Windows\\Help"],
             ..Default::default()
         });
     }

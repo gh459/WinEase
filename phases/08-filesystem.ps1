@@ -38,7 +38,13 @@ if ($removeDrivers) {
 }
 
 # Fonts slimming (strictly skipped if keepExtraFonts is true, even in ultraSlimMode)
-if (-not $keepExtraFonts) {
+# The Advanced Debloat tab can ask for the non-essential fonts as well; the system fonts,
+# the Japanese fonts and the fonts of the language of the image always stay.
+$trimFonts = (-not $keepExtraFonts)
+if (-not $trimFonts -and (Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue)) {
+    $trimFonts = Test-WinEaseDebloatTarget -Item 'Remove non-essential fonts (file delete) [50-100MB]'
+}
+if ($trimFonts) {
     Write-Host "Slimming Fonts folder (preserving Japanese and core system fonts)..." -ForegroundColor Cyan
     $fontsPath = Join-Path -Path $winDir -ChildPath "Fonts"
     if (Test-Path -LiteralPath $fontsPath) {
@@ -96,6 +102,13 @@ $allImeDirectories = @('CHS', 'CHT', 'KOR', 'JPN')
 $keepImeDirectories = @('JPN')
 if ($script:primaryImeLang -and $imeDirectoryForLanguage.ContainsKey($script:primaryImeLang)) {
     $keepImeDirectories += $imeDirectoryForLanguage[$script:primaryImeLang]
+}
+# The Advanced Debloat tab can ask for the non-Japanese input method engines; the rule
+# is the one above (the Japanese engine and the engine of the language of the image
+# stay), so the engines of the other languages are removed.
+if ((Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue) -and
+    (Test-WinEaseDebloatTarget -Item 'Remove non-Japanese IME [5-15MB]')) {
+    Write-Host "Removing the non-Japanese input method engines (CHS, CHT, KOR)..." -ForegroundColor Cyan
 }
 if (-not $keepAsianIME) {
     Write-Host "Removing Asian Input Methods (CHS, CHT, KOR, JPN)..." -ForegroundColor Cyan
@@ -219,7 +232,7 @@ $cleanTempFiles = $cleanOfflineCaches
 if (Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue) {
     $cleanEventLogs = $cleanEventLogs -or (Test-WinEaseDebloatTarget -Item 'Remove event logs [10-50MB]')
     $cleanCrashDumps = $cleanCrashDumps -or (Test-WinEaseDebloatTarget -Item 'Remove crash dumps [varies]')
-    $cleanTempFiles = $cleanTempFiles -or (Test-WinEaseDebloatTarget -Item 'Remove Temp files [varies]')
+    $cleanTempFiles = $cleanTempFiles -or (Test-WinEaseDebloatTarget -Item 'Physical: Temp files (complete removal) [varies]')
 }
 if ($cleanOfflineCaches -or $cleanEventLogs -or $cleanCrashDumps -or $cleanTempFiles) {
     Write-Host "Cleaning offline system caches, prefetch, and setup logs..." -ForegroundColor Cyan

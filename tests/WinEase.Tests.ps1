@@ -1709,7 +1709,8 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
 
             $bt = 'Remove Bluetooth stack (service + binary) [20-40MB]'
             $defender = 'Physical: Defender (complete removal) [~50MB]'
-            $swap = 'Remove swapfile.sys (pagefile disable) [256MB-1GB]'
+            $media = 'Remove Windows Media Player (component) [50-100MB]'
+            $pagefile = 'Remove pagefile.sys (pagefile disable) [4-16GB]'
 
             # the registered default runs when the user did not choose
             Resolve-WinEaseDebloatEngine -Item $bt | Should Be 'PowerShell'
@@ -1729,10 +1730,13 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
             $script:DebloatEngineSelection = [ordered]@{ $defender = 'PowerShell' }
             Resolve-WinEaseDebloatEngine -Item $defender | Should Be 'Rust'
 
-            # the Rust key is data driven (the swap file must not land on the page file key)
+            # the Rust key is data driven (the media player must not land on the key of
+            # another target), and the paging files have no Rust key at all: they are not
+            # part of the mounted image
             Get-WinEaseDebloatRustKey -Item $bt | Should Be 'physical_bluetooth'
-            Get-WinEaseDebloatRustKey -Item $swap | Should Be 'physical_swapfile'
+            Get-WinEaseDebloatRustKey -Item $media | Should Be 'physical_media_player'
             Get-WinEaseDebloatRustKey -Item $defender | Should Be 'physical_defender'
+            Get-WinEaseDebloatRustKey -Item $pagefile | Should Be ''
         } finally {
             # the GUI reads the same table; restore it so the later GUI tests see the real one
             $script:WinEaseDebloatEngines = $null
@@ -1799,8 +1803,11 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
         }
         foreach ($phase in $phases.Keys) {
             $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot $phases[$phase]), [System.Text.Encoding]::UTF8)
+            # the phase asks for its targets either through the dispatcher or through the
+            # target gate (the engine specific one or the engine independent one)
             if ($text -notmatch [regex]::Escape("Invoke-WinEaseDebloatTargets -Phase '$phase'") -and
-                $text -notmatch [regex]::Escape("Test-WinEaseDebloatTarget -Item")) {
+                $text -notmatch [regex]::Escape("Test-WinEaseDebloatTarget -Item") -and
+                $text -notmatch [regex]::Escape("Test-WinEaseDebloatTargetSelected -Item")) {
                 throw "the phase $phase owns a target but never asks for it"
             }
         }
@@ -3372,6 +3379,33 @@ Describe "GUI display language (English / Japanese)" {
         }
     }
 
+    It "no Japanese string was read with the wrong code page (no Shift-JIS mojibake)" {
+        # A Japanese text that was decoded with Shift-JIS instead of UTF-8 leaves the
+        # halfwidth katakana and the C1 controls in the string. Seven strings of the
+        # table were in that state (the Advanced Debloat column headers and the four
+        # language pack descriptions).
+        $ja = Read-UiTable 'ja'
+        $bad = @()
+        foreach ($k in $ja.Keys) {
+            $codes = [int[]][char[]]$ja[$k]
+            $hits = @($codes | Where-Object { ($_ -ge 0xFF61 -and $_ -le 0xFF9F) -or ($_ -ge 0x0080 -and $_ -le 0x009F) })
+            if ($hits.Count -gt 0) { $bad += $k }
+        }
+        ($bad -join ',') | Should Be ''
+    }
+
+    It "the Advanced Debloat headers and the language pack descriptions are readable Japanese" {
+        # the expected text is written with \u escapes, so this file stays ASCII
+        $ja = Read-UiTable 'ja'
+        $ja['Debloat.Column.Engine'] | Should Be ([regex]::Unescape('\u30A8\u30F3\u30B8\u30F3'))
+        $ja['Debloat.Column.Target'] | Should Be ([regex]::Unescape('\u5BFE\u8C61'))
+        $ja['Debloat.Engine.All'] | Should Be ([regex]::Unescape('\u5168\u5BFE\u8C61\u306E\u30A8\u30F3\u30B8\u30F3:'))
+        $ja['Tweak.RemoveLanguageJaJP.Description'] | Should Be ([regex]::Unescape('\u65E5\u672C\u8A9E\u306E\u8A00\u8A9E\u30D1\u30C3\u30AF\u3092\u524A\u9664\u3067\u304D\u308B\u72B6\u614B\u306B\u3059\u308B (OFF = \u4FDD\u8B77\u3057\u3066\u6B8B\u3059)'))
+        $ja['Tweak.RemoveLanguageKoKR.Description'] | Should Be ([regex]::Unescape('\u97D3\u56FD\u8A9E\u306E\u8A00\u8A9E\u30D1\u30C3\u30AF\u3092\u524A\u9664\u3067\u304D\u308B\u72B6\u614B\u306B\u3059\u308B (OFF = \u4FDD\u8B77\u3057\u3066\u6B8B\u3059)'))
+        $ja['Tweak.RemoveLanguageZhCN.Description'] | Should Be ([regex]::Unescape('\u7C21\u4F53\u5B57\u4E2D\u56FD\u8A9E\u306E\u8A00\u8A9E\u30D1\u30C3\u30AF\u3092\u524A\u9664\u3067\u304D\u308B\u72B6\u614B\u306B\u3059\u308B (OFF = \u4FDD\u8B77\u3057\u3066\u6B8B\u3059)'))
+        $ja['Tweak.RemoveLanguageZhTW.Description'] | Should Be ([regex]::Unescape('\u7E41\u4F53\u5B57\u4E2D\u56FD\u8A9E\u306E\u8A00\u8A9E\u30D1\u30C3\u30AF\u3092\u524A\u9664\u3067\u304D\u308B\u72B6\u614B\u306B\u3059\u308B (OFF = \u4FDD\u8B77\u3057\u3066\u6B8B\u3059)'))
+    }
+
     It "Get-WinEaseUiString falls back from the chosen language to English, then to the default, then to the key" {
         Set-WinEaseUiLanguage -Language 'ja'
         try {
@@ -3504,7 +3538,7 @@ Describe "GUI display language (English / Japanese)" {
             @(Get-AllControls $gui.Form | Where-Object { $_ -is [System.Windows.Forms.Button] -and ($_.Text -eq $ja['Button.SelectAll'] -or $_.Text -eq $ja['Button.ClearAll']) }).Count | Should Be 14
             # every item shows its translation, and checking all of them hands the English text on
             $gui.GrdStd.Rows.Count | Should BeGreaterThan 20
-            $gui.GrdStd.Rows[0].Cells['Target'].Value | Should Be $ja['Debloat:Remove WinRE (reagentc /disable + file delete) [500-700MB]']
+            $gui.GrdStd.Rows[0].Cells['Target'].Value | Should Be $ja['Debloat:Remove PatchCache (dir delete) [200-500MB]']
             Set-WinEaseDebloatGridChecked -Grid $gui.GrdStd -Checked $true
             Set-WinEaseDebloatGridChecked -Grid $gui.GrdExp -Checked $true
             Complete-WinEaseGuiResult -Gui $gui -SkipPhysicalDebloatConsent | Should Be $true
@@ -4470,5 +4504,164 @@ Describe "WinEase forced physical deletion - the Rust engine" {
             [string]$def.Default | Should Be 'PowerShell'
             (@($def.Engines) -contains 'PowerShell') | Should Be $true
         }
+    }
+}
+
+Describe "WinEase advanced debloat - every engine can remove its target" {
+    # The engine column of the Advanced Debloat tab must never offer an engine that
+    # cannot remove the target: the user would pick an engine and nothing would happen.
+    $script:EngSchema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+    $script:EngDefs = @($script:EngSchema.DebloatEngines)
+    $script:EngLibText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1"), [System.Text.Encoding]::UTF8)
+    $script:EngRustSrc = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "tools\winease-physical-debloat\src\main.rs"), [System.Text.Encoding]::UTF8)
+    # the items the safe engine removes in the shared library
+    $script:EngHandled = @([regex]::Matches($script:EngLibText, "(?m)^\s{8}'([^']+)' \{") | ForEach-Object { $_.Groups[1].Value })
+
+    It "every target that offers the Rust engine has a Rust key the binary accepts" {
+        $allowlist = [regex]::Match($script:EngRustSrc, '(?s)KNOWN_EXPERIMENTAL_KEYS: &\[&str\] = &\[(.*?)\];').Groups[1].Value
+        foreach ($def in $script:EngDefs) {
+            if (@($def.Engines) -notcontains 'Rust') { continue }
+            [string]$def.RustKey | Should Not BeNullOrEmpty
+            $allowlist | Should Match ([regex]::Escape([string]$def.RustKey))
+        }
+    }
+
+    It "every target that offers the PowerShell engine is removed by it" {
+        foreach ($def in $script:EngDefs) {
+            if (@($def.Engines) -notcontains 'PowerShell') { continue }
+            $reachable = ($script:EngHandled -contains $def.Item)
+            if (-not $reachable) {
+                # the phase that owns the target asks for it (the engine gate or the
+                # engine independent one) or the option of the target switches the work on
+                $phasePath = Join-Path $script:RepoRoot ("phases\{0}.ps1" -f $def.Phase)
+                if (Test-Path -LiteralPath $phasePath) {
+                    $phaseText = [System.IO.File]::ReadAllText($phasePath, [System.Text.Encoding]::UTF8)
+                    $reachable = ($phaseText -match [regex]::Escape("Test-WinEaseDebloatTarget -Item '{0}'" -f $def.Item)) -or
+                        ($phaseText -match [regex]::Escape("Test-WinEaseDebloatTargetSelected -Item '{0}'" -f $def.Item))
+                    if (-not $reachable -and $def.Option) {
+                        # the target carries the option of the phase that owns it, so the
+                        # phase asks for the option mechanism
+                        $reachable = ($phaseText -match 'Test-WinEaseDebloatOptionEnabled')
+                    }
+                }
+            }
+            if (-not $reachable) {
+                throw "the target '$($def.Item)' offers the PowerShell engine, but neither the shared library nor the phase '$($def.Phase)' removes it"
+            }
+        }
+    }
+
+    It "the paging files belong to the safe engine only" {
+        # hiberfil.sys, pagefile.sys and swapfile.sys are created by Windows on the running
+        # system, so they are not part of the mounted image and the Rust engine could only
+        # ever report "file not found"
+        foreach ($key in @('physical_hiberfil', 'physical_pagefile', 'physical_swapfile')) {
+            $script:EngRustSrc | Should Not Match ([regex]::Escape($key))
+        }
+        foreach ($item in @('Remove hiberfil.sys (powercfg /h off) [4-16GB]', 'Remove pagefile.sys (pagefile disable) [4-16GB]', 'Remove swapfile.sys (pagefile disable) [256MB-1GB]')) {
+            $def = @($script:EngDefs | Where-Object { $_.Item -eq $item })
+            $def.Count | Should Be 1
+            (@($def[0].Engines) -join ',') | Should Be 'PowerShell'
+            [string]$def[0].RustKey | Should BeNullOrEmpty
+            [bool]$def[0].SupportsRustPhysical | Should Be $false
+        }
+    }
+
+    It "the swap file is removed by the safe engine together with the page file" {
+        # the swap file is created with the paging file, so the post-install switch of
+        # phase 11 removes both
+        $phase11 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\11-unattend.ps1"), [System.Text.Encoding]::UTF8)
+        $phase11 | Should Match ([regex]::Escape("Test-WinEaseDebloatTarget -Item 'Remove swapfile.sys (pagefile disable) [256MB-1GB]'"))
+        $phase11 | Should Match 'remove-pagefile\.flag'
+    }
+
+    It "a target that no engine can remove does not exist" {
+        # the toggles that were removed: the WinRE cleanup is done by the KeepRecoveryEnv
+        # option (the Rust engine must not touch winre.wim, the setup needs it) and the
+        # Store cache lives in the user profile, not in the image
+        $guiAst = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiPath, [ref]$null, [ref]$null)
+        $assigns = $guiAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in '$script:WinEaseDebloatStandardItems', '$script:WinEaseDebloatExperimentalItems' }, $true)
+        $guiItems = @()
+        foreach ($a in $assigns) { $guiItems += @($a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value }) }
+        $ja = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\ui-strings\ja.json"), (New-Object System.Text.UTF8Encoding($false))) | ConvertFrom-Json
+        $depText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\dependencies.psd1"), [System.Text.Encoding]::UTF8)
+        foreach ($gone in @('Remove WinRE (reagentc /disable + file delete) [500-700MB]', 'Remove Windows Store cache [varies]')) {
+            @($script:EngDefs | Where-Object { $_.Item -eq $gone }).Count | Should Be 0
+            ($guiItems -contains $gone) | Should Be $false
+            ($ja.PSObject.Properties.Name -contains "Debloat:$gone") | Should Be $false
+            $depText | Should Not Match ([regex]::Escape("'$gone'"))
+        }
+    }
+
+    It "the services of the service targets are disabled on both engines" {
+        # the binaries are removed by the engine the user picked, but the services have to
+        # be disabled in any case - otherwise the image keeps a service whose binary the
+        # Rust engine has just deleted
+        $phase10 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\10-registry.ps1"), [System.Text.Encoding]::UTF8)
+        foreach ($item in @(
+            'Remove Print Spooler (service + binary) [20-30MB]',
+            'Remove Bluetooth stack (service + binary) [20-40MB]',
+            'Remove Remote Desktop host (service + binary) [30-50MB]',
+            'Remove touch/pen/ink components [20-30MB]',
+            'Physical: BitLocker (complete removal) [~30-50MB]'
+        )) {
+            $phase10 | Should Match ([regex]::Escape("Test-WinEaseDebloatTargetSelected -Item '{0}'" -f $item))
+        }
+    }
+}
+
+Describe "WinEase advanced debloat - the engine choice is explained" {
+    # The engine column is not obvious: a help mark next to the engine label explains
+    # what the two engines do.
+    $script:HelpEn = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\ui-strings\en.json"), (New-Object System.Text.UTF8Encoding($false))) | ConvertFrom-Json
+    $script:HelpJa = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\ui-strings\ja.json"), (New-Object System.Text.UTF8Encoding($false))) | ConvertFrom-Json
+
+    It "the help text is in both language tables" {
+        $en = [string]$script:HelpEn.PSObject.Properties['Debloat.Engine.Help'].Value
+        $ja = [string]$script:HelpJa.PSObject.Properties['Debloat.Engine.Help'].Value
+        $en | Should Not BeNullOrEmpty
+        $ja | Should Not BeNullOrEmpty
+        # both texts name the two engines and what they do
+        $en | Should Match 'PowerShell'
+        $en | Should Match 'Rust'
+        $ja | Should Match 'PowerShell'
+        $ja | Should Match 'Rust'
+    }
+
+    It "the classic window shows the help mark next to the engine label" {
+        $guiText = [System.IO.File]::ReadAllText($script:GuiPath, [System.Text.Encoding]::UTF8)
+        $guiText | Should Match 'Debloat\.Engine\.Help'
+        $guiText | Should Match "SetToolTip\(\`$engineHelpMark"
+        # the mark sits left of the engine label
+        $guiText | Should Match "engineHelpMark = New-WinEaseLabel -Text '\?' -X 431"
+        $guiText | Should Match "Debloat\.Engine\.All'\) -X 455"
+    }
+
+    It "the WinUI window shows the help mark next to the engine label" {
+        $winuiText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'gui\winui\WinEaseGui\MainWindow.xaml.cs'))
+        $winuiText | Should Match 'Debloat\.Engine\.Help'
+        $winuiText | Should Match 'ToolTipService\.SetToolTip\(engineHelp'
+    }
+
+    It "the help mark of the classic window shows the explanation on hover" {
+        $schema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+        $script:AllTweakDefs = [ordered]@{}
+        foreach ($td in $schema.Tweaks) { $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description } }
+        $script:ComponentDefs = [ordered]@{}
+        foreach ($cd in $schema.Components) { $script:ComponentDefs[$cd.Key] = $cd }
+        function Get-WinEasePreset { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([string]$Name) $null }
+        $script:WinEaseDebloatEngines = [ordered]@{}
+        foreach ($d in $schema.DebloatEngines) { $script:WinEaseDebloatEngines[[string]$d.Item] = $d }
+        . $script:GuiPath
+        function Confirm-WinEaseGuiAction { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([string]$Message, [string]$Title) $true }
+        $gui = Show-WinEaseGUI -NoShow -UiLanguage en -InitialSettings @{ SourceDrive = 'E:\'; TweakSettings = [ordered]@{} }
+        try {
+            $mark = @($gui.Form.Controls.Find('WinEaseEngineHelp', $true))
+            $mark.Count | Should Be 1
+            $mark[0].Text | Should Be '?'
+            $gui.ToolTip.GetToolTip($mark[0]) | Should Be ([string]$script:HelpEn.PSObject.Properties['Debloat.Engine.Help'].Value)
+            # the mark sits left of the engine label
+            $mark[0].Right | Should BeLessThan 455
+        } finally { $gui.Form.Dispose() }
     }
 }
