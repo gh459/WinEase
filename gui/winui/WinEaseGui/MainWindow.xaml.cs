@@ -564,8 +564,19 @@ public sealed partial class MainWindow : Window
         });
         // Global engine switch: applies one engine to every target that supports it
         var allRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 0, 0, 6) };
+        // The help mark next to the label: what the engine choice does is not obvious,
+        // so the mark explains it in a tooltip.
+        var engineHelp = new TextBlock
+        {
+            Text = "?",
+            VerticalAlignment = VerticalAlignment.Center,
+            FontSize = 15,
+        };
+        ToolTipService.SetToolTip(engineHelp, _s.Get("Debloat.Engine.Help"));
+        allRow.Children.Add(engineHelp);
         allRow.Children.Add(new TextBlock { Text = _s.Get("Debloat.Engine.All"), VerticalAlignment = VerticalAlignment.Center });
         var allCombo = new ComboBox { MinWidth = 140, SelectedIndex = 0 };
+        ToolTipService.SetToolTip(allCombo, _s.Get("Debloat.Engine.Help"));
         allCombo.Items.Add("PowerShell");
         allCombo.Items.Add("Rust");
         allCombo.SelectionChanged += (_, _) =>

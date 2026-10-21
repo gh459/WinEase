@@ -2,21 +2,29 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use windows::core::PCWSTR;
+use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
-    CloseHandle, GetLastError, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, HANDLE, LUID,
+    CloseHandle, GetLastError, LocalFree, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, HANDLE, HLOCAL,
+    LUID,
 };
 use windows::Win32::Security::Authorization::{
-    SetNamedSecurityInfoW, SE_FILE_OBJECT,
+    GetNamedSecurityInfoW, SetEntriesInAclW, SetNamedSecurityInfoW, EXPLICIT_ACCESS_W, GRANT_ACCESS,
+    MULTIPLE_TRUSTEE_OPERATION, SE_FILE_OBJECT, TRUSTEE_IS_SID, TRUSTEE_IS_USER, TRUSTEE_W,
 };
 use windows::Win32::Security::{
-    AdjustTokenPrivileges, LookupPrivilegeValueW, OWNER_SECURITY_INFORMATION,
-    SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_QUERY, TOKEN_PRIVILEGES,
+    AdjustTokenPrivileges, CreateWellKnownSid, LookupPrivilegeValueW, ACL, CONTAINER_INHERIT_ACE,
+    DACL_SECURITY_INFORMATION, OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+    PSID, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_QUERY, TOKEN_PRIVILEGES,
+    WinBuiltinAdministratorsSid,
 };
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, DeleteFileW, RemoveDirectoryW, SetFileAttributesW, FILE_ATTRIBUTE_NORMAL,
+    CreateFileW, DeleteFileW, GetFileAttributesW, RemoveDirectoryW, SetFileAttributesW, DELETE,
+    FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM,
+    FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
+    FILE_DISPOSITION_FLAG_ON_CLOSE, FILE_DISPOSITION_INFO, FILE_DISPOSITION_INFO_EX,
     FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, OPEN_EXISTING,
+    FILE_SHARE_WRITE, FileDispositionInfo, FileDispositionInfoEx, OPEN_EXISTING,
+    SetFileInformationByHandle,
 };
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -26,9 +34,6 @@ pub const KNOWN_EXPERIMENTAL_KEYS: &[&str] = &[
     "physical_crash_dumps",
     "physical_help",
     "physical_temp_files",
-    "physical_hiberfil",
-    "physical_pagefile",
-    "physical_swapfile",
     "physical_patchcache",
     "physical_delivery_optimization",
     "physical_search_index",
@@ -51,7 +56,14 @@ pub const KNOWN_EXPERIMENTAL_KEYS: &[&str] = &[
     "physical_bitlocker",
     "physical_sandbox",
     "physical_wsl",
+    "physical_event_logs",
+    "physical_fonts",
+    "physical_ime",
 ];
+// The paging files (hiberfil.sys, pagefile.sys, swapfile.sys) are not part of a
+// mounted image: Windows creates them on the running system. The safe engine disables
+// them after the setup (the post-install flag of phase 11), so the Rust engine must not
+// offer a target for them - it could only ever report "file not found".
 
 #[derive(Debug, Deserialize, Default, Clone)]
 struct DebloatConfig {
@@ -65,6 +77,10 @@ struct DebloatConfig {
     confirm_offline_image: bool,
     #[serde(default)]
     experimental: HashMap<String, bool>,
+    /// The primary input method language of the image ("ko-kr", "zh-cn", "zh-tw").
+    /// The IME engine and the fonts of that language are never removed.
+    #[serde(default)]
+    primary_ime_lang: Option<String>,
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -77,6 +93,15 @@ struct DebloatResult {
     dry_run: bool,
     timestamp: String,
     targets_processed: Vec<String>,
+}
+
+/// What one removal step removed. The counts are reported in the result of the run,
+/// the errors are the ones that the caller has to show.
+#[derive(Debug, Default)]
+struct RemovalOutcome {
+    files: u64,
+    dirs: u64,
+    errors: Vec<String>,
 }
 
 // --- Privilege escalation ---
@@ -149,6 +174,230 @@ fn take_ownership(path: &str) -> bool {
             None,
         );
         result.is_ok()
+    }
+}
+
+/// FILE_ALL_ACCESS (winnt.h): STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0x1FF.
+const FILE_ALL_ACCESS: u32 = 0x001F_01FF;
+
+/// Give the built-in Administrators group full control over the path.
+///
+/// Taking the ownership alone does not grant the DELETE right: the owner of an object
+/// only gets READ_CONTROL and WRITE_DAC implicitly. A component file whose DACL does
+/// not grant DELETE to the Administrators group therefore still fails with
+/// ERROR_ACCESS_DENIED after the ownership was taken, so the forced deletion needs the
+/// DACL as well. The ACEs that are already on the path are kept.
+fn grant_full_control(path: &str) -> bool {
+    let wide = to_wide(path);
+    unsafe {
+        // The SID of BUILTIN\Administrators (S-1-5-32-544).
+        let mut sid_len: u32 = 0;
+        if CreateWellKnownSid(
+            WinBuiltinAdministratorsSid,
+            None,
+            PSID(std::ptr::null_mut()),
+            &mut sid_len,
+        )
+        .is_err()
+        {
+            return false;
+        }
+        let mut sid = vec![0u8; sid_len as usize];
+        if CreateWellKnownSid(
+            WinBuiltinAdministratorsSid,
+            None,
+            PSID(sid.as_mut_ptr() as *mut core::ffi::c_void),
+            &mut sid_len,
+        )
+        .is_err()
+        {
+            return false;
+        }
+
+        // Read the current DACL so that the ACEs that are already there stay. When the
+        // DACL cannot be read, the grant is skipped: replacing a DACL that was never
+        // read would drop the access of the other accounts (SYSTEM) for good.
+        let mut old_dacl: *mut ACL = std::ptr::null_mut();
+        let mut old_sd = PSECURITY_DESCRIPTOR(std::ptr::null_mut());
+        let read = GetNamedSecurityInfoW(
+            PCWSTR(wide.as_ptr()),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            None,
+            None,
+            Some(&mut old_dacl),
+            None,
+            &mut old_sd,
+        )
+        .is_ok();
+        if !read {
+            if !old_sd.0.is_null() {
+                let _ = LocalFree(HLOCAL(old_sd.0));
+            }
+            return false;
+        }
+
+        let entry = EXPLICIT_ACCESS_W {
+            grfAccessPermissions: FILE_ALL_ACCESS,
+            grfAccessMode: GRANT_ACCESS,
+            grfInheritance: CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE,
+            Trustee: TRUSTEE_W {
+                pMultipleTrustee: std::ptr::null_mut(),
+                MultipleTrusteeOperation: MULTIPLE_TRUSTEE_OPERATION(0),
+                TrusteeForm: TRUSTEE_IS_SID,
+                TrusteeType: TRUSTEE_IS_USER,
+                ptstrName: PWSTR(sid.as_mut_ptr() as *mut u16),
+            },
+        };
+
+        let mut new_dacl: *mut ACL = std::ptr::null_mut();
+        let mut granted = false;
+        let old_acl_ptr = if old_dacl.is_null() {
+            None
+        } else {
+            Some(old_dacl as *const ACL)
+        };
+        if SetEntriesInAclW(Some(&[entry]), old_acl_ptr, &mut new_dacl).is_ok() && !new_dacl.is_null()
+        {
+            granted = SetNamedSecurityInfoW(
+                PCWSTR(wide.as_ptr()),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                None,
+                None,
+                Some(new_dacl as *const ACL),
+                None,
+            )
+            .is_ok();
+        }
+        if !new_dacl.is_null() {
+            let _ = LocalFree(HLOCAL(new_dacl as *mut core::ffi::c_void));
+        }
+        if !old_sd.0.is_null() {
+            let _ = LocalFree(HLOCAL(old_sd.0));
+        }
+        granted
+    }
+}
+
+/// Make the path deletable: take the ownership of it and grant the delete right.
+///
+/// This is the step that turns a plain delete into a forced one: a component file that
+/// is owned by TrustedInstaller and that is protected by a restrictive DACL is
+/// refused by `DeleteFileW` and by `RemoveDirectoryW` until the process owns the path
+/// and may delete it.
+fn force_access(path: &str) -> bool {
+    let owned = take_ownership(path);
+    let granted = grant_full_control(path);
+    owned || granted
+}
+
+/// Clear the read-only, hidden and system attributes of a path.
+///
+/// A read-only component file cannot be deleted, not even with the DELETE right. The
+/// other attributes are left alone, so the directory bit of a folder stays set.
+fn clear_protective_attributes(path: &str) {
+    let wide = to_wide(path);
+    unsafe {
+        let attrs = GetFileAttributesW(PCWSTR(wide.as_ptr()));
+        if attrs == u32::MAX {
+            return;
+        }
+        let protective = FILE_ATTRIBUTE_READONLY.0
+            | FILE_ATTRIBUTE_HIDDEN.0
+            | FILE_ATTRIBUTE_SYSTEM.0;
+        if attrs & protective == 0 {
+            return;
+        }
+        let _ = SetFileAttributesW(
+            PCWSTR(wide.as_ptr()),
+            windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES(attrs & !protective),
+        );
+    }
+}
+
+/// Delete a path through a handle that carries the delete-on-close disposition.
+///
+/// This is the last step of the forced deletion: it works even when the plain delete
+/// calls are refused. `FILE_DISPOSITION_INFO_EX` is used first because it ignores the
+/// read-only attribute; the older `FILE_DISPOSITION_INFO` is the fallback.
+fn delete_by_handle(path: &str) -> Result<(), String> {
+    let wide = to_wide(path);
+    unsafe {
+        let handle = CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            DELETE.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            None,
+        );
+        let handle = match handle {
+            Ok(h) => h,
+            Err(e) => {
+                let code = e.code();
+                if code == windows::core::HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0)
+                    || code == windows::core::HRESULT::from_win32(ERROR_PATH_NOT_FOUND.0)
+                {
+                    return Err(format!("not found: {}", path));
+                }
+                return Err(format!("CreateFileW failed: {}", e));
+            }
+        };
+        let ex = FILE_DISPOSITION_INFO_EX {
+            Flags: windows::Win32::Storage::FileSystem::FILE_DISPOSITION_INFO_EX_FLAGS(
+                FILE_DISPOSITION_FLAG_DELETE.0
+                    | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE.0
+                    | FILE_DISPOSITION_FLAG_ON_CLOSE.0,
+            ),
+        };
+        let mut deleted = SetFileInformationByHandle(
+            handle,
+            FileDispositionInfoEx,
+            &ex as *const _ as *const _,
+            std::mem::size_of::<FILE_DISPOSITION_INFO_EX>() as u32,
+        )
+        .is_ok();
+        if !deleted {
+            let info = FILE_DISPOSITION_INFO {
+                DeleteFile: true.into(),
+            };
+            deleted = SetFileInformationByHandle(
+                handle,
+                FileDispositionInfo,
+                &info as *const _ as *const _,
+                std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
+            )
+            .is_ok();
+        }
+        let _ = CloseHandle(handle);
+        if deleted {
+            Ok(())
+        } else {
+            Err(format!("SetFileInformationByHandle failed: {}", path))
+        }
+    }
+}
+
+/// Remove a directory with the forced ladder: the plain call first, then the
+/// ownership and the delete right, then the delete-on-close disposition.
+///
+/// A directory that is still owned by TrustedInstaller is refused by
+/// `RemoveDirectoryW`, and the refusal was silently dropped before, so a component
+/// folder survived the removal unnoticed.
+fn remove_directory_forced(path: &str) -> bool {
+    let wide = to_wide(path);
+    unsafe {
+        clear_protective_attributes(path);
+        if RemoveDirectoryW(PCWSTR(wide.as_ptr())).is_ok() {
+            return true;
+        }
+        force_access(path);
+        if RemoveDirectoryW(PCWSTR(wide.as_ptr())).is_ok() {
+            return true;
+        }
+        delete_by_handle(path).is_ok()
     }
 }
 
@@ -293,6 +542,10 @@ pub fn validate_target_path(mount: &Path, rel_path: &str) -> Result<PathBuf, Str
 
 /// Delete a file. Returns `Ok(true)` when the file was deleted, `Ok(false)`
 /// when it did not exist, and `Err` only for genuine failures.
+///
+/// The deletion is a forced one: the plain delete is tried first, then the ownership
+/// of the file is taken and the delete right is granted, and the last step is the
+/// delete-on-close disposition of a handle that owns the DELETE access.
 fn delete_file(path: &str, dry_run: bool) -> Result<bool, String> {
     if dry_run {
         if fs::symlink_metadata(path).is_ok() {
@@ -304,16 +557,16 @@ fn delete_file(path: &str, dry_run: bool) -> Result<bool, String> {
     }
     let wide = to_wide(path);
     unsafe {
-        let attrs = windows::Win32::Storage::FileSystem::GetFileAttributesW(PCWSTR(wide.as_ptr()));
+        let attrs = GetFileAttributesW(PCWSTR(wide.as_ptr()));
         if attrs == u32::MAX {
             let err = GetLastError();
             if err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND {
                 println!("  [SKIP] File not found: {}", path);
                 return Ok(false);
             }
-        } else {
-            let _ = SetFileAttributesW(PCWSTR(wide.as_ptr()), FILE_ATTRIBUTE_NORMAL);
         }
+        // A read-only component file cannot be deleted, not even with the DELETE right.
+        clear_protective_attributes(path);
         match DeleteFileW(PCWSTR(wide.as_ptr())) {
             Ok(()) => return Ok(true),
             Err(e) => {
@@ -326,61 +579,26 @@ fn delete_file(path: &str, dry_run: bool) -> Result<bool, String> {
                 }
             }
         }
-        // Deletion failed - most likely because the file is owned by TrustedInstaller.
-        // Take ownership and retry the plain delete before falling back to the
-        // delete-on-close disposition below.
-        if take_ownership(path) {
-            match DeleteFileW(PCWSTR(wide.as_ptr())) {
-                Ok(()) => return Ok(true),
-                Err(_) => {}
-            }
+        // Deletion failed - most likely because the file is owned by TrustedInstaller
+        // or protected by a restrictive DACL. Take the ownership, grant the delete
+        // right and retry the plain delete before falling back to the delete-on-close
+        // disposition below.
+        force_access(path);
+        match DeleteFileW(PCWSTR(wide.as_ptr())) {
+            Ok(()) => return Ok(true),
+            Err(_) => {}
         }
-        let handle = CreateFileW(
-            PCWSTR(wide.as_ptr()),
-            0x00010000, // DELETE
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            None,
-            OPEN_EXISTING,
-            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-            None,
-        );
-        match handle {
-            Ok(h) => {
-                use windows::Win32::Storage::FileSystem::{
-                    FileDispositionInfo, SetFileInformationByHandle, FILE_DISPOSITION_INFO,
-                };
-                let info = FILE_DISPOSITION_INFO {
-                    DeleteFile: true.into(),
-                };
-                let result = SetFileInformationByHandle(
-                    h,
-                    FileDispositionInfo,
-                    &info as *const _ as *const _,
-                    std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
-                );
-                let _ = CloseHandle(h);
-                if result.is_ok() {
-                    Ok(true)
-                } else {
-                    Err("SetFileInformationByHandle failed".to_string())
-                }
-            }
-            Err(e) => {
-                let code = e.code();
-                if code == windows::core::HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0)
-                    || code == windows::core::HRESULT::from_win32(ERROR_PATH_NOT_FOUND.0)
-                {
-                    println!("  [SKIP] File not found: {}", path);
-                    Ok(false)
-                } else {
-                    Err(format!("CreateFileW failed: {}", e))
-                }
-            }
-        }
+        delete_by_handle(path)
+            .map(|_| true)
+            .map_err(|e| format!("{}: {}", path, e))
     }
 }
 
 /// Delete a directory tree. Reparse points (junctions/symlinks) are never traversed and never deleted through.
+///
+/// Every step is a forced one: the files are deleted with `delete_file`, the
+/// subdirectories are removed with `remove_directory_forced` and the directory itself
+/// is removed with the same ladder.
 fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
     let p = Path::new(path);
     if is_reparse_point(p) {
@@ -427,13 +645,15 @@ fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
     collect(p, &mut entries);
     // Take ownership of the directory itself first: without it the child deletions
     // below fail on TrustedInstaller-owned component folders.
-    let _ = take_ownership(&p.to_string_lossy());
+    let _ = force_access(&p.to_string_lossy());
     for entry in &entries {
         if entry.is_dir() {
-            let s = entry.to_string_lossy();
-            let wide = to_wide(&s);
-            unsafe {
-                let _ = RemoveDirectoryW(PCWSTR(wide.as_ptr()));
+            // The subdirectory is removed with the forced ladder as well. The plain
+            // RemoveDirectoryW call that was used here before was refused for every
+            // component folder that is owned by TrustedInstaller, and the refusal was
+            // dropped, so the folder survived the removal unnoticed.
+            if let Err(e) = delete_directory(&entry.to_string_lossy(), false) {
+                println!("  [ERR] {}", e);
             }
         } else {
             // The result was previously discarded with `let _ =`, which hid every
@@ -444,11 +664,9 @@ fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
             }
         }
     }
-    let s = p.to_string_lossy();
-    let wide = to_wide(&s);
-    unsafe {
-        let _ = RemoveDirectoryW(PCWSTR(wide.as_ptr()));
-    }
+    // The directory itself is removed with the forced ladder too: a plain
+    // RemoveDirectoryW is refused while the directory is owned by TrustedInstaller.
+    remove_directory_forced(path);
     if p.exists() {
         Err(format!(
             "not fully removed (locked, access denied, or contains preserved reparse points): {}",
@@ -457,6 +675,65 @@ fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
     } else {
         Ok(true)
     }
+}
+
+/// Delete everything inside a directory but keep the directory itself.
+///
+/// The event log service expects its log folder to exist, so only the log files are
+/// removed and the folder stays.
+fn delete_directory_contents(path: &str, dry_run: bool) -> RemovalOutcome {
+    let mut outcome = RemovalOutcome::default();
+    let p = Path::new(path);
+    if !p.exists() {
+        println!("  [SKIP] Directory not found: {}", path);
+        return outcome;
+    }
+    if !p.is_dir() {
+        outcome.errors.push(format!("not a directory: {}", path));
+        return outcome;
+    }
+    let mut entries: Vec<PathBuf> = Vec::new();
+    if let Ok(rd) = fs::read_dir(p) {
+        for entry in rd.flatten() {
+            let ep = entry.path();
+            if is_reparse_point(&ep) {
+                println!(
+                    "  [SKIP] Reparse point (junction/symlink) not traversed: {}",
+                    ep.to_string_lossy()
+                );
+                continue;
+            }
+            entries.push(ep);
+        }
+    }
+    if dry_run {
+        println!("[DRY] Would delete the content of: {}", path);
+        for entry in &entries {
+            if entry.is_dir() {
+                outcome.dirs += 1;
+            } else {
+                outcome.files += 1;
+            }
+        }
+        return outcome;
+    }
+    for entry in &entries {
+        let entry_path = entry.to_string_lossy().to_string();
+        if entry.is_dir() {
+            if remove_directory_forced(&entry_path) {
+                outcome.dirs += 1;
+            } else {
+                outcome.errors.push(format!("directory not removed: {}", entry_path));
+            }
+        } else {
+            match delete_file(&entry_path, false) {
+                Ok(true) => outcome.files += 1,
+                Ok(false) => {}
+                Err(e) => outcome.errors.push(e),
+            }
+        }
+    }
+    outcome
 }
 
 // --- Wildcard expansion for directory patterns ---
@@ -528,10 +805,25 @@ fn expand_dir_pattern(mount: &str, rel_pattern: &str) -> Vec<PathBuf> {
 
 // --- Target definitions (Filesystem Only - Host Registry Protected) ---
 
+/// How a target removes its payload. Most targets name their files and directories;
+/// the fonts and the input method engines need a rule that cannot be expressed as a
+/// list of paths.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+enum TargetKind {
+    #[default]
+    Paths,
+    Fonts,
+    Ime,
+}
+
+#[derive(Debug, Default)]
 struct DeletionTarget {
     name: &'static str,
     files: Vec<&'static str>,
     dirs: Vec<&'static str>,
+    /// The directories whose content is removed while the directory itself stays.
+    dir_contents: Vec<&'static str>,
+    kind: TargetKind,
 }
 
 fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
@@ -548,8 +840,11 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             files: vec![],
             dirs: vec![
                 "Program Files (x86)\\Microsoft\\Edge",
+                "Program Files (x86)\\Microsoft\\EdgeUpdate",
+                "Program Files (x86)\\Microsoft\\EdgeCore",
                 "Program Files\\WindowsApps\\MicrosoftEdge*",
             ],
+            ..Default::default()
         });
     }
 
@@ -563,6 +858,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             name: "Defender",
             files: vec![],
             dirs: vec!["ProgramData\\Microsoft\\Windows Defender"],
+            ..Default::default()
         });
     }
 
@@ -576,6 +872,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             name: "Crash Dumps",
             files: vec![],
             dirs: vec!["Windows\\Minidump"],
+            ..Default::default()
         });
     }
 
@@ -589,6 +886,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             name: "Help Files",
             files: vec![],
             dirs: vec!["Windows\\Help"],
+            ..Default::default()
         });
     }
 
@@ -602,45 +900,21 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             name: "Temp Files",
             files: vec![],
             dirs: vec!["Windows\\Temp"],
+            ..Default::default()
         });
     }
 
     if config
         .experimental
-        .get("physical_hiberfil")
+        .get("physical_help")
         .copied()
         .unwrap_or(false)
     {
         targets.push(DeletionTarget {
-            name: "Hiberfil",
-            files: vec!["hiberfil.sys"],
-            dirs: vec![],
-        });
-    }
-
-    if config
-        .experimental
-        .get("physical_pagefile")
-        .copied()
-        .unwrap_or(false)
-    {
-        targets.push(DeletionTarget {
-            name: "Pagefile",
-            files: vec!["pagefile.sys"],
-            dirs: vec![],
-        });
-    }
-
-    if config
-        .experimental
-        .get("physical_swapfile")
-        .copied()
-        .unwrap_or(false)
-    {
-        targets.push(DeletionTarget {
-            name: "Swapfile",
-            files: vec!["swapfile.sys"],
-            dirs: vec![],
+            name: "Help Files",
+            files: vec![],
+            dirs: vec!["Windows\\Help"],
+            ..Default::default()
         });
     }
 
@@ -654,6 +928,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             name: "PatchCache",
             files: vec![],
             dirs: vec!["Windows\\Installer\\$PatchCache$"],
+            ..Default::default()
         });
     }
 
@@ -667,6 +942,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             name: "Delivery Optimization",
             files: vec![],
             dirs: vec!["Windows\\SoftwareDistribution\\DeliveryOptimization"],
+            ..Default::default()
         });
     }
 
@@ -680,6 +956,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             name: "Search Index",
             files: vec![],
             dirs: vec!["ProgramData\\Microsoft\\Search\\Data"],
+            ..Default::default()
         });
     }
 
@@ -693,6 +970,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             name: "Provisioning",
             files: vec![],
             dirs: vec!["Windows\\Provisioning"],
+            ..Default::default()
         });
     }
 
@@ -706,6 +984,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             name: "Windows.old",
             files: vec![],
             dirs: vec!["Windows.old"],
+            ..Default::default()
         });
     }
 
@@ -719,6 +998,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             name: "Minidump",
             files: vec![],
             dirs: vec!["Windows\\Minidump"],
+            ..Default::default()
         });
     }
 
@@ -732,6 +1012,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             name: "Memory.dmp",
             files: vec!["Windows\\Memory.dmp"],
             dirs: vec![],
+            ..Default::default()
         });
     }
 
@@ -748,6 +1029,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "Windows\\SystemApps\\Microsoft.Windows.Search*",
                 "Windows\\SystemApps\\Microsoft.Cortana*",
             ],
+            ..Default::default()
         });
     }
 
@@ -761,6 +1043,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             name: "OneDrive",
             files: vec!["Windows\\System32\\OneDriveSetup.exe"],
             dirs: vec![],
+            ..Default::default()
         });
     }
 
@@ -774,6 +1057,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             name: "Telemetry",
             files: vec![],
             dirs: vec!["ProgramData\\Microsoft\\Diagnosis"],
+            ..Default::default()
         });
     }
 
@@ -793,6 +1077,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "Windows\\System32\\drivers\\vhdmp.sys",
             ],
             dirs: vec![],
+            ..Default::default()
         });
     }
 
@@ -806,6 +1091,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             name: "IIS",
             files: vec![],
             dirs: vec!["Windows\\System32\\inetsrv"],
+            ..Default::default()
         });
     }
 
@@ -822,6 +1108,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "Windows\\System32\\drivers\\mpsdrv.sys",
             ],
             dirs: vec![],
+            ..Default::default()
         });
     }
 
@@ -839,6 +1126,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "Windows\\System32\\drivers\\bthusb.sys",
             ],
             dirs: vec![],
+            ..Default::default()
         });
     }
 
@@ -857,6 +1145,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "Windows\\System32\\win32spl.dll",
             ],
             dirs: vec!["Windows\\System32\\spool"],
+            ..Default::default()
         });
     }
 
@@ -873,6 +1162,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "Windows\\System32\\inkobj.dll",
             ],
             dirs: vec![],
+            ..Default::default()
         });
     }
 
@@ -886,6 +1176,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             name: "Media Player",
             files: vec![],
             dirs: vec!["Program Files\\Windows Media Player"],
+            ..Default::default()
         });
     }
 
@@ -906,6 +1197,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "Windows\\System32\\bdesvc.dll",
             ],
             dirs: vec![],
+            ..Default::default()
         });
     }
 
@@ -925,6 +1217,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "Windows\\System32\\atbroker.exe",
             ],
             dirs: vec![],
+            ..Default::default()
         });
     }
 
@@ -942,6 +1235,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "Windows\\System32\\WindowsSandboxServer.exe",
             ],
             dirs: vec!["Windows\\System32\\Containers\\DisposableClientVM"],
+            ..Default::default()
         });
     }
 
@@ -959,6 +1253,7 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "Windows\\System32\\wslg.exe",
             ],
             dirs: vec!["Windows\\System32\\lxss"],
+            ..Default::default()
         });
     }
 
@@ -978,10 +1273,177 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "Windows\\System32\\rfxvmt.dll",
             ],
             dirs: vec![],
+            ..Default::default()
+        });
+    }
+
+    if config
+        .experimental
+        .get("physical_event_logs")
+        .copied()
+        .unwrap_or(false)
+    {
+        targets.push(DeletionTarget {
+            name: "Event Logs",
+            files: vec![],
+            dirs: vec![],
+            // The log folder itself stays: the event log service expects it to exist,
+            // only the log files inside it are removed.
+            dir_contents: vec!["Windows\\System32\\winevt\\Logs"],
+            ..Default::default()
+        });
+    }
+
+    if config
+        .experimental
+        .get("physical_fonts")
+        .copied()
+        .unwrap_or(false)
+    {
+        targets.push(DeletionTarget {
+            name: "Non-essential Fonts",
+            files: vec![],
+            dirs: vec![],
+            kind: TargetKind::Fonts,
+            ..Default::default()
+        });
+    }
+
+    if config
+        .experimental
+        .get("physical_ime")
+        .copied()
+        .unwrap_or(false)
+    {
+        targets.push(DeletionTarget {
+            name: "Non-Japanese IME",
+            files: vec![],
+            dirs: vec![],
+            kind: TargetKind::Ime,
+            ..Default::default()
         });
     }
 
     targets
+}
+
+// --- The targets that need a rule instead of a list of paths ---
+
+/// The font files that stay in the image: the system fonts, the Japanese fonts and
+/// the fonts of the primary language of the image.
+///
+/// The list is the one of phases\08-filesystem.ps1, so both engines remove the same
+/// fonts and the Japanese rendering of the image never breaks.
+fn font_keep_patterns(primary_ime_lang: Option<&str>) -> Vec<&'static str> {
+    let mut keep = vec![
+        // the system fonts
+        "segoe*",
+        "tahoma*",
+        "marlett.ttf",
+        "8541oem.fon",
+        "segui*",
+        "consol*",
+        "lucon*",
+        "calibri*",
+        "arial*",
+        "times*",
+        "cou*",
+        "8*.*",
+        // the Japanese fonts
+        "meiryo*",
+        "yugoth*",
+        "yumin*",
+        "msgoth*",
+        "msgothic*",
+        "msmin*",
+        "msmincho*",
+        "segoeuihistoric.ttf",
+    ];
+    match primary_ime_lang {
+        Some("ko-kr") => keep.extend_from_slice(&["gulim*", "malgun*", "batang*"]),
+        Some("zh-cn") => keep.extend_from_slice(&["simsun*", "msyh*", "simhei*", "dengxian*"]),
+        Some("zh-tw") => keep.extend_from_slice(&["mingliu*", "msjh*", "jhen*", "tc*"]),
+        _ => {}
+    }
+    keep
+}
+
+/// The input method engine of the primary language of the image.
+fn ime_directory_for_language(primary_ime_lang: Option<&str>) -> Option<&'static str> {
+    match primary_ime_lang {
+        Some("ko-kr") => Some("KOR"),
+        Some("zh-cn") => Some("CHS"),
+        Some("zh-tw") => Some("CHT"),
+        Some("zh-hk") => Some("CHT"),
+        _ => None,
+    }
+}
+
+/// Remove the fonts that the image does not need.
+fn remove_non_essential_fonts(mount: &Path, config: &DebloatConfig) -> RemovalOutcome {
+    let mut outcome = RemovalOutcome::default();
+    let fonts_dir = mount.join("Windows").join("Fonts");
+    if !fonts_dir.is_dir() {
+        println!("  [SKIP] Font folder not found: {}", fonts_dir.display());
+        return outcome;
+    }
+    let keep = font_keep_patterns(config.primary_ime_lang.as_deref());
+    let entries: Vec<PathBuf> = match fs::read_dir(&fonts_dir) {
+        Ok(rd) => rd.flatten().map(|e| e.path()).collect(),
+        Err(e) => {
+            outcome
+                .errors
+                .push(format!("cannot read {}: {}", fonts_dir.display(), e));
+            return outcome;
+        }
+    };
+    for entry in entries {
+        if entry.is_dir() {
+            continue;
+        }
+        let name = match entry.file_name() {
+            Some(n) => n.to_string_lossy().into_owned(),
+            None => continue,
+        };
+        if keep.iter().any(|pattern| wildcard_match(pattern, &name)) {
+            continue;
+        }
+        match delete_file(&entry.to_string_lossy(), config.dry_run) {
+            Ok(true) => outcome.files += 1,
+            Ok(false) => {}
+            Err(e) => outcome.errors.push(e),
+        }
+    }
+    outcome
+}
+
+/// Remove the input method engines of the other languages.
+///
+/// The Japanese engine and the engine of the primary language of the image stay, so
+/// the keyboard of the image keeps working.
+fn remove_non_japanese_ime(mount: &Path, config: &DebloatConfig) -> RemovalOutcome {
+    let mut outcome = RemovalOutcome::default();
+    let mut keep = vec!["JPN"];
+    if let Some(dir) = ime_directory_for_language(config.primary_ime_lang.as_deref()) {
+        keep.push(dir);
+    }
+    let ime_root = mount.join("Windows").join("System32").join("InputMethod");
+    for dir in ["JPN", "CHS", "CHT", "KOR"] {
+        if keep.contains(&dir) {
+            println!("  [SKIP] IME engine kept: {}", dir);
+            continue;
+        }
+        let path = ime_root.join(dir);
+        if !path.exists() {
+            continue;
+        }
+        match delete_directory(&path.to_string_lossy(), config.dry_run) {
+            Ok(true) => outcome.dirs += 1,
+            Ok(false) => {}
+            Err(e) => outcome.errors.push(e),
+        }
+    }
+    outcome
 }
 
 fn chrono_now() -> String {
@@ -1106,6 +1568,38 @@ fn main() {
         println!("\n=== Processing: {} ===", target.name);
         result.targets_processed.push(target.name.to_string());
 
+        // The fonts and the input method engines need a rule instead of a list of
+        // paths, so they are removed by their own handler.
+        match target.kind {
+            TargetKind::Fonts => {
+                let outcome = remove_non_essential_fonts(&mount_path, &config);
+                result.deleted_files += outcome.files;
+                if !config.dry_run {
+                    println!("  [OK] Removed {} font file(s)", outcome.files);
+                }
+                for e in outcome.errors {
+                    result.errors.push(format!("[{}] font: {}", target.name, e));
+                    result.success = false;
+                    println!("  [ERR] {}", e);
+                }
+                continue;
+            }
+            TargetKind::Ime => {
+                let outcome = remove_non_japanese_ime(&mount_path, &config);
+                result.deleted_dirs += outcome.dirs;
+                if !config.dry_run {
+                    println!("  [OK] Removed {} IME engine folder(s)", outcome.dirs);
+                }
+                for e in outcome.errors {
+                    result.errors.push(format!("[{}] ime: {}", target.name, e));
+                    result.success = false;
+                    println!("  [ERR] {}", e);
+                }
+                continue;
+            }
+            TargetKind::Paths => {}
+        }
+
         for f in &target.files {
             match validate_target_path(&mount_path, f) {
                 Ok(target_file_path) => {
@@ -1206,6 +1700,39 @@ fn main() {
                 }
             }
         }
+
+        // The directories whose content is removed while the directory itself stays.
+        for d in &target.dir_contents {
+            match validate_target_path(&mount_path, d) {
+                Ok(target_dir_path) => {
+                    let full_path = target_dir_path.to_string_lossy().to_string();
+                    let outcome = delete_directory_contents(&full_path, config.dry_run);
+                    result.deleted_files += outcome.files;
+                    result.deleted_dirs += outcome.dirs;
+                    for e in outcome.errors {
+                        result
+                            .errors
+                            .push(format!("[{}] content of {}: {}", target.name, d, e));
+                        result.success = false;
+                        println!("  [ERR] {}", e);
+                    }
+                    if !config.dry_run && (outcome.files > 0 || outcome.dirs > 0) {
+                        println!(
+                            "  [OK] Deleted the content of {} ({} files, {} dirs)",
+                            d, outcome.files, outcome.dirs
+                        );
+                    }
+                }
+                Err(e) => {
+                    result.errors.push(format!(
+                        "[{}] Invalid target dir path {}: {}",
+                        target.name, d, e
+                    ));
+                    result.success = false;
+                    println!("  [GUARD REJECT] {}", e);
+                }
+            }
+        }
     }
 
     if !config.log_path.is_empty() {
@@ -1290,6 +1817,7 @@ mod tests {
             log_path: String::new(),
             confirm_offline_image: false,
             experimental,
+            primary_ime_lang: None,
         };
 
         let targets = get_targets(&config);
@@ -1299,7 +1827,10 @@ mod tests {
         );
         for target in &targets {
             assert!(
-                !target.files.is_empty() || !target.dirs.is_empty(),
+                !target.files.is_empty()
+                    || !target.dirs.is_empty()
+                    || !target.dir_contents.is_empty()
+                    || target.kind != TargetKind::Paths,
                 "experimental target '{}' has an empty file and directory list, so it \
                  would silently do nothing",
                 target.name
@@ -1330,6 +1861,7 @@ mod tests {
             log_path: String::new(),
             confirm_offline_image: false,
             experimental,
+            primary_ime_lang: None,
         };
 
         let targets = get_targets(&config);
@@ -1360,5 +1892,169 @@ mod tests {
                 key
             );
         }
+    }
+
+    /// The components that had no forced physical deletion at all must now have one:
+    /// the event logs, the fonts and the input method engines.
+    #[test]
+    fn test_the_components_without_a_forced_deletion_have_one_now() {
+        for key in ["physical_event_logs", "physical_fonts", "physical_ime"] {
+            assert!(
+                KNOWN_EXPERIMENTAL_KEYS.contains(&key),
+                "the key {} is not in the allowlist of the binary",
+                key
+            );
+            let mut experimental = std::collections::HashMap::new();
+            experimental.insert(key.to_string(), true);
+            let config = DebloatConfig {
+                dry_run: true,
+                mount_path: "C:\\nonexistent-mount".to_string(),
+                log_path: String::new(),
+                confirm_offline_image: false,
+                experimental,
+                primary_ime_lang: None,
+            };
+            let targets = get_targets(&config);
+            assert_eq!(
+                targets.len(),
+                1,
+                "the key {} did not produce a target",
+                key
+            );
+            let target = &targets[0];
+            match key {
+                "physical_event_logs" => assert!(
+                    !target.dir_contents.is_empty(),
+                    "the event log target names no directory"
+                ),
+                "physical_fonts" => assert_eq!(
+                    target.kind,
+                    TargetKind::Fonts,
+                    "the font target does not use the font rule"
+                ),
+                "physical_ime" => assert_eq!(
+                    target.kind,
+                    TargetKind::Ime,
+                    "the IME target does not use the IME rule"
+                ),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    /// The font rule keeps the system fonts, the Japanese fonts and the fonts of the
+    /// primary language of the image, so the rendering of the image never breaks.
+    #[test]
+    fn test_the_font_rule_keeps_the_system_and_the_japanese_fonts() {
+        let keep = font_keep_patterns(None);
+        for name in [
+            "segoeui.ttf",
+            "tahoma.ttf",
+            "consola.ttf",
+            "meiryo.ttc",
+            "msgothic.ttc",
+            "msmincho.ttc",
+            "yugothm.ttc",
+            "segoeuihistoric.ttf",
+        ] {
+            assert!(
+                keep.iter().any(|p| wildcard_match(p, name)),
+                "the font {} would be removed",
+                name
+            );
+        }
+        // a font that is not needed by the image is not on the keep list
+        assert!(
+            !keep.iter().any(|p| wildcard_match(p, "NotoSansThai-Regular.ttf")),
+            "an unneeded font would be kept"
+        );
+        // the fonts of the primary language are kept as well
+        let keep_ko = font_keep_patterns(Some("ko-kr"));
+        assert!(keep_ko.iter().any(|p| wildcard_match(p, "malgun.ttf")));
+        let keep_zh = font_keep_patterns(Some("zh-cn"));
+        assert!(keep_zh.iter().any(|p| wildcard_match(p, "msyh.ttc")));
+    }
+
+    /// The IME rule keeps the Japanese engine and the engine of the primary language.
+    #[test]
+    fn test_the_ime_rule_keeps_the_japanese_and_the_own_language() {
+        assert_eq!(ime_directory_for_language(None), None);
+        assert_eq!(ime_directory_for_language(Some("ko-kr")), Some("KOR"));
+        assert_eq!(ime_directory_for_language(Some("zh-cn")), Some("CHS"));
+        assert_eq!(ime_directory_for_language(Some("zh-tw")), Some("CHT"));
+        assert_eq!(ime_directory_for_language(Some("zh-hk")), Some("CHT"));
+    }
+
+    /// The forced deletion removes a read-only file. The plain delete call refuses it,
+    /// so the file only goes away when the attributes are cleared and the delete right
+    /// is granted.
+    #[test]
+    fn test_the_forced_deletion_removes_a_read_only_file() {
+        let dir = test_temp_dir("forced-file");
+        let file = dir.join("component.dll");
+        fs::write(&file, b"payload").expect("the test file must be writable");
+        let attrs = unsafe {
+            GetFileAttributesW(PCWSTR(to_wide(&file.to_string_lossy()).as_ptr()))
+        };
+        assert_ne!(attrs, u32::MAX);
+        unsafe {
+            let _ = SetFileAttributesW(
+                PCWSTR(to_wide(&file.to_string_lossy()).as_ptr()),
+                FILE_ATTRIBUTE_READONLY,
+            );
+        }
+        let deleted = delete_file(&file.to_string_lossy(), false).expect("the delete failed");
+        assert!(deleted, "the read-only file was not deleted");
+        assert!(!file.exists(), "the read-only file is still there");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The forced deletion removes a whole tree, including the subdirectories that are
+    /// read-only. The plain RemoveDirectoryW call refuses those, so they only go away
+    /// when the ownership is taken and the delete right is granted.
+    #[test]
+    fn test_the_forced_deletion_removes_a_read_only_directory_tree() {
+        let dir = test_temp_dir("forced-tree");
+        let sub = dir.join("sub");
+        fs::create_dir_all(&sub).expect("the test directory must be creatable");
+        let file = sub.join("component.dll");
+        fs::write(&file, b"payload").expect("the test file must be writable");
+        unsafe {
+            let _ = SetFileAttributesW(
+                PCWSTR(to_wide(&sub.to_string_lossy()).as_ptr()),
+                FILE_ATTRIBUTE_READONLY,
+            );
+        }
+        let deleted = delete_directory(&dir.to_string_lossy(), false).expect("the delete failed");
+        assert!(deleted, "the directory tree was not deleted");
+        assert!(!dir.exists(), "the directory tree is still there");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The event log folder stays, only the log files inside it are removed.
+    #[test]
+    fn test_the_content_removal_keeps_the_directory() {
+        let dir = test_temp_dir("contents");
+        let file = dir.join("System.evtx");
+        fs::write(&file, b"log").expect("the test file must be writable");
+        let outcome = delete_directory_contents(&dir.to_string_lossy(), false);
+        assert!(outcome.errors.is_empty(), "the removal reported errors");
+        assert_eq!(outcome.files, 1);
+        assert!(dir.exists(), "the directory itself was removed");
+        assert!(!file.exists(), "the log file is still there");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A unique directory for a test. The name contains the process id and the name of
+    /// the test, so two runs never use the same directory.
+    fn test_temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "winease-physical-debloat-test-{}-{}",
+            std::process::id(),
+            name
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("the test directory must be creatable");
+        dir
     }
 }

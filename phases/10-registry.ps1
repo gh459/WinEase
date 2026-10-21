@@ -666,24 +666,29 @@ function Set-WinEaseServiceStartIfPresent {
 }
 
 if (Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue) {
+    # The services belong to the target itself and not to one engine: the binaries of the
+    # Spooler, the Bluetooth stack, the Remote Desktop host and the BitLocker stack are
+    # removed by the engine the user picked, but the services have to be disabled in any
+    # case - otherwise the image keeps a service whose binary the Rust engine has just
+    # deleted.
     $advServices = [ordered]@{}
-    if (Test-WinEaseDebloatTarget -Item 'Remove Print Spooler (service + binary) [20-30MB]') {
+    if (Test-WinEaseDebloatTargetSelected -Item 'Remove Print Spooler (service + binary) [20-30MB]') {
         $advServices["Spooler"] = 4
         $advServices["PrintNotify"] = 4
     }
-    if (Test-WinEaseDebloatTarget -Item 'Remove Bluetooth stack (service + binary) [20-40MB]') {
+    if (Test-WinEaseDebloatTargetSelected -Item 'Remove Bluetooth stack (service + binary) [20-40MB]') {
         $advServices["bthserv"] = 4
         $advServices["BthAvctpSvc"] = 4
         $advServices["BluetoothUserService"] = 3
     }
-    if (Test-WinEaseDebloatTarget -Item 'Remove Remote Desktop host (service + binary) [30-50MB]') {
+    if (Test-WinEaseDebloatTargetSelected -Item 'Remove Remote Desktop host (service + binary) [30-50MB]') {
         $advServices["TermService"] = 4
         $advServices["UmRdpService"] = 4
     }
-    if (Test-WinEaseDebloatTarget -Item 'Remove touch/pen/ink components [20-30MB]') {
+    if (Test-WinEaseDebloatTargetSelected -Item 'Remove touch/pen/ink components [20-30MB]') {
         $advServices["TabletInputService"] = 4
     }
-    if (Test-WinEaseDebloatTarget -Item 'Physical: BitLocker (complete removal) [~30-50MB]') {
+    if (Test-WinEaseDebloatTargetSelected -Item 'Physical: BitLocker (complete removal) [~30-50MB]') {
         $advServices["fvevc"] = 4
     }
     foreach ($svc in $advServices.GetEnumerator()) {

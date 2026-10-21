@@ -80,7 +80,6 @@
             "DisableDiagnosticData": true
         },
         "AdvancedDebloatStandard": [
-            "Remove WinRE (reagentc /disable + file delete) [500-700MB]",
             "Remove PatchCache (dir delete) [200-500MB]",
             "Remove Delivery Optimization cache (dir delete) [100-500MB]",
             "Remove non-Japanese language packs (DISM) [200-500MB]",
@@ -100,7 +99,6 @@
             "Remove non-Japanese IME [5-15MB]",
             "Remove event logs [10-50MB]",
             "Remove crash dumps [varies]",
-            "Remove Windows Store cache [varies]",
             "Remove Provisioning packages [5-10MB]",
             "Remove Windows Sandbox [10-20MB]",
             "Remove WSL / VM Platform [20-40MB]",

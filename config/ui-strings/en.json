@@ -23,6 +23,7 @@
   "Debloat.Column.Target": "Target",
   "Debloat.ConfirmSelectExperimental": "Select ALL experimental physical deletions?\nThis permanently breaks Windows Update and sfc.",
   "Debloat.Engine.All": "Engine for all targets:",
+  "Debloat.Engine.Help": "Engine = how a checked target is removed.\n\nPowerShell (safe engine): the standard Windows mechanisms - DISM for the optional features, the Start values of the services, the registry keys, and the deletion of the files with the normal permissions. The protected Windows files stay in the image, so less space is freed, but the component store and the code integrity of the image stay intact.\n\nRust (forced physical engine): the files of the component are physically deleted from the mounted image. The engine takes the ownership of the protected files (TrustedInstaller) and grants the delete right, so they really disappear - more space is freed, but the component store (WinSxS) and the code integrity of the image can be affected.\n\nA target that supports only one engine shows that engine locked, and only the targets you check are removed at all.",
   "Debloat.Group.Experimental": " Experimental Physical Debloat (Destructive / Breaks WU) ",
   "Debloat.Group.Standard": " Standard Debloat (Safe Component Pruning) ",
   "Debloat.Notice": "Notice: Standard uses CBS safe operations. Experimental physically deletes files.",

@@ -1534,7 +1534,6 @@ function New-WinEaseServicesTab {
 
 # Advanced Debloat items of Tab 7 (and of the WinUI 3 window). The English text is the value phases\09 matches.
 $script:WinEaseDebloatStandardItems = @(
-    "Remove WinRE (reagentc /disable + file delete) [500-700MB]",
     "Remove PatchCache (dir delete) [200-500MB]",
     "Remove Delivery Optimization cache (dir delete) [100-500MB]",
     "Remove non-Japanese language packs (DISM) [200-500MB]",
@@ -1554,7 +1553,6 @@ $script:WinEaseDebloatStandardItems = @(
     "Remove non-Japanese IME [5-15MB]",
     "Remove event logs [10-50MB]",
     "Remove crash dumps [varies]",
-    "Remove Windows Store cache [varies]",
     "Remove Provisioning packages [5-10MB]",
     "Remove Windows Sandbox [10-20MB]",
     "Remove WSL / VM Platform [20-40MB]",
@@ -1591,7 +1589,8 @@ function New-WinEaseDebloatTab {
         [hashtable]$Gui,
         [System.Windows.Forms.TabControl]$TabControl,
         [hashtable]$InitialSettings,
-        [string]$UiFontName
+        [string]$UiFontName,
+        [System.Windows.Forms.ToolTip]$ToolTip
     )
     # =========================================================================
     # TAB 7: Advanced Debloat (Physical Deletion)
@@ -1616,13 +1615,23 @@ function New-WinEaseDebloatTab {
 
     $tabDebloat = New-WinEaseTabPage -Text (Get-WinEaseUiString 'Tab.Debloat') -TabControl $TabControl
     $barDeb = New-WinEaseButtonBar -Parent $tabDebloat
-    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Debloat.Notice') -X 15 -Y 11 -Width 430 -Height 20 `
+    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Debloat.Notice') -X 15 -Y 11 -Width 412 -Height 20 `
         -ForeColor $script:WinEaseGuiColors.Warn -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $barDeb)
     # Global engine switch: applies one engine to every target that supports it
+    # The help mark next to the label: what the engine choice does is not obvious, so the
+    # mark explains it in a tooltip.
+    $engineHelpText = Get-WinEaseUiString 'Debloat.Engine.Help'
+    $engineHelpMark = New-WinEaseLabel -Text '?' -X 431 -Y 11 -Width 16 -Height 20 `
+        -ForeColor $script:WinEaseGuiColors.Accent -Font (New-Object System.Drawing.Font($uiFontName, 9, [System.Drawing.FontStyle]::Bold)) -Parent $barDeb
+    $engineHelpMark.Name = 'WinEaseEngineHelp'
     [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Debloat.Engine.All') -X 455 -Y 11 -Width 135 -Height 20 `
         -ForeColor $script:WinEaseGuiColors.Text -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $barDeb)
     $cmbAllEngine = New-WinEaseComboBox -Items @('PowerShell', 'Rust') -DropList -SelectedIndex 0 `
         -X 590 -Y 8 -Width 115 -Height 22 -BackColor $script:WinEaseGuiColors.Input -ForeColor $script:WinEaseGuiColors.Text -Parent $barDeb
+    if ($ToolTip) {
+        $ToolTip.SetToolTip($engineHelpMark, $engineHelpText)
+        $ToolTip.SetToolTip($cmbAllEngine, $engineHelpText)
+    }
     $flowDeb = New-WinEaseFlowPanel -Parent $tabDebloat
 
     # Standard Debloat group
@@ -1969,6 +1978,9 @@ function Initialize-WinEaseGuiContent {
     $form.Text = Get-WinEaseUiString 'Main.WindowTitle'
 
     $toolTip = New-Object System.Windows.Forms.ToolTip
+    # the shared tooltip of the window; the GUI context keeps it, so the help texts of
+    # the controls can be read (and checked) from the outside
+    $Gui.ToolTip = $toolTip
     $accent = $script:WinEaseGuiColors.Accent
     $headerBack = $script:WinEaseGuiColors.Header
 
@@ -2065,7 +2077,7 @@ function Initialize-WinEaseGuiContent {
     New-WinEaseMediaTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings
     New-WinEaseTweakTabs -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
     New-WinEaseServicesTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
-    New-WinEaseDebloatTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -UiFontName $UiFontName
+    New-WinEaseDebloatTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -UiFontName $UiFontName -ToolTip $toolTip
     New-WinEaseMigrationTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
     New-WinEaseUserTweaksTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
     $cmbPreset = $Gui.Preset

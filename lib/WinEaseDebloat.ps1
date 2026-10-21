@@ -75,6 +75,18 @@ function Test-WinEaseDebloatTarget {
     return ((Resolve-WinEaseDebloatEngine -Item $Item) -eq $Engine)
 }
 
+function Test-WinEaseDebloatTargetSelected {
+    # True when the target is selected, no matter which engine removes it.
+    #
+    # The work that belongs to the target itself and not to one engine is done for both:
+    # the services of the Spooler, the Bluetooth stack, the Remote Desktop host and the
+    # BitLocker stack have to be disabled in any case, otherwise the image keeps a
+    # service whose binary the Rust engine has just deleted.
+    param([Parameter(Mandatory = $true)][string]$Item)
+    $selected = @($script:advancedDebloatStandard) + @($script:advancedDebloatExperimental)
+    return ($selected -contains $Item)
+}
+
 function Test-WinEaseDebloatOptionEnabled {
     # True when the granular option is on, or when a selected Advanced Debloat target
     # implies it (the Option field of the table). This is how a target of the Advanced
@@ -153,11 +165,14 @@ function Get-WinEaseDebloatRustKey {
     elseif ($Item -match 'Windows.old') { return 'physical_windows_old' }
     elseif ($Item -match 'Temp files') { return 'physical_temp_files' }
     elseif ($Item -match 'PatchCache') { return 'physical_patchcache' }
-    elseif ($Item -match 'pagefile') { return 'physical_pagefile' }
-    elseif ($Item -match 'hiberfil') { return 'physical_hiberfil' }
-    elseif ($Item -match 'swapfile') { return 'physical_swapfile' }
     elseif ($Item -match 'Memory.dmp') { return 'physical_memory_dmp' }
     elseif ($Item -match 'Minidump') { return 'physical_minidump' }
+    elseif ($Item -match 'event logs') { return 'physical_event_logs' }
+    elseif ($Item -match 'non-essential fonts') { return 'physical_fonts' }
+    elseif ($Item -match 'non-Japanese IME') { return 'physical_ime' }
+    # The paging files are not part of the mounted image: the safe engine disables them
+    # after the setup, so they have no Rust key and no Rust target.
+    elseif ($Item -match 'pagefile|hiberfil|swapfile') { return '' }
     $fallback = $Item -replace '\s*\[.*?\]\s*', '' -replace '\s+', '_' -replace '[^a-zA-Z0-9_]', '' -replace '_+', '_' -replace '^_|_$', ''
     return 'physical_' + $fallback.ToLower()
 }
@@ -298,11 +313,6 @@ function Invoke-WinEaseDebloatTarget {
         'Remove Delivery Optimization cache (dir delete) [100-500MB]' {
             [void](Remove-WinEaseDebloatPath -Path (Join-Path -Path $scratchDir -ChildPath "Windows\SoftwareDistribution\DeliveryOptimization") -Label 'DeliveryOptimization cache')
         }
-        'Remove Windows Store cache [varies]' {
-            # The Store cache lives under each user profile and only exists after the first
-            # sign-in, so there is nothing in the offline image to remove.
-            Write-Host "    [INFO] Store cache is per-user; nothing exists in the offline image to remove" -ForegroundColor Gray
-        }
         'Remove Provisioning packages [5-10MB]' {
             [void](Remove-WinEaseDebloatPath -Path (Join-Path -Path $scratchDir -ChildPath "Windows\Provisioning") -Label 'Provisioning dir')
         }
@@ -429,7 +439,6 @@ function Get-WinEaseDebloatSafeHandlerItems {
     return @(
         'Remove PatchCache (dir delete) [200-500MB]'
         'Remove Delivery Optimization cache (dir delete) [100-500MB]'
-        'Remove Windows Store cache [varies]'
         'Remove Provisioning packages [5-10MB]'
         'Physical: Windows.old (complete removal) [varies]'
         'Physical: OneDrive (complete removal) [~50MB]'

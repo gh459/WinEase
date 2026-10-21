@@ -1097,7 +1097,13 @@ exit 0
         'DisableCrossDevice'           = 'disable-crossdevice.flag'
     }
     foreach ($flagKey in $postInstallFlags.Keys) {
-        if (Test-TweakEnabled $flagKey $false) {
+        # An Advanced Debloat target can switch the same work on (the target carries the
+        # option of the phase that owns it), so both are asked.
+        $flagOn = Test-TweakEnabled $flagKey $false
+        if (-not $flagOn -and (Get-Command -Name Test-WinEaseDebloatOptionEnabled -ErrorAction SilentlyContinue)) {
+            $flagOn = Test-WinEaseDebloatOptionEnabled -Option $flagKey
+        }
+        if ($flagOn) {
             Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath $postInstallFlags[$flagKey]) -Value "1" -Encoding ascii -Force
         }
     }
@@ -1146,8 +1152,14 @@ exit 0
     # file cannot be deleted from the offline image (Windows recreates it), so the switch
     # is a post-install one: the page file is disabled and the file is deleted on the
     # installed system.
-    if ((Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue) -and
-        (Test-WinEaseDebloatTarget -Item 'Remove pagefile.sys (pagefile disable) [4-16GB]')) {
+    # The swap file is created together with the paging file, so switching the paging
+    # file off removes both - there is no separate switch for it.
+    $removePageFile = $false
+    if (Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue) {
+        $removePageFile = (Test-WinEaseDebloatTarget -Item 'Remove pagefile.sys (pagefile disable) [4-16GB]') -or
+            (Test-WinEaseDebloatTarget -Item 'Remove swapfile.sys (pagefile disable) [256MB-1GB]')
+    }
+    if ($removePageFile) {
         Write-Host "  - Page file removal requested (Advanced Debloat): staging the post-install switch" -ForegroundColor Cyan
         Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "remove-pagefile.flag") -Value "1" -Encoding ascii -Force
     }
