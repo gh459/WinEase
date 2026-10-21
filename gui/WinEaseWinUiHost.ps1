@@ -303,8 +303,8 @@ function ConvertFrom-WinEaseWinUiResult {
     $tweaks = [ordered]@{}
     if ($r.TweakSettings) { foreach ($k in $r.TweakSettings.Keys) { $tweaks[$k] = [bool]$r.TweakSettings[$k] } }
     $out.TweakSettings = $tweaks
-    $out.AdvancedDebloatStandard = @($r.AdvancedDebloatStandard | Where-Object { $_ } | ForEach-Object { "$_" })
-    $out.AdvancedDebloatExperimental = @($r.AdvancedDebloatExperimental | Where-Object { $_ } | ForEach-Object { "$_" })
+    $out.AdvancedDebloatStandard = @(@($r.AdvancedDebloatStandard).Where({ $_ }).ForEach({ "$_" }))
+    $out.AdvancedDebloatExperimental = @(@($r.AdvancedDebloatExperimental).Where({ $_ }).ForEach({ "$_" }))
     # The engine per Advanced Debloat target (PowerShell / Rust)
     $engines = [ordered]@{}
     if ($r.DebloatEngineSelection) {
