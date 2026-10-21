@@ -463,13 +463,14 @@ This working copy carries the following changes on top of the upstream fork:
 ## 📁 Repository Structure
 
 ```
-WinEase-main/
+WinEase/
 ├── WinEasebuilder.ps1          # Main orchestrator (params, options, try/catch)
 ├── WinEasehelpers.ps1          # Pure utility helpers (dot-sourced at startup)
 ├── lib/                       # Builder function libraries (dot-sourced into the builder's scope)
 │   ├── WinEaseMount.ps1        # DISM mount discovery/cleanup, mount directories, offline hives
 │   ├── WinEaseFileSystem.ps1   # Directory safety checks, ownership/ACL, robust deletion, capacity
 │   ├── WinEaseWim.ps1          # Native WIM export, fingerprinting and repair
+│   ├── WinEaseDebloat.ps1      # Advanced Debloat engine (PowerShell / Rust) and per-target handlers
 │   ├── WinEaseReport.ps1       # HTML build report (WinEase_report.html)
 │   ├── WinEaseResume.ps1       # Resume-ISO mode and phase checkpoints
 │   ├── WinEaseSelfTest.ps1     # Self-test suite (loaded only for -TestSelf)
@@ -479,11 +480,13 @@ WinEase-main/
 │   ├── WinEaseWinUiHost.ps1    # Starts the WinUI 3 window and answers its requests (JSON lines over stdin/stdout)
 │   └── winui/                 # WinUI 3 window (C#, Windows App SDK); build.ps1 publishes it to winui/bin
 ├── phases/                    # 18 build phases (dot-sourced by orchestrator)
-│   └── 01-environment.ps1 ... 18-iso.ps1   # 09 has two files: 09-physical-debloat.ps1 and 09-winsxs.ps1
+│   └── 01-environment.ps1 ... 18-iso.ps1   # 19 files: 09 has two (09-physical-debloat.ps1, 09-winsxs.ps1)
 ├── config/
-│   ├── tweaks.psd1            # Single source of truth for every tweak/component setting and CLI switch pair
+│   ├── schema.psd1            # Single source of truth for every tweak/component setting, CLI switch pair and debloat engine
+│   ├── presets.psd1           # Built-in presets (extreme, balanced, fat32, handheld, vm, audio)
 │   ├── dependencies.psd1      # Dependency & feature-impact catalog (conflicts, impacts, unknowns)
 │   ├── WinEase.config.schema.json  # JSON Schema for profile validation
+│   ├── ui-strings/            # GUI strings (en.json, ja.json)
 │   └── user/                  # User-edited files (all optional)
 │       ├── user-tweaks.psd1          # User-defined tweaks, presets and custom scripts
 │       └── user-migration-rules.psd1 # User-defined migration rules
@@ -495,6 +498,7 @@ WinEase-main/
 │   ├── custom-scripts/        # User scripts by stage: PreBuild/ OfflineImage/ FirstLogon/ UserOnce/ (see its README.md)
 │   ├── winease-physical-debloat/   # Rust tool for Advanced Debloat physical deletion
 │   ├── Measure-WinEaseGuestBaseline.ps1  # In-guest footprint / idle load / boot-time measurement
+│   ├── benchmark_winui_init.ps1          # WinUI host init-message benchmark
 │   └── Compare-WinEaseBenchmarks.ps1     # Multi-run benchmark statistical comparison
 ├── scripts/                   # Embedded setup scripts (injected into autounattend.xml)
 │   ├── Specialize.ps1
@@ -508,10 +512,13 @@ WinEase-main/
 ├── docs/
 │   ├── EXTENSIBILITY_GUIDE.md    # Extensibility guide (English): quick start + reference
 │   ├── EXTENSIBILITY_GUIDE.ja.md # Same guide in Japanese
+│   ├── SECURITY_OPTIONS.md    # Security-relevant options, their cost and how to revert
 │   └── dev/SESSION_BRIEFS.md  # Work briefs used for the S1-S12 fix sessions
 ├── tests/
 │   └── WinEase.Tests.ps1       # Pester test suite
-├── .github/workflows/ci.yml   # CI workflow
+├── .github/
+│   ├── dependabot.yml
+│   └── workflows/             # ci.yml (Pester), lint.yml (PSScriptAnalyzer), release.yml, claude-issue-agent.yml
 ├── autounattend.xml           # Unattended setup template (scripts injected at build time)
 ├── WinEase-GUI.bat             # GUI launcher
 ├── oscdimg.exe                # Bundled ISO mastering tool
