@@ -3852,6 +3852,28 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
         $builder | Should Match 'falling back to the classic window'
     }
 
+    It "Find-WinEaseWinUiExe finds and returns the newest candidate executable in build directory" {
+        $testBinDir = Join-Path -Path $script:RepoRoot -ChildPath ("gui\winui\WinEaseGui\bin\TestBuild_" + [Guid]::NewGuid().ToString('N'))
+        $oldSub = Join-Path -Path $testBinDir -ChildPath "Debug"
+        $newSub = Join-Path -Path $testBinDir -ChildPath "Release"
+        try {
+            [void][System.IO.Directory]::CreateDirectory($oldSub)
+            [void][System.IO.Directory]::CreateDirectory($newSub)
+            $oldExe = Join-Path -Path $oldSub -ChildPath "WinEaseGui.exe"
+            $newExe = Join-Path -Path $newSub -ChildPath "WinEaseGui.exe"
+            [System.IO.File]::WriteAllText($oldExe, "old")
+            [System.IO.File]::SetLastWriteTime($oldExe, (Get-Date).AddHours(-2))
+            [System.IO.File]::WriteAllText($newExe, "new")
+            [System.IO.File]::SetLastWriteTime($newExe, (Get-Date))
+
+            $found = Find-WinEaseWinUiExe
+            $found | Should Not BeNullOrEmpty
+            [System.IO.Path]::GetFullPath($found) | Should Be [System.IO.Path]::GetFullPath($newExe)
+        } finally {
+            if (Test-Path -LiteralPath $testBinDir) { Remove-Item -LiteralPath $testBinDir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
     It "handles WINEASE_WINUI_INIT_DUMP environment variable creating parent directories safely" {
         $dumpFolder = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("winease_dump_test_" + [Guid]::NewGuid().ToString('N'))
         $dumpFile = Join-Path -Path $dumpFolder -ChildPath "nested\init_dump.json"
