@@ -166,8 +166,8 @@ function Get-MigratorEstimate {
     param([string]$Root, [string[]]$FolderPaths, [string[]]$Custom, [string[]]$Ids)
     $src = Get-MigratorRuleSources -Ids $Ids
     $est = Get-WinEaseMigrationSizeEstimate -UserFolderPaths (@($FolderPaths) + @($Custom) + @($src.Paths)) -SelectedRuleIds $Ids -DestinationPath $Root
-    $running = @()
-    foreach ($pn in $src.ProcessNames) { if (Get-Process -Name $pn -ErrorAction SilentlyContinue) { $running += $pn } }
+    $running = [System.Collections.Generic.List[string]]::new()
+    foreach ($pn in $src.ProcessNames) { if (Get-Process -Name $pn -ErrorAction SilentlyContinue) { $running.Add($pn) } }
     $est.RunningProcesses = @($running)
     return $est
 }
@@ -218,29 +218,32 @@ function Update-MigFreeSpace {
 function Get-MigSelection {
     param($Form)
     $g = $Form.Tag
-    $known = @(); $custom = @()
+    $known = [System.Collections.Generic.List[string]]::new()
+    $custom = [System.Collections.Generic.List[string]]::new()
     foreach ($i in $g.Folders.CheckedItems) {
-        if ($g.KnownFolderNames -contains [string]$i) { $known += [string]$i } else { $custom += [string]$i }
+        if ($g.KnownFolderNames -contains [string]$i) { $known.Add([string]$i) } else { $custom.Add([string]$i) }
     }
-    $ids = @()
+    $ids = [System.Collections.Generic.List[string]]::new()
     foreach ($lb in @($g.GameRules, $g.AppRules)) {
-        foreach ($i in $lb.CheckedItems) { $ids += (([string]$i -split ' - ')[0]).Trim() }
+        if ($lb) {
+            foreach ($i in $lb.CheckedItems) { $ids.Add((([string]$i -split ' - ')[0]).Trim()) }
+        }
     }
     $root = $g.BackupRoot.Text.Trim()
     if (-not $root) { $root = $script:DefaultPackagePath; $g.BackupRoot.Text = $root }
-    return @{ PackagePath = $root; UserFolders = $known; CustomPaths = $custom; RuleIds = ($ids -join ','); IncludeSecrets = (-not $g.ExcludeSecrets.Checked) }
+    return @{ PackagePath = $root; UserFolders = @($known); CustomPaths = @($custom); RuleIds = ($ids -join ','); IncludeSecrets = (-not $g.ExcludeSecrets.Checked) }
 }
 
 # "ID - Name" rows for a rule list; rules with a cloud-save note get a [Cloud] mark
 function Get-MigRuleRows {
     param($Rules)
-    $rows = @()
+    $rows = [System.Collections.Generic.List[string]]::new()
     foreach ($r in @($Rules)) {
         if (-not $r) { continue }
         $mark = if ($r.CloudSaveNotice) { '  [Cloud]' } else { '' }
-        $rows += "$($r.Id) - $($r.Name)$mark"
+        $rows.Add("$($r.Id) - $($r.Name)$mark")
     }
-    return $rows
+    return @($rows)
 }
 
 # Tab 1: Export / Backup
@@ -397,9 +400,14 @@ function Switch-MigratorLanguage {
     $g = $Form.Tag
     if (-not $Language) { $Language = "$($g.PendingLanguage)" }
     if ($script:WinEaseUiLanguages -notcontains $Language -or $Language -eq $script:WinEaseUiLanguage) { return }
-    $folders = @()
-    for ($i = 0; $i -lt $g.Folders.Items.Count; $i++) { $folders += , @("$($g.Folders.Items[$i])", $g.Folders.GetItemChecked($i)) }
-    $checkedRules = @(); foreach ($lb in @($g.GameRules, $g.AppRules)) { foreach ($i in $lb.CheckedItems) { $checkedRules += "$i" } }
+    $folders = [System.Collections.Generic.List[object]]::new()
+    for ($i = 0; $i -lt $g.Folders.Items.Count; $i++) { $folders.Add(@("$($g.Folders.Items[$i])", $g.Folders.GetItemChecked($i))) }
+    $checkedRules = [System.Collections.Generic.List[string]]::new()
+    foreach ($lb in @($g.GameRules, $g.AppRules)) {
+        if ($lb) {
+            foreach ($i in $lb.CheckedItems) { $checkedRules.Add("$i") }
+        }
+    }
     $state = @{
         BackupRoot = $g.BackupRoot.Text; RestoreRoot = $g.RestoreRoot.Text; Policy = $g.Policy.SelectedIndex
         ExcludeSecrets = [bool]$g.ExcludeSecrets.Checked; Folders = $folders; Rules = $checkedRules

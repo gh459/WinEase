@@ -14,8 +14,10 @@ function Find-WinEaseWinUiExe {
     $candidates = @(Join-Path -Path $winuiDir -ChildPath 'bin\WinEaseGui.exe')
     $buildDir = Join-Path -Path $winuiDir -ChildPath 'WinEaseGui\bin'
     if (Test-Path -LiteralPath $buildDir) {
-        $candidates += @(Get-ChildItem -LiteralPath $buildDir -Filter 'WinEaseGui.exe' -Recurse -File -ErrorAction SilentlyContinue |
-            Sort-Object LastWriteTime -Descending | ForEach-Object { $_.FullName })
+        try {
+            $candidates += @([System.IO.Directory]::EnumerateFiles($buildDir, 'WinEaseGui.exe', [System.IO.SearchOption]::AllDirectories) |
+                Sort-Object { [System.IO.File]::GetLastWriteTime($_) } -Descending)
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
     foreach ($c in $candidates) { if ($c -and (Test-Path -LiteralPath $c)) { return $c } }
     return $null
@@ -267,7 +269,8 @@ function Invoke-WinEaseWinUiRequest {
         'wizard' {
             $migratorPath = Join-Path $repo 'tools\migrator\WinEase-Migrator.ps1'
             if (-not (Test-Path -LiteralPath $migratorPath)) { return @{ Kind = 'Warning'; Title = (Get-WinEaseUiString 'Mig.Wizard.Title'); Text = (Get-WinEaseUiString 'Mig.Wizard.NotFound') } }
-            Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$migratorPath`" -GUI -BackupRoot `"$root`" -UiLanguage $($script:WinEaseUiLanguage)" -WindowStyle Normal
+            $migratorArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $migratorPath, '-GUI', '-BackupRoot', $root, '-UiLanguage', "$($script:WinEaseUiLanguage)")
+            Start-Process powershell.exe -ArgumentList $migratorArgs -WindowStyle Normal
             return @{}
         }
         'guide' {
@@ -303,8 +306,8 @@ function ConvertFrom-WinEaseWinUiResult {
     $tweaks = [ordered]@{}
     if ($r.TweakSettings) { foreach ($k in $r.TweakSettings.Keys) { $tweaks[$k] = [bool]$r.TweakSettings[$k] } }
     $out.TweakSettings = $tweaks
-    $out.AdvancedDebloatStandard = @(($r.AdvancedDebloatStandard).Where({ $_ }).ForEach({ "$_" }))
-    $out.AdvancedDebloatExperimental = @(($r.AdvancedDebloatExperimental).Where({ $_ }).ForEach({ "$_" }))
+    $out.AdvancedDebloatStandard = @(@($r.AdvancedDebloatStandard).Where({ $_ }).ForEach({ "$_" }))
+    $out.AdvancedDebloatExperimental = @(@($r.AdvancedDebloatExperimental).Where({ $_ }).ForEach({ "$_" }))
     # The engine per Advanced Debloat target (PowerShell / Rust)
     $engines = [ordered]@{}
     if ($r.DebloatEngineSelection) {
