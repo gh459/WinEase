@@ -8,6 +8,12 @@ build_diagnostics/
 *.vhdx
 *.iso.sha256
 
+# Temporary files and UNC extended prefix test paths
+tmp/
+\\?\tmp/
+\\\\?\\/tmp/
+*deep.txt
+
 # Workspace artifacts (kept out of VCS; workspace lives outside this folder by default)
 WinEase_workspace/
 
