@@ -571,6 +571,125 @@ Describe "WinEase telemetry - Save-WinEaseTelemetry" {
     }
 }
 
+Describe "WinEase helpers - DISM wrapper (Invoke-Dism)" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+    }
+
+    BeforeEach {
+        $script:DismLogPath = $null
+        $script:LastDismExitCode = $null
+    }
+
+    AfterEach {
+        Remove-Item Function:\dism.exe -ErrorAction SilentlyContinue
+        Remove-Item Function:\Start-Sleep -ErrorAction SilentlyContinue
+    }
+
+    It "returns true when DISM exits with code 0" {
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $global:LASTEXITCODE = 0
+        }
+
+        $result = Invoke-Dism -DismArgs @('/Get-MountedWimInfo')
+        $result | Should Be $true
+        $script:LastDismExitCode | Should Be 0
+    }
+
+    It "returns true when DISM exits with code 3010 (reboot required)" {
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $global:LASTEXITCODE = 3010
+        }
+
+        $result = Invoke-Dism -DismArgs @('/Get-MountedWimInfo')
+        $result | Should Be $true
+        $script:LastDismExitCode | Should Be 3010
+    }
+
+    It "includes DismLogPath arguments when DismLogPath is set" {
+        $script:CapturedArgs = $null
+        function dism.exe {
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $script:CapturedArgs = $DismArgs
+            $global:LASTEXITCODE = 0
+        }
+
+        $script:DismLogPath = "C:\Logs\dism.log"
+        $result = Invoke-Dism -DismArgs @('/Get-MountedWimInfo') -ActivityDescription "Testing Log Path"
+        $result | Should Be $true
+        ($script:CapturedArgs -contains "/LogPath:C:\Logs\dism.log") | Should Be $true
+        ($script:CapturedArgs -contains "/LogLevel:3") | Should Be $true
+    }
+
+    It "captures and returns output when CaptureOutput is specified" {
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            Write-Output "Deployment Image Servicing and Management tool"
+            $global:LASTEXITCODE = 0
+        }
+
+        $output = Invoke-Dism -DismArgs @('/Get-MountedWimInfo') -CaptureOutput
+        $output | Should Match "Deployment Image Servicing"
+        $script:LastDismExitCode | Should Be 0
+    }
+
+    It "runs quietly when Quiet parameter is specified" {
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            Write-Output "Some noisy output"
+            $global:LASTEXITCODE = 0
+        }
+
+        $result = Invoke-Dism -DismArgs @('/Get-MountedWimInfo') -Quiet
+        $result | Should Be $true
+    }
+
+    It "retries on failure up to Retries attempts and returns false on final attempt failure" {
+        $script:DismCalls = 0
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $script:DismCalls++
+            $global:LASTEXITCODE = 2
+        }
+        function Start-Sleep {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'Mock Start-Sleep to avoid delays during tests')]
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([int]$Seconds)
+        }
+
+        $result = Invoke-Dism -DismArgs @('/Cleanup-Wim') -Retries 3
+        $result | Should Be $false
+        $script:DismCalls | Should Be 3
+        $script:LastDismExitCode | Should Be 2
+    }
+
+    It "returns null when CaptureOutput is specified and DISM fails after retries" {
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            Write-Output "Error occurred"
+            $global:LASTEXITCODE = 87
+        }
+        function Start-Sleep {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'Mock Start-Sleep to avoid delays during tests')]
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([int]$Seconds)
+        }
+
+        $result = Invoke-Dism -DismArgs @('/InvalidArg') -Retries 2 -CaptureOutput
+        $result | Should BeNullOrEmpty
+        $script:LastDismExitCode | Should Be 87
+    }
+}
+
 Describe "WinEase helpers - registry hive unmounting (Unmount-RegistryHiveWithRetry)" {
     BeforeAll {
         . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
