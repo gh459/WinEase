@@ -557,11 +557,11 @@ function Invoke-WinEaseGuiBackgroundJob {
         }
         $output = @()
         $jobError = $null
-        $errors = @()
+        $errors = [System.Collections.Generic.List[string]]::new()
         if ($job.State -eq 'Failed') {
             $jobError = $job.ChildJobs[0].JobStateInfo.Reason.Message
         } else {
-            foreach ($e in $job.ChildJobs[0].Error) { $errors += "$e" }
+            foreach ($e in $job.ChildJobs[0].Error) { $errors.Add("$e") }
             $output = @(Receive-Job -Job $job -ErrorAction SilentlyContinue)
         }
         Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
