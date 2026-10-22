@@ -166,8 +166,8 @@ function Get-MigratorEstimate {
     param([string]$Root, [string[]]$FolderPaths, [string[]]$Custom, [string[]]$Ids)
     $src = Get-MigratorRuleSources -Ids $Ids
     $est = Get-WinEaseMigrationSizeEstimate -UserFolderPaths (@($FolderPaths) + @($Custom) + @($src.Paths)) -SelectedRuleIds $Ids -DestinationPath $Root
-    $running = @()
-    foreach ($pn in $src.ProcessNames) { if (Get-Process -Name $pn -ErrorAction SilentlyContinue) { $running += $pn } }
+    $running = [System.Collections.Generic.List[string]]::new()
+    foreach ($pn in $src.ProcessNames) { if (Get-Process -Name $pn -ErrorAction SilentlyContinue) { $running.Add($pn) } }
     $est.RunningProcesses = @($running)
     return $est
 }
