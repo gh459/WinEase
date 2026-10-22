@@ -408,6 +408,167 @@ Describe "WinEase builder - phase timing telemetry" {
         ([math]::Round($total, 1)) | Should Be 27.1
         Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
     }
+
+    It "writes diagnostic JSON and summary text report when Write-WinEaseDiagnosticReport is invoked" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Write-WinEaseDiagnosticReport'
+        }, $true))
+        $funcTexts.Count | Should Be 1
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $tempDiagDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_diag_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($tempDiagDir) | Out-Null
+        $script:DiagDir = $tempDiagDir
+        $script:DiagnosticData = [ordered]@{
+            BuildId              = "test-build-123"
+            Timestamp            = "2026-01-01 12:00:00"
+            BuilderScriptSha256  = "dummyhash"
+            BuildSucceeded       = $true
+            FailurePhase         = $null
+            FailureMessage       = $null
+            DismPath             = "dism.exe"
+            DismVersion          = "10.0.22621"
+            SourceIsoPath        = "C:\test.iso"
+            SourceIsoSha256      = "isohash"
+            SelectedImageIndex   = "1"
+            SelectedImageName    = "Windows 11 Pro"
+            ExportSucceeded      = $true
+            ExportExitCode       = 0
+            PreExportWimSha256   = "prehash"
+            ExportedWimSha256    = "exphash"
+            FinalPayloadVerified = $true
+            FinalApplyExitCode   = 0
+            FinalWimSha256       = "finalhash"
+            IsoGenerated         = $true
+            OscdimgExitCode      = 0
+            IsoEmbeddedWimSha256 = "finalhash"
+            IsoPayloadMatch      = $true
+            PreservedArtifacts   = @("C:\workspace\build")
+        }
+
+        Write-WinEaseDiagnosticReport "Test status message"
+
+        $jsonPath = Join-Path -Path $tempDiagDir -ChildPath "build_diagnostic_report.json"
+        $txtPath = Join-Path -Path $tempDiagDir -ChildPath "build_diagnostic_summary.txt"
+
+        (Test-Path -LiteralPath $jsonPath) | Should Be $true
+        (Test-Path -LiteralPath $txtPath) | Should Be $true
+
+        $reportJson = (Get-Content -LiteralPath $jsonPath -Raw -Encoding UTF8) | ConvertFrom-Json
+        $reportJson.BuildId | Should Be "test-build-123"
+        $reportJson.BuildSucceeded | Should Be $true
+        $reportJson.IsoPayloadMatch | Should Be $true
+
+        $summaryTxt = Get-Content -LiteralPath $txtPath -Raw -Encoding UTF8
+        $summaryTxt | Should Match "Overall Build Status:\s+SUCCESS"
+        $summaryTxt | Should Match "Build ID:\s+test-build-123"
+        $summaryTxt | Should Match "Preserved Artifacts:\r?\n\s+- C:\\workspace\\build"
+
+        Remove-Item -LiteralPath $tempDiagDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It "formats build failure details in summary text report when build failed" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Write-WinEaseDiagnosticReport'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $tempDiagDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_diag_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($tempDiagDir) | Out-Null
+        $script:DiagDir = $tempDiagDir
+        $script:DiagnosticData = [ordered]@{
+            BuildId            = "failed-build-456"
+            Timestamp          = "2026-01-01 12:05:00"
+            BuildSucceeded     = $false
+            FailurePhase       = "Phase 13: Export"
+            FailureMessage     = "Export command exited with code 1"
+            PreservedArtifacts = @()
+        }
+
+        Write-WinEaseDiagnosticReport "Build failed"
+
+        $txtPath = Join-Path -Path $tempDiagDir -ChildPath "build_diagnostic_summary.txt"
+        $summaryTxt = Get-Content -LiteralPath $txtPath -Raw -Encoding UTF8
+        $summaryTxt | Should Match "Overall Build Status:\s+FAILED"
+        $summaryTxt | Should Match "Failure Phase:\s+Phase 13: Export"
+        $summaryTxt | Should Match "Failure Message:\s+Export command exited with code 1"
+
+        Remove-Item -LiteralPath $tempDiagDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It "catches file write errors without throwing an exception when output directory is invalid" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Write-WinEaseDiagnosticReport'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $script:DiagDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "nonexistent_dir_12345\sub_dir"
+        $script:DiagnosticData = [ordered]@{ BuildId = "err-build" }
+
+        { Write-WinEaseDiagnosticReport "Status" -ErrorAction SilentlyContinue } | Should Not Throw
+    }
+}
+
+Describe "WinEase telemetry - Save-WinEaseTelemetry" {
+    BeforeAll {
+        . (Join-Path $script:RepoRoot "lib\WinEaseTelemetry.ps1")
+    }
+
+    It "returns early without writing a file when WinEaseBuildTelemetry is null" {
+        $script:WinEaseBuildTelemetry = $null
+        $tempDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_telem_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+
+        $res = Save-WinEaseTelemetry -OutputDirectory $tempDir -BuildId "b123"
+        $res | Should Be $null
+        (Test-Path -LiteralPath $tempDir) | Should Be $false
+    }
+
+    It "creates output directory and writes valid telemetry JSON file when data is provided" {
+        $script:WinEaseBuildTelemetry = [ordered]@{
+            BuildId = "b123"
+            Timing  = @{ Phases = @{ "Phase 1" = 12.3 } }
+        }
+        $tempDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_telem_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+
+        $res = Save-WinEaseTelemetry -OutputDirectory $tempDir -BuildId "b123"
+        $res | Should Not Be $null
+        (Test-Path -LiteralPath $res) | Should Be $true
+
+        $savedJson = (Get-Content -LiteralPath $res -Raw -Encoding UTF8) | ConvertFrom-Json
+        $savedJson.BuildId | Should Be "b123"
+        $savedJson.Timing.Phases.'Phase 1' | Should Be 12.3
+
+        $script:WinEaseBuildTelemetry = $null
+        Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It "catches file write errors and returns null when output directory creation fails" {
+        $script:WinEaseBuildTelemetry = [ordered]@{ BuildId = "b999" }
+        $tempFileAsDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_blocker_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        Set-Content -LiteralPath $tempFileAsDir -Value "blocking_file"
+        $invalidDir = Join-Path -Path $tempFileAsDir -ChildPath "child"
+
+        $res = Save-WinEaseTelemetry -OutputDirectory $invalidDir -BuildId "b999" -ErrorAction SilentlyContinue
+        $res | Should Be $null
+
+        $script:WinEaseBuildTelemetry = $null
+        Remove-Item -LiteralPath $tempFileAsDir -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Describe "WinEase helpers - registry hive unmounting (Unmount-RegistryHiveWithRetry)" {

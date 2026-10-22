@@ -580,8 +580,8 @@ $script:PreservedMountDirs = [System.Collections.Generic.HashSet[string]]::new(
 $script:MountAllocationRoot = $null
 $script:MountDirectoryPrefix = $null
 
-# Low-level DISM mount / offline hive, filesystem / ACL and WIM helpers (function definitions only)
-foreach ($WinEaseLibFile in @('WinEaseMount.ps1', 'WinEaseFileSystem.ps1', 'WinEaseWim.ps1')) {
+# Low-level DISM mount / offline hive, filesystem / ACL, WIM and telemetry helpers (function definitions only)
+foreach ($WinEaseLibFile in @('WinEaseMount.ps1', 'WinEaseFileSystem.ps1', 'WinEaseWim.ps1', 'WinEaseTelemetry.ps1')) {
     . (Join-Path -Path (Join-Path -Path $scriptDirEarly -ChildPath "lib") -ChildPath $WinEaseLibFile)
 }
 
