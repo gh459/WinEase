@@ -33,7 +33,21 @@ jobs:
         # not break the pipeline of a pull request.
         shell: pwsh
         run: |
-          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue
+          if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
+            $attempts = 0
+            while ($attempts -lt 3) {
+              try {
+                Install-Module PSScriptAnalyzer -Force -SkipPublisherCheck -Scope CurrentUser -ErrorAction Stop
+                break
+              } catch {
+                $attempts++
+                if ($attempts -ge 3) { throw }
+                Start-Sleep -Seconds 5
+              }
+            }
+          }
           $results = Invoke-ScriptAnalyzer -Path . -Recurse -Settings .\PSScriptAnalyzerSettings.psd1
           $results | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize -Wrap
           foreach ($r in $results) {
