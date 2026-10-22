@@ -2289,8 +2289,8 @@ function Compare-WinEaseConfig {
     $allTweakKeys = $allTweakKeysList | Select-Object -Unique
     foreach ($k in $allTweakKeys) {
         $rv = $null; $dv = $null
-        if ($refTS -is [System.Collections.IDictionary]) { if ($refTS.Contains($k)) { $rv = $refTS[$k] } } elseif ($refTS.PSObject -and $refTS.PSObject.Properties[$k]) { $rv = $refTS.PSObject.Properties[$k].Value }
-        if ($diffTS -is [System.Collections.IDictionary]) { if ($diffTS.Contains($k)) { $dv = $diffTS[$k] } } elseif ($diffTS.PSObject -and $diffTS.PSObject.Properties[$k]) { $dv = $diffTS.PSObject.Properties[$k].Value }
+        if ($refTS -is [System.Collections.IDictionary]) { if ($refTS.Contains($k)) { $rv = $refTS[$k] } } elseif ($refTS -and $refTS.PSObject -and $refTS.PSObject.Properties[$k]) { $rv = $refTS.PSObject.Properties[$k].Value }
+        if ($diffTS -is [System.Collections.IDictionary]) { if ($diffTS.Contains($k)) { $dv = $diffTS[$k] } } elseif ($diffTS -and $diffTS.PSObject -and $diffTS.PSObject.Properties[$k]) { $dv = $diffTS.PSObject.Properties[$k].Value }
         $desc = ''
         if ($script:AllTweakDefs -and $script:AllTweakDefs.Contains($k)) { $desc = $script:AllTweakDefs[$k].Description }
         if ($rv -ne $dv) {
@@ -2312,8 +2312,8 @@ function Compare-WinEaseConfig {
     $allTGKeys = $allTGKeysList | Select-Object -Unique
     foreach ($k in $allTGKeys) {
         $rv = $null; $dv = $null
-        if ($refTG -is [System.Collections.IDictionary]) { if ($refTG.Contains($k)) { $rv = $refTG[$k] } } elseif ($refTG.PSObject -and $refTG.PSObject.Properties[$k]) { $rv = $refTG.PSObject.Properties[$k].Value }
-        if ($diffTG -is [System.Collections.IDictionary]) { if ($diffTG.Contains($k)) { $dv = $diffTG[$k] } } elseif ($diffTG.PSObject -and $diffTG.PSObject.Properties[$k]) { $dv = $diffTG.PSObject.Properties[$k].Value }
+        if ($refTG -is [System.Collections.IDictionary]) { if ($refTG.Contains($k)) { $rv = $refTG[$k] } } elseif ($refTG -and $refTG.PSObject -and $refTG.PSObject.Properties[$k]) { $rv = $refTG.PSObject.Properties[$k].Value }
+        if ($diffTG -is [System.Collections.IDictionary]) { if ($diffTG.Contains($k)) { $dv = $diffTG[$k] } } elseif ($diffTG -and $diffTG.PSObject -and $diffTG.PSObject.Properties[$k]) { $dv = $diffTG.PSObject.Properties[$k].Value }
         if ($rv -ne $dv) {
             $tweakGroupDiffs.Add([PSCustomObject]@{ Key = $k; Category = 'TweakGroup'; ReferenceValue = $rv; DifferenceValue = $dv })
         }
@@ -2323,9 +2323,9 @@ function Compare-WinEaseConfig {
     return [PSCustomObject]@{
         ReferenceName     = $ref.Name
         DifferenceName    = $diff.Name
-        ComponentDiffs    = $compDiffs
-        TweakGroupDiffs   = $tweakGroupDiffs
-        TweakSettingDiffs = $tweakSettingDiffs
+        ComponentDiffs    = @($compDiffs)
+        TweakGroupDiffs   = @($tweakGroupDiffs)
+        TweakSettingDiffs = @($tweakSettingDiffs)
         AddedImpacts      = @()
         RemovedImpacts    = @()
         TotalDiffCount    = $totalDiff
