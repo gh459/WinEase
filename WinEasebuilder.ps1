@@ -225,6 +225,7 @@ param(
     [switch]$NetworkTuning,
     [switch]$DisableIdleMaintenance,
     [switch]$SvcHostConsolidation,
+    [switch]$DisableSearchWebView2,
     [switch]$HideSearchBox,
     [switch]$MenuShowDelayZero,
     [switch]$DisableSnapAssist,
@@ -238,6 +239,9 @@ param(
     [switch]$AlwaysShowScrollbars,
     [switch]$DisableLogonBlur,
     [switch]$HideOneDriveNavPane,
+    [switch]$DisableAccessibilityHotkeys,
+    [switch]$DisableMouseAcceleration,
+    [switch]$DisableKeyboardDelay,
     # Removal options (polarity: OFF = keep, ON = remove). These used to run
     # unconditionally on every build.
     [switch]$RemoveHelpFiles,
@@ -370,6 +374,11 @@ param(
 # The helper module contains only pure functions and the BuildContext class
 # (no top-level state), so loading it this early is safe.
 $scriptDirEarly = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+# The moment this builder was started. The rotation of the build_diagnostics folders
+# uses it to tell the diagnostic directory of a build that is still running from an
+# abandoned one: a build that starts while another one is still running must not
+# delete the diagnostic directory of that other build.
+$script:BuilderStartTime = Get-Date
 $helperModuleEarly = Join-Path -Path $scriptDirEarly -ChildPath "WinEasehelpers.ps1"
 if (Test-Path -LiteralPath $helperModuleEarly) {
     . $helperModuleEarly
@@ -571,8 +580,8 @@ $script:PreservedMountDirs = [System.Collections.Generic.HashSet[string]]::new(
 $script:MountAllocationRoot = $null
 $script:MountDirectoryPrefix = $null
 
-# Low-level DISM mount / offline hive, filesystem / ACL and WIM helpers (function definitions only)
-foreach ($WinEaseLibFile in @('WinEaseMount.ps1', 'WinEaseFileSystem.ps1', 'WinEaseWim.ps1')) {
+# Low-level DISM mount / offline hive, filesystem / ACL, WIM and telemetry helpers (function definitions only)
+foreach ($WinEaseLibFile in @('WinEaseMount.ps1', 'WinEaseFileSystem.ps1', 'WinEaseWim.ps1', 'WinEaseTelemetry.ps1')) {
     . (Join-Path -Path (Join-Path -Path $scriptDirEarly -ChildPath "lib") -ChildPath $WinEaseLibFile)
 }
 
@@ -656,6 +665,38 @@ function Sync-WinEaseTweakVariables {
             Set-Variable -Name $script:TweakVariableMap[$tk] -Scope Script -Value ([bool]$script:TweakSettings[$tk])
         }
     }
+}
+
+# Helper function to evaluate individual toggle settings.
+# This is the single canonical definition of the helper. It has to live here, in the
+# builder's script scope, and not in one of the phases: phases 05, 06 and 08 and
+# lib\WinEaseDebloat.ps1 call it, but phase 10 (which carries a guarded fallback copy)
+# runs long after them - a helper that is only defined in phase 10 is therefore not
+# resolvable when phase 05 asks for it.
+# Phases 10 and 11 keep their own guarded copy so that they still work when they are
+# dot-sourced on their own; during a normal build the guard keeps them from
+# redefining this one.
+function Test-TweakEnabled {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Name,
+        [bool]$Default = $true
+    )
+    if ($null -ne $script:TweakSettings -and $script:TweakSettings.Contains($Name)) {
+        return [bool]$script:TweakSettings[$Name]
+    }
+    # Legacy key names (older profiles / -TweakSettings hashtables) that map onto this GUI key
+    if ($null -ne $script:TweakSettings -and $script:TweakKeyAliases) {
+        foreach ($alias in $script:TweakKeyAliases.Keys) {
+            if ($script:TweakKeyAliases[$alias] -eq $Name -and $script:TweakSettings.Contains($alias)) {
+                return [bool]$script:TweakSettings[$alias]
+            }
+        }
+    }
+    $varName = "Tweak_$Name"
+    $v = Get-Variable -Name $varName -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $v) { return [bool]$v.Value }
+    return $Default
 }
 
 # Profile key order: component settings first, then every tweak key (-SaveProfile writes these,
@@ -1010,6 +1051,12 @@ function Apply-WinEaseProfileTweaks {
             $tweakOverride[$k] = [bool]$val
         }
     }
+    # The resolved tweaks are written back into $script:TweakSettings and onto the
+    # script variables: without this the layers are only collected and a preset or a
+    # profile never reaches the build.
+    $resolvedTweaks = Resolve-WinEaseConfiguration -TweakBase $tweakBase -TweakPreset $tweakPreset -TweakOverrides $tweakOverride
+    foreach ($k in $resolvedTweaks.Tweaks.Keys) { $script:TweakSettings[$k] = [bool]$resolvedTweaks.Tweaks[$k] }
+    Sync-WinEaseTweakVariables
 }
 
 # Helper function: Unified profile settings application
@@ -1081,6 +1128,24 @@ function Import-WinEaseProfile {
         }
         if ($unknownKeys.Count -gt 0) {
             Write-Warning "Profile '$([System.IO.Path]::GetFileName($FilePath))' contains unrecognized setting(s): $($unknownKeys -join ', '). Please check for typos."
+        }
+
+        # Value types: Apply-ProfileSettings casts with [bool], and [bool]"false" is $true, so a
+        # quoted or nested value would silently switch a removal option on. Refuse such a file.
+        $typeErrors = @()
+        foreach ($cd in $script:ComponentDefs.Values) {
+            if ($cd.Type -ne 'Bool') { continue }
+            $prop = $settings.PSObject.Properties[$cd.Key]
+            if ($prop -and $null -ne $prop.Value -and $prop.Value -isnot [bool]) { $typeErrors += "$($cd.Key) (expected true/false, got '$($prop.Value)')" }
+        }
+        $tsProp = $settings.PSObject.Properties['TweakSettings']
+        if ($tsProp -and $null -ne $tsProp.Value) {
+            foreach ($prop in $tsProp.Value.PSObject.Properties) {
+                if ($null -ne $prop.Value -and $prop.Value -isnot [bool]) { $typeErrors += "TweakSettings.$($prop.Name) (expected true/false, got '$($prop.Value)')" }
+            }
+        }
+        if ($typeErrors.Count -gt 0) {
+            throw "Profile '$([System.IO.Path]::GetFileName($FilePath))' has setting(s) of the wrong type: $($typeErrors -join '; ')"
         }
 
         return $settings
@@ -1164,12 +1229,18 @@ try {
         Write-Warning "Log compression skipped: $_"
     }
     # D: rotate build_diagnostics folders - drop empty (aborted) dirs first, then keep newest $KeepLogs runs
+    # A build that starts while another one is still running must not delete the diagnostic
+    # directory of that other build: the directory of a running build is still empty, so the
+    # "drop empty dirs" rule would pick it up and the report of the running build would be
+    # lost. Only the directories that existed before this build started are rotated.
     $diagRootDir = Join-Path -Path $scriptDir -ChildPath "build_diagnostics"
     if (Test-Path -LiteralPath $diagRootDir) {
-        Get-ChildItem -LiteralPath $diagRootDir -Directory -ErrorAction SilentlyContinue |
+        $rotatableDirs = @(Get-ChildItem -LiteralPath $diagRootDir -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -lt $script:BuilderStartTime })
+        $rotatableDirs |
             Where-Object { -not (Get-ChildItem -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue) } |
             Remove-Item -Force -ErrorAction SilentlyContinue
-        Get-ChildItem -LiteralPath $diagRootDir -Directory -ErrorAction SilentlyContinue |
+        $rotatableDirs |
             Sort-Object Name -Descending |
             Select-Object -Skip $KeepLogs |
             Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
@@ -2069,6 +2140,13 @@ function Write-WinEaseDiagnosticReport {
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'StatusMessage', Justification = 'Callers pass a status message; kept for compatibility')]
     param([string]$StatusMessage = "")
     try {
+        # The diagnostic directory is created when the build starts, but it can be
+        # removed again while the build runs (the rotation of a build that starts in
+        # parallel). It is therefore created again before the report is written, so a
+        # failed build always leaves its report behind.
+        if (-not (Test-Path -LiteralPath $script:DiagDir)) {
+            New-Item -ItemType Directory -Path $script:DiagDir -Force | Out-Null
+        }
         $jsonPath = Join-Path -Path $script:DiagDir -ChildPath "build_diagnostic_report.json"
         $script:DiagnosticData | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $jsonPath -Encoding utf8
 
