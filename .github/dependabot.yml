@@ -1,6 +1,26 @@
 version: 2
+# Monthly, like the original GitHub Actions entry. Every update arrives as a pull request
+# that runs the full CI; nothing is merged automatically (see docs/dev/github-automation-audit.md).
 updates:
+  # Actions are pinned to commit SHAs; Dependabot updates the SHA and the version comment.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    groups:
+      github-actions:
+        patterns: ['*']
+
+  # Rust engine for the forced physical deletion (Cargo.toml + Cargo.lock)
+  - package-ecosystem: cargo
+    directory: /tools/winease-physical-debloat
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+
+  # WinUI 3 window (gui/winui/WinEaseGui/WinEaseGui.csproj PackageReference entries)
+  - package-ecosystem: nuget
+    directory: /gui/winui/WinEaseGui
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5

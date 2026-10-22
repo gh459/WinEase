@@ -291,9 +291,29 @@ function Get-WinEaseMigrationSizeEstimate {
         $p = Expand-WinEaseMigrationPath -RawPath $fp
         if (Test-Path -LiteralPath $p) {
             try {
-                $items = Get-ChildItem -LiteralPath $p -Recurse -File -ErrorAction SilentlyContinue
-                $totalFiles += $items.Count
-                foreach ($it in $items) { $totalBytes += $it.Length }
+                if (Test-Path -LiteralPath $p -PathType Leaf) {
+                    $item = Get-Item -LiteralPath $p -ErrorAction SilentlyContinue
+                    if ($item) {
+                        $totalFiles++
+                        $totalBytes += $item.Length
+                    }
+                } else {
+                    if ('System.IO.EnumerationOptions' -as [type]) {
+                        $di = New-Object System.IO.DirectoryInfo($p)
+                        $enumOptions = New-Object System.IO.EnumerationOptions
+                        $enumOptions.RecurseSubdirectories = $true
+                        $enumOptions.IgnoreInaccessible = $true
+                        $files = $di.EnumerateFiles('*', $enumOptions)
+                        foreach ($fi in $files) {
+                            $totalFiles++
+                            $totalBytes += $fi.Length
+                        }
+                    } else {
+                        $items = Get-ChildItem -LiteralPath $p -Recurse -File -ErrorAction SilentlyContinue
+                        $totalFiles += $items.Count
+                        foreach ($it in $items) { $totalBytes += $it.Length }
+                    }
+                }
             } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         }
     }
@@ -1102,10 +1122,10 @@ function Get-WinEaseMigrationReportData {
         [Parameter(Mandatory = $true)]
         [psobject]$MigrationResult
     )
-    $succeeded = @()    # Area, Item, Detail
-    $skippedItems = @() # Item, Reason
-    $failedItems = @()  # Item, Reason
-    $manual = @()       # Item, Note
+    $succeeded = [System.Collections.Generic.List[PSCustomObject]]::new()    # Area, Item, Detail
+    $skippedItems = [System.Collections.Generic.List[PSCustomObject]]::new() # Item, Reason
+    $failedItems = [System.Collections.Generic.List[PSCustomObject]]::new()  # Item, Reason
+    $manual = [System.Collections.Generic.List[PSCustomObject]]::new()       # Item, Note
     $files = 0
     $bytes = [int64]0
     $hashOk = 0
@@ -1121,12 +1141,12 @@ function Get-WinEaseMigrationReportData {
         foreach ($e in @($r.ManifestEntries)) {
             if ($e.Sha256) { $hashOk++ } else { $hashMissing++ }
         }
-        $succeeded += [PSCustomObject]@{ Area = $pair[0]; Item = "$($r.CopiedFiles) file(s)"; Detail = (Format-WinEaseByteSize -Bytes ([int64]$r.TotalBytes)) }
+        $succeeded.Add([PSCustomObject]@{ Area = $pair[0]; Item = "$($r.CopiedFiles) file(s)"; Detail = (Format-WinEaseByteSize -Bytes ([int64]$r.TotalBytes)) })
         if ([int]$r.SkippedFiles -gt 0) {
-            $skippedItems += [PSCustomObject]@{ Item = "$($pair[0]): $($r.SkippedFiles) file(s)"; Reason = 'Already present in the backup and protected by the overwrite policy (unchanged or not newer)' }
+            $skippedItems.Add([PSCustomObject]@{ Item = "$($pair[0]): $($r.SkippedFiles) file(s)"; Reason = 'Already present in the backup and protected by the overwrite policy (unchanged or not newer)' })
         }
         foreach ($f in @($r.FailedFiles)) {
-            $failedItems += [PSCustomObject]@{ Item = [string]$f.Path; Reason = [string]$f.Error }
+            $failedItems.Add([PSCustomObject]@{ Item = [string]$f.Path; Reason = [string]$f.Error })
         }
     }
 
@@ -1135,33 +1155,33 @@ function Get-WinEaseMigrationReportData {
     if ($rr -and $rr.Value) {
         $rv = $rr.Value
         $files += [int]$rv.CopiedFiles
-        $succeeded += [PSCustomObject]@{ Area = 'App/game rules'; Item = "$($rv.CopiedFiles) file(s) from $(@($rv.BackedUpRules).Count) rule(s)"; Detail = '' }
-        foreach ($s in @($rv.SkipReasons)) { $skippedItems += [PSCustomObject]@{ Item = [string]$s.Item; Reason = [string]$s.Reason } }
+        $succeeded.Add([PSCustomObject]@{ Area = 'App/game rules'; Item = "$($rv.CopiedFiles) file(s) from $(@($rv.BackedUpRules).Count) rule(s)"; Detail = '' })
+        foreach ($s in @($rv.SkipReasons)) { $skippedItems.Add([PSCustomObject]@{ Item = [string]$s.Item; Reason = [string]$s.Reason }) }
         foreach ($f in @($rv.FailedFiles)) {
             $name = if ($f.Rule) { [string]$f.Rule } else { [string]$f.Path }
-            $failedItems += [PSCustomObject]@{ Item = $name; Reason = [string]$f.Error }
+            $failedItems.Add([PSCustomObject]@{ Item = $name; Reason = [string]$f.Error })
         }
         foreach ($n in @($rv.CloudSaveNotices)) {
-            $manual += [PSCustomObject]@{ Item = [string]$n.Name; Note = "Cloud save: $($n.Notice)" }
+            $manual.Add([PSCustomObject]@{ Item = [string]$n.Name; Note = "Cloud save: $($n.Notice)" })
         }
     }
 
     # --- restore task results ---
-    $tasks = @()
+    $tasks = [System.Collections.Generic.List[PSCustomObject]]::new()
     $tr = $MigrationResult.PSObject.Properties['Results']
     if ($tr -and $tr.Value) {
         foreach ($t in @($tr.Value)) {
-            $tasks += [PSCustomObject]@{ TaskId = [string]$t.TaskId; Status = [string]$t.Status }
+            $tasks.Add([PSCustomObject]@{ TaskId = [string]$t.TaskId; Status = [string]$t.Status })
             $st = [string]$t.Status
             if ($st -eq 'Completed') {
-                $succeeded += [PSCustomObject]@{ Area = 'Restore'; Item = [string]$t.TaskId; Detail = '' }
+                $succeeded.Add([PSCustomObject]@{ Area = 'Restore'; Item = [string]$t.TaskId; Detail = '' })
             } elseif ($st -eq 'Failed') {
                 $reason = if ($t.Detail -is [string]) { [string]$t.Detail } elseif ($t.Detail -and $t.Detail.FailedFiles) { (@($t.Detail.FailedFiles | ForEach-Object { "$($_.Path) $($_.Error)".Trim() }) -join '; ') } elseif ($t.Detail -and $t.Detail.Failed) { (@($t.Detail.Failed | ForEach-Object { "$($_.App): $($_.Error)" }) -join '; ') } else { 'Task failed' }
-                $failedItems += [PSCustomObject]@{ Item = [string]$t.TaskId; Reason = $reason }
+                $failedItems.Add([PSCustomObject]@{ Item = [string]$t.TaskId; Reason = $reason })
             } else {
-                $skippedItems += [PSCustomObject]@{ Item = [string]$t.TaskId; Reason = $st }
+                $skippedItems.Add([PSCustomObject]@{ Item = [string]$t.TaskId; Reason = $st })
                 if ($t.Detail -and $t.Detail.ManualGuidance) {
-                    foreach ($g in @($t.Detail.ManualGuidance)) { $manual += [PSCustomObject]@{ Item = [string]$g.Name; Note = [string]$g.Hint } }
+                    foreach ($g in @($t.Detail.ManualGuidance)) { $manual.Add([PSCustomObject]@{ Item = [string]$g.Name; Note = [string]$g.Hint }) }
                 }
             }
         }
@@ -1177,12 +1197,12 @@ function Get-WinEaseMigrationReportData {
             foreach ($a in @($inv.Apps)) {
                 if ($a -and -not $a.AutoReinstallable) {
                     $hint = if ($a.ManualHint) { [string]$a.ManualHint } else { 'Reinstall manually.' }
-                    $manual += [PSCustomObject]@{ Item = [string]$a.Name; Note = $hint }
+                    $manual.Add([PSCustomObject]@{ Item = [string]$a.Name; Note = $hint })
                 }
             }
         } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
-    $manual += [PSCustomObject]@{ Item = 'Accounts and sign-ins'; Note = 'Sign in again to your Microsoft account, browsers, Steam/Epic/other launchers and any cloud-sync clients. Saved passwords and tokens are not migrated.' }
+    $manual.Add([PSCustomObject]@{ Item = 'Accounts and sign-ins'; Note = 'Sign in again to your Microsoft account, browsers, Steam/Epic/other launchers and any cloud-sync clients. Saved passwords and tokens are not migrated.' })
 
     return [ordered]@{
         Generated = (Get-Date).ToString('o')

@@ -557,11 +557,11 @@ function Invoke-WinEaseGuiBackgroundJob {
         }
         $output = @()
         $jobError = $null
-        $errors = @()
+        $errors = [System.Collections.Generic.List[string]]::new()
         if ($job.State -eq 'Failed') {
             $jobError = $job.ChildJobs[0].JobStateInfo.Reason.Message
         } else {
-            foreach ($e in $job.ChildJobs[0].Error) { $errors += "$e" }
+            foreach ($e in $job.ChildJobs[0].Error) { $errors.Add("$e") }
             $output = @(Receive-Job -Job $job -ErrorAction SilentlyContinue)
         }
         Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
@@ -900,7 +900,7 @@ function Update-WinEaseGuiSources {
 
 # Detected Windows 11 media drives and ISO files (shared by the WinForms and WinUI 3 windows)
 function Get-WinEaseGuiSourceCandidates {
-    $detectedSources = @()
+    $detectedSources = [System.Collections.Generic.List[string]]::new()
     foreach ($psd in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
         if (-not $psd.Root) { continue }
         $r = $psd.Root.TrimEnd('\')
@@ -909,9 +909,9 @@ function Get-WinEaseGuiSourceCandidates {
         $vol = Get-Volume -DriveLetter ($r.TrimEnd(':')) -ErrorAction SilentlyContinue
         $volLabel = if ($vol -and $vol.FileSystemLabel) { " [$($vol.FileSystemLabel)]" } else { "" }
         if ((Test-Path -LiteralPath $wim) -and ((Get-Item -LiteralPath $wim).Length -gt 500MB)) {
-            $detectedSources += "$r\$volLabel (Windows 11 Media - install.wim)"
+            $detectedSources.Add("$r\$volLabel (Windows 11 Media - install.wim)")
         } elseif ((Test-Path -LiteralPath $esd) -and ((Get-Item -LiteralPath $esd).Length -gt 500MB)) {
-            $detectedSources += "$r\$volLabel (Windows 11 Media - install.esd)"
+            $detectedSources.Add("$r\$volLabel (Windows 11 Media - install.esd)")
         }
     }
     $desktopDir = Join-Path -Path $env:USERPROFILE -ChildPath "Desktop"
@@ -920,7 +920,7 @@ function Get-WinEaseGuiSourceCandidates {
         if (Test-Path -LiteralPath $p) {
             $foundIsos = Get-ChildItem -Path $p -Filter "*.iso" -File -ErrorAction SilentlyContinue |
                 Where-Object { $_.Length -gt 3GB -and ($_.Name -like "*Win11*" -or $_.Name -like "*Windows11*" -or $_.Name -like "*26300*" -or $_.Name -like "*24H2*") -and $_.Name -notlike "*WinEase*" }
-            foreach ($iso in $foundIsos) { $detectedSources += $iso.FullName }
+            foreach ($iso in $foundIsos) { $detectedSources.Add($iso.FullName) }
         }
     }
     return ,$detectedSources
@@ -1713,7 +1713,8 @@ function New-WinEaseMigrationActionsGroup {
                 $root = Get-WinEaseGuiMigrationRoot -Gui $g
                 # -BackupRoot exists in every WinEase-Migrator.ps1 version (it is a -PackagePath alias after S6);
                 # the wizard opens in the language of this window
-                Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$migratorPath`" -GUI -BackupRoot `"$root`" -UiLanguage $($script:WinEaseUiLanguage)" -WindowStyle Normal
+                $migratorArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $migratorPath, '-GUI', '-BackupRoot', $root, '-UiLanguage', "$($script:WinEaseUiLanguage)")
+                Start-Process powershell.exe -ArgumentList $migratorArgs -WindowStyle Normal
             } catch {
                 Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'Mig.Wizard.Title') -Kind Error
             }
@@ -1768,7 +1769,7 @@ function New-WinEaseMigrationActionsGroup {
             # The custom paths of the backup are only restored to the locations that are
             # listed in the custom path box: the manifest alone never decides where a
             # file is written to.
-            $allowed = @($g.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            $allowed = @(($g.CustomPaths.Text -split "`n").ForEach({ $_.Trim() }).Where({ $_ }))
             if ($allowed.Count -gt 0) { $ra['AllowedCustomPaths'] = $allowed }
             if ($retry) { $ra['RetryFailedOnly'] = $true }
             $o = Invoke-WinEaseGuiMigrationJob -Button $btn -Form $f -RepoRoot $script:WinEaseGuiRepoRoot -Arguments $ra -Script 'param($a) Start-WinEaseMigrationRestore @a'
@@ -1794,7 +1795,7 @@ function New-WinEaseMigrationCustomPathsGroup {
         $btn = $this
         $f = $btn.FindForm()
         $g = $f.Tag
-        $paths = @($g.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        $paths = @(($g.CustomPaths.Text -split "`n").ForEach({ $_.Trim() }).Where({ $_ }))
         if ($paths.Count -eq 0) {
             Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Mig.Custom.NoPaths') -Title (Get-WinEaseUiString 'Mig.Button.BackupCustom') -Kind Warning
             return
@@ -1815,7 +1816,7 @@ function New-WinEaseMigrationCustomPathsGroup {
         $g = $f.Tag
         # The custom paths are restored to the locations that are listed here: the
         # manifest alone never decides where a file is written to.
-        $paths = @($g.CustomPaths.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        $paths = @(($g.CustomPaths.Text -split "`n").ForEach({ $_.Trim() }).Where({ $_ }))
         if ($paths.Count -eq 0) {
             Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Mig.Custom.NoPaths') -Title (Get-WinEaseUiString 'Mig.Button.RestoreCustom') -Kind Warning
             return
@@ -2125,8 +2126,8 @@ function Get-WinEaseGuiState {
     $settings['UseVHDX'] = [bool]$Gui.VHDX.Checked
     $settings['ExportESDMode'] = [bool]$Gui.RadESD.Checked
     $settings['SplitWIMMode'] = [bool]$Gui.RadSWM.Checked
-    $migFolders = @()
-    foreach ($name in $Gui.MigFolders.CheckedItems) { $migFolders += "$name" }
+    $migFolders = [System.Collections.Generic.List[string]]::new()
+    foreach ($name in $Gui.MigFolders.CheckedItems) { $migFolders.Add("$name") }
     $migTab = $Gui.MigTab
     return @{
         Settings         = $settings
