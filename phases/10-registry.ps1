@@ -37,7 +37,9 @@ try {
 } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
 # Helper function to evaluate individual toggle settings
-# (guarded so a re-run of the phase does not redefine it; phase 11 declares the same helper)
+# (guarded so a re-run of the phase does not redefine it; the canonical definition
+# lives in WinEasebuilder.ps1, so the guard normally finds the one from there.
+# This copy only matters when the phase is dot-sourced on its own.)
 if (-not (Get-Command -Name Test-TweakEnabled -ErrorAction SilentlyContinue)) {
     function Test-TweakEnabled {
         param(
@@ -175,6 +177,9 @@ if (Test-TweakEnabled 'DisableCloudContent' $true) {
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "EdgeShoppingAssistantEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "StartupBoostEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "HideFirstRunExperience" /t REG_DWORD /d 1 /f > $null 2>&1
+    # ReviOS 26.10 (registry/updates/updates.yml): the Media Player must not pull
+    # its own updates in the background.
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\WindowsMediaPlayer" /v "DisableAutoUpdate" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\PolicyManager\current\device\Start" /v "ConfigureStartPins" /t REG_SZ /d "{\`"pinnedList\`": [{}]}" /f > $null 2>&1
 }
 
@@ -219,6 +224,8 @@ if (Test-TweakEnabled 'DisableTelemetryAndDiagnostics' $true) {
     }
     # Revision Tool 2.14.1: the Sleep Study power diagnostics recorder.
     reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Power" /v "SleepStudyDisabled" /t REG_DWORD /d 1 /f > $null 2>&1
+    # hellzerg/optimizer (master, after 16.7): Edge's 3P service telemetry.
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "Edge3PSerpTelemetryEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
 }
 
 # Windows Error Reporting
@@ -258,9 +265,9 @@ if (Test-TweakEnabled 'DisableWindowsAI' $true) {
     reg.exe add "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\WindowsAI" /v "TurnOffSavingSnapshots" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "DisableClickToDo" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "DisableSettingsAgent" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "DisableAgentConnectors" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "DisableAgentWorkspaces" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "DisableRemoteAgentConnectors" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "DisableAgentConnectors" /t REG_DWORD /d 2 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "DisableAgentWorkspaces" /t REG_DWORD /d 2 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "DisableRemoteAgentConnectors" /t REG_DWORD /d 2 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "AllowCopilotRuntime" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Notepad" /v "EnableAIFeatures" /t REG_DWORD /d 0 /f > $null 2>&1
     # WinUtil 26.10.07 (WPFTweaksWindowsAI): the machine policy for Notepad's AI features
@@ -279,6 +286,10 @@ if (Test-TweakEnabled 'DisableWindowsAI' $true) {
     reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Paint" /v "EnableCocreator" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "RecallPin" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "RecallPin" /t REG_DWORD /d 0 /f > $null 2>&1
+    # ReviOS 26.10 (meetrevision/packages, ai-removal-amd64.yaml): force-deny the
+    # "Let Windows apps make use of text and image generation" capabilities.
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy" /v "LetAppsAccessSystemAIModels" /t REG_DWORD /d 2 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy" /v "LetAppsAccessGenerativeAI" /t REG_DWORD /d 2 /f > $null 2>&1
 }
 
 if (Test-TweakEnabled 'DisableCopilot' $true) {
@@ -303,6 +314,11 @@ if (Test-TweakEnabled 'DisableCopilot' $true) {
     }
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "GenAILocalFoundationalModelSettings" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Teams" /v "DisableInstallation" /t REG_DWORD /d 1 /f > $null 2>&1
+    # Debloat-Win11 main (Modules/PolicyCatalog.psd1): the per-user flag that
+    # hides the Copilot entry in the shell.
+    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
+        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\Shell\Copilot" /v "IsCopilotAvailable" /t REG_DWORD /d 0 /f > $null 2>&1
+    }
 }
 
 # ============================================================================
@@ -321,6 +337,11 @@ if (Test-TweakEnabled 'DisableCrossDevice' $true) {
     reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\CrossDeviceResume\Configuration" /v "IsResumeAllowed" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe delete "HKLM\zSOFTWARE\Classes\Directory\Background\shellex\ContextMenuHandlers\SendToPhone" /f > $null 2>&1
     reg.exe delete "HKLM\zSOFTWARE\Classes\DesktopBackground\shellex\ContextMenuHandlers\SendToPhone" /f > $null 2>&1
+    # ReviOS 26.10 (registry/explorer/win-settings.yml): the shell host of the
+    # Cross Device Resume app is redirected to ShellHost.exe, so the resume host
+    # can never start. Upstream replaced the FeatureManagement override and the
+    # IFEO redirect with this one because it is the reliable variant.
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Shell\ShellUIHosts\CrossDeviceResumeHost" /v "ProcessPath" /t REG_SZ /d "%SystemRoot%\system32\ShellHost.exe" /f > $null 2>&1
 }
 
 # ============================================================================
@@ -343,7 +364,18 @@ if (Test-TweakEnabled 'DisableWebSearch' $true) {
     foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
         reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\SearchSettings" /v "IsDynamicSearchBoxEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
         reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\SearchSettings" /v "IsDeviceSearchHistoryEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
+        # ReviOS 26.10 / main (registry/explorer/search.yml): the web and the
+        # Microsoft Store results that the Search box offers (26H2).
+        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\SearchSettings" /v "IsWebSuggestionsEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
+        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\SearchSettings" /v "IsStoreSuggestionsEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
     }
+    # ReviOS 26.10 (registry/explorer/search.yml): the activatable class of the
+    # Store search task is disabled outright (25H2 and newer).
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\WinStore.Tasks.WindowsSearchTask" /v "ActivationType" /t REG_DWORD /d 4294967295 /f > $null 2>&1
+    # The empty string has to be passed as the literal '""': an empty argument is
+    # dropped by the PowerShell native call, so reg.exe would take the next switch
+    # ('/f') as the value instead.
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\WinStore.Tasks.WindowsSearchTask" /v "Server" /t REG_SZ /d '""' /f > $null 2>&1
 }
 
 if (Test-TweakEnabled 'HideSearchBox' $true) {
@@ -626,6 +658,24 @@ $uiPreferenceTweaks = @(
         @('Control Panel\Accessibility', 'DynamicScrollbars', 'REG_DWORD', '0')) }
     @{ On = (Test-TweakEnabled 'HideOneDriveNavPane' $false); Values = @(
         @('Software\Classes\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}', 'System.IsPinnedToNameSpaceTree', 'REG_DWORD', '0')) }
+    # AtlasOS main (AtlasModules/Scripts/Modules/Qol/Qol.psm1) and WinUtil main
+    # (config/tweaks.json): the accessibility hotkeys and the pointer / keyboard
+    # settings have to be REG_SZ, a REG_DWORD value is ignored by Windows.
+    @{ On = (Test-TweakEnabled 'DisableAccessibilityHotkeys' $false); Values = @(
+        @('Control Panel\Accessibility\StickyKeys', 'Flags', 'REG_SZ', '0'),
+        @('Control Panel\Accessibility\FilterKeys', 'Flags', 'REG_SZ', '0'),
+        @('Control Panel\Accessibility\ToggleKeys', 'Flags', 'REG_SZ', '0'),
+        @('Control Panel\Accessibility\MouseKeys', 'Flags', 'REG_SZ', '0'),
+        @('Control Panel\Accessibility\Keyboard Response', 'Flags', 'REG_SZ', '0'),
+        @('Keyboard Layout\Toggle', 'Hotkey', 'REG_SZ', '3'),
+        @('Keyboard Layout\Toggle', 'Language Hotkey', 'REG_SZ', '3'),
+        @('Keyboard Layout\Toggle', 'Layout Hotkey', 'REG_SZ', '3')) }
+    @{ On = (Test-TweakEnabled 'DisableMouseAcceleration' $false); Values = @(
+        @('Control Panel\Mouse', 'MouseSpeed', 'REG_SZ', '1'),
+        @('Control Panel\Mouse', 'MouseThreshold1', 'REG_SZ', '6'),
+        @('Control Panel\Mouse', 'MouseThreshold2', 'REG_SZ', '10')) }
+    @{ On = (Test-TweakEnabled 'DisableKeyboardDelay' $false); Values = @(
+        @('Control Panel\Keyboard', 'KeyboardDelay', 'REG_SZ', '0')) }
 )
 foreach ($uiTweak in $uiPreferenceTweaks) {
     if (-not $uiTweak.On) { continue }
@@ -848,6 +898,32 @@ if (Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue) {
     if (Test-WinEaseDebloatTargetSelected -Item 'Physical: BitLocker (complete removal) [~30-50MB]') {
         $advServices["fvevc"] = 4
     }
+    # The targets below remove a service and its binary. The binary is removed by the
+    # engine the user picked, so the service has to be disabled in any case - otherwise
+    # the image keeps a service whose binary is gone.
+    if (Test-WinEaseDebloatTargetSelected -Item 'Physical: Defender (complete removal) [~50MB]') {
+        $advServices["WinDefend"] = 4
+        $advServices["MDCoreSvc"] = 4
+        $advServices["WdNisSvc"] = 4
+        $advServices["Sense"] = 4
+        $advServices["SecurityHealthService"] = 4
+    }
+    if (Test-WinEaseDebloatTargetSelected -Item 'Physical: Windows Firewall (complete removal) [~20-40MB]') {
+        # only the firewall service itself: the base filtering engine (BFE) is shared
+        # with other services and stays enabled
+        $advServices["MpsSvc"] = 4
+    }
+    if (Test-WinEaseDebloatTargetSelected -Item 'Remove SNMP service [2MB]') {
+        $advServices["SNMP"] = 4
+    }
+    if (Test-WinEaseDebloatTargetSelected -Item 'Remove Fax service [5MB]') {
+        # the service name of the fax service is "Fax" (the binary is fxssvc.exe)
+        $advServices["Fax"] = 4
+    }
+    if (Test-WinEaseDebloatTargetSelected -Item 'Remove Telnet/TFTP client [1MB]') {
+        $advServices["Telnet"] = 4
+        $advServices["TFTP"] = 4
+    }
     foreach ($svc in $advServices.GetEnumerator()) {
         Write-Host "  - Disabling service: $($svc.Key) (Advanced Debloat)" -ForegroundColor Cyan
         [void](Set-WinEaseServiceStartIfPresent -Name $svc.Key -Start $svc.Value)
@@ -933,7 +1009,7 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v "DisableOnAccessProtection" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v "DisableScanOnRealtimeEnable" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\MpEngine" /v "MpEngineEnableFileNameFiltering" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet" /v "SubmitSamplesConsent" /t REG_DWORD /d 0 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet" /v "SubmitSamplesConsent" /t REG_DWORD /d 2 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet" /v "SpynetReporting" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet" /v "SpynetProtection" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Signature Updates" /v "SignatureUpdateInterval" /t REG_DWORD /d 0 /f > $null 2>&1
@@ -1003,6 +1079,18 @@ if (Test-TweakEnabled 'DisableDiagnosticData' $true) {
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" /v "DisableDiagnosticDataViewer" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zNTUSER\Software\Microsoft\Siuf\Rules" /v "NumberOfSIUFInPeriod" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Siuf\Rules" /v "NumberOfSIUFInPeriod" /t REG_DWORD /d 0 /f > $null 2>&1
+    # WinUtil main (config/tweaks.json, WPFTweaksTelemetry): the sampling period
+    # of the telemetry client is removed, not only its counter.
+    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
+        reg.exe delete "HKLM\$userHive\Software\Microsoft\Siuf\Rules" /v "PeriodInNanoSeconds" /f > $null 2>&1
+    }
+    # ReviOS 26.10 (registry/security/security.yml): never send a sample to
+    # Microsoft. The old WinEase value 0 means "always prompt", which is the
+    # opposite of a debloat image.
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet" /v "SubmitSamplesConsent" /t REG_DWORD /d 2 /f > $null 2>&1
+    # ReviOS 26.10 (registry/updates/updates.yml): the Malicious Software
+    # Removal Tool must not report infections.
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\MRT" /v "DontReportInfectionInformation" /t REG_DWORD /d 1 /f > $null 2>&1
 }
 
 if (Test-TweakEnabled 'TuneMemoryAndPaging' $true) {
@@ -1045,7 +1133,36 @@ if (Test-TweakEnabled 'OptimizeVisualEffects' $true) {
 if (Test-TweakEnabled 'CleanContextMenus' $true) {
     # Share, Give access to, Cast to Device
     foreach ($shellExt in @('{e2bf9676-5f8f-435c-97eb-11607a5bedf7}', '{f81e9010-6ea4-11ce-a7ff-00aa003ca9f6}', '{7AD84985-87B4-4a16-BE58-8B72A5B390F7}')) {
-        reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked" /v $shellExt /t REG_SZ /d "" /f > $null 2>&1
+        # The empty string has to be passed as the literal '""': an empty argument is
+        # dropped by the PowerShell native call, so reg.exe would take the next switch
+        # ('/f') as the value and the extension would not be blocked at all.
+        reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked" /v $shellExt /t REG_SZ /d '""' /f > $null 2>&1
+    }
+}
+
+# ReviOS 26.10 / main (registry/explorer/search.yml) and Revision Tool 2.14.x
+# (src/lib/core/services/win_registry_service.dart): the two shell features that
+# let SearchHost start a WebView2 runtime are switched off with an obfuscated
+# FeatureManagement override. Without them the search box keeps a WebView2
+# process alive in the background, which is one of the biggest idle RAM costs of
+# a stock Windows 11 install.
+if (Test-TweakEnabled 'DisableSearchWebView2' $true) {
+    Write-Host "Disabling the WebView2 search features..." -ForegroundColor Green
+    $searchWebView2Features = @(
+        @{ Id = 43998308; Name = 'SearchWebView2_Master' },
+        @{ Id = 37926450; Name = 'WebView2_SearchHost' }
+    )
+    foreach ($feature in $searchWebView2Features) {
+        $overrideId = ConvertTo-WinEaseFeatureIdOverride -FeatureId $feature.Id
+        # Policy location: the variant the ReviOS playbook writes.
+        reg.exe add "HKLM\zSYSTEM\ControlSet001\Policies\Microsoft\FeatureManagement\Overrides" /v "$overrideId" /t REG_DWORD /d 0 /f > $null 2>&1
+        # Primary location: the variant the Revision Tool writes.
+        $overrideKey = "HKLM\zSYSTEM\ControlSet001\Control\FeatureManagement\Overrides\8\$overrideId"
+        reg.exe add $overrideKey /v "EnabledState" /t REG_DWORD /d 1 /f > $null 2>&1
+        reg.exe add $overrideKey /v "EnabledStateOptions" /t REG_DWORD /d 0 /f > $null 2>&1
+        reg.exe add $overrideKey /v "Variant" /t REG_DWORD /d 0 /f > $null 2>&1
+        reg.exe add $overrideKey /v "VariantPayload" /t REG_DWORD /d 0 /f > $null 2>&1
+        reg.exe add $overrideKey /v "VariantPayloadKind" /t REG_DWORD /d 0 /f > $null 2>&1
     }
 }
 

@@ -414,8 +414,11 @@ $scripts = @(
 		$pagefileFlag = "C:\Windows\Setup\Scripts\remove-pagefile.flag"
 		if (Test-Path $pagefileFlag) {
 			try {
-				& reg.exe add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" /v PagingFiles /t REG_MULTI_SZ /d "" /f 2>$null | Out-Null
-				& reg.exe add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" /v ExistingPageFiles /t REG_MULTI_SZ /d "" /f 2>$null | Out-Null
+				# The empty string has to be passed as the literal '""': an empty argument is
+				# dropped by the PowerShell native call, so reg.exe would take the next switch
+				# ('/f') as the value and Windows would keep the old paging file entry.
+				& reg.exe add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" /v PagingFiles /t REG_MULTI_SZ /d '""' /f 2>$null | Out-Null
+				& reg.exe add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" /v ExistingPageFiles /t REG_MULTI_SZ /d '""' /f 2>$null | Out-Null
 			} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 			Remove-Item -LiteralPath $pagefileFlag -Force -ErrorAction SilentlyContinue;
 		}

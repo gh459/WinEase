@@ -16,6 +16,7 @@ if (-not (Test-Path -LiteralPath $logDir)) {
 }
 
 function Write-Log {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '')]
     param(
         [string]$Message,
         [string]$Level = "INFO"

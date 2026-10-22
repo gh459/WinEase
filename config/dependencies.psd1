@@ -105,6 +105,7 @@
         'NetworkTuning' = @{ TriggerValue = $false; Status = 'Safe'; Summary = 'Tunes TCP timeouts, port range, TTL and DNS behaviour'; AffectedFeatures = @(); ConflictsWith = @() }
         'DisableIdleMaintenance' = @{ TriggerValue = $false; Status = 'Safe'; Summary = 'Disables Windows scheduled idle maintenance'; AffectedFeatures = @(); ConflictsWith = @() }
         'SvcHostConsolidation' = @{ TriggerValue = $false; Status = 'Known'; Summary = 'Consolidates svchost processes to reduce idle RAM'; AffectedFeatures = @('svchost process isolation (one service crash can affect co-hosted services)'); ConflictsWith = @() }
+        'DisableSearchWebView2' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Stops SearchHost from starting a WebView2 runtime for the search box'; AffectedFeatures = @('Web content inside the Windows search box (search results stay local)'); ConflictsWith = @() }
         'NoHypervisor' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Sets hypervisorlaunchtype to Off'; AffectedFeatures = @('WSL2','WSA','Hyper-V VMs','Windows Sandbox','Docker Desktop','Core Isolation (HVCI)','VBS'); ConflictsWith = @('WSLSupport') }
         'BypassActivationRestrictions' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Unlocks personalization and suppresses licensing nags'; AffectedFeatures = @(); ConflictsWith = @() }
         'DisableCPUMitigations' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Disables Spectre/Meltdown CPU mitigations'; AffectedFeatures = @('CPU speculative execution mitigations (security trade-off)'); ConflictsWith = @() }
@@ -125,6 +126,9 @@
         'AlwaysShowScrollbars' = @{ TriggerValue = $true; Status = 'Safe'; Summary = 'Always shows scrollbars'; AffectedFeatures = @(); ConflictsWith = @() }
         'DisableLogonBlur' = @{ TriggerValue = $true; Status = 'Safe'; Summary = 'Disables the sign-in screen blur'; AffectedFeatures = @(); ConflictsWith = @() }
         'HideOneDriveNavPane' = @{ TriggerValue = $true; Status = 'Safe'; Summary = 'Hides OneDrive in Explorer'; AffectedFeatures = @(); ConflictsWith = @() }
+        'DisableAccessibilityHotkeys' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Disables the StickyKeys / FilterKeys / ToggleKeys / MouseKeys accessibility hotkeys'; AffectedFeatures = @('StickyKeys (5x Shift)','FilterKeys','ToggleKeys','MouseKeys','Keyboard Response','input language and layout hotkeys'); ConflictsWith = @() }
+        'DisableMouseAcceleration' = @{ TriggerValue = $true; Status = 'Safe'; Summary = 'Turns off mouse pointer acceleration'; AffectedFeatures = @('pointer precision setting'); ConflictsWith = @() }
+        'DisableKeyboardDelay' = @{ TriggerValue = $true; Status = 'Safe'; Summary = 'Removes the keyboard character repeat delay'; AffectedFeatures = @('keyboard repeat delay setting'); ConflictsWith = @() }
         'RemoveHelpFiles' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Remove the Windows Help files folder'; AffectedFeatures = @(); ConflictsWith = @() }
         'RemoveEdge' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Remove the Edge browser (the WebView2 runtime is kept for OOBE)'; AffectedFeatures = @(); ConflictsWith = @() }
         'RemoveWindowsBackup' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Remove the Windows Backup app and its scheduled task'; AffectedFeatures = @(); ConflictsWith = @() }

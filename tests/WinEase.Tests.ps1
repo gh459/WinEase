@@ -62,6 +62,13 @@ Describe "WinEase builder - AST syntax" {
         $content = [System.IO.File]::ReadAllText($regPath, [System.Text.Encoding]::UTF8)
         $content | Should Match 'pushd,\\"%V\\"'
     }
+    It "gui\WinEaseWinUiHost.ps1 and gui\WinEaseGui.ps1 Start-Process calls pass array arguments preventing command injection" {
+        foreach ($file in @($script:GuiPath, (Join-Path $script:RepoRoot "gui\WinEaseWinUiHost.ps1"))) {
+            $content = [System.IO.File]::ReadAllText($file, [System.Text.Encoding]::UTF8)
+            $content | Should Not Match 'Start-Process\s+powershell\.exe\s+-ArgumentList\s+"[^"]*\$'
+            $content | Should Match 'Start-Process\s+powershell\.exe\s+-ArgumentList\s+\$migratorArgs'
+        }
+    }
 }
 
 Describe "WinEase builder - autounattend.xml" {
@@ -401,6 +408,286 @@ Describe "WinEase builder - phase timing telemetry" {
         ([math]::Round($total, 1)) | Should Be 27.1
         Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
     }
+
+    It "writes diagnostic JSON and summary text report when Write-WinEaseDiagnosticReport is invoked" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Write-WinEaseDiagnosticReport'
+        }, $true))
+        $funcTexts.Count | Should Be 1
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $tempDiagDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_diag_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($tempDiagDir) | Out-Null
+        $script:DiagDir = $tempDiagDir
+        $script:DiagnosticData = [ordered]@{
+            BuildId              = "test-build-123"
+            Timestamp            = "2026-01-01 12:00:00"
+            BuilderScriptSha256  = "dummyhash"
+            BuildSucceeded       = $true
+            FailurePhase         = $null
+            FailureMessage       = $null
+            DismPath             = "dism.exe"
+            DismVersion          = "10.0.22621"
+            SourceIsoPath        = "C:\test.iso"
+            SourceIsoSha256      = "isohash"
+            SelectedImageIndex   = "1"
+            SelectedImageName    = "Windows 11 Pro"
+            ExportSucceeded      = $true
+            ExportExitCode       = 0
+            PreExportWimSha256   = "prehash"
+            ExportedWimSha256    = "exphash"
+            FinalPayloadVerified = $true
+            FinalApplyExitCode   = 0
+            FinalWimSha256       = "finalhash"
+            IsoGenerated         = $true
+            OscdimgExitCode      = 0
+            IsoEmbeddedWimSha256 = "finalhash"
+            IsoPayloadMatch      = $true
+            PreservedArtifacts   = @("C:\workspace\build")
+        }
+
+        Write-WinEaseDiagnosticReport "Test status message"
+
+        $jsonPath = Join-Path -Path $tempDiagDir -ChildPath "build_diagnostic_report.json"
+        $txtPath = Join-Path -Path $tempDiagDir -ChildPath "build_diagnostic_summary.txt"
+
+        (Test-Path -LiteralPath $jsonPath) | Should Be $true
+        (Test-Path -LiteralPath $txtPath) | Should Be $true
+
+        $reportJson = (Get-Content -LiteralPath $jsonPath -Raw -Encoding UTF8) | ConvertFrom-Json
+        $reportJson.BuildId | Should Be "test-build-123"
+        $reportJson.BuildSucceeded | Should Be $true
+        $reportJson.IsoPayloadMatch | Should Be $true
+
+        $summaryTxt = Get-Content -LiteralPath $txtPath -Raw -Encoding UTF8
+        $summaryTxt | Should Match "Overall Build Status:\s+SUCCESS"
+        $summaryTxt | Should Match "Build ID:\s+test-build-123"
+        $summaryTxt | Should Match "Preserved Artifacts:\r?\n\s+- C:\\workspace\\build"
+
+        Remove-Item -LiteralPath $tempDiagDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It "formats build failure details in summary text report when build failed" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Write-WinEaseDiagnosticReport'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $tempDiagDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_diag_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($tempDiagDir) | Out-Null
+        $script:DiagDir = $tempDiagDir
+        $script:DiagnosticData = [ordered]@{
+            BuildId            = "failed-build-456"
+            Timestamp          = "2026-01-01 12:05:00"
+            BuildSucceeded     = $false
+            FailurePhase       = "Phase 13: Export"
+            FailureMessage     = "Export command exited with code 1"
+            PreservedArtifacts = @()
+        }
+
+        Write-WinEaseDiagnosticReport "Build failed"
+
+        $txtPath = Join-Path -Path $tempDiagDir -ChildPath "build_diagnostic_summary.txt"
+        $summaryTxt = Get-Content -LiteralPath $txtPath -Raw -Encoding UTF8
+        $summaryTxt | Should Match "Overall Build Status:\s+FAILED"
+        $summaryTxt | Should Match "Failure Phase:\s+Phase 13: Export"
+        $summaryTxt | Should Match "Failure Message:\s+Export command exited with code 1"
+
+        Remove-Item -LiteralPath $tempDiagDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It "catches file write errors without throwing an exception when output directory is invalid" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Write-WinEaseDiagnosticReport'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $script:DiagDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "nonexistent_dir_12345\sub_dir"
+        $script:DiagnosticData = [ordered]@{ BuildId = "err-build" }
+
+        { Write-WinEaseDiagnosticReport "Status" -ErrorAction SilentlyContinue } | Should Not Throw
+    }
+}
+
+Describe "WinEase telemetry - Save-WinEaseTelemetry" {
+    BeforeAll {
+        . (Join-Path $script:RepoRoot "lib\WinEaseTelemetry.ps1")
+    }
+
+    It "returns early without writing a file when WinEaseBuildTelemetry is null" {
+        $script:WinEaseBuildTelemetry = $null
+        $tempDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_telem_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+
+        $res = Save-WinEaseTelemetry -OutputDirectory $tempDir -BuildId "b123"
+        $res | Should Be $null
+        (Test-Path -LiteralPath $tempDir) | Should Be $false
+    }
+
+    It "creates output directory and writes valid telemetry JSON file when data is provided" {
+        $script:WinEaseBuildTelemetry = [ordered]@{
+            BuildId = "b123"
+            Timing  = @{ Phases = @{ "Phase 1" = 12.3 } }
+        }
+        $tempDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_telem_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+
+        $res = Save-WinEaseTelemetry -OutputDirectory $tempDir -BuildId "b123"
+        $res | Should Not Be $null
+        (Test-Path -LiteralPath $res) | Should Be $true
+
+        $savedJson = (Get-Content -LiteralPath $res -Raw -Encoding UTF8) | ConvertFrom-Json
+        $savedJson.BuildId | Should Be "b123"
+        $savedJson.Timing.Phases.'Phase 1' | Should Be 12.3
+
+        $script:WinEaseBuildTelemetry = $null
+        Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It "catches file write errors and returns null when output directory creation fails" {
+        $script:WinEaseBuildTelemetry = [ordered]@{ BuildId = "b999" }
+        $tempFileAsDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_blocker_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        Set-Content -LiteralPath $tempFileAsDir -Value "blocking_file"
+        $invalidDir = Join-Path -Path $tempFileAsDir -ChildPath "child"
+
+        $res = Save-WinEaseTelemetry -OutputDirectory $invalidDir -BuildId "b999" -ErrorAction SilentlyContinue
+        $res | Should Be $null
+
+        $script:WinEaseBuildTelemetry = $null
+        Remove-Item -LiteralPath $tempFileAsDir -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Describe "WinEase helpers - DISM wrapper (Invoke-Dism)" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+    }
+
+    BeforeEach {
+        $script:DismLogPath = $null
+        $script:LastDismExitCode = $null
+    }
+
+    AfterEach {
+        Remove-Item Function:\dism.exe -ErrorAction SilentlyContinue
+        Remove-Item Function:\Start-Sleep -ErrorAction SilentlyContinue
+    }
+
+    It "returns true when DISM exits with code 0" {
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $global:LASTEXITCODE = 0
+        }
+
+        $result = Invoke-Dism -DismArgs @('/Get-MountedWimInfo')
+        $result | Should Be $true
+        $script:LastDismExitCode | Should Be 0
+    }
+
+    It "returns true when DISM exits with code 3010 (reboot required)" {
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $global:LASTEXITCODE = 3010
+        }
+
+        $result = Invoke-Dism -DismArgs @('/Get-MountedWimInfo')
+        $result | Should Be $true
+        $script:LastDismExitCode | Should Be 3010
+    }
+
+    It "includes DismLogPath arguments when DismLogPath is set" {
+        $script:CapturedArgs = $null
+        function dism.exe {
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $script:CapturedArgs = $DismArgs
+            $global:LASTEXITCODE = 0
+        }
+
+        $script:DismLogPath = "C:\Logs\dism.log"
+        $result = Invoke-Dism -DismArgs @('/Get-MountedWimInfo') -ActivityDescription "Testing Log Path"
+        $result | Should Be $true
+        ($script:CapturedArgs -contains "/LogPath:C:\Logs\dism.log") | Should Be $true
+        ($script:CapturedArgs -contains "/LogLevel:3") | Should Be $true
+    }
+
+    It "captures and returns output when CaptureOutput is specified" {
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            Write-Output "Deployment Image Servicing and Management tool"
+            $global:LASTEXITCODE = 0
+        }
+
+        $output = Invoke-Dism -DismArgs @('/Get-MountedWimInfo') -CaptureOutput
+        $output | Should Match "Deployment Image Servicing"
+        $script:LastDismExitCode | Should Be 0
+    }
+
+    It "runs quietly when Quiet parameter is specified" {
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            Write-Output "Some noisy output"
+            $global:LASTEXITCODE = 0
+        }
+
+        $result = Invoke-Dism -DismArgs @('/Get-MountedWimInfo') -Quiet
+        $result | Should Be $true
+    }
+
+    It "retries on failure up to Retries attempts and returns false on final attempt failure" {
+        $script:DismCalls = 0
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $script:DismCalls++
+            $global:LASTEXITCODE = 2
+        }
+        function Start-Sleep {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'Mock Start-Sleep to avoid delays during tests')]
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([int]$Seconds)
+        }
+
+        $result = Invoke-Dism -DismArgs @('/Cleanup-Wim') -Retries 3
+        $result | Should Be $false
+        $script:DismCalls | Should Be 3
+        $script:LastDismExitCode | Should Be 2
+    }
+
+    It "returns null when CaptureOutput is specified and DISM fails after retries" {
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            Write-Output "Error occurred"
+            $global:LASTEXITCODE = 87
+        }
+        function Start-Sleep {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'Mock Start-Sleep to avoid delays during tests')]
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([int]$Seconds)
+        }
+
+        $result = Invoke-Dism -DismArgs @('/InvalidArg') -Retries 2 -CaptureOutput
+        $result | Should BeNullOrEmpty
+        $script:LastDismExitCode | Should Be 87
+    }
 }
 
 Describe "WinEase helpers - registry hive unmounting (Unmount-RegistryHiveWithRetry)" {
@@ -551,6 +838,55 @@ Describe "WinEase helpers - process token privileges (Enable-WinEaseTokenPrivile
         } finally {
             $script:WinEaseTokenHelperWarned = $warnedBefore
         }
+    }
+}
+
+Describe "Get-WinEaseHtmlTemplate HTML report template loader" {
+    BeforeAll {
+        . (Join-Path $script:RepoRoot "lib\WinEaseReport.ps1")
+    }
+
+    It "loads template from an existing custom TemplatePath" {
+        $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("template_test_" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+        $customTemplateFile = Join-Path $tempDir "custom_template.html"
+        $customContent = '<html><body><h1>Custom Template {{TITLE}}</h1></body></html>'
+        [System.IO.File]::WriteAllText($customTemplateFile, $customContent, [System.Text.Encoding]::UTF8)
+
+        try {
+            $template = Get-WinEaseHtmlTemplate -TemplatePath $customTemplateFile
+            $template | Should Be $customContent
+        } finally {
+            if (Test-Path -LiteralPath $tempDir) {
+                Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "falls back to default template when custom TemplatePath does not exist" {
+        $nonExistentPath = Join-Path ([System.IO.Path]::GetTempPath()) ("nonexistent_template_" + [guid]::NewGuid().ToString('N') + ".html")
+        $template = Get-WinEaseHtmlTemplate -TemplatePath $nonExistentPath
+        $template | Should Not BeNullOrEmpty
+        $template | Should Match '\{\{TITLE\}\}'
+    }
+
+    It "falls back to default template when TemplatePath is null, empty, or whitespace" {
+        $templateNull = Get-WinEaseHtmlTemplate -TemplatePath $null
+        $templateNull | Should Not BeNullOrEmpty
+        $templateNull | Should Match '\{\{TITLE\}\}'
+
+        $templateEmpty = Get-WinEaseHtmlTemplate -TemplatePath ""
+        $templateEmpty | Should Not BeNullOrEmpty
+
+        $templateWS = Get-WinEaseHtmlTemplate -TemplatePath "   "
+        $templateWS | Should Not BeNullOrEmpty
+    }
+
+    It "loads repository report.html template when templates/report.html exists" {
+        $template = Get-WinEaseHtmlTemplate
+        $template | Should Not BeNullOrEmpty
+        $template | Should Match '\{\{TITLE\}\}'
+        $template | Should Match '\{\{TIMESTAMP\}\}'
     }
 }
 
@@ -764,6 +1100,79 @@ Describe "WinEase helpers - Resolve-WinEaseConfigForDiff" {
         $nullResolved = Resolve-WinEaseConfigForDiff -InputConfig $null
         $nullResolved.Name | Should Be "Config"
         $nullResolved.Data.Count | Should Be 0
+    }
+}
+
+Describe "WinEase helpers - Format-WinEaseConfigDiff" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+    }
+
+    It "formats diff result with zero differences correctly" {
+        $diffMock = [PSCustomObject]@{
+            ReferenceName     = 'BasePreset'
+            DifferenceName    = 'UserPreset'
+            ComponentDiffs    = @()
+            TweakGroupDiffs   = @()
+            TweakSettingDiffs = @()
+            TotalDiffCount    = 0
+        }
+
+        $formatted = Format-WinEaseConfigDiff -DiffResult $diffMock
+        $formatted | Should Match "Config diff: BasePreset -> UserPreset"
+        $formatted | Should Match "Total differences: 0"
+        $formatted | Should Not Match "\[Components\]"
+        $formatted | Should Not Match "\[Tweak Groups\]"
+        $formatted | Should Not Match "\[Tweak Settings\]"
+    }
+
+    It "formats diff result containing ComponentDiffs, TweakGroupDiffs, and TweakSettingDiffs" {
+        $diffMock = [PSCustomObject]@{
+            ReferenceName     = 'PresetA'
+            DifferenceName    = 'PresetB'
+            ComponentDiffs    = @(
+                [PSCustomObject]@{ Key = 'RemoveStore'; ReferenceValue = $false; DifferenceValue = $true }
+            )
+            TweakGroupDiffs   = @(
+                [PSCustomObject]@{ Key = 'Telemetry'; ReferenceValue = 'Default'; DifferenceValue = 'Disabled' }
+            )
+            TweakSettingDiffs = @(
+                [PSCustomObject]@{ Key = 'DisableUAC'; ReferenceValue = $false; DifferenceValue = $true }
+            )
+            TotalDiffCount    = 3
+        }
+
+        $formatted = Format-WinEaseConfigDiff -DiffResult $diffMock
+        $formatted | Should Match "Config diff: PresetA -> PresetB"
+        $formatted | Should Match "Total differences: 3"
+        $formatted | Should Match "\[Components\]"
+        $formatted | Should Match "RemoveStore: False -> True"
+        $formatted | Should Match "\[Tweak Groups\]"
+        $formatted | Should Match "Telemetry: Default -> Disabled"
+        $formatted | Should Match "\[Tweak Settings\]"
+        $formatted | Should Match "DisableUAC: False -> True"
+    }
+
+    It "formats output generated by Compare-WinEaseConfig" {
+        $refConfig = @{
+            RemoveDefender = $false
+            TweakSettings  = @{ DisableUAC = $false }
+        }
+        $diffConfig = @{
+            RemoveDefender = $true
+            TweakSettings  = @{ DisableUAC = $true }
+        }
+
+        $diffResult = Compare-WinEaseConfig -ReferenceConfig $refConfig -DifferenceConfig $diffConfig
+        $formatted = Format-WinEaseConfigDiff -DiffResult $diffResult
+
+        $formatted | Should Match "Config diff: Reference -> Difference"
+        $formatted | Should Match "Total differences:"
+        $formatted | Should Match "\[Components\]"
+        $formatted | Should Match "RemoveDefender: False -> True"
+        $formatted | Should Match "\[Tweak Settings\]"
+        $formatted | Should Match "DisableUAC: False -> True"
     }
 }
 
@@ -1128,6 +1537,131 @@ Describe "WinEase helpers - Path and Directory Safety Guards" {
     }
 }
 
+Describe "WinEase helpers - Test-CanSafelyDeleteVhdx" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+    }
+
+    It "returns false when script:BuildSucceeded is false" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $false
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\disk.vhdx" -VhdxDetached $true | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when VhdxDetached is false" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\disk.vhdx" -VhdxDetached $false | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when VhdxPath is null, empty, or whitespace" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Test-CanSafelyDeleteVhdx -VhdxPath $null -VhdxDetached $true | Should Be $false
+            Test-CanSafelyDeleteVhdx -VhdxPath "" -VhdxDetached $true | Should Be $false
+            Test-CanSafelyDeleteVhdx -VhdxPath "   " -VhdxDetached $true | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when VhdxPath does not exist" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $false }
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\nonexistent.vhdx" -VhdxDetached $true | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when VhdxPath fails safety check (Test-IsSafePathToDelete returns false)" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $false }
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Windows\disk.vhdx" -VhdxDetached $true | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when ConvertTo-WinEaseNormalizedPath throws" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { throw "Invalid path format" }
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\disk.vhdx" -VhdxDetached $true | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when VhdxPath is outside ExpectedBaseDir" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { param($Path) return $Path }
+            Mock Test-WinEasePathWithin { return $false }
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\OtherDir\disk.vhdx" -VhdxDetached $true -ExpectedBaseDir "C:\Workspace" | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when VhdxPath is preserved in PreservedDirs" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { param($Path) return $Path }
+            Mock Test-WinEasePathWithin { return $true }
+            Mock Test-IsPathPreserved { return $true }
+            $preserved = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            [void]$preserved.Add("C:\Workspace\disk.vhdx")
+
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\disk.vhdx" -VhdxDetached $true -ExpectedBaseDir "C:\Workspace" -PreservedDirs $preserved | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns true when all safety conditions are met" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { param($Path) return $Path }
+            Mock Test-WinEasePathWithin { return $true }
+            Mock Test-IsPathPreserved { return $false }
+
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\disk.vhdx" -VhdxDetached $true -ExpectedBaseDir "C:\Workspace" | Should Be $true
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\disk.vhdx" -VhdxDetached $true | Should Be $true
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+}
+
 Describe "WinEase helpers - Get-WinEaseRelativePath" {
     BeforeAll {
         $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
@@ -1420,6 +1954,37 @@ Describe "WinEase helpers - Statistical Analysis and Benchmark Comparison" {
     }
 }
 
+Describe "WinEase helpers - Format-WinEasePhaseDuration" {
+    BeforeAll {
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+    }
+
+    It "formats durations under 60 seconds as rounded seconds" {
+        Format-WinEasePhaseDuration -TotalSeconds 0 | Should Be "0s"
+        Format-WinEasePhaseDuration -TotalSeconds 0.5 | Should Be "0.5s"
+        Format-WinEasePhaseDuration -TotalSeconds 42.3 | Should Be "42.3s"
+        Format-WinEasePhaseDuration -TotalSeconds 59.9 | Should Be "59.9s"
+    }
+
+    It "formats exact minutes without trailing seconds" {
+        Format-WinEasePhaseDuration -TotalSeconds 60 | Should Be "1m"
+        Format-WinEasePhaseDuration -TotalSeconds 120 | Should Be "2m"
+        Format-WinEasePhaseDuration -TotalSeconds 3600 | Should Be "60m"
+    }
+
+    It "formats durations over 60 seconds with minutes and remaining seconds" {
+        Format-WinEasePhaseDuration -TotalSeconds 65.4 | Should Be "1m 5.4s"
+        Format-WinEasePhaseDuration -TotalSeconds 125.1 | Should Be "2m 5.1s"
+        Format-WinEasePhaseDuration -TotalSeconds 3615.8 | Should Be "60m 15.8s"
+    }
+
+    It "handles rounding boundary at 60 seconds correctly" {
+        Format-WinEasePhaseDuration -TotalSeconds 59.96 | Should Be "1m"
+        Format-WinEasePhaseDuration -TotalSeconds 119.96 | Should Be "2m"
+    }
+}
+
 Describe "WinEase setup scripts - Custom Scripts Logging" {
     It "scripts/FirstLogon.ps1 contains dual-log recording and stop preference wrapper" {
         $firstLogonPath = Join-Path $script:RepoRoot "scripts\FirstLogon.ps1"
@@ -1697,15 +2262,53 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
         }
     }
 
-    It "the Rust-only targets are the ones without a PowerShell handler" {
+    It "a target that offers one engine has a documented reason" {
         $libText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1"), [System.Text.Encoding]::UTF8)
         $handled = @([regex]::Matches($libText, "(?m)^\s{8}'([^']+)' \{") | ForEach-Object { $_.Groups[1].Value })
         $handled.Count | Should BeGreaterThan 0
-        $rustOnly = @($engineDefs | Where-Object { @($_.Engines) -notcontains 'PowerShell' })
-        $rustOnly.Count | Should BeGreaterThan 0
-        foreach ($def in $rustOnly) {
-            # a Rust-only target must not be handled by the safe engine
-            if ($handled -contains $def.Item) { throw "the Rust-only target '$($def.Item)' has a safe handler" }
+        # Every target that offers only one engine says why: the engine it does not offer
+        # cannot remove it. A target that offers both engines never needs a reason.
+        $single = @($engineDefs | Where-Object { @($_.Engines).Count -eq 1 })
+        $single.Count | Should BeGreaterThan 0
+        foreach ($def in $single) {
+            if (-not $def.SingleEngineReason) { throw "the single-engine target '$($def.Item)' has no reason" }
+            # a target that only the Rust engine can remove must not be handled by the safe engine
+            if (@($def.Engines) -notcontains 'PowerShell' -and $handled -contains $def.Item) {
+                throw "the Rust-only target '$($def.Item)' has a safe handler"
+            }
+        }
+    }
+
+    It "the single-engine targets are the ones that cannot have both engines" {
+        # The component store (WinSxS), the paging files, the language packs and the
+        # provisioned AppX packages can only be removed by the safe engine.
+        $expected = @(
+            'Remove non-Japanese language packs (DISM) [200-500MB]'
+            'WinSxS cleanup (/StartComponentCleanup /ResetBase) [1-3GB]'
+            'Remove pagefile.sys (pagefile disable) [4-16GB]'
+            'Remove hiberfil.sys (powercfg /h off) [4-16GB]'
+            'Remove swapfile.sys (pagefile disable) [256MB-1GB]'
+            'Remove Provisioned AppX (list-based) [100-300MB]'
+        )
+        $single = @($engineDefs | Where-Object { @($_.Engines).Count -eq 1 } | ForEach-Object { [string]$_.Item })
+        ($single | Sort-Object) -join '|' | Should Be (($expected | Sort-Object) -join '|')
+    }
+
+    It "every target that offers both engines names the payload of the Rust engine" {
+        $rustSrc = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "tools\winease-physical-debloat\src\main.rs"), [System.Text.Encoding]::UTF8)
+        # the Rust source escapes the backslashes of the paths, so it is compared unescaped
+        $rustPlain = $rustSrc -replace '\\\\', '\'
+        $dual = @($engineDefs | Where-Object { @($_.Engines).Count -eq 2 })
+        $dual.Count | Should BeGreaterThan 30
+        foreach ($def in $dual) {
+            $payload = @($def.Payload)
+            if ($payload.Count -eq 0) { continue }
+            [string]$def.RustKey | Should Not BeNullOrEmpty
+            $rustPlain | Should Match ([regex]::Escape([string]$def.RustKey))
+            # the Rust engine deletes exactly the payload of the target
+            foreach ($p in $payload) {
+                $rustPlain | Should Match ([regex]::Escape([string]$p))
+            }
         }
     }
 
@@ -1735,7 +2338,7 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
         $script:advancedDebloatExperimental = @()
         $script:DebloatEngineSelection = [ordered]@{}
         try {
-            foreach ($fn in $funcs) { Invoke-Expression $fn.Extent.Text }
+            foreach ($fn in $funcs) { . ([scriptblock]::Create($fn.Extent.Text)) }
 
             $bt = 'Remove Bluetooth stack (service + binary) [20-40MB]'
             $legacy = 'Physical: Bluetooth stack (complete removal) [~20-40MB]'
@@ -1780,7 +2383,7 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
         $script:advancedDebloatExperimental = @()
         $script:DebloatEngineSelection = [ordered]@{}
         try {
-            foreach ($fn in $funcs) { Invoke-Expression $fn.Extent.Text }
+            foreach ($fn in $funcs) { . ([scriptblock]::Create($fn.Extent.Text)) }
 
             $bt = 'Remove Bluetooth stack (service + binary) [20-40MB]'
             $defender = 'Physical: Defender (complete removal) [~50MB]'
@@ -1802,8 +2405,9 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
             $script:advancedDebloatStandard = @()
 
             # an engine the target does not support falls back to the default
-            $script:DebloatEngineSelection = [ordered]@{ $defender = 'PowerShell' }
-            Resolve-WinEaseDebloatEngine -Item $defender | Should Be 'Rust'
+            $winSxS = 'WinSxS cleanup (/StartComponentCleanup /ResetBase) [1-3GB]'
+            $script:DebloatEngineSelection = [ordered]@{ $winSxS = 'Rust' }
+            Resolve-WinEaseDebloatEngine -Item $winSxS | Should Be 'PowerShell'
 
             # the Rust key is data driven (the media player must not land on the key of
             # another target), and the paging files have no Rust key at all: they are not
@@ -1927,7 +2531,7 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
         $script:advancedDebloatExperimental = @()
         $script:DebloatEngineSelection = [ordered]@{}
         try {
-            foreach ($fn in $funcs) { Invoke-Expression $fn.Extent.Text }
+            foreach ($fn in $funcs) { . ([scriptblock]::Create($fn.Extent.Text)) }
 
             $target = 'Remove PatchCache (dir delete) [200-500MB]'
             # not selected -> nothing happens
@@ -1944,6 +2548,57 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
             Set-Content -LiteralPath (Join-Path $patchCache "payload.msi") -Value "x" -Encoding ascii
             Invoke-WinEaseDebloatTargets -Phase '06-fod'
             (Test-Path -LiteralPath (Join-Path $patchCache "payload.msi")) | Should Be $true
+        } finally {
+            Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
+            $script:scratchDir = $null
+            $script:WinEaseDebloatEngines = $null
+            $script:DebloatEngineSelection = [ordered]@{}
+        }
+    }
+
+    It "the safe engine removes the payload of a target the Rust engine can remove" {
+        # the shared library is loaded on its own, with a scratch directory that stands in
+        # for the mounted image
+        $libPath = Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1"
+        $libAst = [System.Management.Automation.Language.Parser]::ParseFile($libPath, [ref]$null, [ref]$null)
+        $wanted = @('Get-WinEaseDebloatEngines', 'Get-WinEaseDebloatEngineDef', 'Resolve-WinEaseDebloatEngine', 'Test-WinEaseDebloatTarget', 'Test-WinEaseDebloatOptionEnabled', 'Invoke-WinEaseDebloatTargets', 'Invoke-WinEaseDebloatTarget', 'Remove-WinEaseDebloatPath', 'Remove-WinEaseDebloatPayload', 'Get-WinEaseDebloatSafeHandlerItems')
+        $funcs = $libAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $wanted -contains $n.Name }, $true)
+        $funcs.Count | Should Be $wanted.Count
+
+        $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ("winease_payload_" + [System.IO.Path]::GetRandomFileName())
+        $minidump = Join-Path $scratch "Windows\Minidump"
+        $edge = Join-Path $scratch "Program Files (x86)\Microsoft\Edge"
+        New-Item -ItemType Directory -Force -Path $minidump | Out-Null
+        Set-Content -LiteralPath (Join-Path $minidump "dump.dmp") -Value "x" -Encoding ascii
+        New-Item -ItemType Directory -Force -Path $edge | Out-Null
+        Set-Content -LiteralPath (Join-Path $edge "msedge.exe") -Value "x" -Encoding ascii
+        $script:scratchDir = $scratch
+        $script:isDryRunMode = $false
+        $script:WinEaseDebloatEngines = [ordered]@{}
+        foreach ($def in $engineDefs) { $script:WinEaseDebloatEngines[[string]$def.Item] = $def }
+        $script:advancedDebloatStandard = @()
+        $script:advancedDebloatExperimental = @()
+        $script:DebloatEngineSelection = [ordered]@{}
+        try {
+            foreach ($fn in $funcs) { Invoke-Expression $fn.Extent.Text }
+
+            # a target that is not selected is not removed
+            Invoke-WinEaseDebloatTargets -Phase '08-filesystem'
+            (Test-Path -LiteralPath $minidump) | Should Be $true
+
+            # the target is selected for the safe engine: the payload is gone
+            $minidumpTarget = 'Physical: Minidump (complete removal) [varies]'
+            $script:advancedDebloatExperimental = @($minidumpTarget)
+            $script:DebloatEngineSelection = [ordered]@{ $minidumpTarget = 'PowerShell' }
+            Invoke-WinEaseDebloatTargets -Phase '08-filesystem'
+            (Test-Path -LiteralPath $minidump) | Should Be $false
+
+            # the Rust engine removes the same payload, so the safe engine removes it too
+            $edgeTarget = 'Physical: Edge / WebView2 (complete removal) [~200MB]'
+            $script:advancedDebloatExperimental = @($edgeTarget)
+            $script:DebloatEngineSelection = [ordered]@{ $edgeTarget = 'PowerShell' }
+            Invoke-WinEaseDebloatTargets -Phase '08-filesystem'
+            (Test-Path -LiteralPath $edge) | Should Be $false
         } finally {
             Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
             $script:scratchDir = $null
@@ -2155,7 +2810,7 @@ Describe "WinEase settings - config\schema.psd1 is the single source of truth" {
             param($n)
             $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$script:BuiltInPresets'
         }, $true)
-        $presetData = Invoke-Expression $presets.Right.Extent.Text
+        $presetData = . ([scriptblock]::Create($presets.Right.Extent.Text))
         $meta = @('ProfileName', 'Description')
         foreach ($pn in $presetData.Keys) {
             foreach ($k in $presetData[$pn].Keys) {
@@ -2449,6 +3104,109 @@ Describe "WinEase dependency checker" {
     }
 }
 
+Describe "Format-WinEaseDependencyReport" {
+    BeforeAll {
+        if (-not (Get-Command -Name Format-WinEaseDependencyReport -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot -ChildPath "WinEasehelpers.ps1")
+        }
+    }
+
+    It "returns empty string when result has no conflicts, unknowns, or impacts" {
+        $result = @{ Conflicts = @(); Unknowns = @(); Impacts = @() }
+        $report = Format-WinEaseDependencyReport -Result $result
+        $report | Should Be ""
+    }
+
+    It "formats dependency conflicts with and without ConflictingWith property" {
+        $result = @{
+            Conflicts = @(
+                @{ Category = 'Component'; Source = 'WSLSupport'; Summary = 'WSL2 requires hypervisor'; ConflictingWith = 'NoHypervisor' },
+                @{ Category = 'Tweak'; Source = 'TweakA'; Summary = 'Direct conflict' }
+            )
+        }
+        $report = Format-WinEaseDependencyReport -Result $result
+        $report | Should Match '\[DEPENDENCY CONFLICT\]'
+        $report | Should Match '  - \[Component\] WSLSupport: WSL2 requires hypervisor \(conflicts with: NoHypervisor\)'
+        $report | Should Match '  - \[Tweak\] TweakA: Direct conflict'
+    }
+
+    It "formats unknown dependency items correctly" {
+        $result = @{
+            Unknowns = @(
+                @{ Category = 'AdvancedDebloat'; Source = 'UnknownItem'; Summary = 'Unregistered item'; Reason = 'Item is not registered in catalog' }
+            )
+        }
+        $report = Format-WinEaseDependencyReport -Result $result
+        $report | Should Match '\[DEPENDENCY UNKNOWN / .*\]'
+        $report | Should Match '  - \[AdvancedDebloat\] UnknownItem: Unregistered item -- Item is not registered in catalog'
+    }
+
+    It "formats feature impacts with and without AffectedFeatures list" {
+        $result = @{
+            Impacts = @(
+                @{ Category = 'Component'; Source = 'RemoveStore'; Summary = 'Store removal affects apps'; AffectedFeatures = @('App Installer', 'Store Apps') },
+                @{ Category = 'Tweak'; Source = 'DisableSpooler'; Summary = 'Print spooler disabled' }
+            )
+        }
+        $report = Format-WinEaseDependencyReport -Result $result
+        $report | Should Match '\[FEATURE IMPACT\]'
+        $report | Should Match '  - \[Component\] RemoveStore: Store removal affects apps'
+        $report | Should Match '      \* App Installer'
+        $report | Should Match '      \* Store Apps'
+        $report | Should Match '  - \[Tweak\] DisableSpooler: Print spooler disabled'
+    }
+
+    It "formats combined report containing conflicts, unknowns, and impacts" {
+        $result = @{
+            Conflicts = @(
+                @{ Category = 'Component'; Source = 'CompA'; Summary = 'Conflict A' }
+            )
+            Unknowns = @(
+                @{ Category = 'Tweak'; Source = 'TweakB'; Summary = 'Unknown B'; Reason = 'Reason B' }
+            )
+            Impacts = @(
+                @{ Category = 'Component'; Source = 'CompC'; Summary = 'Impact C'; AffectedFeatures = @('Feature C') }
+            )
+        }
+        $report = Format-WinEaseDependencyReport -Result $result
+        $report | Should Match '\[DEPENDENCY CONFLICT\]'
+        $report | Should Match '\[DEPENDENCY UNKNOWN / .*\]'
+        $report | Should Match '\[FEATURE IMPACT\]'
+
+        # Verify section order: CONFLICT < UNKNOWN < FEATURE IMPACT
+        $idxConflict = $report.IndexOf('[DEPENDENCY CONFLICT]')
+        $idxUnknown = $report.IndexOf('DEPENDENCY UNKNOWN')
+        $idxImpact = $report.IndexOf('[FEATURE IMPACT]')
+
+        ($idxConflict -lt $idxUnknown) | Should Be $true
+        ($idxUnknown -lt $idxImpact) | Should Be $true
+
+        # Verify output is trimmed at the end (no trailing newlines)
+        $report.EndsWith("`n") | Should Be $false
+        $report.EndsWith("`r") | Should Be $false
+    }
+
+    It "formats output correctly when integrated directly with Test-WinEaseDependencies" {
+        $cfg = @{
+            WSLSupport = $true
+            NoHypervisor = $true
+            RemoveStore = $true
+            TweakSettings = @{}
+            AdvancedDebloatStandard = @('Totally Unknown Item XYZ')
+            AdvancedDebloatExperimental = @()
+        }
+        $depResult = Test-WinEaseDependencies -Config $cfg
+        $report = Format-WinEaseDependencyReport -Result $depResult
+
+        $report | Should Match '\[DEPENDENCY CONFLICT\]'
+        $report | Should Match '\[DEPENDENCY UNKNOWN / .*\]'
+        $report | Should Match '\[FEATURE IMPACT\]'
+        $report | Should Match 'WSLSupport'
+        $report | Should Match 'RemoveStore'
+        $report | Should Match 'Totally Unknown Item XYZ'
+    }
+}
+
 # --- User Extensibility Engine tests (M2) ---
 if (-not (Get-Command -Name Import-WinEaseUserExtensions -ErrorAction SilentlyContinue)) {
     . (Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseExtensions.ps1")
@@ -2479,8 +3237,37 @@ Describe "User Extensibility Engine (lib/WinEaseExtensions.ps1)" {
         $diff.TotalDiffCount | Should BeGreaterThan 0
         $diff.ReferenceName | Should Not Be $null
     }
+    It "Format-WinEaseConfigDiff produces formatted string output for config diff" {
+        $diff = Compare-WinEaseConfig -ReferenceConfig @{ RemoveDefender = $false; TweakGroups = @{ Gaming = $false }; TweakSettings = @{ DisableUAC = $false } } -DifferenceConfig @{ RemoveDefender = $true; TweakGroups = @{ Gaming = $true }; TweakSettings = @{ DisableUAC = $true } }
+        $formatted = Format-WinEaseConfigDiff -DiffResult $diff
+        $formatted | Should Match "Config diff: Reference -> Difference"
+        $formatted | Should Match "Total differences: 5"
+        $formatted | Should Match "\[Components\]"
+        $formatted | Should Match "RemoveDefender: False -> True"
+        $formatted | Should Match "\[Tweak Groups\]"
+        $formatted | Should Match "Gaming: False -> True"
+        $formatted | Should Match "\[Tweak Settings\]"
+        $formatted | Should Match "DisableUAC: False -> True"
+    }
+    It "Format-WinEaseConfigDiff handles empty diffs without section headers" {
+        $diff = [PSCustomObject]@{
+            ReferenceName     = "Base"
+            DifferenceName    = "Target"
+            TotalDiffCount    = 0
+            ComponentDiffs    = @()
+            TweakGroupDiffs   = @()
+            TweakSettingDiffs = @()
+        }
+        $formatted = Format-WinEaseConfigDiff -DiffResult $diff
+        $formatted | Should Match "Config diff: Base -> Target"
+        $formatted | Should Match "Total differences: 0"
+        $formatted | Should Not Match "\[Components\]"
+        $formatted | Should Not Match "\[Tweak Groups\]"
+        $formatted | Should Not Match "\[Tweak Settings\]"
+    }
     It "Get-WinEaseCustomScriptMetadata parses metadata headers" {
-        $tmp = Join-Path $env:TEMP "test_script_meta.ps1"
+        $tempPath = if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() }
+        $tmp = Join-Path $tempPath "test_script_meta.ps1"
         "# @WinEase-Id: TestScript`n# @WinEase-Stage: PreBuild`n# @WinEase-Order: 42`n# @WinEase-OnError: Warn`n# @WinEase-Description: Test desc`nWrite-Host 'hi'" | Set-Content $tmp -Encoding UTF8
         $m = Get-WinEaseCustomScriptMetadata -ScriptPath $tmp
         $m.Id | Should Be 'TestScript'
@@ -2941,6 +3728,77 @@ Describe "S7 - GUI Tab 8 (Migration & Backup)" {
             foreach ($t in 'Browse...', 'Estimate Size', 'Verify Backup Integrity', 'Retry Failed Tasks Only') { ($texts -contains $t) | Should Be $true }
             @($texts | Where-Object { $_ -match '^(Select All|Clear All|Deselect All)$' }).Count | Should Be 14
         } finally { $gui.Form.Dispose() }
+    }
+}
+
+Describe "WinEase structured logger (lib/WinEaseLogger.ps1)" {
+    BeforeAll {
+        . (Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseLogger.ps1")
+    }
+
+    BeforeEach {
+        Reset-WinEaseLogState
+    }
+
+    It "creates structured log entry with default level Info" {
+        $entry = New-WinEaseLogMessage -Message "Information test"
+        $entry.Message | Should Be "Information test"
+        $entry.Level | Should Be "Info"
+        $entry.Timestamp | Should Not BeNullOrEmpty
+        $script:WinEaseLogEntries.Count | Should Be 1
+        $script:WinEaseLogWarningCount | Should Be 0
+        $script:WinEaseLogErrorCount | Should Be 0
+    }
+
+    It "creates log entries with custom levels Debug and Success" {
+        $debugEntry = New-WinEaseLogMessage -Message "Debug test" -Level "Debug"
+        $debugEntry.Message | Should Be "Debug test"
+        $debugEntry.Level | Should Be "Debug"
+
+        $successEntry = New-WinEaseLogMessage -Message "Success test" -Level "Success"
+        $successEntry.Message | Should Be "Success test"
+        $successEntry.Level | Should Be "Success"
+
+        $script:WinEaseLogEntries.Count | Should Be 2
+        $script:WinEaseLogWarningCount | Should Be 0
+        $script:WinEaseLogErrorCount | Should Be 0
+    }
+
+    It "increments warning count and records entry when level is Warning" {
+        $entry = New-WinEaseLogMessage -Message "Warning test" -Level "Warning"
+        $entry.Message | Should Be "Warning test"
+        $entry.Level | Should Be "Warning"
+        $script:WinEaseLogWarningCount | Should Be 1
+        $script:WinEaseLogErrorCount | Should Be 0
+        $script:WinEaseLogEntries.Count | Should Be 1
+    }
+
+    It "increments error count and records entry when level is Error" {
+        $entry = New-WinEaseLogMessage -Message "Error test" -Level "Error"
+        $entry.Message | Should Be "Error test"
+        $entry.Level | Should Be "Error"
+        $script:WinEaseLogErrorCount | Should Be 1
+        $script:WinEaseLogWarningCount | Should Be 0
+        $script:WinEaseLogEntries.Count | Should Be 1
+    }
+
+    It "throws when mandatory Message parameter is missing or Level is invalid" {
+        { New-WinEaseLogMessage -Message $null } | Should Throw
+        { New-WinEaseLogMessage -Message "Test" -Level "InvalidLevel" } | Should Throw
+    }
+
+    It "resets log state correctly via Reset-WinEaseLogState" {
+        New-WinEaseLogMessage -Message "Warn" -Level "Warning" | Out-Null
+        New-WinEaseLogMessage -Message "Err" -Level "Error" | Out-Null
+        $script:WinEaseLogEntries.Count | Should Be 2
+        $script:WinEaseLogWarningCount | Should Be 1
+        $script:WinEaseLogErrorCount | Should Be 1
+
+        Reset-WinEaseLogState
+
+        $script:WinEaseLogEntries.Count | Should Be 0
+        $script:WinEaseLogWarningCount | Should Be 0
+        $script:WinEaseLogErrorCount | Should Be 0
     }
 }
 
@@ -3645,11 +4503,20 @@ Describe "GUI display language (English / Japanese)" {
             $row.Cells['On'].Value = $true
             Update-WinEaseDebloatRowState -Grid $gui.GrdStd -RowIndex $row.Index -EngineDefs (Get-WinEaseDebloatEngineDefs)
             $row.Cells['Engine'].ReadOnly | Should Be $false
-            # a target that only the Rust engine can remove stays locked
-            $rustOnly = @($gui.GrdExp.Rows | Where-Object { [string]$_.Tag -like 'Physical: Defender*' })[0]
-            $rustOnly | Should Not BeNullOrEmpty
-            $rustOnly.Cells['Engine'].ReadOnly | Should Be $true
-            $rustOnly.Cells['Engine'].Value | Should Be 'Rust'
+            # a target that only one engine can remove stays locked, even when it is selected
+            $single = @($gui.GrdStd.Rows | Where-Object { [string]$_.Tag -like 'WinSxS cleanup*' })[0]
+            $single | Should Not BeNullOrEmpty
+            $single.Cells['On'].Value = $true
+            Update-WinEaseDebloatRowState -Grid $gui.GrdStd -RowIndex $single.Index -EngineDefs (Get-WinEaseDebloatEngineDefs)
+            $single.Cells['Engine'].ReadOnly | Should Be $true
+            $single.Cells['Engine'].Value | Should Be 'PowerShell'
+            # a target that both engines can remove offers both of them
+            $dual = @($gui.GrdExp.Rows | Where-Object { [string]$_.Tag -like 'Physical: Defender*' })[0]
+            $dual | Should Not BeNullOrEmpty
+            $dual.Cells['On'].Value = $true
+            Update-WinEaseDebloatRowState -Grid $gui.GrdExp -RowIndex $dual.Index -EngineDefs (Get-WinEaseDebloatEngineDefs)
+            $dual.Cells['Engine'].ReadOnly | Should Be $false
+            $dual.Cells['Engine'].Value | Should Be 'Rust'
         } finally { $gui.Form.Dispose() }
     }
 
@@ -3659,9 +4526,12 @@ Describe "GUI display language (English / Japanese)" {
             Set-WinEaseDebloatEngineForAll -Grids @($gui.GrdStd, $gui.GrdExp) -Engine 'Rust'
             $dual = @($gui.GrdStd.Rows | Where-Object { @($_.Tag) -like '*Bluetooth*' })[0]
             $dual.Cells['Engine'].Value | Should Be 'Rust'
-            # a target that only the Rust engine can remove is not changed
-            $rustOnly = @($gui.GrdExp.Rows | Where-Object { [string]$_.Tag -like 'Physical: Defender*' })[0]
-            $rustOnly.Cells['Engine'].Value | Should Be 'Rust'
+            # a target that only the safe engine can remove is not changed
+            $single = @($gui.GrdStd.Rows | Where-Object { [string]$_.Tag -like 'WinSxS cleanup*' })[0]
+            $single.Cells['Engine'].Value | Should Be 'PowerShell'
+            # a target that both engines can remove is changed as well
+            $physical = @($gui.GrdExp.Rows | Where-Object { [string]$_.Tag -like 'Physical: Defender*' })[0]
+            $physical.Cells['Engine'].Value | Should Be 'Rust'
             # the draft config carries the engine of every target, the result only the changed ones
             Set-WinEaseDebloatGridChecked -Grid $gui.GrdStd -Checked $true
             $cfg = Get-WinEaseGuiDraftConfig -Gui $gui
@@ -4241,6 +5111,81 @@ Describe "Migration restore - path validation" {
     }
 }
 
+Describe "WinEase debloat - Test-WinEaseAppxPackageRemovable" {
+    BeforeAll {
+        if (-not (Get-Command -Name Test-WinEaseAppxPackageRemovable -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseDebloat.ps1")
+        }
+    }
+
+    Context "Get-WinEaseAppxPatternRegex" {
+        It "returns null for empty or missing patterns array" {
+            Get-WinEaseAppxPatternRegex -Patterns @() | Should BeNullOrEmpty
+        }
+
+        It "escapes special regex characters and converts wildcards" {
+            $regex = Get-WinEaseAppxPatternRegex -Patterns @('*Microsoft.ZuneVideo[1]*')
+            $regex | Should Not BeNullOrEmpty
+            $regex.IsMatch('Microsoft.ZuneVideo[1]123') | Should Be $true
+            $regex.IsMatch('Microsoft.ZuneVideo123') | Should Be $false
+        }
+
+        It "deduplicates identical patterns and builds a case-insensitive regex" {
+            $regex = Get-WinEaseAppxPatternRegex -Patterns @('*Zune*', '*Zune*', '*PAINT*')
+            $regex.IsMatch('microsoft.zunemusic') | Should Be $true
+            $regex.IsMatch('MICROSOFT.PAINT') | Should Be $true
+            $regex.IsMatch('Microsoft.Calculator') | Should Be $false
+        }
+    }
+
+    Context "Test-WinEaseAppxPackageRemovable" {
+        $removalRegex = Get-WinEaseAppxPatternRegex -Patterns @('*Zune*', '*Bing*')
+        $protectedRegex = Get-WinEaseAppxPatternRegex -Patterns @('*Microsoft.VCLibs*', '*SecHealthUI*')
+
+        It "returns false when RemovalRegex is null" {
+            Test-WinEaseAppxPackageRemovable -Name 'Microsoft.ZuneMusic' -DisplayName 'Zune Music' -RemovalRegex $null | Should Be $false
+        }
+
+        It "returns false when Name and DisplayName are null or whitespace" {
+            Test-WinEaseAppxPackageRemovable -Name $null -DisplayName $null -RemovalRegex $removalRegex | Should Be $false
+            Test-WinEaseAppxPackageRemovable -Name '' -DisplayName '   ' -RemovalRegex $removalRegex | Should Be $false
+        }
+
+        It "returns false when neither Name nor DisplayName matches RemovalRegex" {
+            Test-WinEaseAppxPackageRemovable -Name 'Microsoft.WindowsCalculator' -DisplayName 'Calculator' -RemovalRegex $removalRegex | Should Be $false
+        }
+
+        It "returns true when Name matches RemovalRegex and ProtectedRegex is null or unmatched" {
+            Test-WinEaseAppxPackageRemovable -Name 'Microsoft.ZuneMusic_8wekyb3d8bbwe' -DisplayName 'Music App' -RemovalRegex $removalRegex | Should Be $true
+        }
+
+        It "returns true when DisplayName matches RemovalRegex and ProtectedRegex is null or unmatched" {
+            Test-WinEaseAppxPackageRemovable -Name 'Microsoft.UnknownPackage_1.0' -DisplayName 'Bing News' -RemovalRegex $removalRegex | Should Be $true
+        }
+
+        It "returns false when Name matches RemovalRegex but matches ProtectedRegex (whitelist protection)" {
+            Test-WinEaseAppxPackageRemovable -Name 'Microsoft.Zune_Microsoft.VCLibs_1.0' -DisplayName 'Protected Zune' -RemovalRegex $removalRegex -ProtectedRegex $protectedRegex | Should Be $false
+        }
+
+        It "returns false when DisplayName matches RemovalRegex but matches ProtectedRegex" {
+            Test-WinEaseAppxPackageRemovable -Name 'Microsoft.Zune_1.0' -DisplayName 'Bing SecHealthUI' -RemovalRegex $removalRegex -ProtectedRegex $protectedRegex | Should Be $false
+        }
+
+        It "returns false when Name matches RemovalRegex and DisplayName matches ProtectedRegex" {
+            Test-WinEaseAppxPackageRemovable -Name 'Microsoft.ZuneMusic_8wekyb3d8bbwe' -DisplayName 'Microsoft.VCLibs' -RemovalRegex $removalRegex -ProtectedRegex $protectedRegex | Should Be $false
+        }
+
+        It "returns false when DisplayName matches RemovalRegex and Name matches ProtectedRegex" {
+            Test-WinEaseAppxPackageRemovable -Name 'Microsoft.SecHealthUI_8wekyb3d8bbwe' -DisplayName 'Bing Search' -RemovalRegex $removalRegex -ProtectedRegex $protectedRegex | Should Be $false
+        }
+
+        It "is case-insensitive for both removal and protection matching" {
+            Test-WinEaseAppxPackageRemovable -Name 'MICROSOFT.ZUNEMUSIC_1.0' -DisplayName 'zune' -RemovalRegex $removalRegex | Should Be $true
+            Test-WinEaseAppxPackageRemovable -Name 'MICROSOFT.ZUNEMUSIC_1.0' -DisplayName 'sechealthui' -RemovalRegex $removalRegex -ProtectedRegex $protectedRegex | Should Be $false
+        }
+    }
+}
+
 Describe "AppX removal - the settings decide what is removed" {
     BeforeAll {
         if (-not (Get-Command -Name Get-WinEaseAppxRemovalPatterns -ErrorAction SilentlyContinue)) {
@@ -4320,6 +5265,68 @@ Describe "AppX removal - the settings decide what is removed" {
         Test-WinEaseAppxPackageRemovable -Name '' -DisplayName '' -RemovalRegex $removal -ProtectedRegex $protected | Should Be $false
         # an unknown package is simply not in the list
         Test-WinEaseAppxPackageRemovable -Name 'Contoso.App_1.0_x64__abc' -DisplayName 'Contoso' -RemovalRegex $removal -ProtectedRegex $protected | Should Be $false
+    }
+
+    It "Test-WinEaseAppxPackageRemovable returns false when RemovalRegex is null" {
+        $protected = Get-WinEaseAppxPatternRegex -Patterns @('*VCLibs*')
+        Test-WinEaseAppxPackageRemovable -Name 'Microsoft.ZuneMusic_1.0_x64__8wekyb3d8bbwe' -DisplayName 'Zune Music' -RemovalRegex $null -ProtectedRegex $protected | Should Be $false
+        Test-WinEaseAppxPackageRemovable -Name 'Microsoft.ZuneMusic_1.0_x64__8wekyb3d8bbwe' -DisplayName 'Zune Music' | Should Be $false
+    }
+
+    It "Test-WinEaseAppxPackageRemovable evaluates removal matching by Name, DisplayName, or both" {
+        $removal = Get-WinEaseAppxPatternRegex -Patterns @('*Zune*', '*Xbox*')
+
+        # Match by Name only (DisplayName is empty or non-matching)
+        Test-WinEaseAppxPackageRemovable -Name 'Microsoft.ZuneMusic_1.0_x64__8wekyb3d8bbwe' -DisplayName 'OtherApp' -RemovalRegex $removal | Should Be $true
+        Test-WinEaseAppxPackageRemovable -Name 'Microsoft.ZuneMusic_1.0_x64__8wekyb3d8bbwe' -DisplayName '' -RemovalRegex $removal | Should Be $true
+        Test-WinEaseAppxPackageRemovable -Name 'Microsoft.ZuneMusic_1.0_x64__8wekyb3d8bbwe' -DisplayName $null -RemovalRegex $removal | Should Be $true
+
+        # Match by DisplayName only (Name is empty or non-matching)
+        Test-WinEaseAppxPackageRemovable -Name 'Microsoft.Unknown_1.0_x64__8wekyb3d8bbwe' -DisplayName 'Xbox Gaming' -RemovalRegex $removal | Should Be $true
+        Test-WinEaseAppxPackageRemovable -Name '' -DisplayName 'Xbox Gaming' -RemovalRegex $removal | Should Be $true
+        Test-WinEaseAppxPackageRemovable -Name $null -DisplayName 'Xbox Gaming' -RemovalRegex $removal | Should Be $true
+
+        # Match by both Name and DisplayName
+        Test-WinEaseAppxPackageRemovable -Name 'Microsoft.ZuneMusic_1.0_x64__8wekyb3d8bbwe' -DisplayName 'Zune Music' -RemovalRegex $removal | Should Be $true
+
+        # Match by neither Name nor DisplayName
+        Test-WinEaseAppxPackageRemovable -Name 'Microsoft.WindowsCalculator_1.0_x64__8wekyb3d8bbwe' -DisplayName 'Calculator' -RemovalRegex $removal | Should Be $false
+    }
+
+    It "Test-WinEaseAppxPackageRemovable prioritizes protection rules over removal rules" {
+        $removal = Get-WinEaseAppxPatternRegex -Patterns @('*Zune*', '*Paint*', '*SecHealth*')
+        $protected = Get-WinEaseAppxPatternRegex -Patterns @('*SecHealth*', '*ProtectedApp*')
+
+        # Protected by Name match (DisplayName matches RemovalRegex)
+        Test-WinEaseAppxPackageRemovable -Name 'Microsoft.SecHealthUI_1.0_x64__8wekyb3d8bbwe' -DisplayName 'Zune Music' -RemovalRegex $removal -ProtectedRegex $protected | Should Be $false
+
+        # Protected by DisplayName match (Name matches RemovalRegex)
+        Test-WinEaseAppxPackageRemovable -Name 'Microsoft.ZuneMusic_1.0_x64__8wekyb3d8bbwe' -DisplayName 'ProtectedApp' -RemovalRegex $removal -ProtectedRegex $protected | Should Be $false
+
+        # Both match ProtectedRegex and RemovalRegex
+        Test-WinEaseAppxPackageRemovable -Name 'Microsoft.SecHealthUI_1.0_x64__8wekyb3d8bbwe' -DisplayName 'SecHealthUI' -RemovalRegex $removal -ProtectedRegex $protected | Should Be $false
+
+        # ProtectedRegex is null -> removal proceeds
+        Test-WinEaseAppxPackageRemovable -Name 'Microsoft.SecHealthUI_1.0_x64__8wekyb3d8bbwe' -DisplayName 'SecHealthUI' -RemovalRegex $removal -ProtectedRegex $null | Should Be $true
+    }
+
+    It "Test-WinEaseAppxPackageRemovable handles null and empty arguments safely" {
+        $removal = Get-WinEaseAppxPatternRegex -Patterns @('*Zune*')
+        $protected = Get-WinEaseAppxPatternRegex -Patterns @('*VCLibs*')
+
+        Test-WinEaseAppxPackageRemovable -Name $null -DisplayName $null -RemovalRegex $removal -ProtectedRegex $protected | Should Be $false
+        Test-WinEaseAppxPackageRemovable -Name '' -DisplayName '' -RemovalRegex $removal -ProtectedRegex $protected | Should Be $false
+        Test-WinEaseAppxPackageRemovable -Name '   ' -DisplayName '   ' -RemovalRegex $removal -ProtectedRegex $protected | Should Be $false
+    }
+
+    It "Test-WinEaseAppxPackageRemovable supports case-insensitive matching" {
+        $removal = Get-WinEaseAppxPatternRegex -Patterns @('*zunemusic*')
+
+        # Uppercase / mixed case Name
+        Test-WinEaseAppxPackageRemovable -Name 'MICROSOFT.ZUNEMUSIC_1.0_X64__8WEKYB3D8BBWE' -DisplayName 'ZUNE MUSIC' -RemovalRegex $removal | Should Be $true
+
+        # Uppercase / mixed case DisplayName
+        Test-WinEaseAppxPackageRemovable -Name 'Microsoft.Unknown_1.0' -DisplayName 'ZuNeMuSiC' -RemovalRegex $removal | Should Be $true
     }
 
     It "phase 05 uses the shared list and the shared decision" {
@@ -4562,7 +5569,7 @@ Describe "WinEase forced physical deletion - the Rust engine" {
         $script:WinEaseDebloatEngines = @{}
         foreach ($def in $script:PhysEngineDefs) { $script:WinEaseDebloatEngines[[string]$def.Item] = $def }
         try {
-            foreach ($fn in $funcs) { Invoke-Expression $fn.Extent.Text }
+            foreach ($fn in $funcs) { . ([scriptblock]::Create($fn.Extent.Text)) }
             foreach ($t in $script:PhysNewRustTargets) {
                 Get-WinEaseDebloatRustKey -Item $t.Item | Should Be $t.Key
             }
@@ -4683,6 +5690,21 @@ Describe "WinEase advanced debloat - every engine can remove its target" {
             $phase10 | Should Match ([regex]::Escape("Test-WinEaseDebloatTargetSelected -Item '{0}'" -f $item))
         }
     }
+
+    It "the services of the targets that can run on both engines are disabled too" {
+        # the targets below remove a service and its binary. The binary is removed by the
+        # engine the user picked, so the service is disabled in any case.
+        $phase10 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\10-registry.ps1"), [System.Text.Encoding]::UTF8)
+        foreach ($item in @(
+            'Physical: Defender (complete removal) [~50MB]',
+            'Physical: Windows Firewall (complete removal) [~20-40MB]',
+            'Remove SNMP service [2MB]',
+            'Remove Fax service [5MB]',
+            'Remove Telnet/TFTP client [1MB]'
+        )) {
+            $phase10 | Should Match ([regex]::Escape("Test-WinEaseDebloatTargetSelected -Item '{0}'" -f $item))
+        }
+    }
 }
 
 Describe "WinEase advanced debloat - the engine choice is explained" {
@@ -4738,5 +5760,238 @@ Describe "WinEase advanced debloat - the engine choice is explained" {
             # the mark sits left of the engine label
             $mark[0].Right | Should BeLessThan 455
         } finally { $gui.Form.Dispose() }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Upstream sync 2026-10-22: the FeatureManagement override IDs and the registry
+# writes that came with the newest upstream releases.
+# ---------------------------------------------------------------------------
+Describe "WinEase helpers - FeatureManagement override IDs" {
+    BeforeAll {
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+    }
+
+    It "computes the same obfuscated IDs as the ReviOS playbook and the Revision Tool" {
+        # The pairs are published by ReviOS 26.10 / main
+        # (src/Configuration/Tasks/registry/explorer/search.yml) and by the
+        # Revision Tool 2.14.x
+        # (src/lib/core/services/win_registry_service.dart).
+        (ConvertTo-WinEaseFeatureIdOverride -FeatureId 43998308) | Should Be 3369582732
+        (ConvertTo-WinEaseFeatureIdOverride -FeatureId 37926450) | Should Be 1694661260
+        (ConvertTo-WinEaseFeatureIdOverride -FeatureId 56517033) | Should Be 1387020943
+        (ConvertTo-WinEaseFeatureIdOverride -FeatureId 58375086) | Should Be 1561856655
+        (ConvertTo-WinEaseFeatureIdOverride -FeatureId 63366798) | Should Be 497250959
+        (ConvertTo-WinEaseFeatureIdOverride -FeatureId 58375066) | Should Be 890768015
+        (ConvertTo-WinEaseFeatureIdOverride -FeatureId 61199980) | Should Be 3653481614
+        (ConvertTo-WinEaseFeatureIdOverride -FeatureId 40012896) | Should Be 3245750924
+    }
+
+    It "decodes an override ID back into its feature ID" {
+        (ConvertFrom-WinEaseFeatureIdOverride -OverrideId 3369582732) | Should Be 43998308
+        (ConvertFrom-WinEaseFeatureIdOverride -OverrideId 1694661260) | Should Be 37926450
+        (ConvertFrom-WinEaseFeatureIdOverride -OverrideId 1387020943) | Should Be 56517033
+        (ConvertFrom-WinEaseFeatureIdOverride -OverrideId 3245750924) | Should Be 40012896
+    }
+
+    It "round-trips every feature ID that the builder writes" {
+        foreach ($id in 43998308, 37926450) {
+            $override = ConvertTo-WinEaseFeatureIdOverride -FeatureId $id
+            (ConvertFrom-WinEaseFeatureIdOverride -OverrideId $override) | Should Be $id
+        }
+    }
+
+    It "rejects a value outside the 32-bit range" {
+        { ConvertTo-WinEaseFeatureIdOverride -FeatureId -1 } | Should Throw
+        { ConvertTo-WinEaseFeatureIdOverride -FeatureId 4294967296 } | Should Throw
+        { ConvertFrom-WinEaseFeatureIdOverride -OverrideId -1 } | Should Throw
+        { ConvertFrom-WinEaseFeatureIdOverride -OverrideId 4294967296 } | Should Throw
+    }
+}
+
+Describe "WinEase builder - the diagnostic report survives a parallel build" {
+    # The diagnostic directory of a build is empty until the build ends, so the rotation
+    # of build_diagnostics (which drops the empty folders) used to delete the directory
+    # of a build that was still running: the report of that build was then written into
+    # a folder that no longer existed and every write failed.
+    $script:BuilderSource = [System.IO.File]::ReadAllText($script:BuilderPath)
+
+    It "the report writer creates the diagnostic directory before it writes" {
+        $script:BuilderSource | Should Match 'if\s*\(-not\s*\(Test-Path\s+-LiteralPath\s+\$script:DiagDir\)\)'
+        $script:BuilderSource | Should Match 'New-Item\s+-ItemType\s+Directory\s+-Path\s+\$script:DiagDir'
+    }
+
+    It "the rotation leaves the directory of a running build alone" {
+        # only the folders that existed before this build started are rotated
+        $script:BuilderSource | Should Match '\$script:BuilderStartTime'
+        $script:BuilderSource | Should Match '\$_\.LastWriteTime\s+-lt\s+\$script:BuilderStartTime'
+    }
+
+    It "the physical debloat phase reports the errors of a failed engine run" {
+        # the errors of the engine are the only place that says which target did not go
+        # through, and they were only read when the engine exited with 0
+        $phase = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\09-physical-debloat.ps1"))
+        $phase | Should Match '\$physErrors\s*=\s*@\(\)'
+        $phase | Should Match '\[ERROR\]\s+\$physError'
+        $phase | Should Match 'The engine reported:'
+    }
+}
+
+Describe "WinEase builder - upstream registry additions (sync 2026-10-22)" {
+    BeforeAll {
+        $script:RegistryPhasePath = Join-Path $script:RepoRoot "phases\10-registry.ps1"
+        $script:RegistryPhaseText = [System.IO.File]::ReadAllText($script:RegistryPhasePath)
+        $script:UpstreamSchema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+    }
+
+    It "writes the search WebView2 feature overrides in both registry locations" {
+        $script:RegistryPhaseText | Should Match 'FeatureManagement\\Overrides'
+        $script:RegistryPhaseText | Should Match 'FeatureManagement\\Overrides\\8'
+        # the two feature IDs of the ReviOS playbook, as obfuscated values
+        $script:RegistryPhaseText | Should Match 'SearchWebView2_Master'
+        $script:RegistryPhaseText | Should Match '37926450'
+    }
+
+    It "applies the AI app privacy values of the ReviOS ai-removal package" {
+        $script:RegistryPhaseText | Should Match 'LetAppsAccessSystemAIModels'
+        $script:RegistryPhaseText | Should Match 'LetAppsAccessGenerativeAI'
+    }
+
+    It "uses the ReviOS CrossDeviceResume host redirect" {
+        $script:RegistryPhaseText | Should Match 'CrossDeviceResumeHost'
+        $script:RegistryPhaseText | Should Match 'ShellHost\.exe'
+    }
+
+    It "never asks for a Defender sample (SubmitSamplesConsent = 2)" {
+        $script:RegistryPhaseText | Should Not Match 'SubmitSamplesConsent" /t REG_DWORD /d 0\b'
+        $script:RegistryPhaseText | Should Match 'SubmitSamplesConsent" /t REG_DWORD /d 2\b'
+    }
+
+    It "disables the agent connectors with the value the upstream tools use" {
+        $script:RegistryPhaseText | Should Match 'DisableAgentConnectors" /t REG_DWORD /d 2\b'
+        $script:RegistryPhaseText | Should Match 'DisableAgentWorkspaces" /t REG_DWORD /d 2\b'
+        $script:RegistryPhaseText | Should Match 'DisableRemoteAgentConnectors" /t REG_DWORD /d 2\b'
+    }
+
+    It "writes the accessibility, pointer and keyboard values as REG_SZ" {
+        $script:RegistryPhaseText | Should Match "'Control Panel\\Accessibility\\StickyKeys', 'Flags', 'REG_SZ'"
+        $script:RegistryPhaseText | Should Match "'Control Panel\\Mouse', 'MouseSpeed', 'REG_SZ'"
+        $script:RegistryPhaseText | Should Match "'Control Panel\\Keyboard', 'KeyboardDelay', 'REG_SZ'"
+    }
+
+    It "registers the new tweaks in the master schema" {
+        $keys = @($script:UpstreamSchema.Tweaks | ForEach-Object { $_.Key })
+        ($keys -contains 'DisableSearchWebView2') | Should Be $true
+        ($keys -contains 'DisableAccessibilityHotkeys') | Should Be $true
+        ($keys -contains 'DisableMouseAcceleration') | Should Be $true
+        ($keys -contains 'DisableKeyboardDelay') | Should Be $true
+    }
+
+    It "gives every new tweak a Japanese GUI description" {
+        $jaPath = Join-Path $script:RepoRoot "config\ui-strings\ja.json"
+        $ja = [System.IO.File]::ReadAllText($jaPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+        foreach ($key in 'DisableSearchWebView2', 'DisableAccessibilityHotkeys', 'DisableMouseAcceleration', 'DisableKeyboardDelay') {
+            $ja.PSObject.Properties["Tweak.$key.Description"] | Should Not BeNullOrEmpty
+        }
+    }
+
+    It "never hands an empty string to reg.exe" {
+        # PowerShell drops an empty argument of a native call, so reg.exe would take
+        # the next switch ('/f') as the value of the registry entry instead of the
+        # empty string that was asked for.
+        foreach ($file in 'phases\10-registry.ps1', 'scripts\FirstLogon.ps1') {
+            $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot $file))
+            $text | Should Not Match '/d\s+""\s+/f'
+        }
+    }
+}
+
+Describe "WinEase builder - the tweak helper is available to every phase" {
+    # Test-TweakEnabled is the accessor every phase uses to ask "is this option on?".
+    # Phases 05, 06, 08 and lib\WinEaseDebloat.ps1 call it, and they run long before
+    # phase 10 - the phase that used to carry the only definition. A helper that is
+    # defined in a late phase therefore aborts the build with
+    # "The term 'Test-TweakEnabled' is not recognized".
+    $script:BuilderSource = [System.IO.File]::ReadAllText($script:BuilderPath)
+    $script:PhasesDir = Join-Path $script:RepoRoot "phases"
+
+    It "the builder declares the helper exactly once" {
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$tokens, [ref]$errors)
+        $defs = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Test-TweakEnabled' }, $true))
+        $defs.Count | Should Be 1
+    }
+
+    It "the builder declares the helper before the first phase is dot-sourced" {
+        $defPos = $script:BuilderSource.IndexOf('function Test-TweakEnabled')
+        $defPos | Should Not Be -1
+        $firstPhasePos = $script:BuilderSource.IndexOf('"01-environment.ps1"')
+        $firstPhasePos | Should Not Be -1
+        ($defPos -lt $firstPhasePos) | Should Be $true
+    }
+
+    It "the helper is declared before every phase that calls it" {
+        $defPos = $script:BuilderSource.IndexOf('function Test-TweakEnabled')
+        $defPos | Should Not Be -1
+        $callers = @()
+        foreach ($f in (Get-ChildItem -LiteralPath $script:PhasesDir -Filter '*.ps1' | Sort-Object Name)) {
+            $text = [System.IO.File]::ReadAllText($f.FullName)
+            if ($text -notmatch 'Test-TweakEnabled') { continue }
+            $callers += $f.Name
+            $loadPos = $script:BuilderSource.IndexOf('"' + $f.Name + '"')
+            $loadPos | Should Not Be -1
+            ($defPos -lt $loadPos) | Should Be $true
+        }
+        # the phases that call the helper have to exist at all
+        ($callers -contains '05-appx.ps1') | Should Be $true
+        ($callers -contains '06-fod.ps1') | Should Be $true
+        ($callers -contains '08-filesystem.ps1') | Should Be $true
+    }
+
+    It "the phase-local copies stay guarded so they cannot shadow the canonical helper" {
+        foreach ($name in '10-registry.ps1', '11-unattend.ps1') {
+            $text = [System.IO.File]::ReadAllText((Join-Path $script:PhasesDir $name))
+            $text | Should Match 'if\s*\(-not\s*\(Get-Command\s+-Name\s+Test-TweakEnabled'
+        }
+    }
+
+    It "resolves the setting, the legacy alias, the script variable and the default" {
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$tokens, [ref]$errors)
+        $fnText = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Test-TweakEnabled' }, $true))[0].Extent.Text
+        # The helper reads the builder's script scope, so it runs in its own module
+        # to keep the probe isolated from the rest of the suite.
+        $probe = New-Module -Name 'WinEaseTweakHelperProbe' -ArgumentList $fnText -ScriptBlock {
+            param($FnText)
+            $script:TweakSettings   = [ordered]@{ 'OldKey' = $true }
+            $script:TweakKeyAliases = [ordered]@{ 'OldKey' = 'SomeKey' }
+            Set-Variable -Name 'Tweak_VarKey' -Scope Script -Value $true
+            . ([scriptblock]::Create($FnText))
+            Export-ModuleMember -Function 'Test-TweakEnabled'
+        }
+        Import-Module $probe -Force
+        try {
+            (Test-TweakEnabled 'OldKey' $false)   | Should Be $true    # a stored setting
+            (Test-TweakEnabled 'SomeKey' $false)  | Should Be $true    # reached through its legacy alias
+            (Test-TweakEnabled 'VarKey' $false)   | Should Be $true    # the Tweak_<Name> script variable
+            (Test-TweakEnabled 'Missing' $true)   | Should Be $true    # the hard-coded default
+            (Test-TweakEnabled 'Missing' $false)  | Should Be $false
+        } finally {
+            Remove-Module $probe -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "every tweak of the master schema is in the JSON profile schema" {
+        # config\WinEase.config.schema.json is the schema of the profile files; a tweak
+        # that is missing there is rejected by every editor that validates against it.
+        $schema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+        $json = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\WinEase.config.schema.json")) | ConvertFrom-Json
+        $known = @($json.properties.PSObject.Properties.Name)
+        $missing = @()
+        foreach ($td in $schema.Tweaks) {
+            if ($known -notcontains $td.Key) { $missing += $td.Key }
+        }
+        ($missing -join ', ') | Should Be ''
     }
 }

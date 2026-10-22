@@ -458,6 +458,34 @@ This working copy carries the following changes on top of the upstream fork:
 - **PC migration & backup engine (M3)**: `tools/migrator/migration-rules.psd1` (15 game + 16 app rules) + `tools/migrator/WinEaseMigration.ps1` (13 functions). Custom file/folder backup preserving directory structure. `tools/migrator/WinEase-Migrator.ps1` standalone CLI/GUI wizard.
 - **Extensibility guide (M4)**: `docs/EXTENSIBILITY_GUIDE.md` (English) and `docs/EXTENSIBILITY_GUIDE.ja.md` (Japanese).
 
+## 📝 Local Fork Revision Notes (2026-10-22)
+
+- **Upstream sync 2026-10-22**: the releases and the runtime tweak catalogues of the tools credited in the README were checked again. One tool published a new release (Revision Tool 2.14.3), the ReviOS playbook 26.10 was reviewed for the first time, and four tools had moved their default branch forward (WinUtil, optimizer, Debloat-Win11, Win11Debloat). Item by item, with the reason for every skipped tweak: [`docs/dev/upstream-sync-2026-10.md`](docs/dev/upstream-sync-2026-10.md).
+- **New option `DisableSearchWebView2` (on by default)**: the two Windows feature overrides that stop `SearchHost` from starting a WebView2 runtime for the search box. The obfuscated feature IDs are computed by the new `ConvertTo-WinEaseFeatureIdOverride` helper - the same algorithm the ReviOS playbook and the Revision Tool use, so the written values are identical to theirs.
+- **New options `DisableAccessibilityHotkeys`, `DisableMouseAcceleration`, `DisableKeyboardDelay` (all off by default)**: the user preferences that WinUtil and AtlasOS turned into REG_SZ values - a REG_DWORD value is ignored by Windows.
+- **New AI, search and telemetry policies**: the "let apps use text and image generation" capabilities are force-denied, the agent connectors are disabled with the value the upstream tools use, the Cross Device Resume shell host is redirected to `ShellHost.exe`, the web and Microsoft Store suggestions of the search box are switched off, the Defender sample submission is never accepted and the Media Player no longer updates itself.
+- **Fix**: `SubmitSamplesConsent` was `0` ("always prompt"); it is `2` ("never send") now, and it is applied whether Defender is removed or kept.
+
+## 🔒 Development & Release Automation
+
+| Workflow | Runs on | What it does |
+|---|---|---|
+| `ci.yml` | push / PR to `main` | `-TestSelf` (PowerShell 5.1 + 7), Pester (`tests\WinEase.Tests.ps1`, `tests\WinEase.Regression.Tests.ps1`), dry-runs of extreme / balanced / none / vm, Rust engine build |
+| `lint.yml` | push / PR to `main` | PSScriptAnalyzer (errors fail) |
+| `workflow-audit.yml` | changes under `.github/` | actionlint + zizmor security audit of the workflows |
+| `release.yml` | `v*` tag | runs all of the above on the tagged commit, verifies the tag did not move, builds and checks the ZIP, publishes it with a `.sha256` file and a build provenance attestation |
+| `claude-issue-agent.yml` | issue assigned / `@claude` from a collaborator | implements the request on a branch and opens a **draft** PR |
+| `claude-pr-review.yml` | PR from a branch of this repository | **read-only, advisory** AI review comments; never approves or merges |
+
+Verify a downloaded release: `sha256sum -c WinEase-<tag>.zip.sha256` (or `Get-FileHash`) and
+`gh attestation verify WinEase-<tag>.zip -R gh459/WinEase`.
+
+Dependency updates: Dependabot opens monthly PRs for GitHub Actions (SHA-pinned), Cargo
+(`tools/winease-physical-debloat`) and NuGet (`gui/winui`). Each one goes through the full CI and
+a human review; nothing is merged automatically. Security alerts: enable Dependabot alerts in
+the repository settings and handle them the same way. Audit, risks and the settings that must be
+made on GitHub: [`docs/dev/github-automation-audit.md`](docs/dev/github-automation-audit.md).
+
 ---
 
 ## 📁 Repository Structure
@@ -534,21 +562,21 @@ WinEase/
 
 - **Original Project & Concept:** [NTDEV](https://github.com/ntdevlabs/nano11)
   - [Patreon](http://patreon.com/ntdev) | [PayPal](http://paypal.me/ntdev2) | [Ko-fi](http://ko-fi.com/ntdev)
-- **Optimization & Debloat Tool Integrations** (tweaks re-implemented in WinEase; last upstream review 2026-10-21, see [docs/dev/upstream-sync-2026-10.md](docs/dev/upstream-sync-2026-10.md)):
-  - [Chris Titus Tech's WinUtil](https://github.com/ChrisTitusTech/winutil) - Open-source Windows utility & OOBE bloat mitigation (reviewed: 26.10.07)
-  - [Sophia Script for Windows](https://github.com/farag2/Sophia-Script-for-Windows) - Advanced Windows 11 PowerShell debloater by Dmitry Nefedov (farag2) (reviewed: 8.0.0)
+- **Optimization & Debloat Tool Integrations** (tweaks re-implemented in WinEase; last upstream review 2026-10-22, see [docs/dev/upstream-sync-2026-10.md](docs/dev/upstream-sync-2026-10.md)):
+  - [Chris Titus Tech's WinUtil](https://github.com/ChrisTitusTech/winutil) - Open-source Windows utility & OOBE bloat mitigation (reviewed: 26.10.07 + main)
+  - [Sophia Script for Windows](https://github.com/farag2/Sophia-Script-for-Windows) - Advanced Windows 11 PowerShell debloater by Dmitry Nefedov (farag2) (reviewed: 8.0.0 + main)
   - [SophiApp](https://github.com/Sophia-Community/SophiApp) - Modern WPF GUI front-end for Sophia Script (reviewed: 1.0.97)
-  - [Optimizer](https://github.com/hellzerg/optimizer) - Standalone C# utility for privacy and system performance by Hellzerg (reviewed: 16.7)
-  - [Bloatynosy](https://github.com/builtbybel/Bloatynosy) - Windows 11 feature debloater and AI manager by Builtbybel (reviewed: 1.01.103)
-  - [ReviOS & Revision Tool](https://github.com/meetrevision) - Low-latency OS playbook & standalone performance optimizer (reviewed: Revision Tool 2.14.1)
-  - [AtlasOS](https://github.com/atlas-os/atlas) - Open-source gaming & low-latency Windows modification playbook (reviewed: 0.5.0-hotfix)
-  - [Win11Debloat](https://github.com/raphire/win11debloat) - Lightweight PowerShell script for removing preinstalled apps and disabling telemetry by Raphire (reviewed: 2026.08.24)
+  - [Optimizer](https://github.com/hellzerg/optimizer) - Standalone C# utility for privacy and system performance by Hellzerg (reviewed: 16.7 + master)
+  - [Bloatynosy](https://github.com/builtbybel/Bloatynosy) - Windows 11 feature debloater and AI manager by Builtbybel (reviewed: 1.01.103 + main)
+  - [ReviOS & Revision Tool](https://github.com/meetrevision) - Low-latency OS playbook & standalone performance optimizer (reviewed: playbook 26.10 + main, Revision Tool 2.14.3)
+  - [AtlasOS](https://github.com/atlas-os/atlas) - Open-source gaming & low-latency Windows modification playbook (reviewed: 0.5.0-hotfix + main)
+  - [Win11Debloat](https://github.com/raphire/win11debloat) - Lightweight PowerShell script for removing preinstalled apps and disabling telemetry by Raphire (reviewed: 2026.08.24 + master)
   - [Windows Defender Remover](https://github.com/ionuttbara/windows-defender-remover) - Script for removing Windows Defender and related components by ionuttbara (reviewed: release13-rev1)
   - [privacy.sexy](https://github.com/undergroundwires/privacy.sexy) - Open-source privacy and security hardening script generator by undergroundwires (reviewed: 0.13.8)
-  - [Crapfixer](https://github.com/builtbybel/Crapfixer) - Windows 11 cleanup and privacy tweaking tool by Builtbybel (reviewed: 2.01.41)
+  - [Crapfixer](https://github.com/builtbybel/Crapfixer) - Windows 11 cleanup and privacy tweaking tool by Builtbybel (reviewed: 2.01.41 + main)
   - [FluentCleaner](https://github.com/builtbybel/FluentCleaner) - Windows system and app cache cleaner by Builtbybel (reviewed: 26.09.01)
-  - [Debloat-Win11](https://github.com/SysAdminDoc/Debloat-Win11) - Windows 11 debloat script by SysAdminDoc (reviewed: v2.3.8)
-  - [Harden-Windows-Security](https://github.com/HotCakeX/Harden-Windows-Security) - Windows security hardening and compliance toolkit by HotCakeX (reviewed: HardenSystemSecurity-v1.0.97.0)
+  - [Debloat-Win11](https://github.com/SysAdminDoc/Debloat-Win11) - Windows 11 debloat script by SysAdminDoc (reviewed: v2.3.8 + main)
+  - [Harden-Windows-Security](https://github.com/HotCakeX/Harden-Windows-Security) - Windows security hardening and compliance toolkit by HotCakeX (reviewed: HardenSystemSecurity-v1.0.97.0 + main)
 - **Contributors:**
   - [Tinnitus97](https://github.com/Tinnitus97) (PR #6: Universal language support, robocopy WinSxS fix)
   - Community bug reports and feature requests from [nano11 Issues](https://github.com/ntdevlabs/nano11/issues)
