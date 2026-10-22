@@ -4655,6 +4655,81 @@ Describe "Migration restore - path validation" {
     }
 }
 
+Describe "WinEase debloat - Test-WinEaseAppxPackageRemovable" {
+    BeforeAll {
+        if (-not (Get-Command -Name Test-WinEaseAppxPackageRemovable -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseDebloat.ps1")
+        }
+    }
+
+    Context "Get-WinEaseAppxPatternRegex" {
+        It "returns null for empty or missing patterns array" {
+            Get-WinEaseAppxPatternRegex -Patterns @() | Should BeNullOrEmpty
+        }
+
+        It "escapes special regex characters and converts wildcards" {
+            $regex = Get-WinEaseAppxPatternRegex -Patterns @('*Microsoft.ZuneVideo[1]*')
+            $regex | Should Not BeNullOrEmpty
+            $regex.IsMatch('Microsoft.ZuneVideo[1]123') | Should Be $true
+            $regex.IsMatch('Microsoft.ZuneVideo123') | Should Be $false
+        }
+
+        It "deduplicates identical patterns and builds a case-insensitive regex" {
+            $regex = Get-WinEaseAppxPatternRegex -Patterns @('*Zune*', '*Zune*', '*PAINT*')
+            $regex.IsMatch('microsoft.zunemusic') | Should Be $true
+            $regex.IsMatch('MICROSOFT.PAINT') | Should Be $true
+            $regex.IsMatch('Microsoft.Calculator') | Should Be $false
+        }
+    }
+
+    Context "Test-WinEaseAppxPackageRemovable" {
+        $removalRegex = Get-WinEaseAppxPatternRegex -Patterns @('*Zune*', '*Bing*')
+        $protectedRegex = Get-WinEaseAppxPatternRegex -Patterns @('*Microsoft.VCLibs*', '*SecHealthUI*')
+
+        It "returns false when RemovalRegex is null" {
+            Test-WinEaseAppxPackageRemovable -Name 'Microsoft.ZuneMusic' -DisplayName 'Zune Music' -RemovalRegex $null | Should Be $false
+        }
+
+        It "returns false when Name and DisplayName are null or whitespace" {
+            Test-WinEaseAppxPackageRemovable -Name $null -DisplayName $null -RemovalRegex $removalRegex | Should Be $false
+            Test-WinEaseAppxPackageRemovable -Name '' -DisplayName '   ' -RemovalRegex $removalRegex | Should Be $false
+        }
+
+        It "returns false when neither Name nor DisplayName matches RemovalRegex" {
+            Test-WinEaseAppxPackageRemovable -Name 'Microsoft.WindowsCalculator' -DisplayName 'Calculator' -RemovalRegex $removalRegex | Should Be $false
+        }
+
+        It "returns true when Name matches RemovalRegex and ProtectedRegex is null or unmatched" {
+            Test-WinEaseAppxPackageRemovable -Name 'Microsoft.ZuneMusic_8wekyb3d8bbwe' -DisplayName 'Music App' -RemovalRegex $removalRegex | Should Be $true
+        }
+
+        It "returns true when DisplayName matches RemovalRegex and ProtectedRegex is null or unmatched" {
+            Test-WinEaseAppxPackageRemovable -Name 'Microsoft.UnknownPackage_1.0' -DisplayName 'Bing News' -RemovalRegex $removalRegex | Should Be $true
+        }
+
+        It "returns false when Name matches RemovalRegex but matches ProtectedRegex (whitelist protection)" {
+            Test-WinEaseAppxPackageRemovable -Name 'Microsoft.Zune_Microsoft.VCLibs_1.0' -DisplayName 'Protected Zune' -RemovalRegex $removalRegex -ProtectedRegex $protectedRegex | Should Be $false
+        }
+
+        It "returns false when DisplayName matches RemovalRegex but matches ProtectedRegex" {
+            Test-WinEaseAppxPackageRemovable -Name 'Microsoft.Zune_1.0' -DisplayName 'Bing SecHealthUI' -RemovalRegex $removalRegex -ProtectedRegex $protectedRegex | Should Be $false
+        }
+
+        It "returns false when Name matches RemovalRegex and DisplayName matches ProtectedRegex" {
+            Test-WinEaseAppxPackageRemovable -Name 'Microsoft.ZuneMusic_8wekyb3d8bbwe' -DisplayName 'Microsoft.VCLibs' -RemovalRegex $removalRegex -ProtectedRegex $protectedRegex | Should Be $false
+        }
+
+        It "returns false when DisplayName matches RemovalRegex and Name matches ProtectedRegex" {
+            Test-WinEaseAppxPackageRemovable -Name 'Microsoft.SecHealthUI_8wekyb3d8bbwe' -DisplayName 'Bing Search' -RemovalRegex $removalRegex -ProtectedRegex $protectedRegex | Should Be $false
+        }
+
+        It "is case-insensitive for both removal and protection matching" {
+            Test-WinEaseAppxPackageRemovable -Name 'MICROSOFT.ZUNEMUSIC_1.0' -DisplayName 'zune' -RemovalRegex $removalRegex | Should Be $true
+            Test-WinEaseAppxPackageRemovable -Name 'MICROSOFT.ZUNEMUSIC_1.0' -DisplayName 'sechealthui' -RemovalRegex $removalRegex -ProtectedRegex $protectedRegex | Should Be $false
+        }
+    }
+}
+
 Describe "AppX removal - the settings decide what is removed" {
     BeforeAll {
         if (-not (Get-Command -Name Get-WinEaseAppxRemovalPatterns -ErrorAction SilentlyContinue)) {
