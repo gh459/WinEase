@@ -2751,6 +2751,109 @@ Describe "WinEase dependency checker" {
     }
 }
 
+Describe "Format-WinEaseDependencyReport" {
+    BeforeAll {
+        if (-not (Get-Command -Name Format-WinEaseDependencyReport -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot -ChildPath "WinEasehelpers.ps1")
+        }
+    }
+
+    It "returns empty string when result has no conflicts, unknowns, or impacts" {
+        $result = @{ Conflicts = @(); Unknowns = @(); Impacts = @() }
+        $report = Format-WinEaseDependencyReport -Result $result
+        $report | Should Be ""
+    }
+
+    It "formats dependency conflicts with and without ConflictingWith property" {
+        $result = @{
+            Conflicts = @(
+                @{ Category = 'Component'; Source = 'WSLSupport'; Summary = 'WSL2 requires hypervisor'; ConflictingWith = 'NoHypervisor' },
+                @{ Category = 'Tweak'; Source = 'TweakA'; Summary = 'Direct conflict' }
+            )
+        }
+        $report = Format-WinEaseDependencyReport -Result $result
+        $report | Should Match '\[DEPENDENCY CONFLICT\]'
+        $report | Should Match '  - \[Component\] WSLSupport: WSL2 requires hypervisor \(conflicts with: NoHypervisor\)'
+        $report | Should Match '  - \[Tweak\] TweakA: Direct conflict'
+    }
+
+    It "formats unknown dependency items correctly" {
+        $result = @{
+            Unknowns = @(
+                @{ Category = 'AdvancedDebloat'; Source = 'UnknownItem'; Summary = 'Unregistered item'; Reason = 'Item is not registered in catalog' }
+            )
+        }
+        $report = Format-WinEaseDependencyReport -Result $result
+        $report | Should Match '\[DEPENDENCY UNKNOWN / .*\]'
+        $report | Should Match '  - \[AdvancedDebloat\] UnknownItem: Unregistered item -- Item is not registered in catalog'
+    }
+
+    It "formats feature impacts with and without AffectedFeatures list" {
+        $result = @{
+            Impacts = @(
+                @{ Category = 'Component'; Source = 'RemoveStore'; Summary = 'Store removal affects apps'; AffectedFeatures = @('App Installer', 'Store Apps') },
+                @{ Category = 'Tweak'; Source = 'DisableSpooler'; Summary = 'Print spooler disabled' }
+            )
+        }
+        $report = Format-WinEaseDependencyReport -Result $result
+        $report | Should Match '\[FEATURE IMPACT\]'
+        $report | Should Match '  - \[Component\] RemoveStore: Store removal affects apps'
+        $report | Should Match '      \* App Installer'
+        $report | Should Match '      \* Store Apps'
+        $report | Should Match '  - \[Tweak\] DisableSpooler: Print spooler disabled'
+    }
+
+    It "formats combined report containing conflicts, unknowns, and impacts" {
+        $result = @{
+            Conflicts = @(
+                @{ Category = 'Component'; Source = 'CompA'; Summary = 'Conflict A' }
+            )
+            Unknowns = @(
+                @{ Category = 'Tweak'; Source = 'TweakB'; Summary = 'Unknown B'; Reason = 'Reason B' }
+            )
+            Impacts = @(
+                @{ Category = 'Component'; Source = 'CompC'; Summary = 'Impact C'; AffectedFeatures = @('Feature C') }
+            )
+        }
+        $report = Format-WinEaseDependencyReport -Result $result
+        $report | Should Match '\[DEPENDENCY CONFLICT\]'
+        $report | Should Match '\[DEPENDENCY UNKNOWN / .*\]'
+        $report | Should Match '\[FEATURE IMPACT\]'
+
+        # Verify section order: CONFLICT < UNKNOWN < FEATURE IMPACT
+        $idxConflict = $report.IndexOf('[DEPENDENCY CONFLICT]')
+        $idxUnknown = $report.IndexOf('DEPENDENCY UNKNOWN')
+        $idxImpact = $report.IndexOf('[FEATURE IMPACT]')
+
+        ($idxConflict -lt $idxUnknown) | Should Be $true
+        ($idxUnknown -lt $idxImpact) | Should Be $true
+
+        # Verify output is trimmed at the end (no trailing newlines)
+        $report.EndsWith("`n") | Should Be $false
+        $report.EndsWith("`r") | Should Be $false
+    }
+
+    It "formats output correctly when integrated directly with Test-WinEaseDependencies" {
+        $cfg = @{
+            WSLSupport = $true
+            NoHypervisor = $true
+            RemoveStore = $true
+            TweakSettings = @{}
+            AdvancedDebloatStandard = @('Totally Unknown Item XYZ')
+            AdvancedDebloatExperimental = @()
+        }
+        $depResult = Test-WinEaseDependencies -Config $cfg
+        $report = Format-WinEaseDependencyReport -Result $depResult
+
+        $report | Should Match '\[DEPENDENCY CONFLICT\]'
+        $report | Should Match '\[DEPENDENCY UNKNOWN / .*\]'
+        $report | Should Match '\[FEATURE IMPACT\]'
+        $report | Should Match 'WSLSupport'
+        $report | Should Match 'RemoveStore'
+        $report | Should Match 'Totally Unknown Item XYZ'
+    }
+}
+
 # --- User Extensibility Engine tests (M2) ---
 if (-not (Get-Command -Name Import-WinEaseUserExtensions -ErrorAction SilentlyContinue)) {
     . (Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseExtensions.ps1")
