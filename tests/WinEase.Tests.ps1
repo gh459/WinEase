@@ -3225,6 +3225,77 @@ Describe "S7 - GUI Tab 8 (Migration & Backup)" {
     }
 }
 
+Describe "WinEase structured logger (lib/WinEaseLogger.ps1)" {
+    BeforeAll {
+        . (Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseLogger.ps1")
+    }
+
+    BeforeEach {
+        Reset-WinEaseLogState
+    }
+
+    It "creates structured log entry with default level Info" {
+        $entry = New-WinEaseLogMessage -Message "Information test"
+        $entry.Message | Should Be "Information test"
+        $entry.Level | Should Be "Info"
+        $entry.Timestamp | Should Not BeNullOrEmpty
+        $script:WinEaseLogEntries.Count | Should Be 1
+        $script:WinEaseLogWarningCount | Should Be 0
+        $script:WinEaseLogErrorCount | Should Be 0
+    }
+
+    It "creates log entries with custom levels Debug and Success" {
+        $debugEntry = New-WinEaseLogMessage -Message "Debug test" -Level "Debug"
+        $debugEntry.Message | Should Be "Debug test"
+        $debugEntry.Level | Should Be "Debug"
+
+        $successEntry = New-WinEaseLogMessage -Message "Success test" -Level "Success"
+        $successEntry.Message | Should Be "Success test"
+        $successEntry.Level | Should Be "Success"
+
+        $script:WinEaseLogEntries.Count | Should Be 2
+        $script:WinEaseLogWarningCount | Should Be 0
+        $script:WinEaseLogErrorCount | Should Be 0
+    }
+
+    It "increments warning count and records entry when level is Warning" {
+        $entry = New-WinEaseLogMessage -Message "Warning test" -Level "Warning"
+        $entry.Message | Should Be "Warning test"
+        $entry.Level | Should Be "Warning"
+        $script:WinEaseLogWarningCount | Should Be 1
+        $script:WinEaseLogErrorCount | Should Be 0
+        $script:WinEaseLogEntries.Count | Should Be 1
+    }
+
+    It "increments error count and records entry when level is Error" {
+        $entry = New-WinEaseLogMessage -Message "Error test" -Level "Error"
+        $entry.Message | Should Be "Error test"
+        $entry.Level | Should Be "Error"
+        $script:WinEaseLogErrorCount | Should Be 1
+        $script:WinEaseLogWarningCount | Should Be 0
+        $script:WinEaseLogEntries.Count | Should Be 1
+    }
+
+    It "throws when mandatory Message parameter is missing or Level is invalid" {
+        { New-WinEaseLogMessage -Message $null } | Should Throw
+        { New-WinEaseLogMessage -Message "Test" -Level "InvalidLevel" } | Should Throw
+    }
+
+    It "resets log state correctly via Reset-WinEaseLogState" {
+        New-WinEaseLogMessage -Message "Warn" -Level "Warning" | Out-Null
+        New-WinEaseLogMessage -Message "Err" -Level "Error" | Out-Null
+        $script:WinEaseLogEntries.Count | Should Be 2
+        $script:WinEaseLogWarningCount | Should Be 1
+        $script:WinEaseLogErrorCount | Should Be 1
+
+        Reset-WinEaseLogState
+
+        $script:WinEaseLogEntries.Count | Should Be 0
+        $script:WinEaseLogWarningCount | Should Be 0
+        $script:WinEaseLogErrorCount | Should Be 0
+    }
+}
+
 Describe "S5: Migration Assistant bundling" {
     $s5Root = Split-Path -Parent $PSScriptRoot
     $s5Text = [System.IO.File]::ReadAllText((Join-Path $s5Root 'phases\11-unattend.ps1'))
