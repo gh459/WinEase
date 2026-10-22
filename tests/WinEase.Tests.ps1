@@ -1936,7 +1936,7 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
         $script:advancedDebloatExperimental = @()
         $script:DebloatEngineSelection = [ordered]@{}
         try {
-            foreach ($fn in $funcs) { Invoke-Expression $fn.Extent.Text }
+            foreach ($fn in $funcs) { . ([scriptblock]::Create($fn.Extent.Text)) }
 
             $bt = 'Remove Bluetooth stack (service + binary) [20-40MB]'
             $legacy = 'Physical: Bluetooth stack (complete removal) [~20-40MB]'
@@ -1981,7 +1981,7 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
         $script:advancedDebloatExperimental = @()
         $script:DebloatEngineSelection = [ordered]@{}
         try {
-            foreach ($fn in $funcs) { Invoke-Expression $fn.Extent.Text }
+            foreach ($fn in $funcs) { . ([scriptblock]::Create($fn.Extent.Text)) }
 
             $bt = 'Remove Bluetooth stack (service + binary) [20-40MB]'
             $defender = 'Physical: Defender (complete removal) [~50MB]'
@@ -2129,7 +2129,7 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
         $script:advancedDebloatExperimental = @()
         $script:DebloatEngineSelection = [ordered]@{}
         try {
-            foreach ($fn in $funcs) { Invoke-Expression $fn.Extent.Text }
+            foreach ($fn in $funcs) { . ([scriptblock]::Create($fn.Extent.Text)) }
 
             $target = 'Remove PatchCache (dir delete) [200-500MB]'
             # not selected -> nothing happens
@@ -2408,7 +2408,7 @@ Describe "WinEase settings - config\schema.psd1 is the single source of truth" {
             param($n)
             $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$script:BuiltInPresets'
         }, $true)
-        $presetData = Invoke-Expression $presets.Right.Extent.Text
+        $presetData = . ([scriptblock]::Create($presets.Right.Extent.Text))
         $meta = @('ProfileName', 'Description')
         foreach ($pn in $presetData.Keys) {
             foreach ($k in $presetData[$pn].Keys) {
@@ -4855,7 +4855,7 @@ Describe "WinEase forced physical deletion - the Rust engine" {
         $script:WinEaseDebloatEngines = @{}
         foreach ($def in $script:PhysEngineDefs) { $script:WinEaseDebloatEngines[[string]$def.Item] = $def }
         try {
-            foreach ($fn in $funcs) { Invoke-Expression $fn.Extent.Text }
+            foreach ($fn in $funcs) { . ([scriptblock]::Create($fn.Extent.Text)) }
             foreach ($t in $script:PhysNewRustTargets) {
                 Get-WinEaseDebloatRustKey -Item $t.Item | Should Be $t.Key
             }
