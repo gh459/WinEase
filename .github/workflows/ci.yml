@@ -6,6 +6,8 @@ on:
   pull_request:
     branches: [main, master]
   workflow_dispatch:
+  # release.yml runs the same checks on the tagged commit before it publishes anything
+  workflow_call:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -16,13 +18,27 @@ permissions:
 
 jobs:
   self-test:
-    name: Self-test (AST + unattend schema + presets)
+    name: Self-test (${{ matrix.shell }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # powershell = Windows PowerShell 5.1 (the supported runtime), pwsh = PowerShell 7
+        shell: [powershell, pwsh]
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Run WinEase self-test
+      - name: Run WinEase self-test (powershell)
+        if: matrix.shell == 'powershell'
+        shell: powershell
+        run: |
+          .\WinEasebuilder.ps1 -TestSelf
+          if ($LASTEXITCODE -ne 0) { throw "Self-test failed with exit code $LASTEXITCODE" }
+      - name: Run WinEase self-test (pwsh)
+        if: matrix.shell == 'pwsh'
         shell: pwsh
         run: |
           .\WinEasebuilder.ps1 -TestSelf
@@ -34,31 +50,93 @@ jobs:
     needs: self-test
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Run Pester tests
         # The suite is written in Pester 3 syntax ("Should Be" without dashes), which Pester 5
         # rejects, and it is developed on Windows PowerShell 5.1. The runner image also ships
         # Pester 5, so pin 3.4.0 explicitly instead of taking whatever is newest.
+        # Pester 3.4 does not load on PowerShell 7 (it needs Get-WmiObject), so the suite runs on
+        # 5.1 only; the PowerShell 7 coverage comes from the self-test and dry-run matrices.
         shell: powershell
         run: |
           if (-not (Get-Module -ListAvailable -Name Pester | Where-Object { $_.Version -eq [version]'3.4.0' })) {
             Install-Module -Name Pester -RequiredVersion 3.4.0 -Force -SkipPublisherCheck -Scope CurrentUser
           }
           Import-Module Pester -RequiredVersion 3.4.0 -Force
-          $result = Invoke-Pester -Path .\tests\WinEase.Tests.ps1 -PassThru
+          $files = @('.\tests\WinEase.Tests.ps1', '.\tests\WinEase.Regression.Tests.ps1')
+          $result = Invoke-Pester -Path $files -PassThru -OutputFormat NUnitXml -OutputFile .\pester-results.xml
+          # One annotation per failed test: test name, file and the failure message
+          foreach ($t in @($result.TestResult | Where-Object { $_.Result -eq 'Failed' })) {
+            $msg = ("$($t.FailureMessage)" -replace '\r?\n', ' ')
+            Write-Host "::error title=Pester: $($t.Describe)::$($t.Name) - $msg"
+          }
+          Write-Host "Passed: $($result.PassedCount)  Failed: $($result.FailedCount)  Skipped: $($result.SkippedCount)  Inconclusive: $($result.InconclusiveCount)"
           if ($result.FailedCount -gt 0) { throw "$($result.FailedCount) Pester test(s) failed" }
 
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pester-results
+          path: pester-results.xml
+          if-no-files-found: warn
+          retention-days: 14
+
   dry-run:
-    name: Dry-run configuration resolution
+    name: Dry-run ${{ matrix.profile }} (${{ matrix.shell }})
     runs-on: windows-latest
     needs: self-test
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [pwsh]
+        profile: [extreme, balanced, none, vm]
+        include:
+          - shell: powershell
+            profile: extreme
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Run dry-run (extreme profile)
-        shell: pwsh
+      - name: Run dry-run (powershell)
+        if: matrix.shell == 'powershell'
+        shell: powershell
+        env:
+          WINEASE_PROFILE: ${{ matrix.profile }}
         run: |
-          .\WinEasebuilder.ps1 -DryRun -NonInteractive -Profile extreme
-          if ($LASTEXITCODE -ne 0) { throw "Dry-run failed with exit code $LASTEXITCODE" }
+          .\WinEasebuilder.ps1 -DryRun -NonInteractive -Profile $env:WINEASE_PROFILE
+          if ($LASTEXITCODE -ne 0) { throw "Dry-run ($env:WINEASE_PROFILE) failed with exit code $LASTEXITCODE" }
+      - name: Run dry-run (pwsh)
+        if: matrix.shell == 'pwsh'
+        shell: pwsh
+        env:
+          WINEASE_PROFILE: ${{ matrix.profile }}
+        run: |
+          .\WinEasebuilder.ps1 -DryRun -NonInteractive -Profile $env:WINEASE_PROFILE
+          if ($LASTEXITCODE -ne 0) { throw "Dry-run ($env:WINEASE_PROFILE) failed with exit code $LASTEXITCODE" }
+
+  rust:
+    name: Rust engine (cargo build + test)
+    # tools/winease-physical-debloat is Windows-only (windows crate). Before this job nothing
+    # compiled it in CI, so a Dependabot Cargo update could not be verified.
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build and test
+        shell: pwsh
+        working-directory: tools/winease-physical-debloat
+        run: |
+          cargo --version
+          cargo build --locked --release
+          if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE" }
+          cargo test --locked
+          if ($LASTEXITCODE -ne 0) { throw "cargo test failed with exit code $LASTEXITCODE" }

@@ -85,6 +85,7 @@
         @{ Key = 'NetworkTuning'; Category = 'Performance'; Default = $false; Description = 'Tune TCP timeouts, port range, TTL and DNS behaviour'; CliSwitch = $true }
         @{ Key = 'DisableIdleMaintenance'; Category = 'Performance'; Default = $false; Description = 'Disable Windows scheduled idle maintenance'; CliSwitch = $true }
         @{ Key = 'SvcHostConsolidation'; Category = 'Performance'; Default = $false; Description = 'Consolidate svchost processes to reduce idle RAM'; CliSwitch = $true }
+        @{ Key = 'DisableSearchWebView2'; Category = 'Performance'; Default = $true; Description = 'Stop SearchHost from spawning a WebView2 runtime (ReviOS feature override)'; CliSwitch = $true }
 
         # UI
         @{ Key = 'EnableClassicContextMenu'; Category = 'UI'; Default = $true; Description = 'Restore classic Windows 10 style full context menus'; CliSwitch = $true }
@@ -110,6 +111,9 @@
         @{ Key = 'AlwaysShowScrollbars'; Category = 'UI'; Default = $false; Description = 'Always show scrollbars'; CliSwitch = $true }
         @{ Key = 'DisableLogonBlur'; Category = 'UI'; Default = $false; Description = 'Disable the acrylic blur on the sign-in screen'; CliSwitch = $true }
         @{ Key = 'HideOneDriveNavPane'; Category = 'UI'; Default = $false; Description = 'Hide OneDrive from the File Explorer navigation pane'; CliSwitch = $true }
+        @{ Key = 'DisableAccessibilityHotkeys'; Category = 'UI'; Default = $false; Description = 'Disable the StickyKeys, FilterKeys, ToggleKeys and MouseKeys accessibility hotkeys'; CliSwitch = $true }
+        @{ Key = 'DisableMouseAcceleration'; Category = 'UI'; Default = $false; Description = 'Turn off mouse pointer acceleration'; CliSwitch = $true }
+        @{ Key = 'DisableKeyboardDelay'; Category = 'UI'; Default = $false; Description = 'Remove the keyboard character repeat delay'; CliSwitch = $true }
 
         # --- Removal options (polarity: OFF = keep / nothing happens, ON = remove) -------
         # These replace the previously unconditional deletions. Every one of them used to
@@ -506,20 +510,32 @@
         @{ Pattern = '*Microsoft.SecHealthUI*'; Group = 'Defender'; Option = 'RemoveDefender' }
         @{ Pattern = '*Microsoft.Windows.SecHealthUI*'; Group = 'Defender'; Option = 'RemoveDefender' }
     )
+    # The execution engine of every Advanced Debloat target. Every field of an entry:
+    #   Item               the exact text of the list entry (the value of the profile)
+    #   Engines            the engines that may remove the target ("PowerShell" / "Rust")
+    #   Default            the engine that runs when the user did not pick one
+    #   RustKey            the key the Rust binary understands (only with the Rust engine)
+    #   Payload            the files the physical (Rust) engine deletes. The safe engine
+    #                      deletes the same list for the targets whose safe work is a
+    #                      file deletion, so both engines remove the same files.
+    #   SingleEngineReason why a target offers only one engine. A target that offers both
+    #                      engines never needs one.
+    #   Phase              the phase that runs the safe work of the target
+    #   Option             the granular option the target implies
     DebloatEngines = @(
         # --- Standard targets (safe engine by default) ---
         @{ Item = 'Remove PatchCache (dir delete) [200-500MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_patchcache'; Legacy = @('Physical: Installer cache PatchCache (complete removal) [varies]'); SupportsRustPhysical = $true; Phase = '08-filesystem' }
         @{ Item = 'Remove Delivery Optimization cache (dir delete) [100-500MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_delivery_optimization'; Legacy = @('Physical: Delivery Optimization (complete removal) [varies]'); SupportsRustPhysical = $true; Phase = '08-filesystem' }
-        @{ Item = 'Remove non-Japanese language packs (DISM) [200-500MB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '06-fod' }
+        @{ Item = 'Remove non-Japanese language packs (DISM) [200-500MB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '06-fod'; SingleEngineReason = 'The language packs are component store (CBS) packages: only DISM removes them without breaking the component store, and the Rust engine never touches the component store.' }
         @{ Item = 'Remove non-essential fonts (file delete) [50-100MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_fonts'; SupportsRustPhysical = $true; Phase = '08-filesystem' }
-        @{ Item = 'WinSxS cleanup (/StartComponentCleanup /ResetBase) [1-3GB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '09-winsxs' }
+        @{ Item = 'WinSxS cleanup (/StartComponentCleanup /ResetBase) [1-3GB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '09-winsxs'; SingleEngineReason = 'The component store (WinSxS) is the one thing the Rust engine must never touch: deleting its files breaks the servicing stack of the image (phase 09, safety rule E2).' }
         # The paging files are created by Windows on the running system and are not part
         # of the mounted image, so the Rust engine can never delete them: the safe engine
         # disables them after the setup (the post-install flag of phase 11).
-        @{ Item = 'Remove pagefile.sys (pagefile disable) [4-16GB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '11-unattend' }
-        @{ Item = 'Remove hiberfil.sys (powercfg /h off) [4-16GB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '11-unattend' }
-        @{ Item = 'Remove swapfile.sys (pagefile disable) [256MB-1GB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '11-unattend' }
-        @{ Item = 'Remove Provisioned AppX (list-based) [100-300MB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '05-appx' }
+        @{ Item = 'Remove pagefile.sys (pagefile disable) [4-16GB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '11-unattend'; SingleEngineReason = 'The paging file is created by Windows on the running system, so it is not part of the mounted image: the Rust engine could only ever report "file not found".' }
+        @{ Item = 'Remove hiberfil.sys (powercfg /h off) [4-16GB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '11-unattend'; SingleEngineReason = 'The hibernation file is created by Windows on the running system, so it is not part of the mounted image: the Rust engine could only ever report "file not found".' }
+        @{ Item = 'Remove swapfile.sys (pagefile disable) [256MB-1GB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '11-unattend'; SingleEngineReason = 'The swap file is created by Windows together with the paging file on the running system, so it is not part of the mounted image: the Rust engine could only ever report "file not found".' }
+        @{ Item = 'Remove Provisioned AppX (list-based) [100-300MB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '05-appx'; SingleEngineReason = 'A provisioned package is only unregistered by DISM: the Rust engine deletes files, but it cannot take the package out of the provisioning database of the image.' }
         @{ Item = 'Remove Windows Media Player (component) [50-100MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_media_player'; Legacy = @('Physical: Windows Media Player (complete removal) [~50-100MB]'); SupportsRustPhysical = $true; Phase = '06-fod'  ; Option = 'RemoveMediaPlayerFeature' }
         @{ Item = 'Remove Remote Desktop host (service + binary) [30-50MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_rdp'; Legacy = @('Physical: Remote Desktop host (complete removal) [~30-50MB]'); SupportsRustPhysical = $true; Phase = '10-registry' }
         @{ Item = 'Remove Bluetooth stack (service + binary) [20-40MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_bluetooth'; Legacy = @('Physical: Bluetooth stack (complete removal) [~20-40MB]'); SupportsRustPhysical = $true; Phase = '10-registry' }
@@ -533,28 +549,36 @@
         @{ Item = 'Remove Provisioning packages [5-10MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_provisioning'; Legacy = @('Physical: Provisioning packages (complete removal) [~5-10MB]'); SupportsRustPhysical = $true; Phase = '08-filesystem' }
         @{ Item = 'Remove Windows Sandbox [10-20MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_sandbox'; Legacy = @('Physical: Windows Sandbox (complete removal) [~10-20MB]'); SupportsRustPhysical = $true; Phase = '06-fod' }
         @{ Item = 'Remove WSL / VM Platform [20-40MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_wsl'; Legacy = @('Physical: WSL / VM Platform (complete removal) [~20-40MB]'); SupportsRustPhysical = $true; Phase = '06-fod' }
-        @{ Item = 'Remove .NET Framework 3.5 [100MB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '06-fod' }
-        @{ Item = 'Remove Windows PowerShell ISE [5MB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '06-fod'  ; Option = 'RemovePowerShellISE' }
-        @{ Item = 'Remove Steps Recorder [2MB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '06-fod'  ; Option = 'RemoveStepsRecorder' }
-        @{ Item = 'Remove Telnet/TFTP client [1MB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '06-fod'  ; Option = 'RemoveTelnetClient' }
-        @{ Item = 'Remove SNMP service [2MB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '06-fod'  ; Option = 'RemoveSnmpClient' }
-        @{ Item = 'Remove Windows Identity Foundation [10MB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '06-fod' }
-        @{ Item = 'Remove Fax service [5MB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '06-fod'  ; Option = 'RemoveFaxClient' }
-        @{ Item = 'Remove XPS Viewer [5MB]'; Engines = @('PowerShell'); Default = 'PowerShell'; SupportsRustPhysical = $false; Phase = '06-fod'  ; Option = 'RemoveXpsViewer' }
+        # The packages below are removed by the safe engine with DISM (the feature or the
+        # capability is unregistered), and by the Rust engine with the forced physical
+        # deletion of their payload. The safe engine stays the default, so a build that
+        # does not pick the Rust engine behaves exactly as before.
+        @{ Item = 'Remove .NET Framework 3.5 [100MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_dotnet35'; SupportsRustPhysical = $true; Phase = '06-fod'; Payload = @('Windows\Microsoft.NET\Framework\v3.0','Windows\Microsoft.NET\Framework64\v3.0') }
+        @{ Item = 'Remove Windows PowerShell ISE [5MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_powershell_ise'; SupportsRustPhysical = $true; Phase = '06-fod'  ; Option = 'RemovePowerShellISE'; Payload = @('Windows\System32\WindowsPowerShell\v1.0\powershell_ise.exe','Windows\SysWOW64\WindowsPowerShell\v1.0\powershell_ise.exe','Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShellISE','Windows\SysWOW64\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShellISE') }
+        @{ Item = 'Remove Steps Recorder [2MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_steps_recorder'; SupportsRustPhysical = $true; Phase = '06-fod'  ; Option = 'RemoveStepsRecorder'; Payload = @('Windows\System32\psr.exe') }
+        @{ Item = 'Remove Telnet/TFTP client [1MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_telnet_tftp'; SupportsRustPhysical = $true; Phase = '06-fod'  ; Option = 'RemoveTelnetClient'; Payload = @('Windows\System32\telnet.exe','Windows\System32\tftp.exe') }
+        @{ Item = 'Remove SNMP service [2MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_snmp_client'; SupportsRustPhysical = $true; Phase = '06-fod'  ; Option = 'RemoveSnmpClient'; Payload = @('Windows\System32\snmpapi.dll','Windows\System32\snmp.exe','Windows\System32\wmisnmp.dll') }
+        @{ Item = 'Remove Windows Identity Foundation [10MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_identity_foundation'; SupportsRustPhysical = $true; Phase = '06-fod'; Payload = @('Windows\Microsoft.NET\Framework\v3.0\WCF','Windows\Microsoft.NET\assembly\GAC_MSIL\Microsoft.IdentityModel*') }
+        @{ Item = 'Remove Fax service [5MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_fax'; SupportsRustPhysical = $true; Phase = '06-fod'  ; Option = 'RemoveFaxClient'; Payload = @('Windows\System32\fxssvc.exe','Windows\System32\WinFax.dll') }
+        @{ Item = 'Remove XPS Viewer [5MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_xps_viewer'; SupportsRustPhysical = $true; Phase = '06-fod'  ; Option = 'RemoveXpsViewer'; Payload = @('Windows\System32\xpsrch.exe','Windows\System32\xpsviewer.exe','Program Files\WindowsApps\Microsoft.Windows.XPSViewer*') }
         # --- Physical targets (forced engine by default) ---
-        @{ Item = 'Physical: Edge / WebView2 (complete removal) [~200MB]'; Engines = @('Rust'); Default = 'Rust'; RustKey = 'physical_edge'; SupportsRustPhysical = $true; Phase = '09-physical-debloat' }
-        @{ Item = 'Physical: Defender (complete removal) [~50MB]'; Engines = @('Rust'); Default = 'Rust'; RustKey = 'physical_defender'; SupportsRustPhysical = $true; Phase = '09-physical-debloat' }
+        # The targets below are removed by the Rust engine (the forced physical deletion of
+        # the payload) and by the safe engine (the same payload, deleted with the normal
+        # permissions). The safe work of a target runs in the phase that owns it, so the
+        # six targets below are owned by phase 08 now, not by the Rust phase.
+        @{ Item = 'Physical: Edge / WebView2 (complete removal) [~200MB]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_edge'; SupportsRustPhysical = $true; Phase = '08-filesystem'; Payload = @('Program Files (x86)\Microsoft\Edge','Program Files (x86)\Microsoft\EdgeUpdate','Program Files (x86)\Microsoft\EdgeCore','Program Files\WindowsApps\MicrosoftEdge*') }
+        @{ Item = 'Physical: Defender (complete removal) [~50MB]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_defender'; SupportsRustPhysical = $true; Phase = '08-filesystem'; Payload = @('ProgramData\Microsoft\Windows Defender') }
         @{ Item = 'Physical: Cortana / Search (complete removal) [~100MB]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_cortana'; SupportsRustPhysical = $true; Phase = '05-appx' }
         @{ Item = 'Physical: OneDrive (complete removal) [~50MB]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_onedrive'; SupportsRustPhysical = $true; Phase = '08-filesystem' }
         @{ Item = 'Physical: Telemetry/DiagTrack (complete removal) [~30MB]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_telemetry'; SupportsRustPhysical = $true; Phase = '08-filesystem' }
         @{ Item = 'Physical: Hyper-V / Virtualization stack [~200-400MB]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_hyperv'; SupportsRustPhysical = $true; Phase = '06-fod' }
         @{ Item = 'Physical: IIS (Web server) [~50-100MB]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_iis'; SupportsRustPhysical = $true; Phase = '06-fod' }
-        @{ Item = 'Physical: Windows Firewall (complete removal) [~20-40MB]'; Engines = @('Rust'); Default = 'Rust'; RustKey = 'physical_firewall'; SupportsRustPhysical = $true; Phase = '09-physical-debloat' }
+        @{ Item = 'Physical: Windows Firewall (complete removal) [~20-40MB]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_firewall'; SupportsRustPhysical = $true; Phase = '08-filesystem'; Payload = @('Windows\System32\mpssvc.dll','Windows\System32\drivers\mpsdrv.sys') }
         @{ Item = 'Physical: BitLocker (complete removal) [~30-50MB]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_bitlocker'; SupportsRustPhysical = $true; Phase = '10-registry'  ; Option = 'RemoveBitLockerFeature' }
-        @{ Item = 'Physical: Windows Search index (complete removal) [varies]'; Engines = @('Rust'); Default = 'Rust'; RustKey = 'physical_search_index'; SupportsRustPhysical = $true; Phase = '09-physical-debloat' }
+        @{ Item = 'Physical: Windows Search index (complete removal) [varies]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_search_index'; SupportsRustPhysical = $true; Phase = '08-filesystem'; Payload = @('ProgramData\Microsoft\Search\Data') }
         @{ Item = 'Physical: Windows.old (complete removal) [varies]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_windows_old'; SupportsRustPhysical = $true; Phase = '08-filesystem' }
         @{ Item = 'Physical: Temp files (complete removal) [varies]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_temp_files'; SupportsRustPhysical = $true; Phase = '08-filesystem' }
-        @{ Item = 'Physical: Memory.dmp (complete removal) [varies]'; Engines = @('Rust'); Default = 'Rust'; RustKey = 'physical_memory_dmp'; SupportsRustPhysical = $true; Phase = '09-physical-debloat' }
-        @{ Item = 'Physical: Minidump (complete removal) [varies]'; Engines = @('Rust'); Default = 'Rust'; RustKey = 'physical_minidump'; SupportsRustPhysical = $true; Phase = '09-physical-debloat' }
+        @{ Item = 'Physical: Memory.dmp (complete removal) [varies]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_memory_dmp'; SupportsRustPhysical = $true; Phase = '08-filesystem'; Payload = @('Windows\Memory.dmp') }
+        @{ Item = 'Physical: Minidump (complete removal) [varies]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_minidump'; SupportsRustPhysical = $true; Phase = '08-filesystem'; Payload = @('Windows\Minidump') }
     )
 }

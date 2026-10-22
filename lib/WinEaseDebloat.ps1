@@ -170,6 +170,16 @@ function Get-WinEaseDebloatRustKey {
     elseif ($Item -match 'event logs') { return 'physical_event_logs' }
     elseif ($Item -match 'non-essential fonts') { return 'physical_fonts' }
     elseif ($Item -match 'non-Japanese IME') { return 'physical_ime' }
+    # The packages the safe engine removes with DISM and the Rust engine with the forced
+    # physical deletion of their payload.
+    elseif ($Item -match '\.NET Framework 3\.5') { return 'physical_dotnet35' }
+    elseif ($Item -match 'PowerShell ISE') { return 'physical_powershell_ise' }
+    elseif ($Item -match 'Steps Recorder') { return 'physical_steps_recorder' }
+    elseif ($Item -match 'Telnet') { return 'physical_telnet_tftp' }
+    elseif ($Item -match 'SNMP') { return 'physical_snmp_client' }
+    elseif ($Item -match 'Identity Foundation') { return 'physical_identity_foundation' }
+    elseif ($Item -match 'Fax service') { return 'physical_fax' }
+    elseif ($Item -match 'XPS Viewer') { return 'physical_xps_viewer' }
     # The paging files are not part of the mounted image: the safe engine disables them
     # after the setup, so they have no Rust key and no Rust target.
     elseif ($Item -match 'pagefile|hiberfil|swapfile') { return '' }
@@ -301,6 +311,72 @@ function Remove-WinEaseDebloatPath {
     return $true
 }
 
+function Remove-WinEaseDebloatPayload {
+    # Deletes the payload of a target (config\schema.psd1 -> DebloatEngines -> Payload).
+    #
+    # This is the safe counterpart of the Rust engine: the same files are removed, but
+    # with the normal permissions. A protected folder is taken over first, a file is
+    # deleted directly. A path that does not exist in the image is skipped, so a payload
+    # that belongs to another Windows build never breaks the build.
+    param(
+        [Parameter(Mandatory = $true)][string]$Item,
+        [string[]]$Paths = @()
+    )
+    if (-not $Paths -or $Paths.Count -eq 0) {
+        $def = Get-WinEaseDebloatEngineDef -Item $Item
+        if ($def -and $def.Payload) { $Paths = @($def.Payload) }
+    }
+    if (-not $Paths -or $Paths.Count -eq 0) {
+        Write-Host "    [SKIP] No payload is declared for: $Item" -ForegroundColor DarkGray
+        return
+    }
+    foreach ($rel in @($Paths)) {
+        if ([string]::IsNullOrWhiteSpace([string]$rel)) { continue }
+        $full = Join-Path -Path $scratchDir -ChildPath ([string]$rel)
+        # a wildcard path is expanded first (the payload of some targets is a family of
+        # folders, e.g. the Edge packages of the WindowsApps folder)
+        $targets = @()
+        if ([string]$rel -match '[\*\?]') {
+            $targets = @(Get-ChildItem -Path $full -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+            if ($targets.Count -eq 0) {
+                Write-Host "    [SKIP] No match for: $rel" -ForegroundColor DarkGray
+                continue
+            }
+        } else {
+            $targets = @($full)
+        }
+        foreach ($target in $targets) {
+            if (-not (Test-Path -LiteralPath $target)) { continue }
+            $entry = Get-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
+            $isDirectory = ($entry -is [System.IO.DirectoryInfo])
+            if ($isDryRunMode) {
+                Write-Host "    [DRY] Would delete: $target" -ForegroundColor Yellow
+                continue
+            }
+            if ($isDirectory) {
+                # a protected folder is taken over first, the rest is removed normally
+                if (Get-Command -Name 'Remove-ProtectedDirectory' -ErrorAction SilentlyContinue) {
+                    try {
+                        Remove-ProtectedDirectory -Path $target -ScratchPath $scratchDir
+                    } catch {
+                        Write-Host "    [WARN] Could not remove $target : $_" -ForegroundColor Yellow
+                        continue
+                    }
+                } else {
+                    Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            } else {
+                Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $target) {
+                Write-Host "    [WARN] Could not delete: $target" -ForegroundColor Yellow
+            } else {
+                Write-Host "    [OK] Deleted $target" -ForegroundColor Green
+            }
+        }
+    }
+}
+
 function Invoke-WinEaseDebloatTarget {
     # The safe handler of one Advanced Debloat target. Only the targets whose work is not
     # implemented by another phase are handled here; the other targets are executed by
@@ -427,6 +503,27 @@ function Invoke-WinEaseDebloatTarget {
                 Write-Host "    [WARN] Phase 05 AppX pattern list unavailable; provisioned AppX pass skipped" -ForegroundColor Yellow
             }
         }
+        # The targets below are the ones the Rust engine removes with the forced physical
+        # deletion. The safe engine removes the same payload (config\schema.psd1 ->
+        # DebloatEngines -> Payload), so the user can pick the engine of the target.
+        'Physical: Edge / WebView2 (complete removal) [~200MB]' {
+            Remove-WinEaseDebloatPayload -Item 'Physical: Edge / WebView2 (complete removal) [~200MB]'
+        }
+        'Physical: Defender (complete removal) [~50MB]' {
+            Remove-WinEaseDebloatPayload -Item 'Physical: Defender (complete removal) [~50MB]'
+        }
+        'Physical: Windows Firewall (complete removal) [~20-40MB]' {
+            Remove-WinEaseDebloatPayload -Item 'Physical: Windows Firewall (complete removal) [~20-40MB]'
+        }
+        'Physical: Windows Search index (complete removal) [varies]' {
+            Remove-WinEaseDebloatPayload -Item 'Physical: Windows Search index (complete removal) [varies]'
+        }
+        'Physical: Memory.dmp (complete removal) [varies]' {
+            Remove-WinEaseDebloatPayload -Item 'Physical: Memory.dmp (complete removal) [varies]'
+        }
+        'Physical: Minidump (complete removal) [varies]' {
+            Remove-WinEaseDebloatPayload -Item 'Physical: Minidump (complete removal) [varies]'
+        }
         default {
             Write-Host "    [SKIP] No safe handler in this phase: $Item" -ForegroundColor DarkGray
         }
@@ -459,6 +556,14 @@ function Get-WinEaseDebloatSafeHandlerItems {
         'Remove XPS Viewer [5MB]'
         'Remove Telnet/TFTP client [1MB]'
         'Remove Provisioned AppX (list-based) [100-300MB]'
+        # The targets the Rust engine removes with the forced physical deletion: the safe
+        # engine deletes the same payload.
+        'Physical: Edge / WebView2 (complete removal) [~200MB]'
+        'Physical: Defender (complete removal) [~50MB]'
+        'Physical: Windows Firewall (complete removal) [~20-40MB]'
+        'Physical: Windows Search index (complete removal) [varies]'
+        'Physical: Memory.dmp (complete removal) [varies]'
+        'Physical: Minidump (complete removal) [varies]'
     )
 }
 

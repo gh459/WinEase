@@ -1,0 +1,13 @@
+# zizmor configuration (see .github/workflows/workflow-audit.yml)
+# Every accepted finding lives next to the code it concerns as an inline
+# "zizmor: ignore[<audit>]" comment with its reason; this file only sets policies.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # every action is pinned to a full commit SHA, Dependabot keeps the pins current
+        "*": hash-pin
+  self-repository:
+    # "./.github/workflows/x.yml" is the documented form for calling a workflow of the same
+    # repository at the same commit; release.yml relies on that to test the tagged commit.
+    disable: true
