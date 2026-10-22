@@ -3910,6 +3910,16 @@ Describe "WinEase structured logger (lib/WinEaseLogger.ps1)" {
         $script:WinEaseLogWarningCount | Should Be 0
         $script:WinEaseLogErrorCount | Should Be 0
     }
+
+    It "redacts secrets and product keys in log messages" {
+        $entry1 = New-WinEaseLogMessage -Message "Setting password = Secret123Password"
+        $entry1.Message | Should Match "password: \[REDACTED\]"
+        $entry1.Message | Should Not Match "Secret123Password"
+
+        $entry2 = New-WinEaseLogMessage -Message "Product code VK7JG-NPHTM-C97JM-9MPGT-3V66T"
+        $entry2.Message | Should Match "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"
+        $entry2.Message | Should Not Match "VK7JG"
+    }
 }
 
 Describe "S5: Migration Assistant bundling" {

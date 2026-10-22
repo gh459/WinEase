@@ -5,6 +5,15 @@ $script:WinEaseLogWarningCount = 0
 $script:WinEaseLogErrorCount = 0
 $script:WinEaseLogEntries = [System.Collections.Generic.List[object]]::new()
 
+# Security helper: Redact sensitive information (passwords, tokens, product keys, API keys) from log messages
+function Redact-WinEaseSecret {
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $Text }
+    $masked = $Text -replace '(?i)\b(password|secret|token|apikey|key)\b\s*[:=]\s*[^\s]+', '$1: [REDACTED]'
+    $masked = $masked -replace '[A-Za-z0-9]{5}-[A-Za-z0-9]{5}-[A-Za-z0-9]{5}-[A-Za-z0-9]{5}-[A-Za-z0-9]{5}', 'XXXXX-XXXXX-XXXXX-XXXXX-XXXXX'
+    return $masked
+}
+
 function New-WinEaseLogMessage {
     [CmdletBinding()]
     param(
@@ -14,10 +23,12 @@ function New-WinEaseLogMessage {
         [string]$Level = 'Info'
     )
 
+    $cleanMessage = Redact-WinEaseSecret -Text $Message
+
     $entry = [PSCustomObject]@{
         Timestamp = Get-Date
         Level     = $Level
-        Message   = $Message
+        Message   = $cleanMessage
     }
 
     if ($null -ne $script:WinEaseLogEntries) {
