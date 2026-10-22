@@ -2600,6 +2600,34 @@ Describe "User Extensibility Engine (lib/WinEaseExtensions.ps1)" {
         $diff.TotalDiffCount | Should BeGreaterThan 0
         $diff.ReferenceName | Should Not Be $null
     }
+    It "Format-WinEaseConfigDiff produces formatted string output for config diff" {
+        $diff = Compare-WinEaseConfig -ReferenceConfig @{ RemoveDefender = $false; TweakGroups = @{ Gaming = $false }; TweakSettings = @{ DisableUAC = $false } } -DifferenceConfig @{ RemoveDefender = $true; TweakGroups = @{ Gaming = $true }; TweakSettings = @{ DisableUAC = $true } }
+        $formatted = Format-WinEaseConfigDiff -DiffResult $diff
+        $formatted | Should Match "Config diff: Reference -> Difference"
+        $formatted | Should Match "Total differences: 5"
+        $formatted | Should Match "\[Components\]"
+        $formatted | Should Match "RemoveDefender: False -> True"
+        $formatted | Should Match "\[Tweak Groups\]"
+        $formatted | Should Match "Gaming: False -> True"
+        $formatted | Should Match "\[Tweak Settings\]"
+        $formatted | Should Match "DisableUAC: False -> True"
+    }
+    It "Format-WinEaseConfigDiff handles empty diffs without section headers" {
+        $diff = [PSCustomObject]@{
+            ReferenceName     = "Base"
+            DifferenceName    = "Target"
+            TotalDiffCount    = 0
+            ComponentDiffs    = @()
+            TweakGroupDiffs   = @()
+            TweakSettingDiffs = @()
+        }
+        $formatted = Format-WinEaseConfigDiff -DiffResult $diff
+        $formatted | Should Match "Config diff: Base -> Target"
+        $formatted | Should Match "Total differences: 0"
+        $formatted | Should Not Match "\[Components\]"
+        $formatted | Should Not Match "\[Tweak Groups\]"
+        $formatted | Should Not Match "\[Tweak Settings\]"
+    }
     It "Get-WinEaseCustomScriptMetadata parses metadata headers" {
         $tmp = Join-Path $env:TEMP "test_script_meta.ps1"
         "# @WinEase-Id: TestScript`n# @WinEase-Stage: PreBuild`n# @WinEase-Order: 42`n# @WinEase-OnError: Warn`n# @WinEase-Description: Test desc`nWrite-Host 'hi'" | Set-Content $tmp -Encoding UTF8
