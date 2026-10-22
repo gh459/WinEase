@@ -2126,8 +2126,8 @@ function Get-WinEaseGuiState {
     $settings['UseVHDX'] = [bool]$Gui.VHDX.Checked
     $settings['ExportESDMode'] = [bool]$Gui.RadESD.Checked
     $settings['SplitWIMMode'] = [bool]$Gui.RadSWM.Checked
-    $migFolders = @()
-    foreach ($name in $Gui.MigFolders.CheckedItems) { $migFolders += "$name" }
+    $migFolders = [System.Collections.Generic.List[string]]::new()
+    foreach ($name in $Gui.MigFolders.CheckedItems) { $migFolders.Add("$name") }
     $migTab = $Gui.MigTab
     return @{
         Settings         = $settings
