@@ -1,6 +1,27 @@
 # WinEaseReport.ps1 - Interactive HTML build report (WinEase_report.html)
 # Dot-sourced into the script scope of WinEasebuilder.ps1 (function definitions only).
 
+# Helper function: Load the default report template if the customized one isn't present
+function Get-WinEaseHtmlTemplate {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$false)]
+        [string]$TemplatePath
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($TemplatePath) -and (Test-Path -LiteralPath $TemplatePath)) {
+        return [System.IO.File]::ReadAllText($TemplatePath, [System.Text.Encoding]::UTF8)
+    }
+
+    $baseDir = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { Get-Location | Select-Object -ExpandProperty Path }
+    $defaultTemplate = Join-Path -Path $baseDir -ChildPath "templates\report.html"
+    if (Test-Path -LiteralPath $defaultTemplate) {
+        return [System.IO.File]::ReadAllText($defaultTemplate, [System.Text.Encoding]::UTF8)
+    }
+
+    return '<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>{{TITLE}}</title></head><body><h1>{{TITLE}}</h1><div>{{TIMESTAMP}}</div></body></html>'
+}
+
 # Helper function: Generate an interactive, visual HTML build report
 function Export-WinEaseHtmlReport {
     [CmdletBinding()]

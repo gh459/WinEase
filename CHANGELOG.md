@@ -3,6 +3,99 @@
 All notable changes to this fork are documented here. Versions follow the upstream
 WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
+## Unreleased (local fork, 2026-10-22) - every Advanced Debloat target can be removed by both engines
+
+### Fixed
+- **Fourteen targets of the Advanced Debloat tab could only be removed by one engine.**
+  The engine column of the tab offers the engines a target declares
+  (`config\schema.psd1` -> `DebloatEngines` -> `Engines`), and a target that declares
+  only one engine is locked to it. Fourteen targets were in that state: the six
+  physical targets the safe engine could not remove, and the eight packages the Rust
+  engine could not remove. Both engines are implemented for them now:
+  | Target | Engine that was missing | What the new engine removes |
+  |---|---|---|
+  | `Physical: Edge / WebView2 (complete removal) [~200MB]` | PowerShell | the Edge folders of `Program Files (x86)\Microsoft` and the Edge packages of `Program Files\WindowsApps` |
+  | `Physical: Defender (complete removal) [~50MB]` | PowerShell | `ProgramData\Microsoft\Windows Defender` |
+  | `Physical: Windows Firewall (complete removal) [~20-40MB]` | PowerShell | `mpssvc.dll` and `mpsdrv.sys` |
+  | `Physical: Windows Search index (complete removal) [varies]` | PowerShell | `ProgramData\Microsoft\Search\Data` |
+  | `Physical: Memory.dmp (complete removal) [varies]` | PowerShell | `Windows\Memory.dmp` |
+  | `Physical: Minidump (complete removal) [varies]` | PowerShell | `Windows\Minidump` |
+  | `Remove .NET Framework 3.5 [100MB]` | Rust | `physical_dotnet35`: the `v3.0` folders of `Microsoft.NET\Framework` |
+  | `Remove Windows PowerShell ISE [5MB]` | Rust | `physical_powershell_ise`: `powershell_ise.exe` and the ISE module |
+  | `Remove Steps Recorder [2MB]` | Rust | `physical_steps_recorder`: `psr.exe` |
+  | `Remove Telnet/TFTP client [1MB]` | Rust | `physical_telnet_tftp`: `telnet.exe` and `tftp.exe` |
+  | `Remove SNMP service [2MB]` | Rust | `physical_snmp_client`: `snmpapi.dll`, `snmp.exe`, `wmisnmp.dll` |
+  | `Remove Windows Identity Foundation [10MB]` | Rust | `physical_identity_foundation`: the assemblies of the identity framework |
+  | `Remove Fax service [5MB]` | Rust | `physical_fax`: the files of the fax client |
+  | `Remove XPS Viewer [5MB]` | Rust | `physical_xps_viewer`: `xpsrch.exe`, `xpsviewer.exe` and the optional app package |
+  The registered default of every target is unchanged (the safe engine for the eight
+  packages, the forced engine for the six physical targets), so a build that does not
+  pick an engine behaves exactly as before. The Rust engine still needs its
+  `-AllowPhysicalDebloat` gate and its binary, exactly as every other physical target.
+- **The services of the targets that remove a service and its binary stayed enabled.**
+  The binaries of Defender, the Windows Firewall, the SNMP agent, the fax service and
+  the Telnet/TFTP client are removed by the engine the user picked, so the services are
+  disabled in any case - otherwise the image keeps a service whose binary is gone.
+- **The six targets that cannot have both engines say why.** The component store
+  (WinSxS), the three paging files, the language packs and the provisioned AppX
+  packages belong to the safe engine alone: the Rust engine must not touch the
+  component store, and the paging files are not part of the mounted image. The reason is
+  declared per target (`DebloatEngines` -> `SingleEngineReason`) and a test keeps the
+  table honest.
+
+### Added
+- **The payload of a target is declared once.** The files a target removes are named
+  in the engine table (`DebloatEngines` -> `Payload`), so the safe engine and the Rust
+  binary remove the same files and a test compares the two lists.
+- Five tests: a target that offers one engine has a documented reason, the
+  single-engine targets are the expected ones, the payload of every dual-engine target
+  is the one the Rust binary deletes, the safe engine removes the payload of a target
+  the Rust engine can remove, and the services of the new dual-engine targets are
+  disabled on both engines.
+
+## Unreleased (local fork, 2026-10-22) - upstream sync 2026-10-22
+
+The releases and the runtime catalogues of the tools credited in the README were
+checked again on 2026-10-22. One tool published a new release (Revision Tool 2.14.3),
+the ReviOS playbook 26.10 had never been reviewed before, and four tools had moved
+their default branch forward since the last sync. Item by item, with the reason for
+every skipped tweak: `docs/dev/upstream-sync-2026-10.md`.
+
+### Added
+- **`DisableSearchWebView2` (new, on by default, `-DisableSearchWebView2`):** the two
+  Windows feature overrides that stop `SearchHost` from starting a WebView2 runtime for
+  the search box (ReviOS 26.10 / main). The obfuscated feature IDs are computed by
+  `ConvertTo-WinEaseFeatureIdOverride` in `WinEasehelpers.ps1` - the same algorithm the
+  ReviOS playbook and the Revision Tool use, so the written values are identical.
+- **`DisableAccessibilityHotkeys`, `DisableMouseAcceleration` and `DisableKeyboardDelay`
+  (new, off by default):** the user preferences that WinUtil main and AtlasOS main
+  turned into REG_SZ values (a REG_DWORD value is ignored by Windows).
+- **DisableWindowsAI:** the "let apps use text and image generation" capabilities are
+  force-denied (`LetAppsAccessSystemAIModels`, `LetAppsAccessGenerativeAI`), and the
+  agent connectors are disabled with the value the upstream tools use.
+- **DisableCrossDevice:** the Cross Device Resume shell host is redirected to
+  `ShellHost.exe` - the variant ReviOS 26.10 uses instead of the IFEO redirect.
+- **DisableWebSearch:** the web and the Microsoft Store suggestions of the search box
+  are switched off, and the activatable class of the Store search task is disabled.
+- **DisableCopilot:** the per-user `IsCopilotAvailable` flag.
+- **DisableTelemetryAndDiagnostics:** the telemetry sampling period is removed and
+  Edge's 3P service telemetry is disabled.
+- **DisableDiagnosticData:** the Defender sample submission is never accepted and the
+  Malicious Software Removal Tool does not report infections.
+- **DisableCloudContent:** the Media Player does not update itself.
+
+### Fixed
+- **The Defender sample submission was set to "always prompt".** `SubmitSamplesConsent = 0`
+  asks the user on every sample, which is the opposite of what a debloat image should do;
+  the value of ReviOS 26.10 and WinUtil is 2 (never send). The value is now applied
+  whether Defender is removed or kept.
+- **Three registry values were written with the wrong content.** PowerShell drops an
+  empty argument of a native call, so `reg.exe add ... /d "" /f` did not write an empty
+  string: reg.exe took the next switch as the value and stored `/f`. The blocked shell
+  extensions of the `CleanContextMenus` option, the `Server` value of the Store search
+  task and the paging file entries of the page file removal were all affected. They are
+  written as the literal `'""'` now.
+
 ## Unreleased - GitHub automation hardening (2026-10-21)
 
 Audit and details: `docs/dev/github-automation-audit.md`.
@@ -78,6 +171,41 @@ default off); no changed default.
 ### Fixed
 - **Sticky Notes was never removed.** The pattern `*Microsoft.StickyNotes*` does not match
   the real package name `Microsoft.MicrosoftStickyNotes`; the correct pattern was added.
+- **The build aborted in phase 5 with "The term 'Test-TweakEnabled' is not recognized".**
+  `Test-TweakEnabled` is the accessor every phase uses to ask "is this option on?", but the
+  only definition lived in `phases/10-registry.ps1` (and a copy in `phases/11-unattend.ps1`),
+  both behind a `Get-Command` guard. Phases 05, 06, 08 and `lib\WinEaseDebloat.ps1` call the
+  helper and run long *before* phase 10, so the command did not exist yet and the run died in
+  `phases/05-appx.ps1` at the `RemoveRecall` check. The helper now has a single canonical
+  definition in `WinEasebuilder.ps1`, next to the other tweak accessors and before the first
+  phase is dot-sourced; the two phase-local copies stay guarded, so they only matter when a
+  phase is dot-sourced on its own.
+- **Four new tweaks were not registered everywhere.** `DisableSearchWebView2`,
+  `DisableAccessibilityHotkeys`, `DisableMouseAcceleration` and `DisableKeyboardDelay` were
+  added to `config\schema.psd1`, but not to `config\WinEase.config.schema.json` (the schema of
+  the profile files - every editor that validates a profile against it rejected them) and not
+  to the `none` preset of `config\presets.psd1` (which has to name every tweak). The self-test
+  check "Granular Tweak Schema Alignment" failed because of it.
+- **The physical debloat aborted the build on three folders that could not be emptied.**
+  `tools\winease-physical-debloat` skipped every file that carries the reparse attribute,
+  because it treated them as junctions. Inside a mounted WIM every file that also has a
+  hardlink in the component store (WinSxS) is materialized as a *sparse placeholder* that
+  carries the same attribute, so the files of `Windows\Provisioning`,
+  `Windows\System32\spool` and `Windows\System32\lxss` were never deleted, the folders could
+  never be emptied and the engine exited with 1 - which aborted the build. Only a reparse
+  point that is a *directory* is a link now (its target can be outside the image and is
+  never traversed); a file that carries the attribute is deleted like any other file. The
+  ownership is also taken before a folder is read, because a refused listing was swallowed
+  and left the folder untouched.
+- **The diagnostic report of a failed build was not written.** The rotation of the
+  `build_diagnostics` folders drops the empty ones, and the folder of a build stays empty
+  until the build ends: a build that started while another one was still running therefore
+  deleted the folder of that other build, and every write of the report failed with "part of
+  the path could not be found". The rotation now only touches the folders that existed
+  before the build started, and the report creates its folder again before it writes.
+- **The errors of a failed physical debloat run were not shown.** The result file of the
+  engine is now read for every exit code, so the build log names the target that did not go
+  through instead of only reporting "exit code 1".
 
 ## Unreleased (local fork, 2026-10-21) - every Advanced Debloat target can be removed by the engine it offers
 

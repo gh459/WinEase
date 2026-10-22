@@ -225,6 +225,7 @@ param(
     [switch]$NetworkTuning,
     [switch]$DisableIdleMaintenance,
     [switch]$SvcHostConsolidation,
+    [switch]$DisableSearchWebView2,
     [switch]$HideSearchBox,
     [switch]$MenuShowDelayZero,
     [switch]$DisableSnapAssist,
@@ -238,6 +239,9 @@ param(
     [switch]$AlwaysShowScrollbars,
     [switch]$DisableLogonBlur,
     [switch]$HideOneDriveNavPane,
+    [switch]$DisableAccessibilityHotkeys,
+    [switch]$DisableMouseAcceleration,
+    [switch]$DisableKeyboardDelay,
     # Removal options (polarity: OFF = keep, ON = remove). These used to run
     # unconditionally on every build.
     [switch]$RemoveHelpFiles,
@@ -370,6 +374,11 @@ param(
 # The helper module contains only pure functions and the BuildContext class
 # (no top-level state), so loading it this early is safe.
 $scriptDirEarly = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+# The moment this builder was started. The rotation of the build_diagnostics folders
+# uses it to tell the diagnostic directory of a build that is still running from an
+# abandoned one: a build that starts while another one is still running must not
+# delete the diagnostic directory of that other build.
+$script:BuilderStartTime = Get-Date
 $helperModuleEarly = Join-Path -Path $scriptDirEarly -ChildPath "WinEasehelpers.ps1"
 if (Test-Path -LiteralPath $helperModuleEarly) {
     . $helperModuleEarly
@@ -571,8 +580,8 @@ $script:PreservedMountDirs = [System.Collections.Generic.HashSet[string]]::new(
 $script:MountAllocationRoot = $null
 $script:MountDirectoryPrefix = $null
 
-# Low-level DISM mount / offline hive, filesystem / ACL and WIM helpers (function definitions only)
-foreach ($WinEaseLibFile in @('WinEaseMount.ps1', 'WinEaseFileSystem.ps1', 'WinEaseWim.ps1')) {
+# Low-level DISM mount / offline hive, filesystem / ACL, WIM and telemetry helpers (function definitions only)
+foreach ($WinEaseLibFile in @('WinEaseMount.ps1', 'WinEaseFileSystem.ps1', 'WinEaseWim.ps1', 'WinEaseTelemetry.ps1')) {
     . (Join-Path -Path (Join-Path -Path $scriptDirEarly -ChildPath "lib") -ChildPath $WinEaseLibFile)
 }
 
@@ -656,6 +665,38 @@ function Sync-WinEaseTweakVariables {
             Set-Variable -Name $script:TweakVariableMap[$tk] -Scope Script -Value ([bool]$script:TweakSettings[$tk])
         }
     }
+}
+
+# Helper function to evaluate individual toggle settings.
+# This is the single canonical definition of the helper. It has to live here, in the
+# builder's script scope, and not in one of the phases: phases 05, 06 and 08 and
+# lib\WinEaseDebloat.ps1 call it, but phase 10 (which carries a guarded fallback copy)
+# runs long after them - a helper that is only defined in phase 10 is therefore not
+# resolvable when phase 05 asks for it.
+# Phases 10 and 11 keep their own guarded copy so that they still work when they are
+# dot-sourced on their own; during a normal build the guard keeps them from
+# redefining this one.
+function Test-TweakEnabled {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Name,
+        [bool]$Default = $true
+    )
+    if ($null -ne $script:TweakSettings -and $script:TweakSettings.Contains($Name)) {
+        return [bool]$script:TweakSettings[$Name]
+    }
+    # Legacy key names (older profiles / -TweakSettings hashtables) that map onto this GUI key
+    if ($null -ne $script:TweakSettings -and $script:TweakKeyAliases) {
+        foreach ($alias in $script:TweakKeyAliases.Keys) {
+            if ($script:TweakKeyAliases[$alias] -eq $Name -and $script:TweakSettings.Contains($alias)) {
+                return [bool]$script:TweakSettings[$alias]
+            }
+        }
+    }
+    $varName = "Tweak_$Name"
+    $v = Get-Variable -Name $varName -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $v) { return [bool]$v.Value }
+    return $Default
 }
 
 # Profile key order: component settings first, then every tweak key (-SaveProfile writes these,
@@ -862,6 +903,162 @@ function Get-WinEasePreset {
     return $null
 }
 
+function Get-WinEaseProfileValue {
+    param(
+        $TargetPreset,
+        [string]$Key,
+        $DefaultValue = $false
+    )
+    if ($TargetPreset -is [System.Collections.IDictionary]) {
+        if ($TargetPreset.Contains($Key)) { return $TargetPreset[$Key] }
+    } elseif ($TargetPreset -and $TargetPreset.PSObject.Properties[$Key]) {
+        return $TargetPreset.$Key
+    }
+    return $DefaultValue
+}
+
+function Apply-WinEaseProfileComponents {
+    param(
+        $TargetPreset,
+        [bool]$SourceIsProfile
+    )
+    # The effective configuration is resolved in one place (Resolve-WinEaseConfiguration):
+    # the base defaults, then the preset, then the explicit settings of the user. An
+    # individual setting always wins, so a preset never overrules it.
+    $baseComponents = [ordered]@{}
+    $presetComponents = [ordered]@{}
+    $overrideComponents = [ordered]@{}
+    foreach ($cd in $script:ComponentDefs.Values) {
+        # Components without a Default (SourceDrive, SkipEiCfg, ...) are not applied from a profile
+        if ($cd.Type -eq 'Special' -or -not $cd.ContainsKey('Default')) { continue }
+        $baseComponents[$cd.Key] = if ($cd.Type -eq 'String') { [string]$cd.Default } else { [bool]$cd.Default }
+        $raw = Get-WinEaseProfileValue -TargetPreset $TargetPreset -Key $cd.Key -DefaultValue $null
+        if ($null -eq $raw) { continue }
+        if ($SourceIsProfile) { $overrideComponents[$cd.Key] = $raw } else { $presetComponents[$cd.Key] = $raw }
+    }
+    # the explicit settings of the user (command line) win over everything
+    foreach ($k in $script:ConfigOverrides.Keys) { $overrideComponents[$k] = $script:ConfigOverrides[$k] }
+    $resolvedComponents = Resolve-WinEaseConfiguration -Base $baseComponents -Preset $presetComponents -Overrides $overrideComponents
+    foreach ($k in $resolvedComponents.Components.Keys) {
+        $cd = $script:ComponentDefs[$k]
+        $val = if ($cd.Type -eq 'String') { "$($resolvedComponents.Components[$k])" } else { [bool]$resolvedComponents.Components[$k] }
+        Set-Variable -Name $cd.Variable -Scope Script -Value $val
+    }
+}
+
+function Apply-WinEaseProfileDebloat {
+    param($TargetPreset)
+
+    $advStd = Get-WinEaseProfileValue -TargetPreset $TargetPreset -Key 'AdvancedDebloatStandard' -DefaultValue $null
+    if ($advStd) { $script:advancedDebloatStandard = @($advStd) } else { $script:advancedDebloatStandard = @() }
+    $advExp = Get-WinEaseProfileValue -TargetPreset $TargetPreset -Key 'AdvancedDebloatExperimental' -DefaultValue $null
+    if ($advExp) { $script:advancedDebloatExperimental = @($advExp) } else { $script:advancedDebloatExperimental = @() }
+
+    # Older profiles still contain the "Physical: <target>" entries that were merged into
+    # the standard list. They are mapped onto the canonical target and keep the Rust engine.
+    $legacyEngines = [ordered]@{}
+    $normStd = @()
+    foreach ($raw in @($script:advancedDebloatStandard)) {
+        $item = ConvertTo-WinEaseDebloatTarget -Item ([string]$raw)
+        if (-not $item) { continue }
+        if ($item -ne [string]$raw) { $legacyEngines[$item] = 'Rust' }
+        $normStd += $item
+    }
+    $normExp = @()
+    foreach ($raw in @($script:advancedDebloatExperimental)) {
+        $item = ConvertTo-WinEaseDebloatTarget -Item ([string]$raw)
+        if (-not $item) { continue }
+        if ($item -ne [string]$raw) { $legacyEngines[$item] = 'Rust' }
+        $normExp += $item
+    }
+    $script:advancedDebloatStandard     = @($normStd | Where-Object { $_ } | Select-Object -Unique)
+    $script:advancedDebloatExperimental = @($normExp | Where-Object { $_ } | Select-Object -Unique)
+
+    # Engine selection (PowerShell <-> Rust) per target
+    $script:DebloatEngineSelection = [ordered]@{}
+    $engineSel = Get-WinEaseProfileValue -TargetPreset $TargetPreset -Key 'DebloatEngineSelection' -DefaultValue $null
+    if ($engineSel) {
+        $map = @{}
+        if ($engineSel -is [System.Collections.IDictionary]) {
+            foreach ($k in $engineSel.Keys) { $map[[string]$k] = [string]$engineSel[$k] }
+        } else {
+            foreach ($p in $engineSel.PSObject.Properties) { $map[[string]$p.Name] = [string]$p.Value }
+        }
+        Set-WinEaseDebloatEngineSelection -Selection $map
+    }
+    # A merged legacy entry always keeps the Rust engine, unless the profile picked one
+    foreach ($k in $legacyEngines.Keys) {
+        if (-not $script:DebloatEngineSelection.Contains($k)) { $script:DebloatEngineSelection[$k] = $legacyEngines[$k] }
+    }
+}
+
+function Apply-WinEaseProfileTweakGroupsAndFormat {
+    param($TargetPreset)
+
+    # Modular Tweak Groups
+    $tGroups = Get-WinEaseProfileValue -TargetPreset $TargetPreset -Key 'TweakGroups' -DefaultValue $null
+    if ($tGroups) {
+        foreach ($k in $script:TweakGroups.Keys) {
+            # Built-in presets use a dictionary; JSON profiles arrive as a PSCustomObject
+            if ($tGroups -is [System.Collections.IDictionary]) {
+                if ($tGroups.Contains($k)) { $script:activeTweakGroups[$k] = [bool]$tGroups[$k] }
+            } elseif ($tGroups.PSObject.Properties[$k]) {
+                $script:activeTweakGroups[$k] = [bool]$tGroups.$k
+            }
+        }
+    }
+
+    $fmt = (Get-WinEaseProfileValue -TargetPreset $TargetPreset -Key 'PayloadFormat' -DefaultValue 'WIM').ToString().ToUpper()
+    if ($fmt -eq 'ESD') { $script:exportESDMode = $true; $script:splitWIMMode = $false }
+    elseif ($fmt -eq 'SWM') { $script:splitWIMMode = $true; $script:exportESDMode = $false }
+    else { $script:exportESDMode = $false; $script:splitWIMMode = $false }
+}
+
+function Apply-WinEaseProfileTweaks {
+    param(
+        $TargetPreset,
+        [bool]$SourceIsProfile
+    )
+
+    # The individual tweaks follow the same three layers as the components.
+    $tweakBase = [ordered]@{}
+    $tweakPreset = [ordered]@{}
+    $tweakOverride = [ordered]@{}
+    foreach ($tk in $script:AllTweakDefs.Keys) {
+        $tweakBase[$tk] = [bool]$script:AllTweakDefs[$tk].Default
+    }
+    $tweakOverrides = Get-WinEaseProfileValue -TargetPreset $TargetPreset -Key 'TweakSettings' -DefaultValue $null
+    if ($tweakOverrides) {
+        if ($tweakOverrides -is [System.Collections.IDictionary]) {
+            foreach ($k in $tweakOverrides.Keys) {
+                $rk = Resolve-WinEaseTweakKey $k
+                if ($script:AllTweakDefs.Contains($rk)) {
+                    if ($SourceIsProfile) { $tweakOverride[$rk] = [bool]$tweakOverrides[$k] } else { $tweakPreset[$rk] = [bool]$tweakOverrides[$k] }
+                }
+            }
+        } elseif ($tweakOverrides.PSObject) {
+            foreach ($prop in $tweakOverrides.PSObject.Properties) {
+                $rk = Resolve-WinEaseTweakKey $prop.Name
+                if ($script:AllTweakDefs.Contains($rk)) {
+                    if ($SourceIsProfile) { $tweakOverride[$rk] = [bool]$prop.Value } else { $tweakPreset[$rk] = [bool]$prop.Value }
+                }
+            }
+        }
+    }
+    foreach ($k in $script:AllTweakDefs.Keys) {
+        $val = Get-WinEaseProfileValue -TargetPreset $TargetPreset -Key $k -DefaultValue $null
+        if ($null -ne $val) {
+            $tweakOverride[$k] = [bool]$val
+        }
+    }
+    # The resolved tweaks are written back into $script:TweakSettings and onto the
+    # script variables: without this the layers are only collected and a preset or a
+    # profile never reaches the build.
+    $resolvedTweaks = Resolve-WinEaseConfiguration -TweakBase $tweakBase -TweakPreset $tweakPreset -TweakOverrides $tweakOverride
+    foreach ($k in $resolvedTweaks.Tweaks.Keys) { $script:TweakSettings[$k] = [bool]$resolvedTweaks.Tweaks[$k] }
+    Sync-WinEaseTweakVariables
+}
+
 # Helper function: Unified profile settings application
 function Apply-ProfileSettings {
     [CmdletBinding()]
@@ -885,133 +1082,13 @@ function Apply-ProfileSettings {
         $targetPreset = $script:BuiltInPresets['extreme']
     }
 
-    $getVal = {
-        param($key, $defaultVal = $false)
-        if ($targetPreset -is [System.Collections.IDictionary]) {
-            if ($targetPreset.Contains($key)) { return $targetPreset[$key] }
-        } elseif ($targetPreset.PSObject.Properties[$key]) {
-            return $targetPreset.$key
-        }
-        return $defaultVal
-    }
-
-    # The effective configuration is resolved in one place (Resolve-WinEaseConfiguration):
-    # the base defaults, then the preset, then the explicit settings of the user. An
-    # individual setting always wins, so a preset never overrules it.
     $sourceIsProfile = [bool]$ProfileObject
-    $baseComponents = [ordered]@{}
-    $presetComponents = [ordered]@{}
-    $overrideComponents = [ordered]@{}
-    foreach ($cd in $script:ComponentDefs.Values) {
-        # Components without a Default (SourceDrive, SkipEiCfg, ...) are not applied from a profile
-        if ($cd.Type -eq 'Special' -or -not $cd.ContainsKey('Default')) { continue }
-        $baseComponents[$cd.Key] = if ($cd.Type -eq 'String') { [string]$cd.Default } else { [bool]$cd.Default }
-        $raw = & $getVal $cd.Key $null
-        if ($null -eq $raw) { continue }
-        if ($sourceIsProfile) { $overrideComponents[$cd.Key] = $raw } else { $presetComponents[$cd.Key] = $raw }
-    }
-    # the explicit settings of the user (command line) win over everything
-    foreach ($k in $script:ConfigOverrides.Keys) { $overrideComponents[$k] = $script:ConfigOverrides[$k] }
-    $resolvedComponents = Resolve-WinEaseConfiguration -Base $baseComponents -Preset $presetComponents -Overrides $overrideComponents
-    foreach ($k in $resolvedComponents.Components.Keys) {
-        $cd = $script:ComponentDefs[$k]
-        $val = if ($cd.Type -eq 'String') { "$($resolvedComponents.Components[$k])" } else { [bool]$resolvedComponents.Components[$k] }
-        Set-Variable -Name $cd.Variable -Scope Script -Value $val
-    }
-    $advStd = & $getVal 'AdvancedDebloatStandard' $null
-    if ($advStd) { $script:advancedDebloatStandard = @($advStd) } else { $script:advancedDebloatStandard = @() }
-    $advExp = & $getVal 'AdvancedDebloatExperimental' $null
-    if ($advExp) { $script:advancedDebloatExperimental = @($advExp) } else { $script:advancedDebloatExperimental = @() }
 
-    # Older profiles still contain the "Physical: <target>" entries that were merged into
-    # the standard list. They are mapped onto the canonical target and keep the Rust engine.
-    $legacyEngines = [ordered]@{}
-    $normStd = @()
-    foreach ($raw in @($script:advancedDebloatStandard)) {
-        $item = ConvertTo-WinEaseDebloatTarget -Item ([string]$raw)
-        if (-not $item) { continue }
-        if ($item -ne [string]$raw) { $legacyEngines[$item] = 'Rust' }
-        $normStd += $item
-    }
-    $normExp = @()
-    foreach ($raw in @($script:advancedDebloatExperimental)) {
-        $item = ConvertTo-WinEaseDebloatTarget -Item ([string]$raw)
-        if (-not $item) { continue }
-        if ($item -ne [string]$raw) { $legacyEngines[$item] = 'Rust' }
-        $normExp += $item
-    }
-    $script:advancedDebloatStandard  = @($normStd | Where-Object { $_ } | Select-Object -Unique)
-    $script:advancedDebloatExperimental = @($normExp | Where-Object { $_ } | Select-Object -Unique)
+    Apply-WinEaseProfileComponents -TargetPreset $targetPreset -SourceIsProfile $sourceIsProfile
+    Apply-WinEaseProfileDebloat -TargetPreset $targetPreset
+    Apply-WinEaseProfileTweakGroupsAndFormat -TargetPreset $targetPreset
+    Apply-WinEaseProfileTweaks -TargetPreset $targetPreset -SourceIsProfile $sourceIsProfile
 
-    # Engine selection (PowerShell <-> Rust) per target
-    $script:DebloatEngineSelection = [ordered]@{}
-    $engineSel = & $getVal 'DebloatEngineSelection' $null
-    if ($engineSel) {
-        $map = @{}
-        if ($engineSel -is [System.Collections.IDictionary]) {
-            foreach ($k in $engineSel.Keys) { $map[[string]$k] = [string]$engineSel[$k] }
-        } else {
-            foreach ($p in $engineSel.PSObject.Properties) { $map[[string]$p.Name] = [string]$p.Value }
-        }
-        Set-WinEaseDebloatEngineSelection -Selection $map
-    }
-    # A merged legacy entry always keeps the Rust engine, unless the profile picked one
-    foreach ($k in $legacyEngines.Keys) {
-        if (-not $script:DebloatEngineSelection.Contains($k)) { $script:DebloatEngineSelection[$k] = $legacyEngines[$k] }
-    }
-
-    # Modular Tweak Groups
-    $tGroups = & $getVal 'TweakGroups' $null
-    if ($tGroups) {
-        foreach ($k in $script:TweakGroups.Keys) {
-            # Built-in presets use a dictionary; JSON profiles arrive as a PSCustomObject
-            if ($tGroups -is [System.Collections.IDictionary]) {
-                if ($tGroups.Contains($k)) { $script:activeTweakGroups[$k] = [bool]$tGroups[$k] }
-            } elseif ($tGroups.PSObject.Properties[$k]) {
-                $script:activeTweakGroups[$k] = [bool]$tGroups.$k
-            }
-        }
-    }
-
-    $fmt = (& $getVal 'PayloadFormat' 'WIM').ToString().ToUpper()
-    if ($fmt -eq 'ESD') { $script:exportESDMode = $true; $script:splitWIMMode = $false }
-    elseif ($fmt -eq 'SWM') { $script:splitWIMMode = $true; $script:exportESDMode = $false }
-    else { $script:exportESDMode = $false; $script:splitWIMMode = $false }
-
-    # The individual tweaks follow the same three layers as the components.
-    $tweakBase = [ordered]@{}
-    $tweakPreset = [ordered]@{}
-    $tweakOverride = [ordered]@{}
-    foreach ($tk in $script:AllTweakDefs.Keys) {
-        $tweakBase[$tk] = [bool]$script:AllTweakDefs[$tk].Default
-    }
-    $tweakOverrides = & $getVal 'TweakSettings' $null
-    if ($tweakOverrides) {
-        if ($tweakOverrides -is [System.Collections.IDictionary]) {
-            foreach ($k in $tweakOverrides.Keys) {
-                $rk = Resolve-WinEaseTweakKey $k
-                if ($script:AllTweakDefs.Contains($rk)) {
-                    if ($sourceIsProfile) { $tweakOverride[$rk] = [bool]$tweakOverrides[$k] } else { $tweakPreset[$rk] = [bool]$tweakOverrides[$k] }
-                }
-            }
-        } elseif ($tweakOverrides.PSObject) {
-            foreach ($prop in $tweakOverrides.PSObject.Properties) {
-                $rk = Resolve-WinEaseTweakKey $prop.Name
-                if ($script:AllTweakDefs.Contains($rk)) {
-                    if ($sourceIsProfile) { $tweakOverride[$rk] = [bool]$prop.Value } else { $tweakPreset[$rk] = [bool]$prop.Value }
-                }
-            }
-        }
-    }
-    foreach ($k in $script:AllTweakDefs.Keys) {
-        $val = & $getVal $k $null
-        if ($null -ne $val) {
-            $tweakOverride[$k] = [bool]$val
-        }
-    }
-    $resolvedTweaks = Resolve-WinEaseConfiguration -TweakBase $tweakBase -TweakPreset $tweakPreset -TweakOverrides $tweakOverride
-    foreach ($k in $resolvedTweaks.Tweaks.Keys) { $script:TweakSettings[$k] = [bool]$resolvedTweaks.Tweaks[$k] }
-    Sync-WinEaseTweakVariables
     return $targetPreset
 }
 
@@ -1152,12 +1229,18 @@ try {
         Write-Warning "Log compression skipped: $_"
     }
     # D: rotate build_diagnostics folders - drop empty (aborted) dirs first, then keep newest $KeepLogs runs
+    # A build that starts while another one is still running must not delete the diagnostic
+    # directory of that other build: the directory of a running build is still empty, so the
+    # "drop empty dirs" rule would pick it up and the report of the running build would be
+    # lost. Only the directories that existed before this build started are rotated.
     $diagRootDir = Join-Path -Path $scriptDir -ChildPath "build_diagnostics"
     if (Test-Path -LiteralPath $diagRootDir) {
-        Get-ChildItem -LiteralPath $diagRootDir -Directory -ErrorAction SilentlyContinue |
+        $rotatableDirs = @(Get-ChildItem -LiteralPath $diagRootDir -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -lt $script:BuilderStartTime })
+        $rotatableDirs |
             Where-Object { -not (Get-ChildItem -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue) } |
             Remove-Item -Force -ErrorAction SilentlyContinue
-        Get-ChildItem -LiteralPath $diagRootDir -Directory -ErrorAction SilentlyContinue |
+        $rotatableDirs |
             Sort-Object Name -Descending |
             Select-Object -Skip $KeepLogs |
             Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
@@ -2057,6 +2140,13 @@ function Write-WinEaseDiagnosticReport {
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'StatusMessage', Justification = 'Callers pass a status message; kept for compatibility')]
     param([string]$StatusMessage = "")
     try {
+        # The diagnostic directory is created when the build starts, but it can be
+        # removed again while the build runs (the rotation of a build that starts in
+        # parallel). It is therefore created again before the report is written, so a
+        # failed build always leaves its report behind.
+        if (-not (Test-Path -LiteralPath $script:DiagDir)) {
+            New-Item -ItemType Directory -Path $script:DiagDir -Force | Out-Null
+        }
         $jsonPath = Join-Path -Path $script:DiagDir -ChildPath "build_diagnostic_report.json"
         $script:DiagnosticData | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $jsonPath -Encoding utf8
 
