@@ -90,8 +90,8 @@ function New-WinEaseWinUiInitMessage {
     $initComponents = [ordered]@{}
     foreach ($c in $components) { if ($InitialSettings.ContainsKey($c.Key)) { $initComponents[$c.Key] = [bool]$InitialSettings[$c.Key] } }
     $initial['Components'] = $initComponents
-    $initial['AdvancedDebloatStandard'] = @($InitialSettings.AdvancedDebloatStandard | Where-Object { $_ })
-    $initial['AdvancedDebloatExperimental'] = @($InitialSettings.AdvancedDebloatExperimental | Where-Object { $_ })
+    $initial['AdvancedDebloatStandard'] = @(($InitialSettings.AdvancedDebloatStandard).Where({ $_ }))
+    $initial['AdvancedDebloatExperimental'] = @(($InitialSettings.AdvancedDebloatExperimental).Where({ $_ }))
     # The engine the user picked for a target (the rest runs on the registered default)
     $initEngines = [ordered]@{}
     if ($InitialSettings.DebloatEngineSelection) {
