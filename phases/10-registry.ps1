@@ -176,76 +176,38 @@ Invoke-WinEaseRegistryTable -Section start-search -Tweak HideRecommendedSection
 # ============================================================================
 if (Test-TweakEnabled 'DisableSmartScreen' $false) {
     Write-Host "Disabling SmartScreen policies..." -ForegroundColor Yellow
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" -Name "EnableSmartScreen" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" -Name "SmartScreenEnabled" -Type REG_SZ -Data "Off"
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Edge" -Name "SmartScreenEnabled" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Edge" -Name "SmartScreenPuaEnabled" -Type REG_DWORD -Data '0'
+    Invoke-WinEaseRegistryTable -Section security -Tweak DisableSmartScreen
 }
 
 if (Test-TweakEnabled 'DisableUAC' $false) {
     Write-Host "Disabling UAC consent prompts..." -ForegroundColor Yellow
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "ConsentPromptBehaviorAdmin" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "PromptOnSecureDesktop" -Type REG_DWORD -Data '0'
+    Invoke-WinEaseRegistryTable -Section security -Tweak DisableUAC
 }
 
 if (Test-TweakEnabled 'DisableVBS' $false) {
     Write-Host "Disabling Virtualization-Based Security (VBS / HVCI)..." -ForegroundColor Yellow
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\DeviceGuard" -Name "EnableVirtualizationBasedSecurity" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\DeviceGuard" -Name "RequirePlatformSecurityFeatures" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\DeviceGuard" -Name "Locked" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" -Name "Enabled" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" -Name "Locked" -Type REG_DWORD -Data '0'
+    Invoke-WinEaseRegistryTable -Section security -Tweak DisableVBS
 }
 
 if (Test-TweakEnabled 'DisableWPBT' $false) {
     Write-Host "Blocking UEFI WPBT execution (OEM bloatware persistence prevention)..." -ForegroundColor Green
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Session Manager" -Name "DisableWpbtExecution" -Type REG_DWORD -Data '1'
+    Invoke-WinEaseRegistryTable -Section security -Tweak DisableWPBT
 }
 
 if (Test-TweakEnabled 'HardenSystemSecurity' $false) {
     # Harden-Windows-Security (HotCakeX) HardenSystemSecurity-v1.0.97.0: the subset of its
     # categories that is a plain registry value and can be written into the offline hives.
     Write-Host "Applying offline security hardening (LSA, NTLM, anonymous access, AutoRun, logging)..." -ForegroundColor Green
-    # LSA protection (2 = enabled without the UEFI lock, so it can still be turned off)
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Lsa" -Name "RunAsPPL" -Type REG_DWORD -Data '2'
-    # No clear-text credentials in LSASS memory
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\SecurityProviders\WDigest" -Name "UseLogonCredential" -Type REG_DWORD -Data '0'
-    # NTLMv2 only, refuse LM and NTLM
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Lsa" -Name "LmCompatibilityLevel" -Type REG_DWORD -Data '5'
-    # No anonymous enumeration of SAM accounts and shares
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Lsa" -Name "RestrictAnonymous" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Lsa" -Name "RestrictAnonymousSAM" -Type REG_DWORD -Data '1'
-    # Remote Assistance off
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Remote Assistance" -Name "fAllowToGetHelp" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Name "fAllowToGetHelp" -Type REG_DWORD -Data '0'
-    # AutoRun / AutoPlay off for every drive type
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name "NoDriveTypeAutoRun" -Type REG_DWORD -Data '255'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name "NoAutorun" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Explorer" -Name "NoAutoplayfornonVolume" -Type REG_DWORD -Data '1'
-    # PowerShell script block logging (event 4104)
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging" -Name "EnableScriptBlockLogging" -Type REG_DWORD -Data '1'
+    Invoke-WinEaseRegistryTable -Section security -Tweak HardenSystemSecurity
 }
 
-if (Test-TweakEnabled 'DisableBSODEmoticon' $false) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\CrashControl" -Name "DisplayParameters" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\CrashControl" -Name "DisableEmoticon" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section security -Tweak DisableBSODEmoticon
 
-if (Test-TweakEnabled 'DisableFTH' $false) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\FTH" -Name "Enabled" -Type REG_DWORD -Data '0'
-}
+Invoke-WinEaseRegistryTable -Section security -Tweak DisableFTH
 
-if (Test-TweakEnabled 'DisablePCA' $false) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppCompat" -Name "DisablePCA" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppCompat" -Name "DisableEngine" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppCompat" -Name "DisableInventory" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppCompat" -Name "AITEnable" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppCompat" -Name "DisableUAR" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section security -Tweak DisablePCA
 
-if (Test-TweakEnabled 'DisableDeliveryOptimization' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" -Name "DODownloadMode" -Type REG_DWORD -Data '0'
-}
+Invoke-WinEaseRegistryTable -Section security -Tweak DisableDeliveryOptimization
 
 # ============================================================================
 # 9. Performance, Power & Latency Optimizations
@@ -1046,20 +1008,11 @@ if (Test-TweakEnabled 'DisableSearchWebView2' $true) {
 # Personalization unlock & watermark suppression
 if ($bypassActivationRestrictions -or (Test-TweakEnabled 'BypassActivationRestrictions' $false)) {
     Write-Host "Applying Windows personalization unlock policies..." -ForegroundColor Green
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Control Panel\Desktop" -Name "PaintDesktopVersion" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Control Panel\Desktop" -Name "PaintDesktopVersion" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows" -Name "DisplayNotGenuine" -Type REG_DWORD -Data '0'
+    Invoke-WinEaseRegistryTable -Section security -Tweak BypassActivationRestrictions -Unconditional
     # Do not force NoLockScreen=0 here: the personalization unlock used to overwrite the
     # DisableLockScreen option. The value follows the user's lock-screen choice.
     $noLockScreenValue = if (Test-TweakEnabled 'DisableLockScreen' $false) { 1 } else { 0 }
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Personalization" -Name "NoLockScreen" -Type REG_DWORD -Data $noLockScreenValue
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Policies\ActiveDesktop" -Name "NoChangingWallPaper" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Policies\ActiveDesktop" -Name "NoChangingWallPaper" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name "NoThemesTab" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name "NoThemesTab" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name "NoThemesTab" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform" -Name "NoGenTicket" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform" -Name "NotificationDisabled" -Type REG_DWORD -Data '1'
 }
 
 # OEM Information Branding
