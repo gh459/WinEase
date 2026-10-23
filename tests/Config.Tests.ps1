@@ -18,7 +18,7 @@ Describe "WinEase builder - Get-WinEaseProfileValue" {
             $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-WinEaseProfileValue'
         }, $true)
         if (-not $fnAst) { throw "Get-WinEaseProfileValue function definition not found in WinEasebuilder.ps1" }
-        Invoke-Expression $fnAst.Extent.Text
+        . ([scriptblock]::Create($fnAst.Extent.Text))
     }
 
     It "returns value from IDictionary when key exists" {
