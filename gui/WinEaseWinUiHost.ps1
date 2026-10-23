@@ -67,11 +67,10 @@ function Get-WinEaseWinUiPresets {
 # The first message: everything the window needs to build itself
 function New-WinEaseWinUiInitMessage {
     param([hashtable]$InitialSettings, [string]$Language)
-    $tweaks = @()
-    foreach ($tk in $script:AllTweakDefs.Keys) {
+    $tweaks = @(foreach ($tk in $script:AllTweakDefs.Keys) {
         $d = $script:AllTweakDefs[$tk]
-        $tweaks += , [ordered]@{ Key = $tk; Category = "$($d.Category)"; Default = [bool]$d.Default; Description = "$($d.Description)"; DescriptionJa = "$($d.DescriptionJa)" }
-    }
+        [ordered]@{ Key = $tk; Category = "$($d.Category)"; Default = [bool]$d.Default; Description = "$($d.Description)"; DescriptionJa = "$($d.DescriptionJa)" }
+    })
     $components = @(foreach ($cd in $script:ComponentDefs.Values) {
         if (-not $cd.Gui) { continue }
         [ordered]@{
