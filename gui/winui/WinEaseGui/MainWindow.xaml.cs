@@ -899,6 +899,7 @@ public sealed partial class MainWindow : Window
     private readonly List<JsonObject> _csScripts = new();
     private string _csStage = "FirstLogon";
     private int _csSelected = -1;
+    private TextBlock? _csCount;
 
     private void BuildCustomScriptsPage()
     {
@@ -926,6 +927,8 @@ public sealed partial class MainWindow : Window
 
         // The scripts of the stage
         PageHost.Children.Add(Section(_s.Get("CS.Group.Scripts")));
+        _csCount = new TextBlock { Foreground = Res("TextFillColorSecondaryBrush") };
+        PageHost.Children.Add(_csCount);
         var scroll = new ScrollViewer { Content = list, MaxHeight = 320, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto };
         PageHost.Children.Add(Card(scroll));
         _ = LoadCustomScriptsAsync(list);
@@ -950,35 +953,56 @@ public sealed partial class MainWindow : Window
             if (n is JsonObject o) _csScripts.Add(o);
         }
         host.Children.Clear();
+        if (_csCount != null) _csCount.Text = _s.Format("CS.Count", _csScripts.Count, _csStage);
         if (_csScripts.Count == 0)
         {
             host.Children.Add(new TextBlock { Text = _s.Get("CS.Msg.Empty"), Foreground = Res("TextFillColorSecondaryBrush"), TextWrapping = TextWrapping.Wrap });
             return;
         }
+        // Same columns as the classic window: Name, Order, Type, Size, Condition, OnError, Description
+        string[] headers = { "CS.Column.Name", "CS.Column.Order", "CS.Column.Type", "CS.Column.Size", "CS.Column.Condition", "CS.Column.OnError", "CS.Column.Description" };
+        string[] fields = { "Name", "Order", "Type", "Size", "Condition", "OnError", "Description" };
+        double[] widths = { 3, 1, 1, 1, 2, 1, 3 };
+        Grid NewRow()
+        {
+            var g = new Grid { ColumnSpacing = 12, Padding = new Thickness(4, 2, 4, 2) };
+            foreach (double w in widths) g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(w, GridUnitType.Star) });
+            return g;
+        }
+        void Cell(Grid g, int col, string text, bool strong, bool legacy)
+        {
+            var t = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap };
+            if (strong) t.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+            else if (col > 0) t.Foreground = Res("TextFillColorSecondaryBrush");
+            if (legacy) t.Foreground = Res("SystemFillColorCautionBrush");
+            Grid.SetColumn(t, col);
+            g.Children.Add(t);
+        }
+        var head = NewRow();
+        for (int c = 0; c < headers.Length; c++) Cell(head, c, _s.Get(headers[c]), true, false);
+        host.Children.Add(head);
+        var buttons = new List<Button>();
+        void Highlight()
+        {
+            for (int k = 0; k < buttons.Count; k++)
+            {
+                buttons[k].Background = k == _csSelected ? Res("SubtleFillColorSecondaryBrush") : Res("SubtleFillColorTransparentBrush");
+            }
+        }
         for (int i = 0; i < _csScripts.Count; i++)
         {
             var s = _csScripts[i];
             int index = i;
-            var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(4, 2, 4, 2) };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            var name = new TextBlock { Text = InitData.Str(s["Name"]), TextWrapping = TextWrapping.Wrap };
-            var order = new TextBlock { Text = InitData.Str(s["Order"]), Foreground = Res("TextFillColorSecondaryBrush") };
-            var type = new TextBlock { Text = InitData.Str(s["Type"]), Foreground = Res("TextFillColorSecondaryBrush") };
-            var desc = new TextBlock { Text = InitData.Str(s["Description"]), Foreground = Res("TextFillColorSecondaryBrush"), TextWrapping = TextWrapping.Wrap };
-            row.Children.Add(name);
-            Grid.SetColumn(order, 1);
-            row.Children.Add(order);
-            Grid.SetColumn(type, 2);
-            row.Children.Add(type);
-            Grid.SetColumn(desc, 3);
-            row.Children.Add(desc);
+            bool legacy = InitData.Str(s["Location"]) == "Legacy";
+            var row = NewRow();
+            for (int c = 0; c < fields.Length; c++) Cell(row, c, InitData.Str(s[fields[c]]), false, legacy);
             var btn = new Button { Content = row, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left };
-            btn.Click += (_, _) => _csSelected = index;
+            AutomationProperties.SetName(btn, InitData.Str(s["Name"]));
+            btn.Click += (_, _) => { _csSelected = index; Highlight(); };
+            buttons.Add(btn);
             host.Children.Add(btn);
         }
+        Highlight();
     }
 
     private JsonObject? SelectedCustomScript()
