@@ -13,7 +13,7 @@ if (-not (Test-Path -LiteralPath $schemaPath)) {
     throw "schema.psd1 not found"
 }
 
-# Load schema definitions into script scope as WinEaseGui.ps1 does
+# Load schema definitions into script scope as the builder does
 $settingsDef = Import-PowerShellDataFile -LiteralPath $schemaPath
 $script:AllTweakDefs = [ordered]@{}
 foreach ($td in $settingsDef.Tweaks) {
@@ -22,19 +22,12 @@ foreach ($td in $settingsDef.Tweaks) {
 $script:ComponentDefs = [ordered]@{}
 foreach ($cd in $settingsDef.Components) { $script:ComponentDefs[$cd.Key] = $cd }
 $script:BuiltInPresets = [ordered]@{ extreme = @{ PayloadFormat = 'ESD'; TweakSettings = @{} } }
-$script:WinEaseUiLanguages = @("en", "ja")
-$script:WinEaseUiLanguage = "en"
+# The host needs only the GUI core (language tables, debloat items, migration helpers)
+. (Join-Path $repoRoot "lib\WinEaseGuiCore.ps1")
 $script:WinEaseGuiRepoRoot = $repoRoot
-$script:WinEaseDebloatStandardItems = @()
-$script:WinEaseDebloatExperimentalItems = @()
-
-function Get-WinEaseUiStringsDir { $repoRoot }
 function Get-WinEasePreset { param($Name) if ($Name -eq 'extreme') { $script:BuiltInPresets['extreme'] } else { $null } }
-function Get-WinEaseDebloatEngineDefs { [ordered]@{} }
-function Get-WinEaseGuiDefaultWorkDir { "C:\Work" }
-function Get-WinEaseDefaultMigrationBackupPath { "C:\Backup" }
+# Keep the benchmark independent of the machine's drives
 function Get-WinEaseGuiSourceCandidates { @() }
-
 . $winUiHostPath
 
 Write-Host "=== WinEase WinUI Host Benchmark (Optimized) ==="

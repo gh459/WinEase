@@ -38,6 +38,7 @@ REQUIRED = [
     "lib/WinEaseBenchmarks.ps1",
     "lib/WinEaseDependencies.ps1",
     "lib/WinEaseGuiSession.ps1",
+    "lib/WinEaseGuiCore.ps1",
     "scripts/setup/RunFirstLogon.ps1",
     "scripts/tools/Install-Browser.ps1",
     "gui/WinEaseGui.ps1",

@@ -308,7 +308,7 @@ Describe "S5: Migration Assistant bundling" {
             $dest = Join-Path $scratchDir 'Windows\Setup\Scripts\Migration'
             # WinEasehelpers.ps1 (restore path validation) and WinEaseGui.ps1 (the wizard window)
             # are part of the bundle: without them the tool cannot start at all.
-            foreach ($n in 'WinEase-Migrator.ps1', 'WinEaseMigration.ps1', 'migration-rules.psd1', 'user-migration-rules.psd1', 'WinEasehelpers.ps1', 'WinEaseGui.ps1') {
+            foreach ($n in 'WinEase-Migrator.ps1', 'WinEaseMigration.ps1', 'migration-rules.psd1', 'user-migration-rules.psd1', 'WinEasehelpers.ps1', 'WinEaseGuiCore.ps1', 'WinEaseGui.ps1') {
                 (Test-Path (Join-Path $dest $n)) | Should Be $true
             }
             foreach ($n in 'en.json', 'ja.json') {
