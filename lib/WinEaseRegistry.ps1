@@ -26,7 +26,6 @@ function Invoke-WinEaseReg {
         the value.
     #>
     [CmdletBinding()]
-    [OutputType([bool])]
     param(
         [Parameter(Mandatory = $true)][ValidateSet('Add', 'Delete', 'Query')][string]$Action,
         [Parameter(Mandatory = $true)][string]$Key,
@@ -126,10 +125,8 @@ function Invoke-WinEaseRegistryTable {
         Test-TweakEnabled gate for callers that already decided (for example
         "$radicalRAM -or Test-TweakEnabled 'SvcHostConsolidation'"); the build range
         still applies.
-        Returns the number of values written.
     #>
     [CmdletBinding()]
-    [OutputType([int])]
     param(
         [Parameter(Mandatory = $true)][string]$Section,
         [string]$Tweak,
@@ -138,7 +135,6 @@ function Invoke-WinEaseRegistryTable {
     )
     $build = 0
     if ($null -ne $script:WinEaseTargetBuild) { [void][int]::TryParse([string]$script:WinEaseTargetBuild, [ref]$build) }
-    $written = 0
     foreach ($entry in (Import-WinEaseRegistryTable -Section $Section -TableRoot $TableRoot)) {
         $entryTweak = [string]$entry.Tweak
         if ($Tweak -and $entryTweak -ne $Tweak) { continue }
@@ -149,16 +145,17 @@ function Invoke-WinEaseRegistryTable {
             if ($entry.MinBuild -and $build -lt [int]$entry.MinBuild) { continue }
             if ($entry.MaxBuild -and $build -gt [int]$entry.MaxBuild) { continue }
         }
+        # An empty argument is dropped by a native call, so an empty string goes to reg.exe as the literal "".
+        $data = [string]$entry.Data
+        if ($data -eq '' -and [string]$entry.Type -in @('REG_SZ', 'REG_EXPAND_SZ')) { $data = '""' }
         $isDefault = ([string]::IsNullOrEmpty([string]$entry.Name) -or [string]$entry.Name -eq '(default)')
         foreach ($hive in @($entry.Hive)) {
             $key = "HKLM\$hive\$($entry.Path)"
             if ($isDefault) {
-                Invoke-WinEaseReg -Action Add -Key $key -DefaultValue -Type ([string]$entry.Type) -Data ([string]$entry.Data)
+                Invoke-WinEaseReg -Action Add -Key $key -DefaultValue -Type ([string]$entry.Type) -Data $data
             } else {
-                Invoke-WinEaseReg -Action Add -Key $key -Name ([string]$entry.Name) -Type ([string]$entry.Type) -Data ([string]$entry.Data)
+                Invoke-WinEaseReg -Action Add -Key $key -Name ([string]$entry.Name) -Type ([string]$entry.Type) -Data $data
             }
-            $written++
         }
     }
-    return $written
 }

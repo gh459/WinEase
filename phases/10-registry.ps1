@@ -67,15 +67,7 @@ if (-not (Get-Command -Name Test-TweakEnabled -ErrorAction SilentlyContinue)) {
 # ============================================================================
 if (Test-TweakEnabled 'BypassHardwareRequirements' $true) {
     Write-Host "Applying Setup & Hardware requirement bypasses (LabConfig + MoSetup)..." -ForegroundColor Green
-    $labConfigKeys = @('BypassCPUCheck', 'BypassRAMCheck', 'BypassSecureBootCheck', 'BypassStorageCheck', 'BypassTPMCheck', 'BypassDiskCheck')
-    foreach ($key in $labConfigKeys) {
-        Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\Setup\LabConfig" -Name $key -Type REG_DWORD -Data '1'
-    }
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\Setup\MoSetup" -Name "AllowUpgradesWithUnsupportedTPMOrCPU" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Control Panel\UnsupportedHardwareNotificationCache" -Name "SV1" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Control Panel\UnsupportedHardwareNotificationCache" -Name "SV2" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Control Panel\UnsupportedHardwareNotificationCache" -Name "SV1" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Control Panel\UnsupportedHardwareNotificationCache" -Name "SV2" -Type REG_DWORD -Data '0'
+    Invoke-WinEaseRegistryTable -Section setup -Tweak BypassHardwareRequirements
 }
 
 # ============================================================================
@@ -83,23 +75,18 @@ if (Test-TweakEnabled 'BypassHardwareRequirements' $true) {
 # ============================================================================
 if (Test-TweakEnabled 'BypassNRO' $true) {
     Write-Host "Enabling Local Account bypass on OOBE (BypassNRO)..." -ForegroundColor Green
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" -Name "BypassNRO" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\ReserveManager" -Name "ShippedWithReserves" -Type REG_DWORD -Data '0'
+    Invoke-WinEaseRegistryTable -Section setup -Tweak BypassNRO
 }
 
 if (Test-TweakEnabled 'PreventDeviceEncryption' $false) {
     Write-Host "Preventing automatic BitLocker device encryption..." -ForegroundColor Green
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\BitLocker" -Name "PreventDeviceEncryption" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\EnhancedStorageDevices" -Name "TCGSecurityActivationDisabled" -Type REG_DWORD -Data '1'
+    Invoke-WinEaseRegistryTable -Section setup -Tweak PreventDeviceEncryption
 }
 
 # Japanese 106/109 Keyboard Configuration
 if ($setJapaneseKeyboard -or (Test-TweakEnabled 'SetJapaneseKeyboard' $false)) {
     Write-Host "Configuring Japanese 106/109 keyboard layout..." -ForegroundColor Green
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Services\i8042prt\Parameters" -Name "LayerDriver JPN" -Type REG_SZ -Data "kbd106.dll"
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Services\i8042prt\Parameters" -Name "OverrideKeyboardIdentifier" -Type REG_SZ -Data "PCAT_106KEY"
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Services\i8042prt\Parameters" -Name "OverrideKeyboardType" -Type REG_DWORD -Data '7'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Services\i8042prt\Parameters" -Name "OverrideKeyboardSubtype" -Type REG_DWORD -Data '2'
+    Invoke-WinEaseRegistryTable -Section setup -Tweak SetJapaneseKeyboard -Unconditional
 }
 
 # Setup & Winlogon / Blank Password / Script Execution
@@ -119,65 +106,14 @@ if (Test-TweakEnabled 'ConfigureWinlogon' $false) {
 }
 
 # PowerShell Script Execution Policy
-if (Test-TweakEnabled 'EnableScripts' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell" -Name "ExecutionPolicy" -Type REG_SZ -Data "RemoteSigned"
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\PowerShell" -Name "EnableScripts" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\PowerShell" -Name "ExecutionPolicy" -Type REG_SZ -Data "RemoteSigned"
-}
+Invoke-WinEaseRegistryTable -Section setup -Tweak EnableScripts
 
 # ============================================================================
 # 3. Sponsored Apps, Suggestions & Cloud Content
 # ============================================================================
 if (Test-TweakEnabled 'DisableCloudContent' $true) {
     Write-Host "Disabling Sponsored Apps & Cloud Content..." -ForegroundColor Green
-    $cdmSettings = @(
-        'ContentDeliveryAllowed', 'FeatureManagementEnabled', 'OemPreInstalledAppsEnabled',
-        'PreInstalledAppsEnabled', 'PreInstalledAppsEverEnabled', 'SilentInstalledAppsEnabled',
-        'SoftLandingEnabled', 'SubscribedContentEnabled', 'SubscribedContent-310093Enabled',
-        'SubscribedContent-338387Enabled', 'SubscribedContent-338388Enabled', 'SubscribedContent-338389Enabled',
-        'SubscribedContent-338393Enabled', 'SubscribedContent-353694Enabled', 'SubscribedContent-353696Enabled',
-        'SubscribedContent-353698Enabled', 'SystemPaneSuggestionsEnabled', 'RotatingImageOverlayEnabled'
-    )
-    foreach ($setting in $cdmSettings) {
-        Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name $setting -Type REG_DWORD -Data '0'
-        Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name $setting -Type REG_DWORD -Data '0'
-    }
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent" -Name "DisableWindowsConsumerFeatures" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent" -Name "DisableConsumerAccountStateContent" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent" -Name "DisableCloudOptimizedContent" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent" -Name "DisableSoftLanding" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent" -Name "DisableWindowsSpotlightFeatures" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent" -Name "DisableAccountBasedInSettings" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\PushToInstall" -Name "DisablePushToInstall" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\MRT" -Name "DontOfferThroughWUAU" -Type REG_DWORD -Data '1'
-    # WinUtil 26.10.07 (WPFTweaksEdgeDebloat): Edge's "make Edge your default browser" campaign.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Edge" -Name "DefaultBrowserSettingsCampaignEnabled" -Type REG_DWORD -Data '0'
-    # Win11Debloat 2026.08.24 (Disable_Edge_Ads_And_Suggestions, Disable_Windows_Suggestions):
-    # Edge recommendations, spotlight, feedback, Acrobat and wallet promotions, and the
-    # "back up your PC" reminder toast.
-    foreach ($edgePolicy in 'DefaultBrowserSettingEnabled', 'ShowRecommendationsEnabled', 'SpotlightExperiencesAndRecommendationsEnabled', 'UserFeedbackAllowed', 'ShowAcrobatSubscriptionButton', 'WalletDonationEnabled') {
-        Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Edge" -Name $edgePolicy -Type REG_DWORD -Data '0'
-    }
-    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.BackupReminder" -Name "Enabled" -Type REG_DWORD -Data '0'
-        # Debloat-Win11 v2.3.8: the "finish setting up your device" (SCOOBE) page and the
-        # Microsoft account notifications of Start and Settings.
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement" -Name "ScoobeSystemSettingEnabled" -Type REG_DWORD -Data '0'
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Start_AccountNotifications" -Type REG_DWORD -Data '0'
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\SystemSettings\AccountNotifications" -Name "EnableAccountNotifications" -Type REG_DWORD -Data '0'
-    }
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent" -Name "DisableWindowsSpotlightOnDesktop" -Type REG_DWORD -Data '1'
-    # Bloatynosy 1.01.103: lock screen ads and Spotlight, Edge shopping, startup boost and first run.
-    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "RotatingLockScreenOverlayEnabled" -Type REG_DWORD -Data '0'
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "RotatingLockScreenEnabled" -Type REG_DWORD -Data '0'
-    }
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Edge" -Name "EdgeShoppingAssistantEnabled" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Edge" -Name "StartupBoostEnabled" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Edge" -Name "HideFirstRunExperience" -Type REG_DWORD -Data '1'
-    # ReviOS 26.10 (registry/updates/updates.yml): the Media Player must not pull
-    # its own updates in the background.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\WindowsMediaPlayer" -Name "DisableAutoUpdate" -Type REG_DWORD -Data '1'
+    Invoke-WinEaseRegistryTable -Section cloud-content -Tweak DisableCloudContent
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\PolicyManager\current\device\Start" -Name "ConfigureStartPins" -Type REG_SZ -Data "{\`"pinnedList\`": [{}]}"
 }
 
@@ -1179,10 +1115,7 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
 # ============================================================================
 # GUI tweak toggles (keys match $script:AllTweakDefs in WinEasebuilder.ps1)
 # ============================================================================
-if (Test-TweakEnabled 'BypassNetworkRequirement' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" -Name "BypassNRO" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\Setup\LabConfig" -Name "BypassNRO" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section setup -Tweak BypassNetworkRequirement
 
 if (Test-TweakEnabled 'DisableAdvertisingId' $true) {
     Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" -Name "Enabled" -Type REG_DWORD -Data '0'
