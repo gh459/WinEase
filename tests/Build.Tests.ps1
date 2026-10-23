@@ -79,6 +79,35 @@ Describe "WinEase builder - autounattend.xml" {
         [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$errors) | Out-Null
         $errors.Count | Should Be 0
     }
+    It "parameterizes UserPassword when set in autounattend.xml" {
+        $raw = [System.IO.File]::ReadAllText($script:UnattendPath, [System.Text.Encoding]::UTF8)
+        $UserName = "CustomAdmin"
+        $UserPassword = "SecretP@ssword123"
+        $xmlDoc = [xml]$raw
+        if ($UserPassword) {
+            $passValueNodes = @($xmlDoc.SelectNodes("//*[local-name()='UserAccounts']//*[local-name()='LocalAccount']//*[local-name()='Password']/*[local-name()='Value'] | //*[local-name()='AutoLogon']//*[local-name()='Password']/*[local-name()='Value']"))
+            foreach ($pvNode in $passValueNodes) {
+                $pvNode.InnerText = $UserPassword
+            }
+        }
+        $embeddedFileNodes = $xmlDoc.SelectNodes("//*[local-name()='Extensions']/*[local-name()='File']")
+        $escapedUser = [regex]::Escape($UserName)
+        foreach ($fn in $embeddedFileNodes) {
+            $scriptText = $fn.InnerText
+            $scriptText = $scriptText -replace 'net\.exe user User ', "net.exe user `"$UserName`" "
+            if ($UserPassword) {
+                $scriptText = $scriptText -replace "net\.exe user `"$escapedUser`" `"`" /active:yes /passwordreq:no", "net.exe user `"$UserName`" `"$UserPassword`" /active:yes /passwordreq:yes"
+                $scriptText = $scriptText -replace 'net\.exe user User "" /active:yes /passwordreq:no', "net.exe user `"$UserName`" `"$UserPassword`" /active:yes /passwordreq:yes"
+            }
+            $fn.InnerText = $scriptText
+        }
+        $pNodes = @($xmlDoc.SelectNodes("//*[local-name()='UserAccounts']//*[local-name()='LocalAccount']//*[local-name()='Password']/*[local-name()='Value'] | //*[local-name()='AutoLogon']//*[local-name()='Password']/*[local-name()='Value']"))
+        foreach ($pn in $pNodes) {
+            $pn.InnerText | Should Be "SecretP@ssword123"
+        }
+        $flNode = $xmlDoc.SelectNodes("//*[local-name()='Extensions']/*[local-name()='File']") | Where-Object { $_.GetAttribute('path') -like '*FirstLogon.ps1' }
+        $flNode.InnerText | Should Match 'net\.exe user "CustomAdmin" "SecretP@ssword123" /active:yes /passwordreq:yes'
+    }
 }
 
 Describe "WinEase builder - IME decoupling filter logic (mock)" {

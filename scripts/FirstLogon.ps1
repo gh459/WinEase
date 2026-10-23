@@ -6,7 +6,7 @@ try {
 } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 $scripts = @(
 	{
-		# Guarantee User account has NO password (completely blank) and cannot expire
+		# Guarantee User account password policy and expiration settings are configured
 		try {
 			& net.exe accounts /maxpwage:UNLIMITED /minpwlen:0 2>$null;
 			& net.exe user User "" /active:yes /passwordreq:no /expires:never 2>$null;

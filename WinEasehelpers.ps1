@@ -799,6 +799,7 @@ class BuildContext {
     [string]$PayloadFormat
     [string]$ComputerName
     [string]$UserName
+    [string]$UserPassword
     [string]$SourceWimSize
     [string]$ActivePayloadPath
     [string]$ActivePayloadName
@@ -941,6 +942,7 @@ function New-BuildContextFromScriptScope {
     $ctx.PayloadFormat = $PayloadFormat
     $ctx.ComputerName = $ComputerName
     $ctx.UserName = $UserName
+    $ctx.UserPassword = $UserPassword
     $ctx.SourceWimSize = $sourceWimSize
     $ctx.ActivePayloadPath = $activePayloadPath
     $ctx.ActivePayloadName = $activePayloadName

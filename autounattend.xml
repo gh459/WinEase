@@ -467,7 +467,7 @@ try {
 } catch {}
 $scripts = @(
 	{
-		# Guarantee User account has NO password (completely blank) and cannot expire
+		# Guarantee User account password policy and expiration settings are configured
 		try {
 			&amp; net.exe accounts /maxpwage:UNLIMITED /minpwlen:0 2&gt;$null;
 			&amp; net.exe user User "" /active:yes /passwordreq:no /expires:never 2&gt;$null;

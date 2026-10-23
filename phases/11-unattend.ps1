@@ -22,6 +22,20 @@ if (-not (Get-Command -Name Test-TweakEnabled -ErrorAction SilentlyContinue)) {
                 }
             }
         }
+
+        # Parameterize embedded setup scripts (e.g. FirstLogon.ps1) with UserName and UserPassword
+        $embeddedFileNodes = $xmlDoc.SelectNodes("//*[local-name()='Extensions']/*[local-name()='File']")
+        $escapedUser = [regex]::Escape($UserName)
+        foreach ($fn in $embeddedFileNodes) {
+            $scriptText = $fn.InnerText
+            $scriptText = $scriptText -replace 'net\.exe user User ', "net.exe user `"$UserName`" "
+            $scriptText = $scriptText -replace 'Set-LocalUser -Name "User"', "Set-LocalUser -Name `"$UserName`""
+            if ($UserPassword) {
+                $scriptText = $scriptText -replace "net\.exe user `"$escapedUser`" `"`" /active:yes /passwordreq:no", "net.exe user `"$UserName`" `"$UserPassword`" /active:yes /passwordreq:yes"
+                $scriptText = $scriptText -replace 'net\.exe user User "" /active:yes /passwordreq:no', "net.exe user `"$UserName`" `"$UserPassword`" /active:yes /passwordreq:yes"
+            }
+            $fn.InnerText = $scriptText
+        }
         $varName = "Tweak_$Name"
         $v = Get-Variable -Name $varName -Scope Script -ErrorAction SilentlyContinue
         if ($null -ne $v) { return [bool]$v.Value }
@@ -62,20 +76,35 @@ if (Test-Path -LiteralPath $unattendSource) {
     # Dynamically purge any harmful ChildCompletion or SystemSetupInProgress forging that breaks Setup state machine
     $xmlContent = $xmlContent -replace '(?s)<RunSynchronousCommand[^>]*>\s*<Order>\d+</Order>\s*<Path>[^<]*ChildCompletion[^<]*</Path>\s*</RunSynchronousCommand>', ''
     $xmlContent = $xmlContent -replace '(?s)\t*\{\s*#[^\r\n]*Zero-Click Setup Completion[^\}]*\}\s*;\r?\n', ''
-    # Dynamically parameterize ComputerName and UserName
+    # Dynamically parameterize ComputerName, UserName and UserPassword
     $xmlContent = $xmlContent -replace '<ComputerName>WinEase</ComputerName>', "<ComputerName>$ComputerName</ComputerName>"
     $xmlContent = $xmlContent -replace '<Username>User</Username>', "<Username>$UserName</Username>"
     $xmlContent = $xmlContent -replace '<Name>User</Name>', "<Name>$UserName</Name>"
     $xmlContent = $xmlContent -replace '<DisplayName>User</DisplayName>', "<DisplayName>$UserName</DisplayName>"
-    $xmlContent =$xmlContent -replace 'net\.exe user User ', "net.exe user `"$UserName`" "
-    $xmlContent =$xmlContent -replace 'Set-LocalUser -Name "User"', "Set-LocalUser -Name `"$UserName`""
+    if ([string]::IsNullOrEmpty($UserPassword)) {
+        $xmlContent = $xmlContent -replace 'net\.exe user User ', "net.exe user `"$UserName`" "
+    } else {
+        $xmlContent = $xmlContent -replace 'net\.exe user User "" /active:yes /passwordreq:no', "net.exe user `"$UserName`" `"$UserPassword`" /active:yes /passwordreq:yes"
+        $xmlContent = $xmlContent -replace 'net\.exe user User ', "net.exe user `"$UserName`" `"$UserPassword`" "
+    }
+    $xmlContent = $xmlContent -replace 'Set-LocalUser -Name "User"', "Set-LocalUser -Name `"$UserName`""
     $xmlContent = $xmlContent -replace "-Name 'DefaultUserName' -Type 'String' -Force -Value 'User'", "-Name 'DefaultUserName' -Type 'String' -Force -Value '$UserName'"
+    if ($UserPassword) {
+        $xmlContent = $xmlContent -replace "-Name 'DefaultPassword' -Type 'String' -Force -Value ''", "-Name 'DefaultPassword' -Type 'String' -Force -Value '$UserPassword'"
+    }
 
     # Clean and match target architecture via XML DOM (Resolves P0-07 Duplicate Component Bug)
     try {
         $xmlDoc = [xml]$xmlContent
         $nsMgr = New-Object System.Xml.XmlNamespaceManager($xmlDoc.NameTable)
         $nsMgr.AddNamespace("u", $xmlDoc.DocumentElement.NamespaceURI)
+
+        if ($UserPassword) {
+            $passValueNodes = @($xmlDoc.SelectNodes("//*[local-name()='UserAccounts']//*[local-name()='LocalAccount']//*[local-name()='Password']/*[local-name()='Value'] | //*[local-name()='AutoLogon']//*[local-name()='Password']/*[local-name()='Value']"))
+            foreach ($pvNode in $passValueNodes) {
+                $pvNode.InnerText = $UserPassword
+            }
+        }
 
         # The blank-password auto-logon is only armed when the user asked for it
         # (ConfigureWinlogon). Without that option the AutoLogon section is removed
@@ -749,7 +778,7 @@ $key  = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
 
 Set-ItemProperty -LiteralPath $key -Name 'AutoAdminLogon'  -Value '1'    -Type String -Force
 Set-ItemProperty -LiteralPath $key -Name 'DefaultUserName' -Value $user -Type String -Force
-Set-ItemProperty -LiteralPath $key -Name 'DefaultPassword' -Value ''    -Type String -Force
+Set-ItemProperty -LiteralPath $key -Name 'DefaultPassword' -Value '__WINEASE_USERPASSWORD__' -Type String -Force
 Set-ItemProperty -LiteralPath $key -Name 'ForceAutoLogon'  -Value '1'    -Type String -Force
 
 $sid = $null
@@ -852,8 +881,8 @@ exit 0
 '@
     }
 
-    # Inject the configured account name into the OOBE transition repair helper
-    $helperScripts['WinEase-oobe-autologon-repair.ps1'] = $helperScripts['WinEase-oobe-autologon-repair.ps1'].Replace('__WINEASE_USERNAME__', $UserName)
+    # Inject the configured account name and password into the OOBE transition repair helper
+    $helperScripts['WinEase-oobe-autologon-repair.ps1'] = $helperScripts['WinEase-oobe-autologon-repair.ps1'].Replace('__WINEASE_USERNAME__', $UserName).Replace('__WINEASE_USERPASSWORD__', $UserPassword)
 
     # The blank-password auto-logon is only armed when the user asked for it
     # (ConfigureWinlogon). Without that option the OOBE -> first session transition

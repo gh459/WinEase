@@ -64,6 +64,7 @@ param(
     # UserName: letters (incl. Japanese), digits, space, '.', '_', '-'; max 20 characters.
     [ValidatePattern('^[\p{L}\p{N}_][\p{L}\p{N} ._-]{0,19}$')]
     [string]$UserName = 'User',
+    [string]$UserPassword = '',
     [int]$KeepLogs = 10,
     [string]$InjectDrivers,
     [switch]$KeepBasicApps,
@@ -1368,7 +1369,7 @@ if ($bound.ContainsKey('LoadProfile') -and $bound['LoadProfile']) {
     $selectedProfile = if ($profileNameProp -and $profileNameProp.Value) { "$($profileNameProp.Value)" } else { [System.IO.Path]::GetFileNameWithoutExtension($LoadProfile) }
 
     # Settings outside Apply-ProfileSettings: only taken from the file when not given on the command line
-    foreach ($extraKey in @('SourceDrive', 'WorkDir', 'Index', 'ComputerName', 'UserName', 'SkipEiCfg', 'NoPostInstallAssets')) {
+    foreach ($extraKey in @('SourceDrive', 'WorkDir', 'Index', 'ComputerName', 'UserName', 'UserPassword', 'SkipEiCfg', 'NoPostInstallAssets')) {
         $prop = $loadedSettings.PSObject.Properties[$extraKey]
         if (-not $prop -or $bound.ContainsKey($extraKey)) { continue }
         $val = $prop.Value
@@ -1393,6 +1394,7 @@ function Get-WinEaseGuiInitialSettings {
         Index                        = $script:Index
         InjectDrivers                = $script:InjectDrivers
         UserName                     = $script:UserName
+        UserPassword                 = $script:UserPassword
         ComputerName                 = $script:ComputerName
         PresetKey                    = $script:selectedProfile
         UseVHDX                      = $script:useVHDX
@@ -1479,6 +1481,7 @@ function Apply-WinEaseGuiResult {
     if ($GuiResult.SourceDrive) { $script:SourceDrive = $GuiResult.SourceDrive }
     if ($GuiResult.WorkDir)     { $script:WorkDir = $GuiResult.WorkDir }
     if ($GuiResult.UserName)     { $script:UserName = $GuiResult.UserName }
+    if ($GuiResult.UserPassword) { $script:UserPassword = $GuiResult.UserPassword }
     if ($GuiResult.ComputerName) { $script:ComputerName = $GuiResult.ComputerName }
     foreach ($cd in $script:ComponentDefs.Values) {
         if ($cd.Gui) { Set-Variable -Name $cd.Variable -Scope Script -Value ([bool]$GuiResult.($cd.Key)) }
