@@ -9,6 +9,72 @@ param()
 . (Join-Path -Path $PSScriptRoot -ChildPath '_TestCommon.ps1')
 
 
+Describe "WinEase builder - Get-WinEaseProfileValue" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        $builderAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:RepoRoot "WinEasebuilder.ps1"), [ref]$null, [ref]$null)
+        $fnAst = $builderAst.Find({
+            param($n)
+            $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-WinEaseProfileValue'
+        }, $true)
+        if (-not $fnAst) { throw "Get-WinEaseProfileValue function definition not found in WinEasebuilder.ps1" }
+        Invoke-Expression $fnAst.Extent.Text
+    }
+
+    It "returns value from IDictionary when key exists" {
+        $dict = @{ 'TestKey' = 'TestVal'; 'NumberKey' = 42 }
+        (Get-WinEaseProfileValue -TargetPreset $dict -Key 'TestKey') | Should Be 'TestVal'
+        (Get-WinEaseProfileValue -TargetPreset $dict -Key 'NumberKey') | Should Be 42
+    }
+
+    It "returns DefaultValue from IDictionary when key is missing" {
+        $dict = @{ 'OtherKey' = 'Val' }
+        (Get-WinEaseProfileValue -TargetPreset $dict -Key 'MissingKey') | Should Be $false
+        (Get-WinEaseProfileValue -TargetPreset $dict -Key 'MissingKey' -DefaultValue 'Fallback') | Should Be 'Fallback'
+    }
+
+    It "returns exact stored false or null value from IDictionary when key exists" {
+        $dict = @{ 'FalseKey' = $false; 'NullKey' = $null }
+        (Get-WinEaseProfileValue -TargetPreset $dict -Key 'FalseKey' -DefaultValue $true) | Should Be $false
+        $nullVal = Get-WinEaseProfileValue -TargetPreset $dict -Key 'NullKey' -DefaultValue 'Fallback'
+        $nullVal | Should Be $null
+    }
+
+    It "returns value from PSCustomObject when property exists" {
+        $obj = [PSCustomObject]@{ 'TestKey' = 'ObjVal'; 'NumberKey' = 99 }
+        (Get-WinEaseProfileValue -TargetPreset $obj -Key 'TestKey') | Should Be 'ObjVal'
+        (Get-WinEaseProfileValue -TargetPreset $obj -Key 'NumberKey') | Should Be 99
+    }
+
+    It "returns DefaultValue from PSCustomObject when property is missing" {
+        $obj = [PSCustomObject]@{ 'OtherProp' = 'Val' }
+        (Get-WinEaseProfileValue -TargetPreset $obj -Key 'MissingProp') | Should Be $false
+        (Get-WinEaseProfileValue -TargetPreset $obj -Key 'MissingProp' -DefaultValue 'DefaultObj') | Should Be 'DefaultObj'
+    }
+
+    It "returns exact stored false or null value from PSCustomObject when property exists" {
+        $obj = [PSCustomObject]@{ 'FalseProp' = $false; 'NullProp' = $null }
+        (Get-WinEaseProfileValue -TargetPreset $obj -Key 'FalseProp' -DefaultValue $true) | Should Be $false
+        $nullVal = Get-WinEaseProfileValue -TargetPreset $obj -Key 'NullProp' -DefaultValue 'Fallback'
+        $nullVal | Should Be $null
+    }
+
+    It "returns DefaultValue when TargetPreset is null or a primitive type" {
+        (Get-WinEaseProfileValue -TargetPreset $null -Key 'AnyKey') | Should Be $false
+        (Get-WinEaseProfileValue -TargetPreset $null -Key 'AnyKey' -DefaultValue 'Def') | Should Be 'Def'
+        (Get-WinEaseProfileValue -TargetPreset 123 -Key 'AnyKey' -DefaultValue 'DefInt') | Should Be 'DefInt'
+        (Get-WinEaseProfileValue -TargetPreset "string" -Key 'AnyKey' -DefaultValue 'DefStr') | Should Be 'DefStr'
+    }
+
+    It "respects custom DefaultValue parameter for missing keys" {
+        $dict = @{}
+        $customDefault = @('item1', 'item2')
+        $result = Get-WinEaseProfileValue -TargetPreset $dict -Key 'NonExistent' -DefaultValue $customDefault
+        $result.Count | Should Be 2
+        $result[0] | Should Be 'item1'
+    }
+}
+
 Describe "WinEase builder - profile presets" {
     BeforeAll {
         # Dot-source only the preset definition by extracting it via AST is overkill; instead
