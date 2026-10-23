@@ -92,6 +92,102 @@ Describe "WinEase builder - profile presets" {
     }
 }
 
+Describe "WinEase builder - Apply-WinEaseProfileComponents" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+        $builderText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "WinEasebuilder.ps1"), [System.Text.Encoding]::UTF8)
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($builderText, [ref]$null, [ref]$null)
+        $fnGetVal = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq "Get-WinEaseProfileValue" }, $true).Extent.Text
+        $fnApplyComp = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq "Apply-WinEaseProfileComponents" }, $true).Extent.Text
+        . ([scriptblock]::Create($fnGetVal))
+        . ([scriptblock]::Create($fnApplyComp))
+    }
+
+    BeforeEach {
+        $script:ComponentDefs = [ordered]@{
+            'RemoveStore'   = @{ Key = 'RemoveStore'; Type = 'Bool'; Default = $false; Variable = 'removeStore' }
+            'Edition'       = @{ Key = 'Edition'; Type = 'String'; Default = 'Home'; Variable = 'edition' }
+            'SourceDrive'   = @{ Key = 'SourceDrive'; Type = 'Special'; Default = 'C:'; Variable = 'sourceDrive' }
+            'NoDefaultComp' = @{ Key = 'NoDefaultComp'; Type = 'Bool'; Variable = 'noDefault' }
+        }
+        $script:ConfigOverrides = [ordered]@{}
+        $script:removeStore = $null
+        $script:edition = $null
+        $script:sourceDrive = 'UnchangedDrive'
+        $script:noDefault = 'UnchangedNoDefault'
+    }
+
+    It "applies component defaults and preset overrides from hashtable preset when SourceIsProfile is false" {
+        $preset = @{
+            'RemoveStore' = $true
+            'Edition'     = 'Pro'
+        }
+        Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+        $script:removeStore | Should Be $true
+        $script:edition | Should Be 'Pro'
+    }
+
+    It "applies components from PSCustomObject profile when SourceIsProfile is true" {
+        $profileObj = [PSCustomObject]@{
+            'RemoveStore' = $true
+            'Edition'     = 'Enterprise'
+        }
+        Apply-WinEaseProfileComponents -TargetPreset $profileObj -SourceIsProfile $true
+        $script:removeStore | Should Be $true
+        $script:edition | Should Be 'Enterprise'
+    }
+
+    It "skips components with Special type or missing Default key" {
+        $preset = @{
+            'SourceDrive'   = 'Z:'
+            'NoDefaultComp' = $true
+        }
+        Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+        $script:sourceDrive | Should Be 'UnchangedDrive'
+        $script:noDefault | Should Be 'UnchangedNoDefault'
+    }
+
+    It "ensures explicit ConfigOverrides take precedence over preset and profile values" {
+        $preset = @{
+            'RemoveStore' = $true
+            'Edition'     = 'Pro'
+        }
+        $script:ConfigOverrides = @{
+            'RemoveStore' = $false
+        }
+        Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+        $script:removeStore | Should Be $false
+        $script:edition | Should Be 'Pro'
+    }
+
+    It "falls back to base defaults when preset is null or contains null raw value" {
+        $preset = @{
+            'RemoveStore' = $null
+            'Edition'     = 'Education'
+        }
+        Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+        $script:removeStore | Should Be $false
+        $script:edition | Should Be 'Education'
+
+        Apply-WinEaseProfileComponents -TargetPreset $null -SourceIsProfile $false
+        $script:removeStore | Should Be $false
+        $script:edition | Should Be 'Home'
+    }
+
+    It "correctly casts string and boolean type values" {
+        $preset = @{
+            'RemoveStore' = 'true'
+            'Edition'     = 'Workstation'
+        }
+        Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+        $script:removeStore | Should Be $true
+        ($script:removeStore -is [bool]) | Should Be $true
+        $script:edition | Should Be 'Workstation'
+        ($script:edition -is [string]) | Should Be $true
+    }
+}
+
 Describe "WinEase helpers - configuration conflict resolution (Test-WinEaseConfigConflicts)" {
     BeforeAll {
         if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
