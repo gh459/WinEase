@@ -370,6 +370,32 @@ Describe "WinEase builder - the tweak helper is available to every phase" {
         }
     }
 
+    It "Resolve-WinEaseTweakKey resolves alias keys and handles edge cases safely" {
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$tokens, [ref]$errors)
+        $fnText = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Resolve-WinEaseTweakKey' }, $true))[0].Extent.Text
+        $probe = New-Module -Name 'WinEaseResolveKeyProbe' -ArgumentList $fnText -ScriptBlock {
+            param($FnText)
+            $script:TweakKeyAliases = [ordered]@{ 'AliasKey' = 'CanonicalKey' }
+            . ([scriptblock]::Create($FnText))
+            Export-ModuleMember -Function 'Resolve-WinEaseTweakKey'
+            function Set-Aliases { param($Val) $script:TweakKeyAliases = $Val }
+            Export-ModuleMember -Function 'Set-Aliases'
+        }
+        Import-Module $probe -Force
+        try {
+            (Resolve-WinEaseTweakKey 'AliasKey')       | Should Be 'CanonicalKey'
+            (Resolve-WinEaseTweakKey 'CanonicalKey')   | Should Be 'CanonicalKey'
+            (Resolve-WinEaseTweakKey 'NonExistentKey') | Should Be 'NonExistentKey'
+            (Resolve-WinEaseTweakKey '')               | Should Be ''
+            (Resolve-WinEaseTweakKey $null)            | Should Be ''
+            Set-Aliases $null
+            (Resolve-WinEaseTweakKey 'AliasKey')       | Should Be 'AliasKey'
+        } finally {
+            Remove-Module $probe -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "every tweak of the master schema is in the JSON profile schema" {
         # config\WinEase.config.schema.json is the schema of the profile files; a tweak
         # that is missing there is rejected by every editor that validates against it.

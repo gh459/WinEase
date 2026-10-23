@@ -658,7 +658,7 @@ foreach ($tk in $script:AllTweakDefs.Keys) {
 
 function Resolve-WinEaseTweakKey {
     param([string]$Name)
-    if ($script:TweakKeyAliases.Contains($Name)) { return $script:TweakKeyAliases[$Name] }
+    if ($null -ne $script:TweakKeyAliases -and $script:TweakKeyAliases.Contains($Name)) { return $script:TweakKeyAliases[$Name] }
     return $Name
 }
 
