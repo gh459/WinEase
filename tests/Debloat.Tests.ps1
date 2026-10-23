@@ -13,7 +13,8 @@ Describe "WinEase - the Defender stays usable unless its removal was asked for" 
     BeforeAll {
         if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
         $script:Phase05 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\05-appx.ps1"), [System.Text.Encoding]::UTF8)
-        $script:Phase10 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\10-registry.ps1"), [System.Text.Encoding]::UTF8)
+        # the plain registry writes live in config\registry, so the guards read the tables too
+        $script:Phase10 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\10-registry.ps1"), [System.Text.Encoding]::UTF8) + "`n" + (Get-WinEaseRegistryTableText)
         $script:Phase11 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\11-unattend.ps1"), [System.Text.Encoding]::UTF8)
         $script:FirstLogon = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "scripts\FirstLogon.ps1"), [System.Text.Encoding]::UTF8)
         $script:DefenderEnforce = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "scripts\WinEase-DefenderEnforce.ps1"), [System.Text.Encoding]::UTF8)

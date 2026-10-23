@@ -238,6 +238,18 @@ Describe "Invoke-WinEaseRegistryTable" {
         @(Invoke-Table -Tweak 'TblOff' -Unconditional).Count | Should Be 1
     }
 
+    It "leaves Data out for an empty value of a non-string type" {
+        $script:TblSettings = $null
+        $root = Join-Path $script:TblRoot "none"
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $root "sample.psd1") -Value @(
+            "@{ Entries = @( @{ Tweak = 'TblOn'; Default = `$true; Hive = 'zSOFTWARE'; Path = 'T'; Name = 'N'; Type = 'REG_NONE'; Data = '' } ) }"
+        ) -Encoding UTF8
+        $script:TblCalls.Clear()
+        Invoke-WinEaseRegistryTable -Section sample -TableRoot $root
+        $script:TblCalls[0] | Should Be 'Add|HKLM\zSOFTWARE\T|N|REG_NONE|'
+    }
+
     It "writes an empty Data of a string value as the literal quotes and an empty Name as the default value" {
         $calls = Invoke-Table -Tweak 'TblOn'
         ($calls -contains 'Add|HKLM\zSOFTWARE\T|(default)|REG_SZ|""') | Should Be $true

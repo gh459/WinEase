@@ -146,15 +146,19 @@ function Invoke-WinEaseRegistryTable {
             if ($entry.MaxBuild -and $build -gt [int]$entry.MaxBuild) { continue }
         }
         # An empty argument is dropped by a native call, so an empty string goes to reg.exe as the literal "".
+        # An empty argument is dropped by a native call. A string value gets the literal ""; for
+        # other types the data is left out, so reg.exe never takes the next switch as the data.
+        $dataArgs = @{}
         $data = [string]$entry.Data
-        if ($data -eq '' -and [string]$entry.Type -in @('REG_SZ', 'REG_EXPAND_SZ')) { $data = '""' }
+        if ($data -ne '') { $dataArgs.Data = $data }
+        elseif ([string]$entry.Type -in @('REG_SZ', 'REG_EXPAND_SZ')) { $dataArgs.Data = '""' }
         $isDefault = ([string]::IsNullOrEmpty([string]$entry.Name) -or [string]$entry.Name -eq '(default)')
         foreach ($hive in @($entry.Hive)) {
             $key = "HKLM\$hive\$($entry.Path)"
             if ($isDefault) {
-                Invoke-WinEaseReg -Action Add -Key $key -DefaultValue -Type ([string]$entry.Type) -Data $data
+                Invoke-WinEaseReg -Action Add -Key $key -DefaultValue -Type ([string]$entry.Type) @dataArgs
             } else {
-                Invoke-WinEaseReg -Action Add -Key $key -Name ([string]$entry.Name) -Type ([string]$entry.Type) -Data $data
+                Invoke-WinEaseReg -Action Add -Key $key -Name ([string]$entry.Name) -Type ([string]$entry.Type) @dataArgs
             }
         }
     }
