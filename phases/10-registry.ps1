@@ -122,64 +122,14 @@ if (Test-TweakEnabled 'DisableCloudContent' $true) {
 # ============================================================================
 if (Test-TweakEnabled 'DisableTelemetryAndDiagnostics' $true) {
     Write-Host "Disabling Diagnostics & Telemetry..." -ForegroundColor Green
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" -Name "Enabled" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" -Name "Enabled" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Privacy" -Name "TailoredExperiencesWithDiagnosticDataEnabled" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Privacy" -Name "TailoredExperiencesWithDiagnosticDataEnabled" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy" -Name "HasAccepted" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy" -Name "HasAccepted" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Input\TIPC" -Name "Enabled" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Input\TIPC" -Name "Enabled" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\InputPersonalization" -Name "RestrictImplicitInkCollection" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\InputPersonalization" -Name "RestrictImplicitTextCollection" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\InputPersonalization" -Name "RestrictImplicitInkCollection" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\InputPersonalization" -Name "RestrictImplicitTextCollection" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "MaxTelemetryAllowed" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\SQMClient\Windows" -Name "CEIPEnable" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Device Metadata" -Name "PreventDeviceMetadataFromNetwork" -Type REG_DWORD -Data '1'
-    # WinUtil 26.10.07 (WPFTweaksTelemetry): contact harvesting, the inking/typing privacy
-    # consent, app launch tracking and the PowerShell 7 telemetry opt-out.
-    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Microsoft\InputPersonalization\TrainedDataStore" -Name "HarvestContacts" -Type REG_DWORD -Data '0'
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Microsoft\Personalization\Settings" -Name "AcceptedPrivacyPolicy" -Type REG_DWORD -Data '0'
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Start_TrackProgs" -Type REG_DWORD -Data '0'
-    }
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Environment" -Name "POWERSHELL_TELEMETRY_OPTOUT" -Type REG_SZ -Data "1"
-    # Debloat-Win11 v2.3.8 (Edge.ps1): Edge diagnostic data and personalization reporting.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Edge" -Name "DiagnosticData" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Edge" -Name "PersonalizationReportingEnabled" -Type REG_DWORD -Data '0'
-    # Bloatynosy 1.01.103: tailored experiences (user policy), online speech recognition and
-    # Narrator's online services.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\InputPersonalization" -Name "AllowInputPersonalization" -Type REG_DWORD -Data '0'
-    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Policies\Microsoft\Windows\CloudContent" -Name "DisableTailoredExperiencesWithDiagnosticData" -Type REG_DWORD -Data '1'
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Microsoft\Narrator\NoRoam" -Name "OnlineServicesEnabled" -Type REG_DWORD -Data '0'
-    }
-    # Revision Tool 2.14.1: the Sleep Study power diagnostics recorder.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Power" -Name "SleepStudyDisabled" -Type REG_DWORD -Data '1'
-    # hellzerg/optimizer (master, after 16.7): Edge's 3P service telemetry.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Edge" -Name "Edge3PSerpTelemetryEnabled" -Type REG_DWORD -Data '0'
+    Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableTelemetryAndDiagnostics
 }
 
 # Windows Error Reporting
-if (Test-TweakEnabled 'DisableErrorReporting' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting" -Name "Disabled" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting" -Name "DontSendAdditionalData" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableErrorReporting
 
 # User Activity History & Sync
-if (Test-TweakEnabled 'DisableActivityHistory' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" -Name "UploadUserActivities" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" -Name "PublishUserActivities" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Backup" -Name "DisableCloudBackup" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\SettingSync" -Name "DisableBackupRestore" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\SettingSync" -Name "DisableSettingSync" -Type REG_DWORD -Data '2'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\SettingSync" -Name "DisableSettingSyncUserOverride" -Type REG_DWORD -Data '1'
-    # Debloat-Win11 v2.3.8: the Windows Backup UI and its monitoring.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsBackup" -Name "DisableBackupUI" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\WindowsBackup" -Name "DisableMonitoring" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableActivityHistory
 
 # ============================================================================
 # 5. Windows AI, Recall, Click-To-Do & Copilot
@@ -751,10 +701,7 @@ if (Test-TweakEnabled 'PhotoViewerAssociations' $true) {
 # Japanese IME Privacy
 if (Test-TweakEnabled 'DisableIMETelemetry' $true) {
     Write-Host "Configuring Japanese IME privacy opt-out..." -ForegroundColor Green
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\IME\15.0\IMEJP\MSIME" -Name "CloudCandidate" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\IME\15.0\IMEJP\MSIME" -Name "SendFeedback" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\IME\15.0\IMEJP\MSIME" -Name "CloudCandidate" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\IME\15.0\IMEJP\MSIME" -Name "SendFeedback" -Type REG_DWORD -Data '0'
+    Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableIMETelemetry
 }
 
 # ============================================================================
@@ -1117,51 +1064,23 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
 # ============================================================================
 Invoke-WinEaseRegistryTable -Section setup -Tweak BypassNetworkRequirement
 
-if (Test-TweakEnabled 'DisableAdvertisingId' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" -Name "Enabled" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" -Name "Enabled" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo" -Name "DisabledByGroupPolicy" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableAdvertisingId
 
-if (Test-TweakEnabled 'DisableAppPrivacy' $true) {
-    foreach ($appPriv in @('LetAppsAccessLocation', 'LetAppsAccessMicrophone', 'LetAppsAccessContacts', 'LetAppsAccessCalendar', 'LetAppsAccessCallHistory', 'LetAppsAccessMessaging', 'LetAppsAccessAccountInfo')) {
-        Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy" -Name $appPriv -Type REG_DWORD -Data '2'
-    }
-}
+Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableAppPrivacy
 
-if (Test-TweakEnabled 'DisableDefenderSecurityCenter' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications" -Name "DisableEnhancedNotifications" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender Security Center\Systray" -Name "HideSystray" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableDefenderSecurityCenter
 
-if (Test-TweakEnabled 'DisableCortana' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCortana" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCortanaAboveLock" -Type REG_DWORD -Data '0'
-}
+Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableCortana
 
-if (Test-TweakEnabled 'DisableTimeline' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" -Name "EnableActivityFeed" -Type REG_DWORD -Data '0'
-}
+Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableTimeline
 
 if (Test-TweakEnabled 'DisableDiagnosticData' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "DoNotShowFeedbackNotifications" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "LimitDiagnosticLogCollection" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "LimitDumpCollection" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "DisableDiagnosticDataViewer" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Siuf\Rules" -Name "NumberOfSIUFInPeriod" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Siuf\Rules" -Name "NumberOfSIUFInPeriod" -Type REG_DWORD -Data '0'
+    Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableDiagnosticData
     # WinUtil main (config/tweaks.json, WPFTweaksTelemetry): the sampling period
     # of the telemetry client is removed, not only its counter.
     foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
         Invoke-WinEaseReg -Action Delete -Key "HKLM\$userHive\Software\Microsoft\Siuf\Rules" -Name "PeriodInNanoSeconds"
     }
-    # ReviOS 26.10 (registry/security/security.yml): never send a sample to
-    # Microsoft. The old WinEase value 0 means "always prompt", which is the
-    # opposite of a debloat image.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet" -Name "SubmitSamplesConsent" -Type REG_DWORD -Data '2'
-    # ReviOS 26.10 (registry/updates/updates.yml): the Malicious Software
-    # Removal Tool must not report infections.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\MRT" -Name "DontReportInfectionInformation" -Type REG_DWORD -Data '1'
 }
 
 if (Test-TweakEnabled 'TuneMemoryAndPaging' $true) {
@@ -1175,10 +1094,7 @@ if (Test-TweakEnabled 'GamingNetworkTweaks' $true) {
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\MSMQ\Parameters" -Name "TCPNoDelay" -Type REG_DWORD -Data '1'
 }
 
-if (Test-TweakEnabled 'DisableBackgroundApps' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy" -Name "LetAppsRunInBackground" -Type REG_DWORD -Data '2'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications" -Name "GlobalUserDisabled" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableBackgroundApps
 
 if (Test-TweakEnabled 'DisableGameDVR' $true) {
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\GameDVR" -Name "AllowGameDVR" -Type REG_DWORD -Data '0'
