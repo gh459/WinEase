@@ -219,7 +219,7 @@ The resulting minimal OS is **not serviceable via cumulative updates** when WinS
 ### **2. Running the Builder**
 
 #### **Option A: Graphical User Interface (GUI - Recommended)**
-Simply double-click **`WinEase-GUI.bat`** (or run `.\WinEasebuilder.ps1 -GUI` as Administrator).  
+Double-click **`WinEase.exe`** (it asks for administrator rights, then opens the settings window; extra arguments such as `-ClassicGui` are passed to the builder). The exe is built by `tools\build-binaries.ps1` and ships in the full release package; it is not code-signed yet, so Windows SmartScreen may warn on first launch. If you only have the source tree and no .NET SDK, use **`WinEase-GUI.bat`** (same steps) or run `.\WinEasebuilder.ps1 -GUI` as Administrator.  
 
 The settings window is a **WinUI 3** app (`gui/winui`, Windows App SDK, follows the Windows light/dark theme with Mica). It is built once with the .NET 8 SDK; `WinEase-GUI.bat` does this automatically on first launch when `dotnet` is installed, or run it yourself:
 
@@ -570,7 +570,8 @@ WinEase/
 │   ├── dependabot.yml
 │   └── workflows/             # ci.yml (Pester), lint.yml (PSScriptAnalyzer), release.yml, claude-issue-agent.yml
 ├── autounattend.xml           # Unattended setup template (scripts injected at build time)
-├── WinEase-GUI.bat             # GUI launcher
+├── WinEase.exe                 # GUI launcher (built from src/WinEase.Launcher; not in the git tree)
+├── WinEase-GUI.bat             # GUI launcher fallback for source checkouts without the exe
 ├── oscdimg.exe                # Bundled ISO mastering tool
 ├── PSScriptAnalyzerSettings.psd1  # Linter configuration
 ├── LICENSE                    # MIT License

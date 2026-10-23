@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- WinEase.exe: the double-click entry point that replaces WinEase-GUI.bat. net48 ships with
+       Windows 11, so it needs no extra runtime. The logic lives in LauncherLogic.cs (no UI types) so
+       the xUnit project can compile it too. Version and FileVersion come from the release tag via
+       tools/build-binaries.ps1 (-p:Version=...); the default below is only for local builds. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>WinEase</AssemblyName>
+    <RootNamespace>WinEase.Launcher</RootNamespace>
+    <Version>0.0.0-dev</Version>
+    <Product>WinEase</Product>
+    <Company>WinEase</Company>
+    <Description>WinEase Builder launcher</Description>
+    <Copyright>MIT License</Copyright>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <Nullable>disable</Nullable>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

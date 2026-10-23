@@ -155,3 +155,48 @@ Describe "R3 - setup and tool scripts are files, not here-strings" {
         $ga | Should Match '(?m)^scripts/tools/\*\* -text\s*$'
     }
 }
+
+
+Describe "Launcher exe (R8)" {
+    BeforeAll {
+        $script:LauncherDir = Join-Path -Path $script:RepoRoot -ChildPath 'src\WinEase.Launcher'
+    }
+    It "launcher sources, manifest and icon exist" {
+        foreach ($f in 'WinEase.Launcher.csproj', 'Program.cs', 'LauncherLogic.cs', 'app.manifest', 'app.ico') {
+            Test-Path -LiteralPath (Join-Path -Path $script:LauncherDir -ChildPath $f) | Should Be $true
+        }
+    }
+    It "manifest requests asInvoker" {
+        (Get-Content -LiteralPath (Join-Path -Path $script:LauncherDir -ChildPath 'app.manifest') -Raw) | Should Match 'level="asInvoker"'
+    }
+    It "app.ico holds the nine frame sizes" {
+        $bytes = [IO.File]::ReadAllBytes((Join-Path -Path $script:LauncherDir -ChildPath 'app.ico'))
+        [BitConverter]::ToInt16($bytes, 2) | Should Be 1
+        $sizes = foreach ($i in 0..([BitConverter]::ToInt16($bytes, 4) - 1)) { $w = $bytes[6 + 16 * $i]; if ($w -eq 0) { 256 } else { [int]$w } }
+        ($sizes -join ',') | Should Be '16,20,24,32,40,48,64,128,256'
+    }
+    It "New-WinEaseIcon.ps1 turns a PNG into a transparent-background icon" {
+        Add-Type -AssemblyName System.Drawing
+        $dir = Join-Path -Path ([IO.Path]::GetTempPath()) -ChildPath ('we-icon-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        try {
+            $png = Join-Path -Path $dir -ChildPath 'in.png'
+            $bmp = New-Object System.Drawing.Bitmap -ArgumentList 300, 300
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.Clear([System.Drawing.Color]::FromArgb(40, 40, 40))
+            $g.FillEllipse([System.Drawing.Brushes]::Teal, 50, 50, 200, 200)
+            $g.Dispose(); $bmp.Save($png); $bmp.Dispose()
+            $ico = Join-Path -Path $dir -ChildPath 'out.ico'
+            & (Join-Path -Path $script:RepoRoot -ChildPath 'tools\New-WinEaseIcon.ps1') -Source $png -Destination $ico | Out-Null
+            $bytes = [IO.File]::ReadAllBytes($ico)
+            [BitConverter]::ToInt16($bytes, 4) | Should Be 9
+            $icon = New-Object System.Drawing.Icon -ArgumentList $ico
+            $icon.Dispose()
+        }
+        finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    It "build-binaries.ps1 builds the launcher and the solution lists it" {
+        (Get-Content -LiteralPath (Join-Path -Path $script:RepoRoot -ChildPath 'tools\build-binaries.ps1') -Raw) | Should Match 'Launcher = \{'
+        (Get-Content -LiteralPath (Join-Path -Path $script:RepoRoot -ChildPath 'src\WinEase.sln') -Raw) | Should Match 'WinEase\.Launcher\.csproj'
+    }
+}
