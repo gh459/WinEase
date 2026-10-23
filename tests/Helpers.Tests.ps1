@@ -962,6 +962,63 @@ Describe "WinEase helpers - ConvertTo-WinEaseNormalizedPath" {
     }
 }
 
+Describe "WinEase helpers - ConvertTo-WinEaseComparablePath" {
+    BeforeAll {
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+    }
+
+    $isWinPlatform = [Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT -or (Get-Variable -Name IsWindows -ValueOnly -ErrorAction SilentlyContinue)
+
+    It "returns null for whitespace paths" {
+        $res = ConvertTo-WinEaseComparablePath -Path "   "
+        $res | Should Be $null
+    }
+
+    It "converts forward slashes to backslashes and trims trailing separators" {
+        $inputPath = "C:/Windows/System32/"
+        $res = ConvertTo-WinEaseComparablePath -Path $inputPath
+        $expected = [System.IO.Path]::GetFullPath("C:\Windows\System32").TrimEnd('\')
+        $res | Should Be $expected
+    }
+
+    It "preserves root separator for drive root paths" -Skip:(-not $isWinPlatform) {
+        $res = ConvertTo-WinEaseComparablePath -Path "C:\"
+        $expected = [System.IO.Path]::GetFullPath("C:\")
+        $res | Should Be $expected
+    }
+
+    It "returns null and handles exceptions when GetFullPath throws an exception" {
+        $invalidPath = [string]::Concat("C:\test", [char]0, "invalid")
+        $verboseMsg = $null
+        $res = ConvertTo-WinEaseComparablePath -Path $invalidPath -Verbose 4>&1 | ForEach-Object {
+            if ($_ -is [System.Management.Automation.VerboseRecord]) { $verboseMsg = $_.Message }
+            else { $_ }
+        }
+        $res | Should Be $null
+        $verboseMsg | Should Match '^Ignored:'
+    }
+
+    It "falls back to un-resolved path and handles exceptions when Get-Item throws for non-existent paths" -Skip:(-not $isWinPlatform) {
+        $nonExistentPath = "C:/non_existent_directory_win_ease_xyz/sub/"
+        $verboseMsg = $null
+        $res = ConvertTo-WinEaseComparablePath -Path $nonExistentPath -Verbose 4>&1 | ForEach-Object {
+            if ($_ -is [System.Management.Automation.VerboseRecord]) { $verboseMsg = $_.Message }
+            else { $_ }
+        }
+        $expected = [System.IO.Path]::GetFullPath("C:\non_existent_directory_win_ease_xyz\sub").TrimEnd('\')
+        $res | Should Be $expected
+        $verboseMsg | Should Match '^Ignored:'
+    }
+
+    It "resolves existing filesystem item FullName when path exists on disk" -Skip:(-not $isWinPlatform) {
+        $existingFile = $PSScriptRoot
+        $res = ConvertTo-WinEaseComparablePath -Path $existingFile
+        $expectedItem = (Get-Item -LiteralPath $existingFile -Force).FullName.TrimEnd('\')
+        $res | Should Be $expectedItem
+    }
+}
+
 Describe "WinEase helpers - Build ID Generator" {
     BeforeAll {
         $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
