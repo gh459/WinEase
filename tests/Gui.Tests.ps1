@@ -1822,7 +1822,7 @@ Describe "Show-WinEaseGuiSessionWindow session launcher and error handling" {
 
     It "passes UiLanguage argument to GUI when UiLanguage parameter is configured" {
         Mock Find-WinEaseWinUiExe { return $null }
-        Mock Show-WinEaseGUI { param($InitialSettings, $UiLanguage) return @{ Language = $UiLanguage } }
+        Mock Show-WinEaseGUI { param($InitialSettings, $UiLanguage) $null = $InitialSettings; return @{ Language = $UiLanguage } }
 
         $script:UiLanguage = "ja"
         try {
