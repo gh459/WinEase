@@ -63,11 +63,11 @@ Describe "WinEase builder - Apply-WinEaseProfileComponents" {
     }
 
     It "applies components from PSCustomObject profile when SourceIsProfile is true" {
-        $profile = [PSCustomObject]@{
+        $profileObj = [PSCustomObject]@{
             'RemoveStore' = $true
             'Edition'     = 'Enterprise'
         }
-        Apply-WinEaseProfileComponents -TargetPreset $profile -SourceIsProfile $true
+        Apply-WinEaseProfileComponents -TargetPreset $profileObj -SourceIsProfile $true
         $script:removeStore | Should Be $true
         $script:edition | Should Be 'Enterprise'
     }
