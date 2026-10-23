@@ -519,7 +519,7 @@ if ((-not $myWindowsPrincipal.IsInRole([System.Security.Principal.WindowsBuiltIn
     $newProcess.Arguments = New-WinEaseChildArguments -ScriptPath $myInvocation.MyCommand.Definition -ScriptArguments $paramList
     $newProcess.Verb = "runas"
     try {
-        [System.Diagnostics.Process]::Start($newProcess) | Out-Null
+        $null = [System.Diagnostics.Process]::Start($newProcess)
         exit 0
     } catch {
         Write-Host "Failed to elevate privileges: $_" -ForegroundColor Red
