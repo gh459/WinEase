@@ -212,13 +212,9 @@ Invoke-WinEaseRegistryTable -Section security -Tweak DisableDeliveryOptimization
 # ============================================================================
 # 9. Performance, Power & Latency Optimizations
 # ============================================================================
-if (Test-TweakEnabled 'DisablePowerThrottling' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Power\PowerThrottling" -Name "PowerThrottlingOff" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section performance -Tweak DisablePowerThrottling
 
-if (Test-TweakEnabled 'DisableIdleMaintenance' $false) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance" -Name "MaintenanceDisabled" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section performance -Tweak DisableIdleMaintenance
 
 # AtlasOS & ReviOS low-latency kernel tuning.
 # The GUI exposes "AtlasOS & ReviOS Low-Latency Kernel Tuning" as a component
@@ -236,65 +232,37 @@ if (Test-TweakEnabled 'ThreadDpcEnable' $false) {
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\PriorityControl" -Name "Win32PrioritySeparation" -Type REG_DWORD -Data '38'
 }
 
-if (Test-TweakEnabled 'NtfsDisable8dot3' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\FileSystem" -Name "NtfsDisable8dot3NameCreation" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\FileSystem" -Name "NtfsDisableLastAccessUpdate" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section performance -Tweak NtfsDisable8dot3
 
-if (Test-TweakEnabled 'EnableLongPaths' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\FileSystem" -Name "LongPathsEnabled" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section performance -Tweak EnableLongPaths
 
-if (Test-TweakEnabled 'NetworkTuning' $false) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Services\Tcpip\Parameters" -Name "TcpTimedWaitDelay" -Type REG_DWORD -Data '30'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Services\Tcpip\Parameters" -Name "MaxUserPort" -Type REG_DWORD -Data '65534'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Services\Tcpip\Parameters" -Name "DefaultTTL" -Type REG_DWORD -Data '64'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Services\Tcpip\Parameters" -Name "EnableICMPRedirect" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows NT\DNSClient" -Name "EnableMulticast" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows NT\DNSClient" -Name "DisableSmartNameResolution" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section performance -Tweak NetworkTuning
 
 if ($keepAudioTweaks -or $dawMode -or (Test-TweakEnabled 'LowLatencyAudioMMCSS' $false)) {
     Write-Host "  [Audio DAW] Configuring low-latency Pro Audio MMCSS task profile..." -ForegroundColor Green
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio" -Name "Priority" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio" -Name "Scheduling Category" -Type REG_SZ -Data "High"
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio" -Name "SFIO Priority" -Type REG_SZ -Data "High"
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio" -Name "Background Only" -Type REG_SZ -Data "False"
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio" -Name "Clock Rate" -Type REG_DWORD -Data '10000'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio" -Name "GPU Priority" -Type REG_DWORD -Data '8'
+    Invoke-WinEaseRegistryTable -Section performance -Tweak LowLatencyAudioMMCSS -Unconditional
 }
 
 if ($mmcssGaming -or (Test-TweakEnabled 'MMCSSGaming' $false) -or $atlasReviOSEnabled) {
     Write-Host "  [Gaming] Configuring Games MMCSS task profile..." -ForegroundColor Green
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" -Name "Priority" -Type REG_DWORD -Data '6'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" -Name "Scheduling Category" -Type REG_SZ -Data "High"
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" -Name "SFIO Priority" -Type REG_SZ -Data "High"
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" -Name "GPU Priority" -Type REG_DWORD -Data '8'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" -Name "Affinity" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" -Name "Background Only" -Type REG_SZ -Data "False"
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" -Name "Clock Rate" -Type REG_DWORD -Data '10000'
+    Invoke-WinEaseRegistryTable -Section performance -Tweak MMCSSGaming -Unconditional
 }
 
 if ($radicalRAM -or (Test-TweakEnabled 'SvcHostConsolidation' $false)) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control" -Name "SvcHostSplitThresholdInKB" -Type REG_DWORD -Data '67108864'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management" -Name "DisablePageCombining" -Type REG_DWORD -Data '0'
+    Invoke-WinEaseRegistryTable -Section performance -Tweak SvcHostConsolidation -Unconditional
 }
 
 if ($noKernelPaging -or (Test-TweakEnabled 'NoKernelPaging' $false)) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management" -Name "DisablePagingExecutive" -Type REG_DWORD -Data '1'
+    Invoke-WinEaseRegistryTable -Section performance -Tweak NoKernelPaging -Unconditional
 }
 
 if ($disableCPUMitigations -or (Test-TweakEnabled 'DisableCPUMitigations' $false)) {
     Write-Host "  [SECURITY WARNING] Disabling CPU speculative execution mitigations (Spectre/Meltdown)..." -ForegroundColor Yellow
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management" -Name "FeatureSettingsOverride" -Type REG_DWORD -Data '3'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management" -Name "FeatureSettingsOverrideMask" -Type REG_DWORD -Data '3'
+    Invoke-WinEaseRegistryTable -Section performance -Tweak DisableCPUMitigations -Unconditional
 }
 
 if ($disableFSE -or (Test-TweakEnabled 'DisableFSE' $false)) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\System\GameConfigStore" -Name "GameDVR_FSEBehaviorMode" -Type REG_DWORD -Data '2'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\System\GameConfigStore" -Name "GameDVR_HonorUserFSEBehaviorMode" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\System\GameConfigStore" -Name "GameDVR_FSEBehaviorMode" -Type REG_DWORD -Data '2'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\System\GameConfigStore" -Name "GameDVR_HonorUserFSEBehaviorMode" -Type REG_DWORD -Data '1'
+    Invoke-WinEaseRegistryTable -Section performance -Tweak DisableFSE -Unconditional
 }
 
 # NVIDIA low-latency: PowerMizer performance mode + per-CPU core DPC registry tuning.
@@ -315,7 +283,7 @@ if ($nvidiaLowLatency -or (Test-TweakEnabled 'NvidiaLowLatency' $false)) {
 # HAGS & MSI
 $gpuLatencyEnabled = [bool]$script:activeTweakGroups['GPULatency'] -or (Test-TweakEnabled 'EnableHAGS' $true)
 if ($gpuLatencyEnabled) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\GraphicsDrivers" -Name "HwSchMode" -Type REG_DWORD -Data '2'
+    Invoke-WinEaseRegistryTable -Section performance -Tweak EnableHAGS -Unconditional
 }
 
 # ============================================================================
@@ -626,10 +594,7 @@ if ([bool]$script:activeTweakGroups['ServiceTrim']) {
 }
 
 # Revision Tool 2.14.1 (Superfetch): ReadyBoost caches go together with SysMain.
-if (Test-TweakEnabled 'DisableSuperfetch' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\EMDMgmt" -Name "GroupPolicyDisallowCaches" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\EMDMgmt" -Name "AllowNewCachesByDefault" -Type REG_DWORD -Data '0'
-}
+Invoke-WinEaseRegistryTable -Section performance -Tweak DisableSuperfetch
 
 # The services of the components the Advanced Debloat tab removes. These used to be
 # printed in phase 09 and nothing else happened: the services stayed enabled, so the
@@ -919,29 +884,15 @@ if (Test-TweakEnabled 'DisableDiagnosticData' $true) {
     }
 }
 
-if (Test-TweakEnabled 'TuneMemoryAndPaging' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management" -Name "ClearPageFileAtShutdown" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management" -Name "LargeSystemCache" -Type REG_DWORD -Data '0'
-}
+Invoke-WinEaseRegistryTable -Section performance -Tweak TuneMemoryAndPaging
 
-if (Test-TweakEnabled 'GamingNetworkTweaks' $true) {
-    # Per-adapter TcpAckFrequency needs interface GUIDs that only exist online; these are the offline-safe parts
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "NetworkThrottlingIndex" -Type REG_DWORD -Data '0xffffffff'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\MSMQ\Parameters" -Name "TCPNoDelay" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section performance -Tweak GamingNetworkTweaks
 
 Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableBackgroundApps
 
-if (Test-TweakEnabled 'DisableGameDVR' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\GameDVR" -Name "AllowGameDVR" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\System\GameConfigStore" -Name "GameDVR_Enabled" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\System\GameConfigStore" -Name "GameDVR_Enabled" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\GameDVR" -Name "AppCaptureEnabled" -Type REG_DWORD -Data '0'
-}
+Invoke-WinEaseRegistryTable -Section performance -Tweak DisableGameDVR
 
-if (Test-TweakEnabled 'DisableFastStartup' $false) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Power" -Name "HiberbootEnabled" -Type REG_DWORD -Data '0'
-}
+Invoke-WinEaseRegistryTable -Section performance -Tweak DisableFastStartup
 
 if (Test-TweakEnabled 'TransparentShortcutOverlay' $false) {
     # Resource -50 in shell32.dll is the transparent icon; the previous value
@@ -950,24 +901,7 @@ if (Test-TweakEnabled 'TransparentShortcutOverlay' $false) {
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Icons" -Name "29" -Type REG_EXPAND_SZ -Data "%SystemRoot%\System32\shell32.dll,-50"
 }
 
-if (Test-TweakEnabled 'OptimizeVisualEffects' $true) {
-    # "Adjust for best performance" is more than VisualFXSetting=2: Windows reads the
-    # per-user UserPreferencesMask and the individual animation values. The old block
-    # wrote only three values, so window/menu/taskbar animations stayed enabled.
-    foreach ($uiHive in @('zNTUSER', 'zDEFAULT')) {
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$uiHive\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" -Name "VisualFXSetting" -Type REG_DWORD -Data '2'
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$uiHive\Control Panel\Desktop\WindowMetrics" -Name "MinAnimate" -Type REG_SZ -Data "0"
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$uiHive\Control Panel\Desktop" -Name "DragFullWindows" -Type REG_SZ -Data "0"
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$uiHive\Control Panel\Desktop" -Name "UserPreferencesMask" -Type REG_BINARY -Data "9012038010000000"
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$uiHive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarAnimations" -Type REG_DWORD -Data '0'
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$uiHive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ListviewAlphaSelect" -Type REG_DWORD -Data '0'
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$uiHive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ListviewShadow" -Type REG_DWORD -Data '0'
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$uiHive\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "EnableTransparency" -Type REG_DWORD -Data '0'
-        # The accessibility animation switch is the setting the shell honours even when
-        # a theme or an app re-enables the explorer animations.
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$uiHive\Control Panel\Accessibility\Animation" -Name "Flags" -Type REG_SZ -Data "0"
-    }
-}
+Invoke-WinEaseRegistryTable -Section performance -Tweak OptimizeVisualEffects
 
 if (Test-TweakEnabled 'CleanContextMenus' $true) {
     # Share, Give access to, Cast to Device
