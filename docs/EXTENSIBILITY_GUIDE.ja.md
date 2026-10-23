@@ -143,7 +143,7 @@ WinEase-main/
 ├── phases/                ビルドの各工程(01〜18)
 ├── gui/WinEaseGui.ps1      WinForms の GUI
 ├── config/                設定ファイル
-├── scripts/               イメージに埋め込むセットアップ用スクリプト
+├── scripts/               イメージに埋め込むセットアップ用スクリプト(setup/ 補助、tools/ インストール後ツール)
 ├── tools/                 補助ツールとカスタムスクリプト
 ├── profiles/              保存したプロファイル(JSON)
 ├── templates/report.html  レポートの雛形
