@@ -24,7 +24,7 @@ function Invoke-WinEaseBuilderProcess {
         [string[]]$Arguments,
         [int]$TimeoutSeconds = 300
     )
-    $exe = (Get-Process -Id $PID).Path
+    $exe = if ((Get-Process -Id $PID).Path -match 'dotnet$') { (Get-Command pwsh).Source } else { (Get-Process -Id $PID).Path }
     $quoted = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:BuilderPath) + @($Arguments) | ForEach-Object {
         if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
     }
@@ -191,6 +191,25 @@ Describe "Regression - command line, profiles and precedence" -Tags 'slow' {
         $r.Output | Should Match 'wrong type'
         $r.Output | Should Match 'RemoveDefender'
         $r.Output | Should Match 'TweakSettings\.DisableUAC'
+    }
+
+    It "a profile with an incompatible version produces a version warning" {
+        $p = New-WinEaseTestProfile -Path (Join-Path $TestDrive 'oldver.json') -Data ([ordered]@{
+            Version = '1.0'; ProfileName = 'oldver'; Settings = [ordered]@{ RemoveDefender = $false }
+        })
+        $r = Invoke-WinEaseBuilderProcess -Arguments @('-DryRun', '-NonInteractive', '-LoadProfile', $p)
+        $r.ExitCode | Should Be 0
+        $r.Output | Should Match 'Profile version \(1\.0\) differs from current'
+    }
+
+    It "promotes top-level ProfileName to settings when not defined in Settings" {
+        $p = New-WinEaseTestProfile -Path (Join-Path $TestDrive 'topname.json') -Data ([ordered]@{
+            ProfileName = 'CustomTopName'; Version = '2.1'
+            Settings = [ordered]@{ RemoveDefender = $false }
+        })
+        $r = Invoke-WinEaseBuilderProcess -Arguments @('-DryRun', '-NonInteractive', '-LoadProfile', $p)
+        $r.ExitCode | Should Be 0
+        $r.Snapshot.Profile | Should Be 'CustomTopName'
     }
 
     It "a profile written by -SaveProfile loads back to the same settings" {
