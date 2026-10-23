@@ -895,8 +895,7 @@ function Disable-WinEaseMnemonic {
 # Collect the real values of the checked items of a CheckedListBox (not the displayed text)
 function Get-WinEaseCheckedItems {
     param([System.Windows.Forms.CheckedListBox]$List)
-    $sel = @()
-    for ($i = 0; $i -lt $List.Items.Count; $i++) { if ($List.GetItemChecked($i)) { $sel += (Get-WinEaseListItemValue $List.Items[$i]) } }
+    $sel = @(for ($i = 0; $i -lt $List.Items.Count; $i++) { if ($List.GetItemChecked($i)) { Get-WinEaseListItemValue $List.Items[$i] } })
     return ,$sel
 }
 
