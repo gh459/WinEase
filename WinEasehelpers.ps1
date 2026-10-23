@@ -1737,8 +1737,7 @@ function Get-WinEaseMetricStatistics {
     $count = $sorted.Count
 
     # Mean
-    $sum = 0.0
-    foreach ($v in $sorted) { $sum += $v }
+    $sum = [System.Linq.Enumerable]::Sum([double[]]$sorted)
     $mean = [math]::Round($sum / $count, 3)
 
     # Median (p50)
