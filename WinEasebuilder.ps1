@@ -1937,7 +1937,7 @@ if ($ComparePreset) {
 # Save build configuration snapshot to logs/<timestamp>.config.json
 $logsDir = Join-Path -Path $scriptDir -ChildPath "logs"
 if (-not (Test-Path -LiteralPath $logsDir)) {
-    New-Item -ItemType Directory -Force -Path $logsDir -ErrorAction SilentlyContinue | Out-Null
+    [void](New-Item -ItemType Directory -Force -Path $logsDir -ErrorAction SilentlyContinue)
 }
 $configSnapshotPath = Join-Path -Path $logsDir -ChildPath "WinEase_$timestampStr.config.json"
 # Use the normalized current configuration instead of the individual script variables.
