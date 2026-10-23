@@ -27,3 +27,12 @@ WinEase_report.html
 gui/winui/bin/
 gui/winui/WinEaseGui/bin/
 gui/winui/WinEaseGui/obj/
+
+# Plugin DLLs of the user: only the lock file (config/user/plugins.lock.psd1) and the README are committed
+plugins/user/*
+!plugins/user/README.md
+plugins/bin/
+
+# .NET build output
+src/**/bin/
+src/**/obj/

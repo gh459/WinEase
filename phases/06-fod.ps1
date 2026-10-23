@@ -138,6 +138,18 @@ if ($ultraSlimMode -and ("$languageCode" -match '^(ja|ko|zh)[-a-zA-Z]*$')) {
     )
 }
 
+# Plugin contributions (IFodRemovalContributor). Packages join the pattern list, so the
+# preservation filters below apply to them; capabilities and features are removed after the
+# package pass (see the end of this phase).
+$pluginFodRemovals = @()
+if (Get-Command -Name Get-WinEasePluginContributions -ErrorAction SilentlyContinue) {
+    $pluginFodRemovals = @(Get-WinEasePluginContributions -Kind Fod)
+    foreach ($pluginFod in @($pluginFodRemovals | Where-Object { $_.Kind -eq 'Package' })) {
+        Write-Host "  [Plugin $($pluginFod.PluginId)] package removal pattern: $($pluginFod.Name)" -ForegroundColor DarkCyan
+        $packagePatterns += $pluginFod.Name
+    }
+}
+
 # Apply preservation filters to $packagePatterns before scanning
 if ($keepExtraFonts) {
     $packagePatterns = @($packagePatterns | Where-Object { $_ -notlike "Microsoft-Windows-LanguageFeatures-Fonts-*" })
@@ -204,6 +216,20 @@ foreach ($packageIdentity in $packagesToRemove) {
 # They are removed here, so phase 09 does not remove them a second time.
 if (Get-Command -Name Invoke-WinEaseDebloatTargets -ErrorAction SilentlyContinue) {
     Invoke-WinEaseDebloatTargets -Phase '06-fod'
+}
+
+# Plugin contributions: capabilities and optional features
+foreach ($pluginFod in @($pluginFodRemovals | Where-Object { $_.Kind -ne 'Package' })) {
+    Write-Host "  - Removing $($pluginFod.Kind) '$($pluginFod.Name)' (plugin $($pluginFod.PluginId))"
+    if ($isDryRunMode) {
+        Write-Host "    [DRY] Would remove the $($pluginFod.Kind) '$($pluginFod.Name)'" -ForegroundColor Yellow
+        continue
+    }
+    if ($pluginFod.Kind -eq 'Capability') {
+        & dism.exe /English "/image:$scratchDir" /Remove-Capability "/CapabilityName:$($pluginFod.Name)" > $null 2>&1
+    } else {
+        & dism.exe /English "/image:$scratchDir" /Disable-Feature "/FeatureName:$($pluginFod.Name)" /Remove > $null 2>&1
+    }
 }
 
 # M2: User extension actions (FOD)

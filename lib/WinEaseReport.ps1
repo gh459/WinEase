@@ -262,6 +262,31 @@ function Export-WinEaseHtmlReport {
     [void]$sb.AppendLine('    </table>')
     [void]$sb.AppendLine('  </div>')
 
+    # Plugins: what the plugin host loaded (id, version, source, file, SHA256) and what it refused
+    $pluginRows = @()
+    if ($BuildInfo.ContainsKey('Plugins') -and $BuildInfo.Plugins) { $pluginRows = @($BuildInfo.Plugins) }
+    elseif (Get-Command -Name Get-WinEaseLoadedPlugins -ErrorAction SilentlyContinue) { $pluginRows = @(Get-WinEaseLoadedPlugins) }
+    $pluginRejected = @()
+    if ($BuildInfo.ContainsKey('PluginRejected') -and $BuildInfo.PluginRejected) { $pluginRejected = @($BuildInfo.PluginRejected) }
+    elseif ($null -ne $script:WinEasePluginRejected) { $pluginRejected = @($script:WinEasePluginRejected) }
+    if ($pluginRows.Count -gt 0 -or $pluginRejected.Count -gt 0) {
+        [void]$sb.AppendLine('  <div class="section-card">')
+        [void]$sb.AppendLine('    <h2>&#129513; Plugins</h2>')
+        [void]$sb.AppendLine('    <table>')
+        [void]$sb.AppendLine('      <thead><tr><th>Plugin</th><th>Source</th><th>File / SHA256</th><th>Contributes</th><th>Status</th></tr></thead>')
+        [void]$sb.AppendLine('      <tbody>')
+        foreach ($pl in $pluginRows) {
+            $contrib = if (@($pl.Contributions).Count -gt 0) { @($pl.Contributions) -join ', ' } else { '-' }
+            [void]$sb.AppendLine("        <tr><td><strong>$(& $enc $pl.Id)</strong> $(& $enc $pl.Version)<br>$(& $enc $pl.Summary)</td><td>$(& $enc $pl.Source)</td><td><code>$(& $enc $pl.File)</code><br><code>$(& $enc $pl.Sha256)</code></td><td>$(& $enc $contrib)</td><td><span class=`"status-tag status-enabled`">Loaded (OnError: $(& $enc $pl.OnError))</span></td></tr>")
+        }
+        foreach ($pr in $pluginRejected) {
+            [void]$sb.AppendLine("        <tr><td><strong>$(& $enc $pr.File)</strong></td><td>$(& $enc $pr.Source)</td><td>-</td><td>-</td><td><span class=`"status-tag status-disabled`">Not loaded: $(& $enc $pr.Reason)</span></td></tr>")
+        }
+        [void]$sb.AppendLine('      </tbody>')
+        [void]$sb.AppendLine('    </table>')
+        [void]$sb.AppendLine('  </div>')
+    }
+
     # Granular Tweaks Breakdown
     $tweakSettings = if ($settings -is [System.Collections.IDictionary] -and $settings.Contains('TweakSettings')) { $settings['TweakSettings'] } elseif ($settings.PSObject.Properties['TweakSettings']) { $settings.PSObject.Properties['TweakSettings'].Value } else { $null }
     if ($tweakSettings -and $script:AllTweakDefs) {

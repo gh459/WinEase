@@ -374,6 +374,45 @@ function Invoke-WinEaseWinUiRequest {
             Start-Process -FilePath 'explorer.exe' -ArgumentList "`"$folder`""
             return @{}
         }
+        # --- plugins (plugins\builtin, plugins\user; allow lists: the two *.lock.psd1 files) ---
+        'plugins.list' {
+            $pluginEngine = Join-Path $repo 'lib\WinEasePlugins.ps1'
+            if (-not (Get-Command -Name Get-WinEasePluginInventory -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $pluginEngine)) { . $pluginEngine }
+            $rows = @()
+            foreach ($p in @(Get-WinEasePluginInventory -RepoRoot $repo)) {
+                $rows += [ordered]@{
+                    Source = [string]$p.Source
+                    File = [string]$p.File
+                    Sha256 = [string]$p.Sha256
+                    Status = [string]$p.Status
+                    OnError = [string]$p.OnError
+                    Enabled = [bool]$p.Enabled
+                    Description = [string]$p.Description
+                }
+            }
+            return @{ Data = $rows }
+        }
+        'plugins.addUser' {
+            # Two steps: without ConfirmSha256 the reply shows the file and its hash (NeedsConfirm);
+            # the window asks the user and sends the same request again with the hash that was shown.
+            $pluginEngine = Join-Path $repo 'lib\WinEasePlugins.ps1'
+            if (-not (Get-Command -Name Add-WinEaseUserPlugin -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $pluginEngine)) { . $pluginEngine }
+            $pluginPath = "$($a.Path)".Trim()
+            if (-not $pluginPath) { throw 'No plugin file was given.' }
+            $pluginTitle = Get-WinEaseUiString 'Plugins.Title'
+            $confirm = "$($a.ConfirmSha256)".Trim().ToLowerInvariant()
+            if (-not $confirm) {
+                $info = Get-WinEasePluginFileInfo -Path $pluginPath
+                return @{
+                    Kind = 'Info'; Title = $pluginTitle
+                    Text = (Get-WinEaseUiString 'Plugins.Confirm' -Format $info.Name, $info.Sha256, $info.Size)
+                    Data = @{ NeedsConfirm = $true; Name = $info.Name; Sha256 = $info.Sha256; Size = $info.Size }
+                }
+            }
+            $onErrorValue = if ("$($a.OnError)") { "$($a.OnError)" } else { 'Warn' }
+            $added = Add-WinEaseUserPlugin -Path $pluginPath -ExpectedSha256 $confirm -OnError $onErrorValue -Description "$($a.Description)" -RepoRoot $repo
+            return @{ Kind = 'Info'; Title = $pluginTitle; Text = (Get-WinEaseUiString 'Plugins.Added' -Format $added.File, $added.Sha256); Data = @{ NeedsConfirm = $false; File = $added.File; Sha256 = $added.Sha256 } }
+        }
         default { throw "Unknown request '$Op'" }
     }
 }
