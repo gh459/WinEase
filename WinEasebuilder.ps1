@@ -748,7 +748,7 @@ function Export-WinEaseProfile {
     )
     $parentDir = Split-Path -Parent $FilePath
     if ($parentDir -and (-not (Test-Path -LiteralPath $parentDir))) {
-        New-Item -ItemType Directory -Force -Path $parentDir | Out-Null
+        $null = New-Item -ItemType Directory -Force -Path $parentDir
     }
     # Settings are written in the same key order as $script:WinEaseProfileKeys so a saved profile
     # round-trips through -LoadProfile without losing any option.
