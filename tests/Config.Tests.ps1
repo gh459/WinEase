@@ -26,6 +26,125 @@ Describe "WinEase builder - profile presets" {
     }
 }
 
+Describe "WinEase builder - Get-WinEaseCurrentConfig" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        $builderPath = Join-Path $script:RepoRoot "WinEasebuilder.ps1"
+        $builderAst = [System.Management.Automation.Language.Parser]::ParseFile($builderPath, [ref]$null, [ref]$null)
+        $funcAsts = $builderAst.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -in @('Get-WinEaseComponentValue', 'Get-WinEaseCurrentConfig')
+        }, $true)
+        foreach ($func in $funcAsts) {
+            Invoke-Expression $func.Extent.Text
+        }
+    }
+
+    BeforeEach {
+        $script:activeTweakGroups = [ordered]@{ NetworkStack = $true; TimerBCD = $false }
+        $script:ComponentDefs = [ordered]@{
+            'RemoveDefender' = @{ Key = 'RemoveDefender'; Type = 'Bool'; Variable = 'removeDefender' }
+            'UserName'       = @{ Key = 'UserName';       Type = 'String'; Variable = 'userName' }
+            'UnsetBool'      = @{ Key = 'UnsetBool';      Type = 'Bool'; Variable = 'unsetVarBool' }
+            'UnsetString'    = @{ Key = 'UnsetString';    Type = 'String'; Variable = 'unsetVarString' }
+            'SpecialComp'    = @{ Key = 'SpecialComp';    Type = 'Special'; Variable = 'specialVar' }
+        }
+        $script:removeDefender = $true
+        $script:userName = "TestUser"
+        $script:DebloatEngineSelection = [ordered]@{ 'AppxBloat' = 'PowerShell' }
+        $script:TweakSettings = @{ 'DisableUAC' = $true }
+        $script:exportESDMode = $false
+        $script:splitWIMMode = $false
+        $script:advancedDebloatStandard = @('stdItem1')
+        $script:advancedDebloatExperimental = @('expItem1')
+    }
+
+    AfterEach {
+        Remove-Variable -Name activeTweakGroups, ComponentDefs, DebloatEngineSelection, TweakSettings, exportESDMode, splitWIMMode, advancedDebloatStandard, advancedDebloatExperimental, removeDefender, userName, unsetVarBool, unsetVarString, specialVar -Scope Script -ErrorAction SilentlyContinue
+    }
+
+    It "uses 'Exported Profile' as the default profile name" {
+        $cfg = Get-WinEaseCurrentConfig
+        $cfg.ProfileName | Should Be "Exported Profile"
+    }
+
+    It "uses custom profile name when specified" {
+        $cfg = Get-WinEaseCurrentConfig -ProfileName "Custom Test Profile"
+        $cfg.ProfileName | Should Be "Custom Test Profile"
+    }
+
+    It "resolves PayloadFormat as WIM when both exportESDMode and splitWIMMode are false or null" {
+        $script:exportESDMode = $false
+        $script:splitWIMMode = $false
+        $cfg = Get-WinEaseCurrentConfig
+        $cfg.PayloadFormat | Should Be "WIM"
+
+        $script:exportESDMode = $null
+        $script:splitWIMMode = $null
+        $cfgNull = Get-WinEaseCurrentConfig
+        $cfgNull.PayloadFormat | Should Be "WIM"
+    }
+
+    It "resolves PayloadFormat as ESD when exportESDMode is true" {
+        $script:exportESDMode = $true
+        $script:splitWIMMode = $false
+        $cfg = Get-WinEaseCurrentConfig
+        $cfg.PayloadFormat | Should Be "ESD"
+    }
+
+    It "resolves PayloadFormat as SWM when splitWIMMode is true and exportESDMode is false" {
+        $script:exportESDMode = $false
+        $script:splitWIMMode = $true
+        $cfg = Get-WinEaseCurrentConfig
+        $cfg.PayloadFormat | Should Be "SWM"
+    }
+
+    It "resolves PayloadFormat as ESD when both exportESDMode and splitWIMMode are true (ESD precedence)" {
+        $script:exportESDMode = $true
+        $script:splitWIMMode = $true
+        $cfg = Get-WinEaseCurrentConfig
+        $cfg.PayloadFormat | Should Be "ESD"
+    }
+
+    It "correctly extracts component values and omits Special components" {
+        $cfg = Get-WinEaseCurrentConfig
+        $cfg.RemoveDefender | Should Be $true
+        $cfg.UserName | Should Be "TestUser"
+        $cfg.ContainsKey('SpecialComp') | Should Be $false
+    }
+
+    It "handles missing or unset script variables for String and Bool component types gracefully" {
+        $cfg = Get-WinEaseCurrentConfig
+        $cfg.UnsetBool | Should Be $false
+        $cfg.UnsetString | Should Be ""
+    }
+
+    It "coerces non-string component values to string for String types" {
+        $script:userName = 12345
+        $cfg = Get-WinEaseCurrentConfig
+        $cfg.UserName | Should Be "12345"
+    }
+
+    It "coerces scalar, empty array, or array debloat lists into arrays" {
+        $script:advancedDebloatStandard = "scalarItem"
+        $script:advancedDebloatExperimental = @()
+
+        $cfg = Get-WinEaseCurrentConfig
+        $cfg.AdvancedDebloatStandard.Count | Should Be 1
+        $cfg.AdvancedDebloatStandard[0] | Should Be "scalarItem"
+        $cfg.AdvancedDebloatExperimental.Count | Should Be 0
+    }
+
+    It "preserves active tweak groups, engine selections, and tweak settings" {
+        $cfg = Get-WinEaseCurrentConfig
+        $cfg.TweakGroups.NetworkStack | Should Be $true
+        $cfg.TweakGroups.TimerBCD | Should Be $false
+        $cfg.DebloatEngineSelection['AppxBloat'] | Should Be 'PowerShell'
+        $cfg.TweakSettings['DisableUAC'] | Should Be $true
+    }
+}
+
 Describe "WinEase helpers - configuration conflict resolution (Test-WinEaseConfigConflicts)" {
     BeforeAll {
         if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
