@@ -48,6 +48,7 @@
             RemovePhotosApp = $false
             RemoveScreenSketchApp = $false
             IncludeMigrationBackup = $false
+            UserPassword = 'WinEase123!'
             PayloadFormat = 'WIM'
             HibernateMode = 'Keep'
             CrashDumpMode = 'Automatic'

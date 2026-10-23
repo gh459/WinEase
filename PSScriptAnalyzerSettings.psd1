@@ -6,6 +6,9 @@
         # WinEase is an interactive console tool: coloured Write-Host output is the UI, not pipeline data.
         'PSAvoidUsingWriteHost',
 
+        # UserPassword parameter specifies default/custom local account password for unattended installation.
+        'PSAvoidUsingPlainTextForPassword',
+
         # New-/Set-/Remove-/Update- functions are internal helpers called by the build itself
         # (GUI control factories, path builders, cleanup routines). The builder exposes its own
         # -WhatIf via [CmdletBinding(SupportsShouldProcess)] on the script; per-helper
