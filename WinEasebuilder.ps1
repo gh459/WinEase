@@ -1678,32 +1678,32 @@ if ($isAutomated) {
     if ($pChoice -in @('1', 'extreme', 'gaming', 'slim')) {
         $skipIndividualPrompts = $true
         $selectedProfile = "extreme"
-        Apply-ProfileSettings -ProfileName 'extreme' | Out-Null
+        $null = Apply-ProfileSettings -ProfileName 'extreme'
         Write-Host "Applied Profile: Extreme Slim & Gaming" -ForegroundColor Green
     } elseif ($pChoice -in @('2', 'balanced', 'safe', 'pro')) {
         $skipIndividualPrompts = $true
         $selectedProfile = "balanced"
-        Apply-ProfileSettings -ProfileName 'balanced' | Out-Null
+        $null = Apply-ProfileSettings -ProfileName 'balanced'
         Write-Host "Applied Profile: Balanced Pro (Windows Update & Defender kept)" -ForegroundColor Yellow
     } elseif ($pChoice -in @('4', 'handheld', 'ally', 'deck', 'legion')) {
         $skipIndividualPrompts = $true
         $selectedProfile = "handheld"
-        Apply-ProfileSettings -ProfileName 'handheld' | Out-Null
+        $null = Apply-ProfileSettings -ProfileName 'handheld'
         Write-Host "Applied Profile: Handheld Gaming" -ForegroundColor Green
     } elseif ($pChoice -in @('5', 'vm', 'dev', 'developer')) {
         $skipIndividualPrompts = $true
         $selectedProfile = "vm"
-        Apply-ProfileSettings -ProfileName 'vm' | Out-Null
+        $null = Apply-ProfileSettings -ProfileName 'vm'
         Write-Host "Applied Profile: VM & Developer Workstation" -ForegroundColor Cyan
     } elseif ($pChoice -in @('6', 'audio', 'daw', 'dtm')) {
         $skipIndividualPrompts = $true
         $selectedProfile = "audio"
-        Apply-ProfileSettings -ProfileName 'audio' | Out-Null
+        $null = Apply-ProfileSettings -ProfileName 'audio'
         Write-Host "Applied Profile: Audio & DAW Production" -ForegroundColor Magenta
     } elseif ($pChoice -in @('3', 'fat32', 'split', 'splitwim')) {
         $skipIndividualPrompts = $true
         $selectedProfile = "fat32"
-        Apply-ProfileSettings -ProfileName 'fat32' | Out-Null
+        $null = Apply-ProfileSettings -ProfileName 'fat32'
         Write-Host "Applied Profile: FAT32 USB Split-WIM" -ForegroundColor Yellow
     } elseif ($pChoice -in @('7', 'gui', 'ui')) {
         . $script:WinEaseGuiPath
