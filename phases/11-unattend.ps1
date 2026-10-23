@@ -23,19 +23,6 @@ if (-not (Get-Command -Name Test-TweakEnabled -ErrorAction SilentlyContinue)) {
             }
         }
 
-        # Parameterize embedded setup scripts (e.g. FirstLogon.ps1) with UserName and UserPassword
-        $embeddedFileNodes = $xmlDoc.SelectNodes("//*[local-name()='Extensions']/*[local-name()='File']")
-        $escapedUser = [regex]::Escape($UserName)
-        foreach ($fn in $embeddedFileNodes) {
-            $scriptText = $fn.InnerText
-            $scriptText = $scriptText -replace 'net\.exe user User ', "net.exe user `"$UserName`" "
-            $scriptText = $scriptText -replace 'Set-LocalUser -Name "User"', "Set-LocalUser -Name `"$UserName`""
-            if ($UserPassword) {
-                $scriptText = $scriptText -replace "net\.exe user `"$escapedUser`" `"`" /active:yes /passwordreq:no", "net.exe user `"$UserName`" `"$UserPassword`" /active:yes /passwordreq:yes"
-                $scriptText = $scriptText -replace 'net\.exe user User "" /active:yes /passwordreq:no', "net.exe user `"$UserName`" `"$UserPassword`" /active:yes /passwordreq:yes"
-            }
-            $fn.InnerText = $scriptText
-        }
         $varName = "Tweak_$Name"
         $v = Get-Variable -Name $varName -Scope Script -ErrorAction SilentlyContinue
         if ($null -ne $v) { return [bool]$v.Value }
@@ -134,6 +121,20 @@ if (Test-Path -LiteralPath $unattendSource) {
                     Write-Host "  [A2] Injected external script: $scriptFileName" -ForegroundColor DarkCyan
                 }
             }
+        }
+
+        # Parameterize all embedded setup scripts (e.g. FirstLogon.ps1) with UserName and UserPassword
+        $embeddedFileNodes = $xmlDoc.SelectNodes("//*[local-name()='Extensions']/*[local-name()='File']")
+        $escapedUser = [regex]::Escape($UserName)
+        foreach ($fn in $embeddedFileNodes) {
+            $scriptText = $fn.InnerText
+            $scriptText = $scriptText -replace 'net\.exe user User ', "net.exe user `"$UserName`" "
+            $scriptText = $scriptText -replace 'Set-LocalUser -Name "User"', "Set-LocalUser -Name `"$UserName`""
+            if ($UserPassword) {
+                $scriptText = $scriptText -replace "net\.exe user `"$escapedUser`" `"`" /active:yes /passwordreq:no", "net.exe user `"$UserName`" `"$UserPassword`" /active:yes /passwordreq:yes"
+                $scriptText = $scriptText -replace 'net\.exe user User "" /active:yes /passwordreq:no', "net.exe user `"$UserName`" `"$UserPassword`" /active:yes /passwordreq:yes"
+            }
+            $fn.InnerText = $scriptText
         }
 
         # 1. Prune components matching other architectures if target architecture is explicitly present

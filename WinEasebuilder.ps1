@@ -21,6 +21,7 @@
 
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', 'isoCreatedSuccessfully', Justification = 'Read by New-BuildContextFromScriptScope and the phases in script scope')]
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidAssignmentToAutomaticVariable', '', Justification = '-Profile is the public preset parameter; renaming it would break the command line')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', 'UserPassword', Justification = 'Plain text password passed to unattend.xml and net.exe user command')]
 [CmdletBinding(SupportsShouldProcess=$true)]
 param(
     [alias("Unattended", "Silent", "Batch")]
