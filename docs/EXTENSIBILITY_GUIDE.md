@@ -138,7 +138,7 @@ Files that look like passwords or tokens are excluded automatically by default.
 ```text
 WinEase-main/
 ├── WinEasebuilder.ps1      Main script: parameters, configuration, calls the phases
-├── WinEasehelpers.ps1      Small shared functions (path validation, config file lookup, ...)
+├── WinEasehelpers.ps1      Loader that dot-sources the shared modules in lib/ (path validation, config file lookup, ...)
 ├── lib/                   Function libraries loaded by the builder
 ├── phases/                Build steps (01-18)
 ├── gui/WinEaseGui.ps1      WinForms GUI
@@ -159,6 +159,12 @@ Load any new file the same way (turning it into a module would hide those variab
 | :--- | :--- |
 | `WinEaseMount.ps1` | DISM mount discovery/cleanup, mount directories, offline registry |
 | `WinEaseFileSystem.ps1` | Directory safety checks, ownership and ACLs, robust deletion, free space |
+| `WinEasePathSafety.ps1` | Path normalization, containment and restore-path validation |
+| `WinEaseSystem.ps1` | BuildContext, DISM wrapper, hive unmount, capacity and timing helpers |
+| `WinEaseConfig.ps1` | Config conflict resolution, resume integrity, user config paths, config diff |
+| `WinEaseBenchmarks.ps1` | Statistical analysis and benchmark comparison |
+| `WinEaseDependencies.ps1` | Dependency / feature-impact analysis |
+| `WinEaseGuiSession.ps1` | Builder GUI session handling |
 | `WinEaseWim.ps1` | WIM export, fingerprinting, repair |
 | `WinEaseReport.ps1` | HTML report (`WinEase_report.html`) |
 | `WinEaseResume.ps1` | `-ResumeIsoOnly` and per-phase checkpoints |

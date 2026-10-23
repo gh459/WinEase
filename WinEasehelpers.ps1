@@ -30,3 +30,5 @@ foreach ($helperFile in $helperFiles) {
     }
     . $helperPath
 }
+# Keep the caller's scope clean: only the functions, the class and $script:WinEaseHelperRoot remain.
+Remove-Variable -Name helperRoot, helperFiles, helperCandidates, helperFile, helperPath, candidate, probe -ErrorAction SilentlyContinue

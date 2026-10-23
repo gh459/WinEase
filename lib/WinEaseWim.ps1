@@ -1,6 +1,19 @@
 # WinEaseWim.ps1 - Native WIM export, fingerprinting and repair helpers
 # Dot-sourced into the script scope of WinEasebuilder.ps1 (function definitions only).
 
+# ---------------------------------------------------------------------------------------------
+# WIM stream integrity helpers (Phase 15 self-healing)
+# DISM /Apply-Image /Verify fails with 577 (0x80070241 ERROR_INVALID_IMAGE_HASH) or 0x80070570 when a
+# decompressed file does not match the SHA-1 recorded in the WIM. Two very different causes produce the
+# same error code:
+#   1. Persistent corruption: a stream was damaged while /Unmount-Image /commit hashed/compressed it.
+#      The bad stream is then copied verbatim by /Export-Image (which still reports success).
+#   2. Transient corruption: the WIM is intact, but data was damaged in RAM while DISM decompressed it
+#      (unstable memory/CPU). The failing file changes on every run.
+# The helpers below extract the failing files directly via wimgapi.dll, classify them, and repair
+# persistent corruption from a known-good reference image (source media / untouched editions).
+# ---------------------------------------------------------------------------------------------
+
 function Initialize-WinEaseWimNative {
     if ('WinEaseWimNative' -as [type]) { return }
     Add-Type -TypeDefinition @'

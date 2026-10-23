@@ -1763,6 +1763,7 @@ Describe "WinEase helpers - split module layout (R2)" {
     It "loads the same flat layout used by the migration bundle" {
         $flatDir = Join-Path ([System.IO.Path]::GetTempPath()) ("WinEase-r2-flat-" + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $flatDir -Force | Out-Null
+        $savedHelperRoot = $script:WinEaseHelperRoot
         try {
             Copy-Item -LiteralPath (Join-Path $script:RepoRoot "WinEasehelpers.ps1") -Destination $flatDir
             foreach ($relative in $script:HelperSourceFiles | Where-Object { $_ -like 'lib\*.ps1' }) {
@@ -1775,6 +1776,7 @@ Describe "WinEase helpers - split module layout (R2)" {
             }
             $marker | Should Not Be $null
         } finally {
+            $script:WinEaseHelperRoot = $savedHelperRoot
             Remove-Item -LiteralPath $flatDir -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
@@ -1782,10 +1784,12 @@ Describe "WinEase helpers - split module layout (R2)" {
     It "throws a clear error when a required split module is missing" {
         $missingDir = Join-Path ([System.IO.Path]::GetTempPath()) ("WinEase-r2-missing-" + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $missingDir -Force | Out-Null
+        $savedHelperRoot = $script:WinEaseHelperRoot
         try {
             Copy-Item -LiteralPath (Join-Path $script:RepoRoot "WinEasehelpers.ps1") -Destination $missingDir
             { . (Join-Path $missingDir "WinEasehelpers.ps1") } | Should Throw
         } finally {
+            $script:WinEaseHelperRoot = $savedHelperRoot
             Remove-Item -LiteralPath $missingDir -Recurse -Force -ErrorAction SilentlyContinue
         }
     }

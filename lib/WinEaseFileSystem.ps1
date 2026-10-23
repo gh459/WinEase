@@ -1,5 +1,5 @@
 # WinEaseFileSystem.ps1 - Directory safety checks, ownership/ACL, robust deletion and capacity checks
-# Dot-sourced into the script scope of WinEasebuilder.ps1 (function definitions only).
+# Dot-sourced by WinEasehelpers.ps1 (function definitions only).
 
 # Helper function: Assert directory safety before destructive operations
 function Assert-WinEaseDirectorySafety {

@@ -1846,7 +1846,7 @@ try {
 # migration backup (which does contain personal data) plus a desktop launcher.
 # The bundle has to be self-contained: the engine needs WinEasehelpers.ps1 (restore path validation,
 # see tools\migrator\WinEaseMigration.ps1) and the wizard needs gui\WinEaseGui.ps1 (shared WinForms
-# parts, see tools\migrator\WinEase-Migrator.ps1). Both are copied flat into the Migration folder,
+# parts, see tools\migrator\WinEase-Migrator.ps1). They are copied flat into the Migration folder (the helpers with the lib modules it loads),
 # which is where the migrator looks for them (MigratorDir\<file>).
 if ($includeMigrationAssistant -eq $true) {
     try {
