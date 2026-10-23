@@ -2413,8 +2413,8 @@ function Test-WinEaseRecoveryReadiness {
         # with the bundled backup was installed, but checking it keeps the readiness
         # report correct when the helper runs from such an installation.
         $backupCandidates = @(
-            (Join-Path -Path $env:USERPROFILE -ChildPath 'WinEase_migration_backup\migration-manifest.json'),
-            (Join-Path -Path ([Environment]::GetFolderPath('MyDocuments')) -ChildPath 'WinEase_migration_backup\migration-manifest.json'),
+            $(if ($env:USERPROFILE) { Join-Path -Path $env:USERPROFILE -ChildPath (Join-Path -Path 'WinEase_migration_backup' -ChildPath 'migration-manifest.json') }),
+            $(if ([Environment]::GetFolderPath('MyDocuments')) { Join-Path -Path ([Environment]::GetFolderPath('MyDocuments')) -ChildPath (Join-Path -Path 'WinEase_migration_backup' -ChildPath 'migration-manifest.json') }),
             'C:\WinEaseBackup\migration-manifest.json'
         )
         foreach ($manifestPath in $backupCandidates) {

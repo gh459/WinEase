@@ -81,7 +81,13 @@ Describe "WinEase builder - profile presets" {
         # run -TestSelf which validates presets internally and capture exit code.
     }
     It "built-in presets validate via -TestSelf" {
-        $psi = New-Object System.Diagnostics.ProcessStartInfo "powershell.exe"
+        if ($IsLinux -or $IsMacOS) {
+            Set-ItResult -Inconclusive -Because "-TestSelf DISM checks are Windows-only"
+            return
+        }
+        $psExe = (Get-Process -Id $PID).Path
+        if ($psExe -match 'dotnet$' -and (Test-Path "$env:HOME/.dotnet/tools/pwsh")) { $psExe = "$env:HOME/.dotnet/tools/pwsh" }
+        $psi = New-Object System.Diagnostics.ProcessStartInfo $psExe
         $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$script:BuilderPath`" -TestSelf"
         $psi.UseShellExecute = $false
         $psi.RedirectStandardOutput = $true
@@ -314,6 +320,155 @@ Describe "WinEase builder - Apply-WinEaseProfileDebloat edge cases" {
 
         $script:advancedDebloatStandard[0] | Should Be $canonicalTarget
         $script:DebloatEngineSelection[$canonicalTarget] | Should Be 'PowerShell'
+    }
+}
+
+Describe "WinEase builder - Apply-WinEaseProfileTweaks" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+
+        $builderContent = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "WinEasebuilder.ps1"), [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($builderContent, [ref]$tokens, [ref]$parseErrors)
+
+        $funcNodes = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -in @('Apply-WinEaseProfileTweaks', 'Get-WinEaseProfileValue', 'Resolve-WinEaseTweakKey', 'Sync-WinEaseTweakVariables')
+        }, $true)) | ForEach-Object { $_.Extent.Text }
+
+        . ([scriptblock]::Create(($funcNodes -join "`n")))
+    }
+
+    BeforeEach {
+        $script:SavedAllTweakDefs = $script:AllTweakDefs
+        $script:SavedTweakKeyAliases = $script:TweakKeyAliases
+        $script:SavedTweakVariableMap = $script:TweakVariableMap
+        $script:SavedTweakSettings = $script:TweakSettings
+
+        $script:AllTweakDefs = [ordered]@{
+            'DisableUAC'      = @{ Category = 'Security'; Default = $false; Description = 'Disable UAC' }
+            'DisableCopilot'  = @{ Category = 'Privacy';  Default = $false; Description = 'Disable Copilot' }
+            'EnableDarkTheme' = @{ Category = 'UI';       Default = $true;  Description = 'Enable Dark Theme' }
+        }
+        $script:TweakKeyAliases = [ordered]@{
+            'LegacyUAC' = 'DisableUAC'
+        }
+        $script:TweakVariableMap = [ordered]@{
+            'DisableUAC'     = 'disableUACVar'
+            'DisableCopilot' = 'disableCopilotVar'
+        }
+        $script:TweakSettings = [ordered]@{
+            'DisableUAC'      = $false
+            'DisableCopilot'  = $false
+            'EnableDarkTheme' = $true
+        }
+    }
+
+    AfterEach {
+        $script:AllTweakDefs = $script:SavedAllTweakDefs
+        $script:TweakKeyAliases = $script:SavedTweakKeyAliases
+        $script:TweakVariableMap = $script:SavedTweakVariableMap
+        $script:TweakSettings = $script:SavedTweakSettings
+    }
+
+    It "applies IDictionary TweakSettings in preset mode (SourceIsProfile = false)" {
+        $preset = @{
+            TweakSettings = [ordered]@{
+                DisableUAC = $true
+            }
+        }
+        Apply-WinEaseProfileTweaks -TargetPreset $preset -SourceIsProfile $false
+        $script:TweakSettings['DisableUAC'] | Should Be $true
+        $script:TweakSettings['DisableCopilot'] | Should Be $false
+        $script:TweakSettings['EnableDarkTheme'] | Should Be $true
+    }
+
+    It "applies PSCustomObject TweakSettings in profile mode (SourceIsProfile = true)" {
+        $profileObj = [PSCustomObject]@{
+            TweakSettings = [PSCustomObject]@{
+                DisableCopilot = $true
+            }
+        }
+        Apply-WinEaseProfileTweaks -TargetPreset $profileObj -SourceIsProfile $true
+        $script:TweakSettings['DisableCopilot'] | Should Be $true
+        $script:TweakSettings['DisableUAC'] | Should Be $false
+    }
+
+    It "resolves legacy tweak key aliases in TweakSettings" {
+        $preset = @{
+            TweakSettings = @{
+                LegacyUAC = $true
+            }
+        }
+        Apply-WinEaseProfileTweaks -TargetPreset $preset -SourceIsProfile $false
+        $script:TweakSettings['DisableUAC'] | Should Be $true
+    }
+
+    It "allows top-level tweak key settings on TargetPreset to override nested TweakSettings" {
+        $preset = @{
+            TweakSettings = @{ DisableUAC = $false }
+            DisableUAC    = $true
+        }
+        Apply-WinEaseProfileTweaks -TargetPreset $preset -SourceIsProfile $false
+        $script:TweakSettings['DisableUAC'] | Should Be $true
+    }
+
+    It "gracefully ignores unknown or unregistered tweak keys" {
+        $preset = @{
+            TweakSettings = @{ UnknownTweakKey = $true }
+            UnknownTopKey = $true
+        }
+        Apply-WinEaseProfileTweaks -TargetPreset $preset -SourceIsProfile $false
+        $script:TweakSettings.Contains('UnknownTweakKey') | Should Be $false
+        $script:TweakSettings.Contains('UnknownTopKey') | Should Be $false
+    }
+
+    It "synchronizes script-scoped variables mapped via script:TweakVariableMap" {
+        $preset = @{
+            TweakSettings = @{ DisableUAC = $true; DisableCopilot = $true }
+        }
+        Apply-WinEaseProfileTweaks -TargetPreset $preset -SourceIsProfile $false
+        $script:disableUACVar | Should Be $true
+        $script:disableCopilotVar | Should Be $true
+    }
+
+    It "handles null and empty TargetPreset or TweakSettings without throwing" {
+        Apply-WinEaseProfileTweaks -TargetPreset $null -SourceIsProfile $false
+        $script:TweakSettings['EnableDarkTheme'] | Should Be $true
+
+        Apply-WinEaseProfileTweaks -TargetPreset @{} -SourceIsProfile $false
+        $script:TweakSettings['EnableDarkTheme'] | Should Be $true
+
+        Apply-WinEaseProfileTweaks -TargetPreset @{ TweakSettings = $null } -SourceIsProfile $false
+        $script:TweakSettings['EnableDarkTheme'] | Should Be $true
+    }
+
+    It "correctly coerces boolean representations (string 'true'/'false' and numbers 1/0)" {
+        $preset = @{
+            TweakSettings = @{
+                DisableUAC      = 'true'
+                EnableDarkTheme = 0
+            }
+        }
+        Apply-WinEaseProfileTweaks -TargetPreset $preset -SourceIsProfile $false
+        $script:TweakSettings['DisableUAC'] | Should Be $true
+        $script:TweakSettings['EnableDarkTheme'] | Should Be $false
+    }
+
+    It "overrides preset settings when SourceIsProfile is true and profile settings conflict" {
+        $preset = @{
+            TweakSettings = @{ DisableUAC = $false }
+        }
+        Apply-WinEaseProfileTweaks -TargetPreset $preset -SourceIsProfile $false
+        $script:TweakSettings['DisableUAC'] | Should Be $false
+
+        $profileConfig = @{
+            TweakSettings = @{ DisableUAC = $true }
+        }
+        Apply-WinEaseProfileTweaks -TargetPreset $profileConfig -SourceIsProfile $true
+        $script:TweakSettings['DisableUAC'] | Should Be $true
     }
 }
 
@@ -869,11 +1024,11 @@ Describe "Import-WinEaseDependencyCatalog" {
         $catalog.Components | Should Not Be $null
         $catalog.Tweaks | Should Not Be $null
         $script:WinEaseDependencyCatalog | Should Be $catalog
-        $script:WinEaseDependencyCatalogPath | Should Match 'config\\dependencies\.psd1$'
+        $script:WinEaseDependencyCatalogPath | Should Match 'config[/\\]dependencies\.psd1$'
 
         $catalog2 = Import-WinEaseDependencyCatalog -Path "   "
         $catalog2 | Should Not Be $null
-        $script:WinEaseDependencyCatalogPath | Should Match 'config\\dependencies\.psd1$'
+        $script:WinEaseDependencyCatalogPath | Should Match 'config[/\\]dependencies\.psd1$'
     }
 
     It "imports a custom dependency catalog file from specified path" {
@@ -1123,16 +1278,19 @@ Describe "User Extensibility Engine (lib/WinEaseExtensions.ps1)" {
     }
     It "Test-WinEaseRecoveryReadiness finds the default profile backup" {
         $oldProfile = $env:USERPROFILE
+        $oldHome = $env:HOME
         $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('winease_readiness_' + [guid]::NewGuid().ToString('N'))
         try {
             $backup = Join-Path $tmp 'WinEase_migration_backup'
             New-Item -ItemType Directory -Path $backup -Force | Out-Null
             Set-Content -LiteralPath (Join-Path $backup 'migration-manifest.json') -Value '{}' -Encoding ASCII
             $env:USERPROFILE = $tmp
+            $env:HOME = $tmp
             $rr = Test-WinEaseRecoveryReadiness -Config @{ KeepRecoveryEnv = $false }
             $rr.MigrationBackupFound | Should Be $true
         } finally {
             $env:USERPROFILE = $oldProfile
+            $env:HOME = $oldHome
             Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
@@ -1380,8 +1538,8 @@ Describe "User Extensibility Engine (lib/WinEaseExtensions.ps1)" {
 
             $prev = @(Get-WinEaseCustomScriptPreview -RepoRoot $repo)
             @($prev | Where-Object { $_.Stage -eq 'FirstLogon' }).Count | Should Be 2
-            @($prev | Where-Object { $_.Stage -eq 'UserOnce' })[0].ImagePath | Should Match '^Windows\\Setup\\Scripts\\UserCustom\\'
-            @($prev | Where-Object { $_.Stage -eq 'FirstLogon' })[0].ImagePath | Should Match '^Windows\\Setup\\Scripts\\Custom\\'
+            @($prev | Where-Object { $_.Stage -eq 'UserOnce' })[0].ImagePath | Should Match '^Windows[/\\]Setup[/\\]Scripts[/\\]UserCustom[/\\]'
+            @($prev | Where-Object { $_.Stage -eq 'FirstLogon' })[0].ImagePath | Should Match '^Windows[/\\]Setup[/\\]Scripts[/\\]Custom[/\\]'
         } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
@@ -1439,7 +1597,8 @@ Describe "User Extensibility Engine (lib/WinEaseExtensions.ps1)" {
 Describe "S1 - user extensions survive -PresetsOnly re-import" {
     It "keeps UserTweakDefs and UserCustomScripts after a -PresetsOnly call" {
         . (Join-Path $script:RepoRoot 'lib\WinEaseExtensions.ps1')
-        $dir = Join-Path $env:TEMP ("s1ext_" + [guid]::NewGuid().ToString('N'))
+        $tempPath = if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() }
+        $dir = Join-Path $tempPath ("s1ext_" + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
         $cfg = Join-Path $dir 'user-tweaks.psd1'
         $lines = @(

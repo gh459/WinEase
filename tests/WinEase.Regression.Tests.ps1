@@ -24,7 +24,7 @@ function Invoke-WinEaseBuilderProcess {
         [string[]]$Arguments,
         [int]$TimeoutSeconds = 300
     )
-    $exe = if ((Get-Process -Id $PID).Path -match 'dotnet$') { (Get-Command pwsh).Source } else { (Get-Process -Id $PID).Path }
+    $exe = if ((Get-Process -Id $PID).ProcessName -match 'dotnet') { 'pwsh' } else { (Get-Process -Id $PID).Path }
     $quoted = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:BuilderPath) + @($Arguments) | ForEach-Object {
         if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
     }
