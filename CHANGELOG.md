@@ -35,7 +35,7 @@ WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 - **Phase 13 aborted after the image had already been committed when
   `build_diagnostics` disappeared.** A parallel Pester/dry-run invocation rotated the
   diagnostics folder and removed the still-empty directory of the running build, so
-  `File.AppendAllText` for `dism_export_integrity_report.txt` threw
+  `File.AppendAllText` for the DISM export integrity report threw
   `DirectoryNotFoundException` (and DISM's `/LogPath` pointed into the missing folder).
   Phases 13 and 15 now re-create the directory before they write, and dry runs / test
   mode no longer rotate the diagnostics of a running build.
