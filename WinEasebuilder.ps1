@@ -1473,7 +1473,7 @@ function Apply-WinEaseGuiResult {
     if ($GuiResult.PhysicalDebloatConsent) { $script:allowPhysicalDebloat = $true }
 
     if ($GuiResult.BasePresetKey) {
-        Apply-ProfileSettings -ProfileName $GuiResult.BasePresetKey | Out-Null
+        $null = Apply-ProfileSettings -ProfileName $GuiResult.BasePresetKey
     }
 
     if ($GuiResult.SourceDrive) { $script:SourceDrive = $GuiResult.SourceDrive }
