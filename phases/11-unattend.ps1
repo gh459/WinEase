@@ -109,11 +109,10 @@ if (Test-Path -LiteralPath $unattendSource) {
 
         # 1. Prune components matching other architectures if target architecture is explicitly present
         $allComponents = $xmlDoc.SelectNodes("//u:component", $nsMgr)
-        $compNodesToRemove = @()
-        foreach ($comp in $allComponents) {
+        $compNodesToRemove = foreach ($comp in $allComponents) {
             $compArch = $comp.GetAttribute("processorArchitecture")
             if ($compArch -and ($compArch -notin @($architecture, "neutral", "wow64"))) {
-                $compNodesToRemove += $comp
+                $comp
             }
         }
         foreach ($c in $compNodesToRemove) {
