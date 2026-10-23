@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The contract between the WinEase builder and plugin DLLs. Keep the source in C# 5 syntax: the
+       builder can compile these files with the C# compiler of Windows PowerShell when no prebuilt
+       WinEase.Plugins.Abstractions.dll is shipped (see lib\WinEasePlugins.ps1). -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>5</LangVersion>
+    <RootNamespace>WinEase.Plugins</RootNamespace>
+    <AssemblyName>WinEase.Plugins.Abstractions</AssemblyName>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Nullable>disable</Nullable>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+</Project>

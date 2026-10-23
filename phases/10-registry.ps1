@@ -962,6 +962,24 @@ function Save-WinEaseUnattendXml {
     Write-Host "  [XML Verified] Saved $($DestinationPath) (Single UTF-8 BOM, valid XML DOM, pass attributes intact)" -ForegroundColor Green
 }
 
+# Plugin contributions (IRegistryContributor, IServiceStartContributor). The registry entries
+# run through the same table runner as config\registry (build range and tweak gate included).
+if (Get-Command -Name Get-WinEasePluginContributions -ErrorAction SilentlyContinue) {
+    $pluginRegistryEntries = @(Get-WinEasePluginContributions -Kind Registry)
+    if ($pluginRegistryEntries.Count -gt 0) {
+        Write-Host "  [Plugins] Applying $($pluginRegistryEntries.Count) registry value(s) contributed by plugins..." -ForegroundColor DarkCyan
+        if ($DryRun) {
+            Write-Host "  [DryRun] Would write the plugin registry values." -ForegroundColor DarkYellow
+        } else {
+            Invoke-WinEaseRegistryTable -Entries $pluginRegistryEntries
+        }
+    }
+    foreach ($pluginService in @(Get-WinEasePluginContributions -Kind Service)) {
+        Write-Host "  [Plugin $($pluginService.PluginId)] service $($pluginService.Name) -> Start=$($pluginService.Start)" -ForegroundColor DarkCyan
+        if (-not $DryRun) { [void](Set-WinEaseServiceStartIfPresent -Name $pluginService.Name -Start $pluginService.Start) }
+    }
+}
+
 # M2: User extension actions (Registry)
 if (Get-Command -Name Invoke-WinEaseUserExtensionActions -ErrorAction SilentlyContinue) {
     try { Invoke-WinEaseUserExtensionActions -PhaseType Registry -ScratchDir $scratchDir -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }

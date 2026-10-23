@@ -141,3 +141,24 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE" }
           cargo test --locked
           if ($LASTEXITCODE -ne 0) { throw "cargo test failed with exit code $LASTEXITCODE" }
+
+  plugins-dotnet:
+    name: Plugin contract (dotnet build + xUnit)
+    # src/WinEase.Plugins.Abstractions is the contract of the plugin host (lib/WinEasePlugins.ps1);
+    # the Pester suite compiles the same sources with the Windows PowerShell compiler.
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build and test
+        shell: pwsh
+        working-directory: src
+        run: |
+          dotnet --version
+          dotnet build WinEase.Plugins.Tests -c Release
+          if ($LASTEXITCODE -ne 0) { throw "dotnet build failed with exit code $LASTEXITCODE" }
+          dotnet test WinEase.Plugins.Tests -c Release --no-build
+          if ($LASTEXITCODE -ne 0) { throw "dotnet test failed with exit code $LASTEXITCODE" }

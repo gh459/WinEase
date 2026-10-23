@@ -872,6 +872,12 @@ $script:WinSxsBeforeMB = & $parseSizeHelper $script:WinsxsBeforeRaw
 $script:WinSxsAfterMB  = & $parseSizeHelper $script:WinsxsAfterRaw
 $script:WinSxsSavedMB  = if ($script:WinSxsBeforeMB -gt 0 -and $script:WinSxsAfterMB -gt 0) { [math]::Max(0, [math]::Round($script:WinSxsBeforeMB - $script:WinSxsAfterMB, 1)) } else { 0 }
 
+# Plugin contributions (IImageFileContributor): files below Windows\Setup\Scripts\Plugins\<plugin id>.
+# A plugin DLL never runs in the guest; a script it wants to run there is handed over as a file.
+if (Get-Command -Name Invoke-WinEasePluginImageFiles -ErrorAction SilentlyContinue) {
+    Invoke-WinEasePluginImageFiles -ScratchDir $scratchDir -DryRun:$DryRun
+}
+
 # M2: User extension actions (SetupScripts)
 if (Get-Command -Name Invoke-WinEaseUserExtensionActions -ErrorAction SilentlyContinue) {
     try { Invoke-WinEaseUserExtensionActions -PhaseType SetupScripts -ScratchDir $scratchDir -DryRun:$DryRun -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }

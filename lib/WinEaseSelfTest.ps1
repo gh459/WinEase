@@ -801,6 +801,30 @@ function Test-WinEaseSelfCheck21ExtensionCatalogs {
     return [PSCustomObject]@{ Test = "21. Extension Catalog Parse"; Passed = $catalogPass; Details = $catalogMsg }
 }
 
+# Self-test check: the SHA256 of every DLL in the plugin lock files matches the file
+function Test-WinEaseSelfCheck22PluginLocks {
+    param([string]$ScriptRoot)
+    $lockPass = $true
+    $lockMsg = ''
+    try {
+        if (-not (Get-Command -Name Test-WinEasePluginLocks -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $ScriptRoot -ChildPath 'lib\WinEasePlugins.ps1')
+        }
+        $rows = @(Test-WinEasePluginLocks -RepoRoot $ScriptRoot)
+        $bad = @($rows | Where-Object { $_.Status -ne 'Ok' })
+        if ($bad.Count -gt 0) {
+            $lockPass = $false
+            $lockMsg = ($bad | ForEach-Object { "$($_.Source)/$($_.File): $($_.Status) $($_.Detail)" }) -join '; '
+        } else {
+            $lockMsg = "$($rows.Count) plugin lock entr$(if ($rows.Count -eq 1) { 'y matches' } else { 'ies match' }) the file hashes"
+        }
+    } catch {
+        $lockPass = $false
+        $lockMsg = "Plugin lock check failed: $($_.Exception.Message)"
+    }
+    return [PSCustomObject]@{ Test = "22. Plugin Lock Hashes"; Passed = $lockPass; Details = $lockMsg }
+}
+
 # Helper function: Execute built-in diagnostic and repository self-test suite
 function Invoke-WinEaseSelfTest {
     [CmdletBinding()]
@@ -845,6 +869,7 @@ function Invoke-WinEaseSelfTest {
     $results += Test-WinEaseSelfCheck19ResumeIntegrity  | Select-Object -Last 1
     $results += Test-WinEaseSelfCheck20TweakCoverage -ScriptRoot $ScriptRoot | Select-Object -Last 1
     $results += Test-WinEaseSelfCheck21ExtensionCatalogs -ScriptRoot $ScriptRoot | Select-Object -Last 1
+    $results += Test-WinEaseSelfCheck22PluginLocks -ScriptRoot $ScriptRoot | Select-Object -Last 1
 
     # Display Results
     Write-Host ""
