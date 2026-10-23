@@ -250,6 +250,178 @@ Describe "WinEase helpers - Format-WinEaseConfigDiff" {
     }
 }
 
+Describe "WinEase builder - Get-WinEaseComponentValue" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        $builderPath = Join-Path -Path $script:RepoRoot -ChildPath "WinEasebuilder.ps1"
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($builderPath, [ref]$null, [ref]$null)
+        $funcAst = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-WinEaseComponentValue' }, $true)
+        . ([scriptblock]::Create($funcAst.Extent.Text))
+    }
+
+    Context "String components" {
+        It "returns string value when variable exists in script scope" {
+            $script:TestCompStrVar = "CustomUser"
+            try {
+                $def = @{ Variable = "TestCompStrVar"; Type = "String" }
+                $val = Get-WinEaseComponentValue -Def $def
+                $val | Should Be "CustomUser"
+                $val -is [string] | Should Be $true
+            } finally {
+                Remove-Variable -Name "TestCompStrVar" -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+
+        It "returns empty string when variable does not exist in script scope" {
+            $def = @{ Variable = "NonExistentStrVar_XYZ"; Type = "String" }
+            $val = Get-WinEaseComponentValue -Def $def
+            $val | Should Be ""
+            $val -is [string] | Should Be $true
+        }
+
+        It "returns empty string when variable value in script scope is null" {
+            $script:TestNullStrVar = $null
+            try {
+                $def = @{ Variable = "TestNullStrVar"; Type = "String" }
+                $val = Get-WinEaseComponentValue -Def $def
+                $val | Should Be ""
+                $val -is [string] | Should Be $true
+            } finally {
+                Remove-Variable -Name "TestNullStrVar" -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+
+        It "converts non-string variable values (integers, booleans) to string" {
+            $script:TestNumVar = 4096
+            $script:TestBoolVar = $true
+            try {
+                $defNum = @{ Variable = "TestNumVar"; Type = "String" }
+                $valNum = Get-WinEaseComponentValue -Def $defNum
+                $valNum | Should Be "4096"
+                $valNum -is [string] | Should Be $true
+
+                $defBool = @{ Variable = "TestBoolVar"; Type = "String" }
+                $valBool = Get-WinEaseComponentValue -Def $defBool
+                $valBool | Should Be "True"
+                $valBool -is [string] | Should Be $true
+            } finally {
+                Remove-Variable -Name "TestNumVar" -Scope Script -ErrorAction SilentlyContinue
+                Remove-Variable -Name "TestBoolVar" -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Context "Bool components" {
+        It "returns boolean true/false when variable exists in script scope" {
+            $script:TestBoolTrue = $true
+            $script:TestBoolFalse = $false
+            try {
+                $defTrue = @{ Variable = "TestBoolTrue"; Type = "Bool" }
+                $valTrue = Get-WinEaseComponentValue -Def $defTrue
+                $valTrue | Should Be $true
+                $valTrue -is [bool] | Should Be $true
+
+                $defFalse = @{ Variable = "TestBoolFalse"; Type = "Bool" }
+                $valFalse = Get-WinEaseComponentValue -Def $defFalse
+                $valFalse | Should Be $false
+                $valFalse -is [bool] | Should Be $true
+            } finally {
+                Remove-Variable -Name "TestBoolTrue" -Scope Script -ErrorAction SilentlyContinue
+                Remove-Variable -Name "TestBoolFalse" -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+
+        It "returns boolean false when variable does not exist in script scope" {
+            $def = @{ Variable = "NonExistentBoolVar_XYZ"; Type = "Bool" }
+            $val = Get-WinEaseComponentValue -Def $def
+            $val | Should Be $false
+            $val -is [bool] | Should Be $true
+        }
+
+        It "returns boolean false when variable value in script scope is null" {
+            $script:TestNullBoolVar = $null
+            try {
+                $def = @{ Variable = "TestNullBoolVar"; Type = "Bool" }
+                $val = Get-WinEaseComponentValue -Def $def
+                $val | Should Be $false
+                $val -is [bool] | Should Be $true
+            } finally {
+                Remove-Variable -Name "TestNullBoolVar" -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+
+        It "evaluates non-boolean variable values according to boolean cast rules" {
+            $script:TestIntOne = 1
+            $script:TestIntZero = 0
+            $script:TestNonEmptyStr = "User"
+            $script:TestEmptyStr = ""
+            try {
+                $valOne = Get-WinEaseComponentValue -Def @{ Variable = "TestIntOne"; Type = "Bool" }
+                $valOne | Should Be $true
+
+                $valZero = Get-WinEaseComponentValue -Def @{ Variable = "TestIntZero"; Type = "Bool" }
+                $valZero | Should Be $false
+
+                $valNonEmpty = Get-WinEaseComponentValue -Def @{ Variable = "TestNonEmptyStr"; Type = "Bool" }
+                $valNonEmpty | Should Be $true
+
+                $valEmpty = Get-WinEaseComponentValue -Def @{ Variable = "TestEmptyStr"; Type = "Bool" }
+                $valEmpty | Should Be $false
+            } finally {
+                Remove-Variable -Name "TestIntOne" -Scope Script -ErrorAction SilentlyContinue
+                Remove-Variable -Name "TestIntZero" -Scope Script -ErrorAction SilentlyContinue
+                Remove-Variable -Name "TestNonEmptyStr" -Scope Script -ErrorAction SilentlyContinue
+                Remove-Variable -Name "TestEmptyStr" -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Context "Edge cases, case-insensitivity and input formats" {
+        It "handles Type matching in a case-insensitive manner" {
+            $script:TestCaseVar = "CaseValue"
+            try {
+                $defLower = @{ Variable = "TestCaseVar"; Type = "string" }
+                $valLower = Get-WinEaseComponentValue -Def $defLower
+                $valLower | Should Be "CaseValue"
+
+                $defUpper = @{ Variable = "TestCaseVar"; Type = "STRING" }
+                $valUpper = Get-WinEaseComponentValue -Def $defUpper
+                $valUpper | Should Be "CaseValue"
+            } finally {
+                Remove-Variable -Name "TestCaseVar" -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+
+        It "falls back to boolean casting for unrecognized or missing Type" {
+            $script:TestSpecialVar = $true
+            try {
+                $defSpecial = @{ Variable = "TestSpecialVar"; Type = "Special" }
+                $valSpecial = Get-WinEaseComponentValue -Def $defSpecial
+                $valSpecial | Should Be $true
+                $valSpecial -is [bool] | Should Be $true
+
+                $defNoType = @{ Variable = "TestSpecialVar" }
+                $valNoType = Get-WinEaseComponentValue -Def $defNoType
+                $valNoType | Should Be $true
+                $valNoType -is [bool] | Should Be $true
+            } finally {
+                Remove-Variable -Name "TestSpecialVar" -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+
+        It "accepts ordered hashtables (OrderedDictionary) as Def parameter" {
+            $script:TestOrderedVar = "OrderedVal"
+            try {
+                $defOrdered = [ordered]@{ Variable = "TestOrderedVar"; Type = "String" }
+                $val = Get-WinEaseComponentValue -Def $defOrdered
+                $val | Should Be "OrderedVal"
+            } finally {
+                Remove-Variable -Name "TestOrderedVar" -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
 Describe "WinEase settings - config\schema.psd1 is the single source of truth" {
     $builderText = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
     $builderAst = [System.Management.Automation.Language.Parser]::ParseInput($builderText, [ref]$null, [ref]$null)
