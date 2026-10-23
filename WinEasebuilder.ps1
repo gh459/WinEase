@@ -888,7 +888,7 @@ foreach ($aliasKey in @($presetFile.Aliases.Keys)) { $script:BuiltInPresetAliase
 # M2: Load user presets now that BuiltInPresets is defined
 try {
     if (Get-Command -Name Import-WinEaseUserExtensions -ErrorAction SilentlyContinue) {
-        Import-WinEaseUserExtensions -PresetsOnly | Out-Null
+        $null = Import-WinEaseUserExtensions -PresetsOnly
     }
 } catch {
     Write-Verbose "Ignored: $($_.Exception.Message)"
