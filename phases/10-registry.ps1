@@ -781,9 +781,24 @@ if (Test-TweakEnabled 'PhotoViewerAssociations' $true) {
         # Do not pass the command through reg.exe: its embedded quotes make reg.exe
         # interpret the value as extra arguments, so the open\command key was never
         # created. The registry provider writes the string verbatim.
+        #
+        # Windows ships protected ProgIDs (notably the TIFF one) whose existing
+        # shell\open key is owned by TrustedInstaller. Leave a valid existing command
+        # alone; only create the missing command for the new PhotoViewer ProgIDs, and
+        # never abort the whole build if one legacy key refuses the write.
         $commandKey = "Registry::HKEY_LOCAL_MACHINE\zSOFTWARE\Classes\$progId\shell\open\command"
-        New-Item -Path $commandKey -Force -ErrorAction Stop | Out-Null
-        Set-ItemProperty -Path $commandKey -Name '(default)' -Value $photoViewerCommand -ErrorAction Stop
+        $existingCommand = $null
+        try {
+            $existingCommand = (Get-ItemProperty -LiteralPath $commandKey -Name '(default)' -ErrorAction Stop).'(default)'
+        } catch { $existingCommand = $null }
+        if ("$existingCommand" -notmatch 'PhotoViewer\.dll') {
+            try {
+                New-Item -Path $commandKey -Force -ErrorAction Stop | Out-Null
+                Set-ItemProperty -Path $commandKey -Name '(default)' -Value $photoViewerCommand -ErrorAction Stop
+            } catch {
+                Write-Warning "Could not register the Photo Viewer command for $progId`: $($_.Exception.Message)"
+            }
+        }
     }
     foreach ($pa in $photoViewerAssocs) {
         reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities\FileAssociations" /f /v $pa.Ext /t REG_SZ /d $pa.ProgId > $null 2>&1

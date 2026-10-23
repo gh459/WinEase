@@ -6762,6 +6762,8 @@ Describe "WinEase UI options that have to take effect" {
     It "writes the Photo Viewer open command without passing embedded quotes through reg.exe" {
         $script:UiPhase | Should Match 'New-Item -Path \$commandKey'
         $script:UiPhase | Should Match 'Set-ItemProperty -Path \$commandKey -Name ''\(default\)'' -Value \$photoViewerCommand'
+        $script:UiPhase.Contains('$existingCommand = (Get-ItemProperty') | Should Be $true
+        $script:UiPhase.Contains('if ("$existingCommand" -notmatch ''PhotoViewer\.dll'') {') | Should Be $true
     }
 
     It "writes the lock-screen policy from the option instead of forcing it on" {
