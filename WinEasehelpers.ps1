@@ -799,6 +799,7 @@ class BuildContext {
     [string]$PayloadFormat
     [string]$ComputerName
     [string]$UserName
+    [string]$UserPassword
     [string]$SourceWimSize
     [string]$ActivePayloadPath
     [string]$ActivePayloadName
@@ -941,6 +942,7 @@ function New-BuildContextFromScriptScope {
     $ctx.PayloadFormat = $PayloadFormat
     $ctx.ComputerName = $ComputerName
     $ctx.UserName = $UserName
+    $ctx.UserPassword = $UserPassword
     $ctx.SourceWimSize = $sourceWimSize
     $ctx.ActivePayloadPath = $activePayloadPath
     $ctx.ActivePayloadName = $activePayloadName
@@ -1181,7 +1183,7 @@ function Remove-WinEaseTreeRobust {
     $repairFailures = [System.Collections.Generic.Dictionary[string,string]]::new()
 
     try {
-        New-Item -Path $emptyTemp -ItemType Directory -Force -ErrorAction Stop | Out-Null
+        $null = New-Item -Path $emptyTemp -ItemType Directory -Force -ErrorAction Stop
     } catch {
         Write-Warning "Remove-WinEaseTreeRobust: could not create mirror source '$emptyTemp': $_"
     }
@@ -1311,7 +1313,7 @@ function Write-WinEaseTextFileAtomic {
     }
     $dir = [System.IO.Path]::GetDirectoryName($Path)
     if ($dir -and -not (Test-Path -LiteralPath $dir)) {
-        New-Item -ItemType Directory -Force -Path $dir -ErrorAction SilentlyContinue | Out-Null
+        $null = New-Item -ItemType Directory -Force -Path $dir -ErrorAction SilentlyContinue
     }
     $tempPath = "$Path.$([System.Guid]::NewGuid().ToString('N')).tmp"
     try {
@@ -1737,8 +1739,7 @@ function Get-WinEaseMetricStatistics {
     $count = $sorted.Count
 
     # Mean
-    $sum = 0.0
-    foreach ($v in $sorted) { $sum += $v }
+    $sum = [System.Linq.Enumerable]::Sum([double[]]$sorted)
     $mean = [math]::Round($sum / $count, 3)
 
     # Median (p50)
@@ -1923,7 +1924,7 @@ function Test-WinEaseDependencies {
         $Config = $normalizedConfig
     }
     if (-not $script:WinEaseDependencyCatalog) {
-        try { Import-WinEaseDependencyCatalog | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        try { $null = Import-WinEaseDependencyCatalog } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
     $cat = $script:WinEaseDependencyCatalog
     $conflicts = [System.Collections.Generic.List[object]]::new()
@@ -2412,8 +2413,8 @@ function Test-WinEaseRecoveryReadiness {
         # with the bundled backup was installed, but checking it keeps the readiness
         # report correct when the helper runs from such an installation.
         $backupCandidates = @(
-            (Join-Path -Path $env:USERPROFILE -ChildPath 'WinEase_migration_backup\migration-manifest.json'),
-            (Join-Path -Path ([Environment]::GetFolderPath('MyDocuments')) -ChildPath 'WinEase_migration_backup\migration-manifest.json'),
+            $(if ($env:USERPROFILE) { Join-Path -Path $env:USERPROFILE -ChildPath (Join-Path -Path 'WinEase_migration_backup' -ChildPath 'migration-manifest.json') }),
+            $(if ([Environment]::GetFolderPath('MyDocuments')) { Join-Path -Path ([Environment]::GetFolderPath('MyDocuments')) -ChildPath (Join-Path -Path 'WinEase_migration_backup' -ChildPath 'migration-manifest.json') }),
             'C:\WinEaseBackup\migration-manifest.json'
         )
         foreach ($manifestPath in $backupCandidates) {

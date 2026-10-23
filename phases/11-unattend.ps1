@@ -76,13 +76,19 @@ if (Test-Path -LiteralPath $unattendSource) {
     # Dynamically purge any harmful ChildCompletion or SystemSetupInProgress forging that breaks Setup state machine
     $xmlContent = $xmlContent -replace '(?s)<RunSynchronousCommand[^>]*>\s*<Order>\d+</Order>\s*<Path>[^<]*ChildCompletion[^<]*</Path>\s*</RunSynchronousCommand>', ''
     $xmlContent = $xmlContent -replace '(?s)\t*\{\s*#[^\r\n]*Zero-Click Setup Completion[^\}]*\}\s*;\r?\n', ''
-    # Dynamically parameterize ComputerName and UserName
+    # Dynamically parameterize ComputerName, UserName and UserPassword
+    $targetUserPass = if ($null -ne $UserPassword -and $UserPassword -ne '') { $UserPassword } elseif ($null -ne $script:UserPassword -and $script:UserPassword -ne '') { $script:UserPassword } else { '' }
     $xmlContent = $xmlContent -replace '<ComputerName>WinEase</ComputerName>', "<ComputerName>$ComputerName</ComputerName>"
     $xmlContent = $xmlContent -replace '<Username>User</Username>', "<Username>$UserName</Username>"
     $xmlContent = $xmlContent -replace '<Name>User</Name>', "<Name>$UserName</Name>"
     $xmlContent = $xmlContent -replace '<DisplayName>User</DisplayName>', "<DisplayName>$UserName</DisplayName>"
-    $xmlContent =$xmlContent -replace 'net\.exe user User ', "net.exe user `"$UserName`" "
-    $xmlContent =$xmlContent -replace 'Set-LocalUser -Name "User"', "Set-LocalUser -Name `"$UserName`""
+    if ($targetUserPass) {
+        $xmlContent = $xmlContent -replace 'net\.exe user User "" /active:yes /passwordreq:no', "net.exe user `"$UserName`" `"$targetUserPass`" /active:yes /passwordreq:yes"
+    } else {
+        $xmlContent = $xmlContent -replace 'net\.exe user User "" /active:yes /passwordreq:no', "net.exe user `"$UserName`" `"`" /active:yes /passwordreq:no"
+    }
+    $xmlContent = $xmlContent -replace 'net\.exe user User ', "net.exe user `"$UserName`" "
+    $xmlContent = $xmlContent -replace 'Set-LocalUser -Name "User"', "Set-LocalUser -Name `"$UserName`""
     $xmlContent = $xmlContent -replace "-Name 'DefaultUserName' -Type 'String' -Force -Value 'User'", "-Name 'DefaultUserName' -Type 'String' -Force -Value '$UserName'"
 
     # Clean and match target architecture via XML DOM (Resolves P0-07 Duplicate Component Bug)
@@ -123,11 +129,10 @@ if (Test-Path -LiteralPath $unattendSource) {
 
         # 1. Prune components matching other architectures if target architecture is explicitly present
         $allComponents = $xmlDoc.SelectNodes("//u:component", $nsMgr)
-        $compNodesToRemove = @()
-        foreach ($comp in $allComponents) {
+        $compNodesToRemove = foreach ($comp in $allComponents) {
             $compArch = $comp.GetAttribute("processorArchitecture")
             if ($compArch -and ($compArch -notin @($architecture, "neutral", "wow64"))) {
-                $compNodesToRemove += $comp
+                $comp
             }
         }
         foreach ($c in $compNodesToRemove) {
@@ -174,6 +179,13 @@ if (Test-Path -LiteralPath $unattendSource) {
                     [void]$newComp.AppendChild($inpLoc)
                     [void]$specPass.AppendChild($newComp)
                 }
+            }
+        }
+
+        if ($targetUserPass) {
+            $passValueNodes = $xmlDoc.SelectNodes("//*[local-name()='UserAccounts']//*[local-name()='Password']/*[local-name()='Value'] | //*[local-name()='AutoLogon']/*[local-name()='Password']/*[local-name()='Value']")
+            foreach ($pvNode in $passValueNodes) {
+                $pvNode.InnerText = $targetUserPass
             }
         }
 
@@ -330,8 +342,9 @@ if (Test-Path -LiteralPath $unattendSource) {
         "WinEase-transition-watchdog.ps1" = (Read-WinEaseEmbeddedScript -RelativePath 'scripts\setup\WinEase-transition-watchdog.ps1')
     }
 
-    # Inject the configured account name into the OOBE transition repair helper
+    # Inject the configured account name and password into the OOBE transition repair helper
     $helperScripts['WinEase-oobe-autologon-repair.ps1'] = $helperScripts['WinEase-oobe-autologon-repair.ps1'].Replace('__WINEASE_USERNAME__', $UserName)
+    $helperScripts['WinEase-oobe-autologon-repair.ps1'] = $helperScripts['WinEase-oobe-autologon-repair.ps1'].Replace('__WINEASE_USERPASSWORD__', $targetUserPass)
 
     # The blank-password auto-logon is only armed when the user asked for it
     # (ConfigureWinlogon). Without that option the OOBE -> first session transition

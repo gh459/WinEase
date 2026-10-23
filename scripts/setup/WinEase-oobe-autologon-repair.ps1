@@ -9,7 +9,7 @@ $key  = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
 
 Set-ItemProperty -LiteralPath $key -Name 'AutoAdminLogon'  -Value '1'    -Type String -Force
 Set-ItemProperty -LiteralPath $key -Name 'DefaultUserName' -Value $user -Type String -Force
-Set-ItemProperty -LiteralPath $key -Name 'DefaultPassword' -Value ''    -Type String -Force
+Set-ItemProperty -LiteralPath $key -Name 'DefaultPassword' -Value '__WINEASE_USERPASSWORD__' -Type String -Force
 Set-ItemProperty -LiteralPath $key -Name 'ForceAutoLogon'  -Value '1'    -Type String -Force
 
 $sid = $null

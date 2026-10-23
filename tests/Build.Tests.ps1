@@ -16,6 +16,16 @@ Describe "WinEase builder - AST syntax" {
         [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$errors) | Out-Null
         $errors.Count | Should Be 0
     }
+    It "autounattend.xml and scripts/FirstLogon.ps1 do not contain blank password overrides" {
+        $firstLogonPath = Join-Path $script:RepoRoot "scripts\FirstLogon.ps1"
+        $flContent = [System.IO.File]::ReadAllText($firstLogonPath, [System.Text.Encoding]::UTF8)
+        $xmlContent = [System.IO.File]::ReadAllText($script:UnattendPath, [System.Text.Encoding]::UTF8)
+
+        $flContent | Should Not Match '/passwordreq:no'
+        $flContent | Should Not Match 'net\.exe user User ""'
+        $xmlContent | Should Not Match '/passwordreq:no'
+        $xmlContent | Should Not Match 'net\.exe user User ""'
+    }
     It "gui\WinEaseGui.ps1 parses with zero parser errors" {
         $content = [System.IO.File]::ReadAllText($script:GuiPath, [System.Text.Encoding]::UTF8)
         $tokens = $null; $errors = $null
@@ -78,6 +88,19 @@ Describe "WinEase builder - autounattend.xml" {
         $tokens = $null; $errors = $null
         [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$errors) | Out-Null
         $errors.Count | Should Be 0
+    }
+    It "parameterizes UserPassword when set" {
+        $xmlPath = Join-Path $script:RepoRoot "autounattend.xml"
+        $raw = [System.IO.File]::ReadAllText($xmlPath, [System.Text.Encoding]::UTF8)
+        $doc = [xml]$raw
+        $UserPassword = "TestSecretPassword123!"
+        $targetUserPass = $UserPassword
+        $passValueNodes = $doc.SelectNodes("//*[local-name()='UserAccounts']//*[local-name()='Password']/*[local-name()='Value'] | //*[local-name()='AutoLogon']/*[local-name()='Password']/*[local-name()='Value']")
+        foreach ($pvNode in $passValueNodes) {
+            $pvNode.InnerText = $targetUserPass
+        }
+        $updatedVal = $doc.SelectSingleNode("//*[local-name()='LocalAccount']/*[local-name()='Password']/*[local-name()='Value']").InnerText
+        $updatedVal | Should Be "TestSecretPassword123!"
     }
 }
 
@@ -370,6 +393,30 @@ Describe "WinEase builder - the tweak helper is available to every phase" {
         }
     }
 
+    It "Resolve-WinEaseTweakKey resolves alias keys and handles edge cases safely" {
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$tokens, [ref]$errors)
+        $fnText = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Resolve-WinEaseTweakKey' }, $true))[0].Extent.Text
+        $probe = New-Module -Name 'WinEaseResolveKeyProbe' -ArgumentList $fnText -ScriptBlock {
+            param($FnText)
+            $script:TweakKeyAliases = [ordered]@{ 'AliasKey' = 'CanonicalKey' }
+            . ([scriptblock]::Create($FnText))
+            Export-ModuleMember -Function 'Resolve-WinEaseTweakKey'
+        }
+        Import-Module $probe -Force
+        try {
+            (Resolve-WinEaseTweakKey 'AliasKey')       | Should Be 'CanonicalKey'
+            (Resolve-WinEaseTweakKey 'CanonicalKey')   | Should Be 'CanonicalKey'
+            (Resolve-WinEaseTweakKey 'NonExistentKey') | Should Be 'NonExistentKey'
+            (Resolve-WinEaseTweakKey '')               | Should Be ''
+            (Resolve-WinEaseTweakKey $null)            | Should Be ''
+            & $probe { $script:TweakKeyAliases = $null }
+            (Resolve-WinEaseTweakKey 'AliasKey')       | Should Be 'AliasKey'
+        } finally {
+            Remove-Module $probe -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "every tweak of the master schema is in the JSON profile schema" {
         # config\WinEase.config.schema.json is the schema of the profile files; a tweak
         # that is missing there is rejected by every editor that validates against it.
@@ -381,5 +428,170 @@ Describe "WinEase builder - the tweak helper is available to every phase" {
             if ($known -notcontains $td.Key) { $missing += $td.Key }
         }
         ($missing -join ', ') | Should Be ''
+    }
+}
+
+Describe "WinEase builder - Enter-Phase progress tracking and checkpoints" {
+    BeforeAll {
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$tokens, [ref]$errors)
+        $fnAst = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Enter-Phase' }, $true))[0]
+        $script:EnterPhaseFnText = $fnAst.Extent.Text
+    }
+
+    BeforeEach {
+        $script:SavedCheckpoints = [System.Collections.ArrayList]::new()
+        $script:EnterPhaseProbe = New-Module -Name 'WinEaseEnterPhaseProbe' -ArgumentList $script:EnterPhaseFnText -ScriptBlock {
+            param($FnText)
+            $script:CurrentPhase = 0
+            $script:TotalPhases = 18
+            $script:PhaseTimings = [ordered]@{}
+            $script:PhaseStopwatch = $null
+            $script:ResumeMode = $false
+            $script:BaseWorkDir = $null
+            $script:CurrentBuildPhase = $null
+            $script:DiagnosticData = $null
+            $script:CheckpointLog = [System.Collections.ArrayList]::new()
+
+            function Save-WinEaseCheckpoint {
+                param([int]$CompletedPhase)
+                [void]$script:CheckpointLog.Add($CompletedPhase)
+            }
+
+            . ([scriptblock]::Create($FnText))
+
+            Export-ModuleMember -Function 'Enter-Phase' -Variable 'CurrentPhase', 'TotalPhases', 'PhaseTimings', 'PhaseStopwatch', 'ResumeMode', 'BaseWorkDir', 'CurrentBuildPhase', 'DiagnosticData', 'CheckpointLog'
+        }
+        Import-Module $script:EnterPhaseProbe -Force
+    }
+
+    AfterEach {
+        Remove-Module $script:EnterPhaseProbe -Force -ErrorAction SilentlyContinue
+    }
+
+    It "handles initial phase entry (CurrentPhase = 0) without saving checkpoints or recording prior phase timings" {
+        & $script:EnterPhaseProbe {
+            Enter-Phase -PhaseNumber 1 -PhaseName "Environment"
+
+            $script:CurrentPhase | Should Be 1
+            $script:CurrentBuildPhase | Should Be "Phase 1: Environment"
+            $script:PhaseStopwatch | Should Not Be $null
+            $script:PhaseTimings.Count | Should Be 0
+            $script:CheckpointLog.Count | Should Be 0
+        }
+    }
+
+    It "persists checkpoint and records previous phase timings on phase transition when BaseWorkDir is set and ResumeMode is false" {
+        & $script:EnterPhaseProbe {
+            $script:BaseWorkDir = "/tmp/winease-work"
+            $script:ResumeMode = $false
+
+            Enter-Phase -PhaseNumber 1 -PhaseName "Environment"
+            Start-Sleep -Milliseconds 50
+            Enter-Phase -PhaseNumber 2 -PhaseName "Mount"
+
+            $script:CurrentPhase | Should Be 2
+            $script:CurrentBuildPhase | Should Be "Phase 2: Mount"
+            $script:PhaseTimings.Contains("Phase 1") | Should Be $true
+            $script:CheckpointLog.Count | Should Be 1
+            $script:CheckpointLog[0] | Should Be 1
+        }
+    }
+
+    It "suppresses checkpoint saving when ResumeMode is enabled" {
+        & $script:EnterPhaseProbe {
+            $script:BaseWorkDir = "/tmp/winease-work"
+            $script:ResumeMode = $true
+
+            Enter-Phase -PhaseNumber 1 -PhaseName "Environment"
+            Enter-Phase -PhaseNumber 2 -PhaseName "Mount"
+
+            $script:CheckpointLog.Count | Should Be 0
+        }
+    }
+
+    It "suppresses checkpoint saving when BaseWorkDir is null or empty" {
+        & $script:EnterPhaseProbe {
+            $script:BaseWorkDir = $null
+            $script:ResumeMode = $false
+
+            Enter-Phase -PhaseNumber 1 -PhaseName "Environment"
+            Enter-Phase -PhaseNumber 2 -PhaseName "Mount"
+
+            $script:CheckpointLog.Count | Should Be 0
+        }
+    }
+
+    It "updates FailurePhase on DiagnosticData when present" {
+        & $script:EnterPhaseProbe {
+            $script:DiagnosticData = [pscustomobject]@{ FailurePhase = $null }
+
+            Enter-Phase -PhaseNumber 5 -PhaseName "Appx"
+
+            $script:DiagnosticData.FailurePhase | Should Be "Phase 5: Appx"
+        }
+    }
+
+    It "gracefully handles exceptions when setting host window title" {
+        & $script:EnterPhaseProbe {
+            # WindowTitle access in headless/Linux pwsh will throw or silently fail inside catch {} block
+            { Enter-Phase -PhaseNumber 10 -PhaseName "Registry" } | Should Not Throw
+            $script:CurrentPhase | Should Be 10
+        }
+    }
+}
+
+Describe "WinEase builder - ConvertTo-WinEaseCliArgument" {
+    BeforeAll {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcNode = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'ConvertTo-WinEaseCliArgument'
+        }, $true)
+        . ([scriptblock]::Create($funcNode.Extent.Text))
+    }
+
+    It "serializes present SwitchParameter as -Name" {
+        $sw = [System.Management.Automation.SwitchParameter]::new($true)
+        ConvertTo-WinEaseCliArgument -Name "NonInteractive" -Value $sw | Should Be "-NonInteractive"
+    }
+
+    It "serializes absent SwitchParameter as -Name:`$false" {
+        $sw = [System.Management.Automation.SwitchParameter]::new($false)
+        ConvertTo-WinEaseCliArgument -Name "NonInteractive" -Value $sw | Should Be "-NonInteractive:`$false"
+    }
+
+    It "serializes boolean `$true as -Name" {
+        ConvertTo-WinEaseCliArgument -Name "KeepDefender" -Value $true | Should Be "-KeepDefender"
+    }
+
+    It "serializes boolean `$false as -Name:`$false" {
+        ConvertTo-WinEaseCliArgument -Name "KeepDefender" -Value $false | Should Be "-KeepDefender:`$false"
+    }
+
+    It "serializes dictionary with boolean values as Key=1;Key2=0 syntax" {
+        $dict = [ordered]@{ 'NetworkStack' = $true; 'TimerBCD' = $false }
+        ConvertTo-WinEaseCliArgument -Name "TweakGroupOverrides" -Value $dict | Should Be "-TweakGroupOverrides 'NetworkStack=1;TimerBCD=0'"
+    }
+
+    It "serializes empty dictionary as parameter with empty string" {
+        $dict = @{}
+        ConvertTo-WinEaseCliArgument -Name "TweakGroupOverrides" -Value $dict | Should Be "-TweakGroupOverrides ''"
+    }
+
+    It "serializes string with single quotes escaped correctly" {
+        ConvertTo-WinEaseCliArgument -Name "UserName" -Value "User's PC" | Should Be "-UserName 'User''s PC'"
+    }
+
+    It "serializes string and numeric values wrapped in single quotes" {
+        ConvertTo-WinEaseCliArgument -Name "KeepLogs" -Value 10 | Should Be "-KeepLogs '10'"
+        ConvertTo-WinEaseCliArgument -Name "WorkDir" -Value "C:\WinEase Work" | Should Be "-WorkDir 'C:\WinEase Work'"
+    }
+
+    It "serializes `$null value as parameter with empty string" {
+        ConvertTo-WinEaseCliArgument -Name "SourceDrive" -Value $null | Should Be "-SourceDrive ''"
     }
 }

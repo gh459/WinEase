@@ -16,8 +16,8 @@
     },
     {
         "path":  "scripts/setup/WinEase-oobe-autologon-repair.ps1",
-        "sha256":  "6a50cec1850937cd47ac93cad1c5ba382ef3f01b6b0546eedce4005b1a563aee",
-        "bytes":  1790
+        "sha256":  "8b43eee955d15db5bf96c61b5268b4676c984c0359dab121fc6cb368d63edce4",
+        "bytes":  1811
     },
     {
         "path":  "scripts/setup/WinEase-transition-watchdog.ps1",
@@ -41,8 +41,8 @@
     },
     {
         "path":  "scripts/tools/Atlas-ReviOS Tools/1. Toggle Windows Defender.bat",
-        "sha256":  "b5ddfe1827eced4ccb0033f715750f30b43749d2ce1d9165372845a169b36171",
-        "bytes":  1647
+        "sha256":  "40c15d3f3b0f8e418d87bce7d99ccf21f0afdc21c7a25af6ff0f6c308da88af7",
+        "bytes":  1370
     },
     {
         "path":  "scripts/tools/Atlas-ReviOS Tools/2. Toggle Windows Update.bat",

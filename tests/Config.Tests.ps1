@@ -9,13 +9,85 @@ param()
 . (Join-Path -Path $PSScriptRoot -ChildPath '_TestCommon.ps1')
 
 
+Describe "WinEase builder - Get-WinEaseProfileValue" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        $builderAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:RepoRoot "WinEasebuilder.ps1"), [ref]$null, [ref]$null)
+        $fnAst = $builderAst.Find({
+            param($n)
+            $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-WinEaseProfileValue'
+        }, $true)
+        if (-not $fnAst) { throw "Get-WinEaseProfileValue function definition not found in WinEasebuilder.ps1" }
+        . ([scriptblock]::Create($fnAst.Extent.Text))
+    }
+
+    It "returns value from IDictionary when key exists" {
+        $dict = @{ 'TestKey' = 'TestVal'; 'NumberKey' = 42 }
+        (Get-WinEaseProfileValue -TargetPreset $dict -Key 'TestKey') | Should Be 'TestVal'
+        (Get-WinEaseProfileValue -TargetPreset $dict -Key 'NumberKey') | Should Be 42
+    }
+
+    It "returns DefaultValue from IDictionary when key is missing" {
+        $dict = @{ 'OtherKey' = 'Val' }
+        (Get-WinEaseProfileValue -TargetPreset $dict -Key 'MissingKey') | Should Be $false
+        (Get-WinEaseProfileValue -TargetPreset $dict -Key 'MissingKey' -DefaultValue 'Fallback') | Should Be 'Fallback'
+    }
+
+    It "returns exact stored false or null value from IDictionary when key exists" {
+        $dict = @{ 'FalseKey' = $false; 'NullKey' = $null }
+        (Get-WinEaseProfileValue -TargetPreset $dict -Key 'FalseKey' -DefaultValue $true) | Should Be $false
+        $nullVal = Get-WinEaseProfileValue -TargetPreset $dict -Key 'NullKey' -DefaultValue 'Fallback'
+        $nullVal | Should Be $null
+    }
+
+    It "returns value from PSCustomObject when property exists" {
+        $obj = [PSCustomObject]@{ 'TestKey' = 'ObjVal'; 'NumberKey' = 99 }
+        (Get-WinEaseProfileValue -TargetPreset $obj -Key 'TestKey') | Should Be 'ObjVal'
+        (Get-WinEaseProfileValue -TargetPreset $obj -Key 'NumberKey') | Should Be 99
+    }
+
+    It "returns DefaultValue from PSCustomObject when property is missing" {
+        $obj = [PSCustomObject]@{ 'OtherProp' = 'Val' }
+        (Get-WinEaseProfileValue -TargetPreset $obj -Key 'MissingProp') | Should Be $false
+        (Get-WinEaseProfileValue -TargetPreset $obj -Key 'MissingProp' -DefaultValue 'DefaultObj') | Should Be 'DefaultObj'
+    }
+
+    It "returns exact stored false or null value from PSCustomObject when property exists" {
+        $obj = [PSCustomObject]@{ 'FalseProp' = $false; 'NullProp' = $null }
+        (Get-WinEaseProfileValue -TargetPreset $obj -Key 'FalseProp' -DefaultValue $true) | Should Be $false
+        $nullVal = Get-WinEaseProfileValue -TargetPreset $obj -Key 'NullProp' -DefaultValue 'Fallback'
+        $nullVal | Should Be $null
+    }
+
+    It "returns DefaultValue when TargetPreset is null or a primitive type" {
+        (Get-WinEaseProfileValue -TargetPreset $null -Key 'AnyKey') | Should Be $false
+        (Get-WinEaseProfileValue -TargetPreset $null -Key 'AnyKey' -DefaultValue 'Def') | Should Be 'Def'
+        (Get-WinEaseProfileValue -TargetPreset 123 -Key 'AnyKey' -DefaultValue 'DefInt') | Should Be 'DefInt'
+        (Get-WinEaseProfileValue -TargetPreset "string" -Key 'AnyKey' -DefaultValue 'DefStr') | Should Be 'DefStr'
+    }
+
+    It "respects custom DefaultValue parameter for missing keys" {
+        $dict = @{}
+        $customDefault = @('item1', 'item2')
+        $result = Get-WinEaseProfileValue -TargetPreset $dict -Key 'NonExistent' -DefaultValue $customDefault
+        $result.Count | Should Be 2
+        $result[0] | Should Be 'item1'
+    }
+}
+
 Describe "WinEase builder - profile presets" {
     BeforeAll {
         # Dot-source only the preset definition by extracting it via AST is overkill; instead
         # run -TestSelf which validates presets internally and capture exit code.
     }
     It "built-in presets validate via -TestSelf" {
-        $psi = New-Object System.Diagnostics.ProcessStartInfo "powershell.exe"
+        if ($IsLinux -or $IsMacOS) {
+            Set-ItResult -Inconclusive -Because "-TestSelf DISM checks are Windows-only"
+            return
+        }
+        $psExe = (Get-Process -Id $PID).Path
+        if ($psExe -match 'dotnet$' -and (Test-Path "$env:HOME/.dotnet/tools/pwsh")) { $psExe = "$env:HOME/.dotnet/tools/pwsh" }
+        $psi = New-Object System.Diagnostics.ProcessStartInfo $psExe
         $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$script:BuilderPath`" -TestSelf"
         $psi.UseShellExecute = $false
         $psi.RedirectStandardOutput = $true
@@ -23,6 +95,380 @@ Describe "WinEase builder - profile presets" {
         $p = [System.Diagnostics.Process]::Start($psi)
         $p.WaitForExit()
         $p.ExitCode | Should Be 0
+    }
+}
+
+Describe "WinEase builder - Apply-WinEaseProfileComponents" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+        $builderText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "WinEasebuilder.ps1"), [System.Text.Encoding]::UTF8)
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($builderText, [ref]$null, [ref]$null)
+        $fnGetVal = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq "Get-WinEaseProfileValue" }, $true).Extent.Text
+        $fnApplyComp = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq "Apply-WinEaseProfileComponents" }, $true).Extent.Text
+        . ([scriptblock]::Create($fnGetVal))
+        . ([scriptblock]::Create($fnApplyComp))
+    }
+
+    BeforeEach {
+        $script:ComponentDefs = [ordered]@{
+            'RemoveStore'   = @{ Key = 'RemoveStore'; Type = 'Bool'; Default = $false; Variable = 'removeStore' }
+            'Edition'       = @{ Key = 'Edition'; Type = 'String'; Default = 'Home'; Variable = 'edition' }
+            'SourceDrive'   = @{ Key = 'SourceDrive'; Type = 'Special'; Default = 'C:'; Variable = 'sourceDrive' }
+            'NoDefaultComp' = @{ Key = 'NoDefaultComp'; Type = 'Bool'; Variable = 'noDefault' }
+        }
+        $script:ConfigOverrides = [ordered]@{}
+        $script:removeStore = $null
+        $script:edition = $null
+        $script:sourceDrive = 'UnchangedDrive'
+        $script:noDefault = 'UnchangedNoDefault'
+    }
+
+    It "applies component defaults and preset overrides from hashtable preset when SourceIsProfile is false" {
+        $preset = @{
+            'RemoveStore' = $true
+            'Edition'     = 'Pro'
+        }
+        Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+        $script:removeStore | Should Be $true
+        $script:edition | Should Be 'Pro'
+    }
+
+    It "applies components from PSCustomObject profile when SourceIsProfile is true" {
+        $profileObj = [PSCustomObject]@{
+            'RemoveStore' = $true
+            'Edition'     = 'Enterprise'
+        }
+        Apply-WinEaseProfileComponents -TargetPreset $profileObj -SourceIsProfile $true
+        $script:removeStore | Should Be $true
+        $script:edition | Should Be 'Enterprise'
+    }
+
+    It "skips components with Special type or missing Default key" {
+        $preset = @{
+            'SourceDrive'   = 'Z:'
+            'NoDefaultComp' = $true
+        }
+        Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+        $script:sourceDrive | Should Be 'UnchangedDrive'
+        $script:noDefault | Should Be 'UnchangedNoDefault'
+    }
+
+    It "ensures explicit ConfigOverrides take precedence over preset and profile values" {
+        $preset = @{
+            'RemoveStore' = $true
+            'Edition'     = 'Pro'
+        }
+        $script:ConfigOverrides = @{
+            'RemoveStore' = $false
+        }
+        Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+        $script:removeStore | Should Be $false
+        $script:edition | Should Be 'Pro'
+    }
+
+    It "falls back to base defaults when preset is null or contains null raw value" {
+        $preset = @{
+            'RemoveStore' = $null
+            'Edition'     = 'Education'
+        }
+        Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+        $script:removeStore | Should Be $false
+        $script:edition | Should Be 'Education'
+
+        Apply-WinEaseProfileComponents -TargetPreset $null -SourceIsProfile $false
+        $script:removeStore | Should Be $false
+        $script:edition | Should Be 'Home'
+    }
+
+    It "correctly casts string and boolean type values" {
+        $preset = @{
+            'RemoveStore' = 'true'
+            'Edition'     = 'Workstation'
+        }
+        Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+        $script:removeStore | Should Be $true
+        ($script:removeStore -is [bool]) | Should Be $true
+        $script:edition | Should Be 'Workstation'
+        ($script:edition -is [string]) | Should Be $true
+    }
+}
+
+Describe "WinEase builder - Apply-WinEaseProfileDebloat edge cases" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+        . (Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1")
+
+        # Extract Apply-WinEaseProfileDebloat and Get-WinEaseProfileValue directly from WinEasebuilder.ps1 AST
+        $builderAst = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$null, [ref]$null)
+        $funcsToLoad = @('Get-WinEaseProfileValue', 'Apply-WinEaseProfileDebloat')
+        $funcNodes = $builderAst.FindAll({
+            param($n)
+            $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $funcsToLoad -contains $n.Name
+        }, $true)
+        foreach ($fnNode in $funcNodes) {
+            . ([scriptblock]::Create($fnNode.Extent.Text))
+        }
+
+        # Initialize schema and engine definitions required by debloat helpers
+        $schema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+        $script:WinEaseDebloatEngines = [ordered]@{}
+        $script:WinEaseDebloatLegacyMap = [ordered]@{}
+        foreach ($de in @($schema.DebloatEngines)) {
+            if (-not $de -or -not $de.Item) { continue }
+            $script:WinEaseDebloatEngines[[string]$de.Item] = $de
+            foreach ($legacyItem in @($de.Legacy)) {
+                if ($legacyItem) { $script:WinEaseDebloatLegacyMap[[string]$legacyItem] = [string]$de.Item }
+            }
+        }
+    }
+
+    BeforeEach {
+        $script:advancedDebloatStandard = @()
+        $script:advancedDebloatExperimental = @()
+        $script:DebloatEngineSelection = [ordered]@{}
+    }
+
+    It "handles null or empty preset gracefully" {
+        Apply-WinEaseProfileDebloat -TargetPreset $null
+        @($script:advancedDebloatStandard).Count | Should Be 0
+        @($script:advancedDebloatExperimental).Count | Should Be 0
+        @($script:DebloatEngineSelection.Keys).Count | Should Be 0
+
+        Apply-WinEaseProfileDebloat -TargetPreset @{}
+        @($script:advancedDebloatStandard).Count | Should Be 0
+        @($script:advancedDebloatExperimental).Count | Should Be 0
+        @($script:DebloatEngineSelection.Keys).Count | Should Be 0
+    }
+
+    It "normalizes scalar values, arrays containing null/empty strings, and removes duplicates" {
+        $preset = @{
+            AdvancedDebloatStandard     = 'Remove Print Spooler (service + binary) [20-30MB]'
+            AdvancedDebloatExperimental = @('Remove Fax service [5MB]', $null, '', 'Remove Fax service [5MB]')
+        }
+
+        Apply-WinEaseProfileDebloat -TargetPreset $preset
+
+        @($script:advancedDebloatStandard).Count | Should Be 1
+        $script:advancedDebloatStandard[0] | Should Be 'Remove Print Spooler (service + binary) [20-30MB]'
+
+        @($script:advancedDebloatExperimental).Count | Should Be 1
+        $script:advancedDebloatExperimental[0] | Should Be 'Remove Fax service [5MB]'
+    }
+
+    It "translates legacy debloat targets and defaults their engine to Rust" {
+        # 'Physical: Defender (complete removal) [~50MB]' maps to 'Physical: Defender (complete removal) [~50MB]' or legacy item
+        $legacyItem = $script:WinEaseDebloatLegacyMap.Keys | Select-Object -First 1
+        $canonicalTarget = $script:WinEaseDebloatLegacyMap[$legacyItem]
+
+        $preset = @{
+            AdvancedDebloatStandard = @($legacyItem)
+        }
+
+        Apply-WinEaseProfileDebloat -TargetPreset $preset
+
+        @($script:advancedDebloatStandard).Count | Should Be 1
+        $script:advancedDebloatStandard[0] | Should Be $canonicalTarget
+        $script:DebloatEngineSelection[$canonicalTarget] | Should Be 'Rust'
+    }
+
+    It "handles DebloatEngineSelection provided as PSCustomObject and IDictionary" {
+        $targetA = 'Remove Print Spooler (service + binary) [20-30MB]'
+        $targetB = 'Remove Fax service [5MB]'
+
+        # 1. IDictionary / Hashtable
+        $presetDict = @{
+            AdvancedDebloatStandard = @($targetA, $targetB)
+            DebloatEngineSelection  = @{
+                $targetA = 'Rust'
+                $targetB = 'PowerShell'
+            }
+        }
+
+        Apply-WinEaseProfileDebloat -TargetPreset $presetDict
+        $script:DebloatEngineSelection[$targetA] | Should Be 'Rust'
+        $script:DebloatEngineSelection[$targetB] | Should Be 'PowerShell'
+
+        # 2. PSCustomObject
+        $engineObj = [PSCustomObject]@{
+            $targetA = 'PowerShell'
+            $targetB = 'Rust'
+        }
+        $presetObj = [PSCustomObject]@{
+            AdvancedDebloatStandard = @($targetA, $targetB)
+            DebloatEngineSelection  = $engineObj
+        }
+
+        Apply-WinEaseProfileDebloat -TargetPreset $presetObj
+        $script:DebloatEngineSelection[$targetA] | Should Be 'PowerShell'
+        $script:DebloatEngineSelection[$targetB] | Should Be 'Rust'
+    }
+
+    It "preserves explicit DebloatEngineSelection over legacy Rust defaults" {
+        $legacyItem = $script:WinEaseDebloatLegacyMap.Keys | Select-Object -First 1
+        $canonicalTarget = $script:WinEaseDebloatLegacyMap[$legacyItem]
+
+        $preset = @{
+            AdvancedDebloatStandard = @($legacyItem)
+            DebloatEngineSelection  = @{
+                $canonicalTarget = 'PowerShell'
+            }
+        }
+
+        Apply-WinEaseProfileDebloat -TargetPreset $preset
+
+        $script:advancedDebloatStandard[0] | Should Be $canonicalTarget
+        $script:DebloatEngineSelection[$canonicalTarget] | Should Be 'PowerShell'
+    }
+}
+
+Describe "WinEase builder - Apply-WinEaseProfileTweaks" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+
+        $builderContent = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "WinEasebuilder.ps1"), [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($builderContent, [ref]$tokens, [ref]$parseErrors)
+
+        $funcNodes = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -in @('Apply-WinEaseProfileTweaks', 'Get-WinEaseProfileValue', 'Resolve-WinEaseTweakKey', 'Sync-WinEaseTweakVariables')
+        }, $true)) | ForEach-Object { $_.Extent.Text }
+
+        . ([scriptblock]::Create(($funcNodes -join "`n")))
+    }
+
+    BeforeEach {
+        $script:SavedAllTweakDefs = $script:AllTweakDefs
+        $script:SavedTweakKeyAliases = $script:TweakKeyAliases
+        $script:SavedTweakVariableMap = $script:TweakVariableMap
+        $script:SavedTweakSettings = $script:TweakSettings
+
+        $script:AllTweakDefs = [ordered]@{
+            'DisableUAC'      = @{ Category = 'Security'; Default = $false; Description = 'Disable UAC' }
+            'DisableCopilot'  = @{ Category = 'Privacy';  Default = $false; Description = 'Disable Copilot' }
+            'EnableDarkTheme' = @{ Category = 'UI';       Default = $true;  Description = 'Enable Dark Theme' }
+        }
+        $script:TweakKeyAliases = [ordered]@{
+            'LegacyUAC' = 'DisableUAC'
+        }
+        $script:TweakVariableMap = [ordered]@{
+            'DisableUAC'     = 'disableUACVar'
+            'DisableCopilot' = 'disableCopilotVar'
+        }
+        $script:TweakSettings = [ordered]@{
+            'DisableUAC'      = $false
+            'DisableCopilot'  = $false
+            'EnableDarkTheme' = $true
+        }
+    }
+
+    AfterEach {
+        $script:AllTweakDefs = $script:SavedAllTweakDefs
+        $script:TweakKeyAliases = $script:SavedTweakKeyAliases
+        $script:TweakVariableMap = $script:SavedTweakVariableMap
+        $script:TweakSettings = $script:SavedTweakSettings
+    }
+
+    It "applies IDictionary TweakSettings in preset mode (SourceIsProfile = false)" {
+        $preset = @{
+            TweakSettings = [ordered]@{
+                DisableUAC = $true
+            }
+        }
+        Apply-WinEaseProfileTweaks -TargetPreset $preset -SourceIsProfile $false
+        $script:TweakSettings['DisableUAC'] | Should Be $true
+        $script:TweakSettings['DisableCopilot'] | Should Be $false
+        $script:TweakSettings['EnableDarkTheme'] | Should Be $true
+    }
+
+    It "applies PSCustomObject TweakSettings in profile mode (SourceIsProfile = true)" {
+        $profileObj = [PSCustomObject]@{
+            TweakSettings = [PSCustomObject]@{
+                DisableCopilot = $true
+            }
+        }
+        Apply-WinEaseProfileTweaks -TargetPreset $profileObj -SourceIsProfile $true
+        $script:TweakSettings['DisableCopilot'] | Should Be $true
+        $script:TweakSettings['DisableUAC'] | Should Be $false
+    }
+
+    It "resolves legacy tweak key aliases in TweakSettings" {
+        $preset = @{
+            TweakSettings = @{
+                LegacyUAC = $true
+            }
+        }
+        Apply-WinEaseProfileTweaks -TargetPreset $preset -SourceIsProfile $false
+        $script:TweakSettings['DisableUAC'] | Should Be $true
+    }
+
+    It "allows top-level tweak key settings on TargetPreset to override nested TweakSettings" {
+        $preset = @{
+            TweakSettings = @{ DisableUAC = $false }
+            DisableUAC    = $true
+        }
+        Apply-WinEaseProfileTweaks -TargetPreset $preset -SourceIsProfile $false
+        $script:TweakSettings['DisableUAC'] | Should Be $true
+    }
+
+    It "gracefully ignores unknown or unregistered tweak keys" {
+        $preset = @{
+            TweakSettings = @{ UnknownTweakKey = $true }
+            UnknownTopKey = $true
+        }
+        Apply-WinEaseProfileTweaks -TargetPreset $preset -SourceIsProfile $false
+        $script:TweakSettings.Contains('UnknownTweakKey') | Should Be $false
+        $script:TweakSettings.Contains('UnknownTopKey') | Should Be $false
+    }
+
+    It "synchronizes script-scoped variables mapped via script:TweakVariableMap" {
+        $preset = @{
+            TweakSettings = @{ DisableUAC = $true; DisableCopilot = $true }
+        }
+        Apply-WinEaseProfileTweaks -TargetPreset $preset -SourceIsProfile $false
+        $script:disableUACVar | Should Be $true
+        $script:disableCopilotVar | Should Be $true
+    }
+
+    It "handles null and empty TargetPreset or TweakSettings without throwing" {
+        Apply-WinEaseProfileTweaks -TargetPreset $null -SourceIsProfile $false
+        $script:TweakSettings['EnableDarkTheme'] | Should Be $true
+
+        Apply-WinEaseProfileTweaks -TargetPreset @{} -SourceIsProfile $false
+        $script:TweakSettings['EnableDarkTheme'] | Should Be $true
+
+        Apply-WinEaseProfileTweaks -TargetPreset @{ TweakSettings = $null } -SourceIsProfile $false
+        $script:TweakSettings['EnableDarkTheme'] | Should Be $true
+    }
+
+    It "correctly coerces boolean representations (string 'true'/'false' and numbers 1/0)" {
+        $preset = @{
+            TweakSettings = @{
+                DisableUAC      = 'true'
+                EnableDarkTheme = 0
+            }
+        }
+        Apply-WinEaseProfileTweaks -TargetPreset $preset -SourceIsProfile $false
+        $script:TweakSettings['DisableUAC'] | Should Be $true
+        $script:TweakSettings['EnableDarkTheme'] | Should Be $false
+    }
+
+    It "overrides preset settings when SourceIsProfile is true and profile settings conflict" {
+        $preset = @{
+            TweakSettings = @{ DisableUAC = $false }
+        }
+        Apply-WinEaseProfileTweaks -TargetPreset $preset -SourceIsProfile $false
+        $script:TweakSettings['DisableUAC'] | Should Be $false
+
+        $profileConfig = @{
+            TweakSettings = @{ DisableUAC = $true }
+        }
+        Apply-WinEaseProfileTweaks -TargetPreset $profileConfig -SourceIsProfile $true
+        $script:TweakSettings['DisableUAC'] | Should Be $true
     }
 }
 
@@ -250,6 +696,178 @@ Describe "WinEase helpers - Format-WinEaseConfigDiff" {
     }
 }
 
+Describe "WinEase builder - Get-WinEaseComponentValue" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        $builderPath = Join-Path -Path $script:RepoRoot -ChildPath "WinEasebuilder.ps1"
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($builderPath, [ref]$null, [ref]$null)
+        $funcAst = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-WinEaseComponentValue' }, $true)
+        . ([scriptblock]::Create($funcAst.Extent.Text))
+    }
+
+    Context "String components" {
+        It "returns string value when variable exists in script scope" {
+            $script:TestCompStrVar = "CustomUser"
+            try {
+                $def = @{ Variable = "TestCompStrVar"; Type = "String" }
+                $val = Get-WinEaseComponentValue -Def $def
+                $val | Should Be "CustomUser"
+                $val -is [string] | Should Be $true
+            } finally {
+                Remove-Variable -Name "TestCompStrVar" -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+
+        It "returns empty string when variable does not exist in script scope" {
+            $def = @{ Variable = "NonExistentStrVar_XYZ"; Type = "String" }
+            $val = Get-WinEaseComponentValue -Def $def
+            $val | Should Be ""
+            $val -is [string] | Should Be $true
+        }
+
+        It "returns empty string when variable value in script scope is null" {
+            $script:TestNullStrVar = $null
+            try {
+                $def = @{ Variable = "TestNullStrVar"; Type = "String" }
+                $val = Get-WinEaseComponentValue -Def $def
+                $val | Should Be ""
+                $val -is [string] | Should Be $true
+            } finally {
+                Remove-Variable -Name "TestNullStrVar" -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+
+        It "converts non-string variable values (integers, booleans) to string" {
+            $script:TestNumVar = 4096
+            $script:TestBoolVar = $true
+            try {
+                $defNum = @{ Variable = "TestNumVar"; Type = "String" }
+                $valNum = Get-WinEaseComponentValue -Def $defNum
+                $valNum | Should Be "4096"
+                $valNum -is [string] | Should Be $true
+
+                $defBool = @{ Variable = "TestBoolVar"; Type = "String" }
+                $valBool = Get-WinEaseComponentValue -Def $defBool
+                $valBool | Should Be "True"
+                $valBool -is [string] | Should Be $true
+            } finally {
+                Remove-Variable -Name "TestNumVar" -Scope Script -ErrorAction SilentlyContinue
+                Remove-Variable -Name "TestBoolVar" -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Context "Bool components" {
+        It "returns boolean true/false when variable exists in script scope" {
+            $script:TestBoolTrue = $true
+            $script:TestBoolFalse = $false
+            try {
+                $defTrue = @{ Variable = "TestBoolTrue"; Type = "Bool" }
+                $valTrue = Get-WinEaseComponentValue -Def $defTrue
+                $valTrue | Should Be $true
+                $valTrue -is [bool] | Should Be $true
+
+                $defFalse = @{ Variable = "TestBoolFalse"; Type = "Bool" }
+                $valFalse = Get-WinEaseComponentValue -Def $defFalse
+                $valFalse | Should Be $false
+                $valFalse -is [bool] | Should Be $true
+            } finally {
+                Remove-Variable -Name "TestBoolTrue" -Scope Script -ErrorAction SilentlyContinue
+                Remove-Variable -Name "TestBoolFalse" -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+
+        It "returns boolean false when variable does not exist in script scope" {
+            $def = @{ Variable = "NonExistentBoolVar_XYZ"; Type = "Bool" }
+            $val = Get-WinEaseComponentValue -Def $def
+            $val | Should Be $false
+            $val -is [bool] | Should Be $true
+        }
+
+        It "returns boolean false when variable value in script scope is null" {
+            $script:TestNullBoolVar = $null
+            try {
+                $def = @{ Variable = "TestNullBoolVar"; Type = "Bool" }
+                $val = Get-WinEaseComponentValue -Def $def
+                $val | Should Be $false
+                $val -is [bool] | Should Be $true
+            } finally {
+                Remove-Variable -Name "TestNullBoolVar" -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+
+        It "evaluates non-boolean variable values according to boolean cast rules" {
+            $script:TestIntOne = 1
+            $script:TestIntZero = 0
+            $script:TestNonEmptyStr = "User"
+            $script:TestEmptyStr = ""
+            try {
+                $valOne = Get-WinEaseComponentValue -Def @{ Variable = "TestIntOne"; Type = "Bool" }
+                $valOne | Should Be $true
+
+                $valZero = Get-WinEaseComponentValue -Def @{ Variable = "TestIntZero"; Type = "Bool" }
+                $valZero | Should Be $false
+
+                $valNonEmpty = Get-WinEaseComponentValue -Def @{ Variable = "TestNonEmptyStr"; Type = "Bool" }
+                $valNonEmpty | Should Be $true
+
+                $valEmpty = Get-WinEaseComponentValue -Def @{ Variable = "TestEmptyStr"; Type = "Bool" }
+                $valEmpty | Should Be $false
+            } finally {
+                Remove-Variable -Name "TestIntOne" -Scope Script -ErrorAction SilentlyContinue
+                Remove-Variable -Name "TestIntZero" -Scope Script -ErrorAction SilentlyContinue
+                Remove-Variable -Name "TestNonEmptyStr" -Scope Script -ErrorAction SilentlyContinue
+                Remove-Variable -Name "TestEmptyStr" -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Context "Edge cases, case-insensitivity and input formats" {
+        It "handles Type matching in a case-insensitive manner" {
+            $script:TestCaseVar = "CaseValue"
+            try {
+                $defLower = @{ Variable = "TestCaseVar"; Type = "string" }
+                $valLower = Get-WinEaseComponentValue -Def $defLower
+                $valLower | Should Be "CaseValue"
+
+                $defUpper = @{ Variable = "TestCaseVar"; Type = "STRING" }
+                $valUpper = Get-WinEaseComponentValue -Def $defUpper
+                $valUpper | Should Be "CaseValue"
+            } finally {
+                Remove-Variable -Name "TestCaseVar" -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+
+        It "falls back to boolean casting for unrecognized or missing Type" {
+            $script:TestSpecialVar = $true
+            try {
+                $defSpecial = @{ Variable = "TestSpecialVar"; Type = "Special" }
+                $valSpecial = Get-WinEaseComponentValue -Def $defSpecial
+                $valSpecial | Should Be $true
+                $valSpecial -is [bool] | Should Be $true
+
+                $defNoType = @{ Variable = "TestSpecialVar" }
+                $valNoType = Get-WinEaseComponentValue -Def $defNoType
+                $valNoType | Should Be $true
+                $valNoType -is [bool] | Should Be $true
+            } finally {
+                Remove-Variable -Name "TestSpecialVar" -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+
+        It "accepts ordered hashtables (OrderedDictionary) as Def parameter" {
+            $script:TestOrderedVar = "OrderedVal"
+            try {
+                $defOrdered = [ordered]@{ Variable = "TestOrderedVar"; Type = "String" }
+                $val = Get-WinEaseComponentValue -Def $defOrdered
+                $val | Should Be "OrderedVal"
+            } finally {
+                Remove-Variable -Name "TestOrderedVar" -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
 Describe "WinEase settings - config\schema.psd1 is the single source of truth" {
     $builderText = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
     $builderAst = [System.Management.Automation.Language.Parser]::ParseInput($builderText, [ref]$null, [ref]$null)
@@ -286,6 +904,15 @@ Describe "WinEase settings - config\schema.psd1 is the single source of truth" {
         foreach ($td in $settingsDef.Tweaks) {
             foreach ($a in @($td.Aliases)) { if ($a) { $tweakKeys -contains $a | Should Be $false } }
         }
+    }
+
+    It "configures UserPassword in schema.psd1 and WinEasebuilder.ps1" {
+        $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+        $compKeys = @($settingsDef.Components | ForEach-Object { $_.Key })
+        ($compKeys -contains 'UserPassword') | Should Be $true
+
+        $builderText = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $builderText | Should Match '\[string\]\$UserPassword'
     }
 
     It "CliSwitch matches a [switch] parameter of the builder, and every setting-named switch is marked" {
@@ -397,11 +1024,11 @@ Describe "Import-WinEaseDependencyCatalog" {
         $catalog.Components | Should Not Be $null
         $catalog.Tweaks | Should Not Be $null
         $script:WinEaseDependencyCatalog | Should Be $catalog
-        $script:WinEaseDependencyCatalogPath | Should Match 'config\\dependencies\.psd1$'
+        $script:WinEaseDependencyCatalogPath | Should Match 'config[/\\]dependencies\.psd1$'
 
         $catalog2 = Import-WinEaseDependencyCatalog -Path "   "
         $catalog2 | Should Not Be $null
-        $script:WinEaseDependencyCatalogPath | Should Match 'config\\dependencies\.psd1$'
+        $script:WinEaseDependencyCatalogPath | Should Match 'config[/\\]dependencies\.psd1$'
     }
 
     It "imports a custom dependency catalog file from specified path" {
@@ -651,16 +1278,19 @@ Describe "User Extensibility Engine (lib/WinEaseExtensions.ps1)" {
     }
     It "Test-WinEaseRecoveryReadiness finds the default profile backup" {
         $oldProfile = $env:USERPROFILE
+        $oldHome = $env:HOME
         $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('winease_readiness_' + [guid]::NewGuid().ToString('N'))
         try {
             $backup = Join-Path $tmp 'WinEase_migration_backup'
             New-Item -ItemType Directory -Path $backup -Force | Out-Null
             Set-Content -LiteralPath (Join-Path $backup 'migration-manifest.json') -Value '{}' -Encoding ASCII
             $env:USERPROFILE = $tmp
+            $env:HOME = $tmp
             $rr = Test-WinEaseRecoveryReadiness -Config @{ KeepRecoveryEnv = $false }
             $rr.MigrationBackupFound | Should Be $true
         } finally {
             $env:USERPROFILE = $oldProfile
+            $env:HOME = $oldHome
             Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
@@ -908,8 +1538,8 @@ Describe "User Extensibility Engine (lib/WinEaseExtensions.ps1)" {
 
             $prev = @(Get-WinEaseCustomScriptPreview -RepoRoot $repo)
             @($prev | Where-Object { $_.Stage -eq 'FirstLogon' }).Count | Should Be 2
-            @($prev | Where-Object { $_.Stage -eq 'UserOnce' })[0].ImagePath | Should Match '^Windows\\Setup\\Scripts\\UserCustom\\'
-            @($prev | Where-Object { $_.Stage -eq 'FirstLogon' })[0].ImagePath | Should Match '^Windows\\Setup\\Scripts\\Custom\\'
+            @($prev | Where-Object { $_.Stage -eq 'UserOnce' })[0].ImagePath | Should Match '^Windows[/\\]Setup[/\\]Scripts[/\\]UserCustom[/\\]'
+            @($prev | Where-Object { $_.Stage -eq 'FirstLogon' })[0].ImagePath | Should Match '^Windows[/\\]Setup[/\\]Scripts[/\\]Custom[/\\]'
         } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
@@ -967,7 +1597,8 @@ Describe "User Extensibility Engine (lib/WinEaseExtensions.ps1)" {
 Describe "S1 - user extensions survive -PresetsOnly re-import" {
     It "keeps UserTweakDefs and UserCustomScripts after a -PresetsOnly call" {
         . (Join-Path $script:RepoRoot 'lib\WinEaseExtensions.ps1')
-        $dir = Join-Path $env:TEMP ("s1ext_" + [guid]::NewGuid().ToString('N'))
+        $tempPath = if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() }
+        $dir = Join-Path $tempPath ("s1ext_" + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
         $cfg = Join-Path $dir 'user-tweaks.psd1'
         $lines = @(
@@ -1216,5 +1847,261 @@ Describe "WinEase builder - the UI preference table (config\ui-preferences.psd1)
             }
         }
         ($offenders -join ', ') | Should Be ''
+    }
+}
+
+Describe "WinEase builder - Apply-WinEaseProfileComponents edge cases" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+
+        $builderPath = Join-Path $script:RepoRoot "WinEasebuilder.ps1"
+        $schemaPath  = Join-Path $script:RepoRoot "config\schema.psd1"
+
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($builderPath, [ref]$tokens, [ref]$errors)
+
+        $fnGetValStr    = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-WinEaseProfileValue' }, $true))[0].Extent.Text
+        $fnApplyCompStr = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Apply-WinEaseProfileComponents' }, $true))[0].Extent.Text
+
+        . ([scriptblock]::Create($fnGetValStr))
+        . ([scriptblock]::Create($fnApplyCompStr))
+
+        $schema = Import-PowerShellDataFile -Path $schemaPath
+        $script:ComponentDefs = [ordered]@{}
+        foreach ($cd in $schema.Components) {
+            $script:ComponentDefs[$cd.Key] = $cd
+        }
+    }
+
+    BeforeEach {
+        $script:ConfigOverrides = [ordered]@{}
+        foreach ($cd in $script:ComponentDefs.Values) {
+            if ($cd.Variable) {
+                Set-Variable -Name $cd.Variable -Scope Script -Value $null
+            }
+        }
+    }
+
+    It "handles null or empty TargetPreset by applying base defaults" {
+        Apply-WinEaseProfileComponents -TargetPreset $null -SourceIsProfile $false
+        foreach ($cd in $script:ComponentDefs.Values) {
+            if ($cd.Type -eq 'Special' -or -not $cd.ContainsKey('Default')) { continue }
+            $expected = if ($cd.Type -eq 'String') { [string]$cd.Default } else { [bool]$cd.Default }
+            $actual = Get-Variable -Name $cd.Variable -Scope Script -ValueOnly
+            $actual | Should Be $expected
+        }
+    }
+
+    It "applies component settings from an IDictionary (hashtable) preset" {
+        $boolCd = @($script:ComponentDefs.Values | Where-Object { $_.Type -eq 'Bool' -and $_.ContainsKey('Default') })[0]
+        $boolKey = $boolCd.Key
+        $targetVal = -not $boolCd.Default
+
+        $preset = @{ $boolKey = $targetVal }
+        Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+
+        $actual = Get-Variable -Name $boolCd.Variable -Scope Script -ValueOnly
+        $actual | Should Be $targetVal
+    }
+
+    It "applies component settings from a PSCustomObject preset" {
+        $boolCd = @($script:ComponentDefs.Values | Where-Object { $_.Type -eq 'Bool' -and $_.ContainsKey('Default') })[0]
+        $boolKey = $boolCd.Key
+        $targetVal = -not $boolCd.Default
+
+        $preset = [PSCustomObject]@{ $boolKey = $targetVal }
+        Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+
+        $actual = Get-Variable -Name $boolCd.Variable -Scope Script -ValueOnly
+        $actual | Should Be $targetVal
+    }
+
+    It "handles unsupported TargetPreset types gracefully without throwing" {
+        Apply-WinEaseProfileComponents -TargetPreset 12345 -SourceIsProfile $false
+        Apply-WinEaseProfileComponents -TargetPreset "invalid_preset_string" -SourceIsProfile $false
+        Apply-WinEaseProfileComponents -TargetPreset @("item1", "item2") -SourceIsProfile $true
+
+        $boolCd = @($script:ComponentDefs.Values | Where-Object { $_.Type -eq 'Bool' -and $_.ContainsKey('Default') })[0]
+        $expected = [bool]$boolCd.Default
+        $actual = Get-Variable -Name $boolCd.Variable -Scope Script -ValueOnly
+        $actual | Should Be $expected
+    }
+
+    It "gives user profile settings precedence when SourceIsProfile is true" {
+        $boolCd = @($script:ComponentDefs.Values | Where-Object { $_.Type -eq 'Bool' -and $_.ContainsKey('Default') })[0]
+        $boolKey = $boolCd.Key
+        $targetVal = -not $boolCd.Default
+
+        $profilePreset = [ordered]@{ $boolKey = $targetVal }
+        Apply-WinEaseProfileComponents -TargetPreset $profilePreset -SourceIsProfile $true
+
+        $actual = Get-Variable -Name $boolCd.Variable -Scope Script -ValueOnly
+        $actual | Should Be $targetVal
+    }
+
+    It "ensures explicit CLI overrides in script:ConfigOverrides take precedence over TargetPreset" {
+        $boolCd = @($script:ComponentDefs.Values | Where-Object { $_.Type -eq 'Bool' -and $_.ContainsKey('Default') })[0]
+        $boolKey = $boolCd.Key
+
+        $preset = @{ $boolKey = $true }
+        $script:ConfigOverrides[$boolKey] = $false
+
+        Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+
+        $actual = Get-Variable -Name $boolCd.Variable -Scope Script -ValueOnly
+        $actual | Should Be $false
+    }
+
+    It "skips components with Type=Special or missing Default key" {
+        $specialCd = @($script:ComponentDefs.Values | Where-Object { $_.Type -eq 'Special' -or -not $_.ContainsKey('Default') })[0]
+        if ($specialCd -and $specialCd.Variable) {
+            Set-Variable -Name $specialCd.Variable -Scope Script -Value "original_value"
+            $preset = @{ $specialCd.Key = "preset_value" }
+
+            Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+
+            $actual = Get-Variable -Name $specialCd.Variable -Scope Script -ValueOnly
+            $actual | Should Be "original_value"
+        }
+    }
+
+    It "correctly casts String component values to string and Bool values to bool" {
+        $stringCds = @($script:ComponentDefs.Values | Where-Object { $_.Type -eq 'String' -and $_.ContainsKey('Default') })
+        if ($stringCds.Count -gt 0) {
+            $strCd = $stringCds[0]
+            $preset = @{ $strCd.Key = 12345 }
+            Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+
+            $actual = Get-Variable -Name $strCd.Variable -Scope Script -ValueOnly
+            $actual | Should Be "12345"
+            $actual -is [string] | Should Be $true
+        }
+
+        $boolCd = @($script:ComponentDefs.Values | Where-Object { $_.Type -eq 'Bool' -and $_.ContainsKey('Default') })[0]
+        $presetBool = @{ $boolCd.Key = $true }
+        Apply-WinEaseProfileComponents -TargetPreset $presetBool -SourceIsProfile $false
+
+        $actualBool = Get-Variable -Name $boolCd.Variable -Scope Script -ValueOnly
+        $actualBool -is [bool] | Should Be $true
+    }
+}
+
+Describe "WinEase builder - Export-WinEaseProfile edge cases" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        $builderContent = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $builderAst = [System.Management.Automation.Language.Parser]::ParseInput($builderContent, [ref]$null, [ref]$null)
+
+        $exportFuncAst = $builderAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Export-WinEaseProfile' }, $true)
+        . ([scriptblock]::Create($exportFuncAst.Extent.Text))
+
+        $importFuncAst = $builderAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Import-WinEaseProfile' }, $true)
+        . ([scriptblock]::Create($importFuncAst.Extent.Text))
+    }
+
+    BeforeEach {
+        $script:WinEaseProfileKeys = @('RemoveDefender', 'KeepIME', 'DisableUAC', 'DebloatEngineSelection')
+        $script:WinEaseVersion = "2.1"
+        $script:ComponentDefs = @{
+            'RemoveDefender' = @{ Type = 'Bool'; Key = 'RemoveDefender' }
+            'KeepIME'        = @{ Type = 'Bool'; Key = 'KeepIME' }
+        }
+        $script:NonInteractive = $true
+    }
+
+    It "exports profile gracefully when Config parameter is null or omitted" {
+        $tmp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "export_null_config_$([guid]::NewGuid().ToString('N')).json"
+        try {
+            Export-WinEaseProfile -FilePath $tmp -Config $null
+            Test-Path -LiteralPath $tmp | Should Be $true
+            $content = Get-Content -LiteralPath $tmp -Raw | ConvertFrom-Json
+            $content.ProfileName | Should Be "WinEase Configuration Profile"
+            $content.Version | Should Be $script:WinEaseVersion
+            @($content.Settings.PSObject.Properties).Count | Should Be 0
+        } finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "exports profile when FilePath has no parent directory" {
+        $fileName = "export_standalone_$([guid]::NewGuid().ToString('N')).json"
+        $tmp = Join-Path -Path (Get-Location).Path -ChildPath $fileName
+        try {
+            $cfg = @{ ProfileName = "Standalone Test"; RemoveDefender = $true }
+            Export-WinEaseProfile -FilePath $fileName -Config $cfg
+            Test-Path -LiteralPath $tmp | Should Be $true
+            $content = Get-Content -LiteralPath $tmp -Raw | ConvertFrom-Json
+            $content.ProfileName | Should Be "Standalone Test"
+            $content.Settings.RemoveDefender | Should Be $true
+        } finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "creates missing parent directory structure if it does not exist" {
+        $subFolder = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "winease_export_test_$([guid]::NewGuid().ToString('N'))\nested\sub"
+        $tmp = Join-Path -Path $subFolder -ChildPath "nested_profile.json"
+        try {
+            $cfg = @{ ProfileName = "Nested Test"; KeepIME = $true }
+            Export-WinEaseProfile -FilePath $tmp -Config $cfg
+            Test-Path -LiteralPath $tmp | Should Be $true
+            $content = Get-Content -LiteralPath $tmp -Raw | ConvertFrom-Json
+            $content.ProfileName | Should Be "Nested Test"
+            $content.Settings.KeepIME | Should Be $true
+        } finally {
+            $rootDir = Split-Path (Split-Path (Split-Path $tmp -Parent) -Parent) -Parent
+            if (Test-Path -LiteralPath $rootDir) { Remove-Item -LiteralPath $rootDir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "overwrites an existing profile file cleanly" {
+        $tmp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "export_overwrite_$([guid]::NewGuid().ToString('N')).json"
+        try {
+            Set-Content -LiteralPath $tmp -Value "old content" -Encoding UTF8
+            $cfg = @{ ProfileName = "Overwritten Profile"; DisableUAC = $true }
+            Export-WinEaseProfile -FilePath $tmp -Config $cfg
+            $content = Get-Content -LiteralPath $tmp -Raw | ConvertFrom-Json
+            $content.ProfileName | Should Be "Overwritten Profile"
+            $content.Settings.DisableUAC | Should Be $true
+        } finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "filters out extra keys not present in script:WinEaseProfileKeys" {
+        $tmp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "export_filter_$([guid]::NewGuid().ToString('N')).json"
+        try {
+            $cfg = @{
+                ProfileName = "Filtered Profile"
+                RemoveDefender = $true
+                UnrecognizedExtraKey = "ShouldBeIgnored"
+            }
+            Export-WinEaseProfile -FilePath $tmp -Config $cfg
+            $content = Get-Content -LiteralPath $tmp -Raw | ConvertFrom-Json
+            $content.Settings.RemoveDefender | Should Be $true
+            $content.Settings.PSObject.Properties['UnrecognizedExtraKey'] | Should Be $null
+        } finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "round-trips exported profile through Import-WinEaseProfile" {
+        $tmp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "export_roundtrip_$([guid]::NewGuid().ToString('N')).json"
+        try {
+            $cfg = @{
+                ProfileName = "Roundtrip Test"
+                RemoveDefender = $true
+                KeepIME = $false
+            }
+            Export-WinEaseProfile -FilePath $tmp -Config $cfg
+            $imported = Import-WinEaseProfile -FilePath $tmp
+            $imported | Should Not Be $null
+            $imported.ProfileName | Should Be "Roundtrip Test"
+            $imported.RemoveDefender | Should Be $true
+            $imported.KeepIME | Should Be $false
+        } finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
     }
 }
