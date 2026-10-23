@@ -35,9 +35,7 @@
         # ReviOS 26.10 (registry/explorer/search.yml): the activatable class of the
         # Store search task is disabled outright (25H2 and newer).
         @{ Tweak = 'DisableWebSearch'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Microsoft\WindowsRuntime\ActivatableClassId\WinStore.Tasks.WindowsSearchTask'; Name = 'ActivationType'; Type = 'REG_DWORD'; Data = '4294967295' }
-        # The empty string has to be passed as the literal '""': an empty argument is
-        # dropped by the PowerShell native call, so reg.exe would take the next switch
-        # ('/f') as the value instead.
+        # Empty Data = the empty string (the runner passes it to reg.exe as the literal "").
         @{ Tweak = 'DisableWebSearch'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Microsoft\WindowsRuntime\ActivatableClassId\WinStore.Tasks.WindowsSearchTask'; Name = 'Server'; Type = 'REG_SZ'; Data = '' }
 
         # --- HideSearchBox -----------------------------------------------
@@ -64,6 +62,5 @@
         @{ Tweak = 'HideRecommendedSection'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Start'; Name = 'ShowRecentList'; Type = 'REG_DWORD'; Data = '0' }
         @{ Tweak = 'HideRecommendedSection'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Start'; Name = 'ShowFrequentList'; Type = 'REG_DWORD'; Data = '0' }
         @{ Tweak = 'HideRecommendedSection'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'Start_TrackDocs'; Type = 'REG_DWORD'; Data = '0' }
-
     )
 }

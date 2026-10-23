@@ -73,6 +73,5 @@
         # Debloat-Win11 main (Modules/PolicyCatalog.psd1): the per-user flag that
         # hides the Copilot entry in the shell.
         @{ Tweak = 'DisableCopilot'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\Shell\Copilot'; Name = 'IsCopilotAvailable'; Type = 'REG_DWORD'; Data = '0' }
-
     )
 }

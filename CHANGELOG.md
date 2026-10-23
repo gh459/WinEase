@@ -6,6 +6,7 @@ WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 ## Unreleased (local fork, 2026-10-23) - the migration tool runs from the ISO and custom scripts have a GUI
 
 ### Changed
+- **Phase 10 registry writes are data.** Every `reg.exe` add/delete/query of `phases/10-registry.ps1` now goes through `Invoke-WinEaseReg` (`lib/WinEaseRegistry.ps1`), and the plain writes moved to `config/registry/<section>.psd1` (`Invoke-WinEaseRegistryTable`). Entries can be limited to a Windows build range with `MinBuild`/`MaxBuild`. Branches, loops with computed values, service trims, the Defender removal logic and the query-based checks stay in the phase. The final registry state per preset is unchanged (Pester snapshots in `tests/fixtures/registry`).
 - **Setup helpers and post-install tools moved out of phase 11.** The five setup helpers
   are now files under `scripts\setup` and the Browser Grabber, Control Center and Atlas
   tools under `scripts\tools`; the phase reads them like the Defender helper. Content
@@ -307,6 +308,7 @@ Audit and details: `docs/dev/github-automation-audit.md`.
   build provenance attestation.
 
 ### Changed
+- **Phase 10 registry writes are data.** Every `reg.exe` add/delete/query of `phases/10-registry.ps1` now goes through `Invoke-WinEaseReg` (`lib/WinEaseRegistry.ps1`), and the plain writes moved to `config/registry/<section>.psd1` (`Invoke-WinEaseRegistryTable`). Entries can be limited to a Windows build range with `MinBuild`/`MaxBuild`. Branches, loops with computed values, service trims, the Defender removal logic and the query-based checks stay in the phase. The final registry state per preset is unchanged (Pester snapshots in `tests/fixtures/registry`).
 - Claude issue agent only starts for the owner, members and collaborators; permissions are
   per job; all actions are pinned to commit SHAs.
 
@@ -548,6 +550,7 @@ default off); no changed default.
   follows the same options as the offline removal (`remove-appx-packages.flag`).
 
 ### Changed
+- **Phase 10 registry writes are data.** Every `reg.exe` add/delete/query of `phases/10-registry.ps1` now goes through `Invoke-WinEaseReg` (`lib/WinEaseRegistry.ps1`), and the plain writes moved to `config/registry/<section>.psd1` (`Invoke-WinEaseRegistryTable`). Entries can be limited to a Windows build range with `MinBuild`/`MaxBuild`. Branches, loops with computed values, service trims, the Defender removal logic and the query-based checks stay in the phase. The final registry state per preset is unchanged (Pester snapshots in `tests/fixtures/registry`).
 - **The security options have conservative defaults.** `RemoveDefender`,
   `DisableWindowsUpdate` and `ConfigureWinlogon` default to `false` now: Defender,
   Windows Update and the blank-password auto-logon stay unless the user asks for
@@ -830,6 +833,7 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
   (`Remove*` / `Disable*` / `Enable*` / `Keep*`), so the convention is checkable.
 
 ### Changed
+- **Phase 10 registry writes are data.** Every `reg.exe` add/delete/query of `phases/10-registry.ps1` now goes through `Invoke-WinEaseReg` (`lib/WinEaseRegistry.ps1`), and the plain writes moved to `config/registry/<section>.psd1` (`Invoke-WinEaseRegistryTable`). Entries can be limited to a Windows build range with `MinBuild`/`MaxBuild`. Branches, loops with computed values, service trims, the Defender removal logic and the query-based checks stay in the phase. The final registry state per preset is unchanged (Pester snapshots in `tests/fixtures/registry`).
 - The conflict check no longer rewrites anything. `Test-WinEaseConfigConflicts` used to
   take `-AutoResolve` and silently changed the settings of the user (e.g. it turned the
   Windows Update switch off when the Microsoft Store was kept). It is now a pure
@@ -940,6 +944,7 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
 - Tests: source-file hygiene check that BOM-less `.ps1` / `.psd1` files are ASCII only.
 
 ### Changed
+- **Phase 10 registry writes are data.** Every `reg.exe` add/delete/query of `phases/10-registry.ps1` now goes through `Invoke-WinEaseReg` (`lib/WinEaseRegistry.ps1`), and the plain writes moved to `config/registry/<section>.psd1` (`Invoke-WinEaseRegistryTable`). Entries can be limited to a Windows build range with `MinBuild`/`MaxBuild`. Branches, loops with computed values, service trims, the Defender removal logic and the query-based checks stay in the phase. The final registry state per preset is unchanged (Pester snapshots in `tests/fixtures/registry`).
 - AppX leftover folder cleanup no longer runs recursive `takeown /R` / `icacls /T`; it
   removes reparse points (junctions) as links first so deletion never follows them out
   of the image (`Remove-WinEaseTreeRobust`). Folder cleanup still runs on
@@ -1087,6 +1092,7 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
   and prunes stale `build_diagnostics` runs.
 
 ### Changed
+- **Phase 10 registry writes are data.** Every `reg.exe` add/delete/query of `phases/10-registry.ps1` now goes through `Invoke-WinEaseReg` (`lib/WinEaseRegistry.ps1`), and the plain writes moved to `config/registry/<section>.psd1` (`Invoke-WinEaseRegistryTable`). Entries can be limited to a Windows build range with `MinBuild`/`MaxBuild`. Branches, loops with computed values, service trims, the Defender removal logic and the query-based checks stay in the phase. The final registry state per preset is unchanged (Pester snapshots in `tests/fixtures/registry`).
 - Size-first ISO reduction: language-aware decoupling of foreign Asian IMEs
   (ko-KR / zh-CN / zh-TW / zh-HK removed for ja-JP / en-US targets while the
   Japanese IME + own-language fonts are preserved), ultraSlim trimming of

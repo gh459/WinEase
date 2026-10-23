@@ -80,6 +80,5 @@
         @{ Tweak = 'BypassActivationRestrictions'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows\CurrentVersion\Policies\Explorer'; Name = 'NoThemesTab'; Type = 'REG_DWORD'; Data = '0' }
         @{ Tweak = 'BypassActivationRestrictions'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform'; Name = 'NoGenTicket'; Type = 'REG_DWORD'; Data = '1' }
         @{ Tweak = 'BypassActivationRestrictions'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform'; Name = 'NotificationDisabled'; Type = 'REG_DWORD'; Data = '1' }
-
     )
 }

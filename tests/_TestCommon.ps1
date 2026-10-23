@@ -43,3 +43,12 @@ $script:UnattendPath = Join-Path -Path $script:RepoRoot -ChildPath "autounattend
 # The GUI tests assume English (they match button texts like "Select All"); the
 # display-language tests in Gui.Tests.ps1 set and restore their own values.
 $env:WINEASE_UI_LANGUAGE = 'en'
+
+function Get-WinEaseRegistryTableText {
+    # The config\registry tables of phase 10 as one text: the plain registry writes that
+    # moved out of phases\10-registry.ps1. Tests that look for a registry value read the
+    # phase text plus this one.
+    $dir = Join-Path -Path $script:RepoRoot -ChildPath 'config\registry'
+    $parts = Get-ChildItem -LiteralPath $dir -Filter '*.psd1' | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }
+    return ($parts -join "`n")
+}

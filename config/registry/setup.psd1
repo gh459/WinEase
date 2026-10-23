@@ -50,6 +50,5 @@
         # --- BypassNetworkRequirement ------------------------------------
         @{ Tweak = 'BypassNetworkRequirement'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows\CurrentVersion\OOBE'; Name = 'BypassNRO'; Type = 'REG_DWORD'; Data = '1' }
         @{ Tweak = 'BypassNetworkRequirement'; Default = $true; Hive = 'zSYSTEM'; Path = 'Setup\LabConfig'; Name = 'BypassNRO'; Type = 'REG_DWORD'; Data = '1' }
-
     )
 }

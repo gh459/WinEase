@@ -69,6 +69,5 @@
         # ReviOS 26.10 (registry/updates/updates.yml): the Media Player must not pull
         # its own updates in the background.
         @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\WindowsMediaPlayer'; Name = 'DisableAutoUpdate'; Type = 'REG_DWORD'; Data = '1' }
-
     )
 }

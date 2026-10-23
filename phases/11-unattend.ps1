@@ -964,6 +964,7 @@ if ($includeMigrationAssistant -eq $true) {
             'lib\WinEaseConfig.ps1',
             'lib\WinEaseBenchmarks.ps1',
             'lib\WinEaseDependencies.ps1',
+            'lib\WinEaseRegistry.ps1',
             'gui\WinEaseGui.ps1'
         )
         # The display strings of the wizard: config\ui-strings in the repository, ui-strings next to

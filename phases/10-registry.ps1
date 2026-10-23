@@ -22,12 +22,16 @@ foreach ($hiveName in $hivesToLoad.Keys) {
     $script:HivesLoaded = $true
 }
 
-# Detect and display target Windows build info
+# Detect and display target Windows build info. The build number also selects the MinBuild /
+# MaxBuild entries of the config\registry tables; it stays unset when it cannot be read.
+$script:WinEaseTargetBuild = $null
 try {
     $targetProductName = (reg.exe query "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion" /v ProductName 2>$null | Select-String -Pattern 'REG_SZ\s+(.+)$' | ForEach-Object { $_.Matches[0].Groups[1].Value.Trim() })
     $targetDisplayVer  = (reg.exe query "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion" /v DisplayVersion 2>$null | Select-String -Pattern 'REG_SZ\s+(.+)$' | ForEach-Object { $_.Matches[0].Groups[1].Value.Trim() })
     $targetBuildNum    = (reg.exe query "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion" /v CurrentBuildNumber 2>$null | Select-String -Pattern 'REG_SZ\s+(.+)$' | ForEach-Object { $_.Matches[0].Groups[1].Value.Trim() })
     $targetUBR         = (reg.exe query "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion" /v UBR 2>$null | Select-String -Pattern 'REG_DWORD\s+0x([0-9a-fA-F]+)' | ForEach-Object { [Convert]::ToInt32($_.Matches[0].Groups[1].Value, 16) })
+    $parsedTargetBuild = 0
+    if ([int]::TryParse([string]$targetBuildNum, [ref]$parsedTargetBuild) -and $parsedTargetBuild -gt 0) { $script:WinEaseTargetBuild = $parsedTargetBuild }
     if ($targetProductName) {
         Write-Host "Target Image OS: $targetProductName (Version: $targetDisplayVer, Build: $targetBuildNum.$targetUBR)" -ForegroundColor Green
     }
@@ -729,22 +733,7 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
     }
 
     # --- Policies ------------------------------------------------------------------------
-    # Tamper Protection must be off before the engine can be stopped or removed.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows Defender\Features" -Name "TamperProtection" -Type REG_DWORD -Data '0'
-    # DisableAntiSpyware no longer disables the engine on Windows 11 24H2+ (Microsoft removed
-    # the behaviour), so it is kept only for legacy builds and the working policies below are
-    # the actual mechanism.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender" -Name "DisableAntiSpyware" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender" -Name "DisableAntiVirus" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" -Name "DisableBehaviorMonitoring" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" -Name "DisableOnAccessProtection" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" -Name "DisableScanOnRealtimeEnable" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\MpEngine" -Name "MpEngineEnableFileNameFiltering" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet" -Name "SubmitSamplesConsent" -Type REG_DWORD -Data '2'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet" -Name "SpynetReporting" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet" -Name "SpynetProtection" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Signature Updates" -Name "SignatureUpdateInterval" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender" -Name "PUAProtection" -Type REG_DWORD -Data '0'
+    Invoke-WinEaseRegistryTable -Section defender -Tweak RemoveDefender -Unconditional
     Invoke-WinEaseReg -Action Delete -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "SecurityHealth"
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.SecHealthUI_8wekyb3d8bbwe"
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.Windows.SecHealthUI_cw5n1h2txyewy"

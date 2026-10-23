@@ -109,6 +109,5 @@
         # --- DisableBackgroundApps ---------------------------------------
         @{ Tweak = 'DisableBackgroundApps'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Windows\AppPrivacy'; Name = 'LetAppsRunInBackground'; Type = 'REG_DWORD'; Data = '2' }
         @{ Tweak = 'DisableBackgroundApps'; Default = $true; Hive = 'zNTUSER'; Path = 'Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications'; Name = 'GlobalUserDisabled'; Type = 'REG_DWORD'; Data = '1' }
-
     )
 }

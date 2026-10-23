@@ -68,18 +68,9 @@
 
         # --- CleanContextMenus -------------------------------------------
         # Share, Give access to, Cast to Device
-        # The empty string has to be passed as the literal '""': an empty argument is
-        # dropped by the PowerShell native call, so reg.exe would take the next switch
-        # ('/f') as the value and the extension would not be blocked at all.
+        # An empty Data is the empty string: the extension is blocked by an empty value.
         @{ Tweak = 'CleanContextMenus'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked'; Name = '{e2bf9676-5f8f-435c-97eb-11607a5bedf7}'; Type = 'REG_SZ'; Data = '' }
-        # The empty string has to be passed as the literal '""': an empty argument is
-        # dropped by the PowerShell native call, so reg.exe would take the next switch
-        # ('/f') as the value and the extension would not be blocked at all.
         @{ Tweak = 'CleanContextMenus'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked'; Name = '{f81e9010-6ea4-11ce-a7ff-00aa003ca9f6}'; Type = 'REG_SZ'; Data = '' }
-        # The empty string has to be passed as the literal '""': an empty argument is
-        # dropped by the PowerShell native call, so reg.exe would take the next switch
-        # ('/f') as the value and the extension would not be blocked at all.
         @{ Tweak = 'CleanContextMenus'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked'; Name = '{7AD84985-87B4-4a16-BE58-8B72A5B390F7}'; Type = 'REG_SZ'; Data = '' }
-
     )
 }

@@ -165,6 +165,7 @@ WinEase-main/
 | `WinEaseBenchmarks.ps1` | 統計分析とベンチマーク比較 |
 | `WinEaseDependencies.ps1` | 依存関係と機能影響の分析 |
 | `WinEaseGuiSession.ps1` | ビルダーの GUI セッション処理 |
+| `WinEaseRegistry.ps1` | フェーズ 10 のオフラインレジストリ操作 (`Invoke-WinEaseReg`、ハイブの読み込み、`config/registry` のテーブル実行) |
 | `WinEaseWim.ps1` | WIM の書き出し、フィンガープリント、修復 |
 | `WinEaseReport.ps1` | HTML レポート(`WinEase_report.html`) |
 | `WinEaseResume.ps1` | `-ResumeIsoOnly` と工程ごとのチェックポイント |
@@ -201,6 +202,7 @@ WinEase-main/
 | :--- | :--- |
 | `schema.psd1` | すべての設定スイッチとコンポーネントの**唯一の定義元**。GUI、プロファイル、CLI はここから作られる |
 | `dependencies.psd1` | 設定の依存関係・影響のカタログ(競合、影響、不明の判定に使う) |
+| `registry/<section>.psd1` | フェーズ 10 の単純なレジストリ書き込みをデータ化したもの: `@{ Tweak; Default; Hive; Path; Name; Type; Data; MinBuild; MaxBuild }`。`Invoke-WinEaseRegistryTable` が実行する。`MinBuild`/`MaxBuild` で Windows のビルド番号ごとに切り替えられる |
 | `WinEase.config.schema.json` | プロファイルの JSON スキーマ |
 | `user/user-tweaks.psd1` | ユーザー独自の設定、プリセット、カスタムスクリプト |
 | `user/user-migration-rules.psd1` | ユーザー独自の移行ルール |

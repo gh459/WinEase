@@ -82,3 +82,199 @@ Describe "Invoke-WinEaseReg" {
         @(Invoke-WinEaseReg -Action Add -Key 'HKLM\zSOFTWARE\Test' -Name 'X' -Type REG_DWORD -Data '1').Count | Should Be 0
     }
 }
+
+Describe "config\registry tables" {
+    BeforeAll {
+        $script:RegistryTableDir = Join-Path $script:RepoRoot 'config\registry'
+        $script:RegistryTableFiles = @(Get-ChildItem -LiteralPath $script:RegistryTableDir -Filter '*.psd1')
+        $schema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot 'config\schema.psd1')
+        # a table entry is switched by a tweak or by a component (SetJapaneseKeyboard, RemoveDefender, ...)
+        $script:SchemaKeys = @($schema.Tweaks | ForEach-Object { $_.Key }) + @($schema.Components | ForEach-Object { $_.Key })
+        $script:AllowedTypes = @('REG_SZ', 'REG_DWORD', 'REG_EXPAND_SZ', 'REG_BINARY', 'REG_NONE', 'REG_QWORD', 'REG_MULTI_SZ')
+        $script:AllowedHives = @('zSYSTEM', 'zSOFTWARE', 'zDEFAULT', 'zNTUSER', 'zCOMPONENTS')
+        $script:RegistryEntries = foreach ($file in $script:RegistryTableFiles) {
+            foreach ($entry in @((Import-PowerShellDataFile -LiteralPath $file.FullName).Entries)) {
+                [pscustomobject]@{ File = $file.Name; Entry = $entry }
+            }
+        }
+    }
+
+    It "has at least one table and every table has entries" {
+        $script:RegistryTableFiles.Count | Should BeGreaterThan 0
+        foreach ($file in $script:RegistryTableFiles) {
+            @((Import-PowerShellDataFile -LiteralPath $file.FullName).Entries).Count | Should BeGreaterThan 0
+        }
+    }
+
+    It "gives every entry the fields Tweak, Default, Hive, Path, Name, Type and Data" {
+        $bad = foreach ($r in $script:RegistryEntries) {
+            foreach ($field in 'Tweak', 'Default', 'Hive', 'Path', 'Name', 'Type', 'Data') {
+                if (-not $r.Entry.ContainsKey($field)) { "$($r.File): $($r.Entry.Tweak) $($r.Entry.Name) lacks $field" }
+            }
+        }
+        ($bad -join "`n") | Should BeNullOrEmpty
+    }
+
+    It "only uses Tweak keys that exist in config\schema.psd1" {
+        $bad = foreach ($r in $script:RegistryEntries) {
+            if ($script:SchemaKeys -notcontains $r.Entry.Tweak) { "$($r.File): unknown Tweak '$($r.Entry.Tweak)'" }
+        }
+        (@($bad | Select-Object -Unique) -join "`n") | Should BeNullOrEmpty
+    }
+
+    It "only uses allowed registry value types" {
+        $bad = foreach ($r in $script:RegistryEntries) {
+            if ($script:AllowedTypes -notcontains $r.Entry.Type) { "$($r.File): $($r.Entry.Name) has type '$($r.Entry.Type)'" }
+        }
+        ($bad -join "`n") | Should BeNullOrEmpty
+    }
+
+    It "only writes to the offline hives and never below zSYSTEM\CurrentControlSet (Bug Check 0x67)" {
+        $bad = foreach ($r in $script:RegistryEntries) {
+            foreach ($hive in @($r.Entry.Hive)) {
+                if ($script:AllowedHives -notcontains $hive) { "$($r.File): unknown hive '$hive'" }
+                if ($hive -eq 'zSYSTEM' -and $r.Entry.Path -match '^CurrentControlSet(\\|$)') { "$($r.File): zSYSTEM\$($r.Entry.Path)" }
+            }
+        }
+        ($bad -join "`n") | Should BeNullOrEmpty
+        foreach ($file in $script:RegistryTableFiles) {
+            ([System.IO.File]::ReadAllText($file.FullName)).Contains('zSYSTEM\CurrentControlSet') | Should Be $false
+        }
+    }
+
+    It "keeps MinBuild and MaxBuild consistent when they are set" {
+        $bad = foreach ($r in $script:RegistryEntries) {
+            $min = $r.Entry.MinBuild; $max = $r.Entry.MaxBuild
+            if ($min -and $min -isnot [int]) { "$($r.File): MinBuild is not a number" }
+            if ($max -and $max -isnot [int]) { "$($r.File): MaxBuild is not a number" }
+            if ($min -and $max -and $min -gt $max) { "$($r.File): MinBuild $min > MaxBuild $max" }
+        }
+        ($bad -join "`n") | Should BeNullOrEmpty
+    }
+
+    It "warns about a value that two entries write with different data" {
+        $seen = @{}
+        $conflicts = [System.Collections.Generic.List[string]]::new()
+        foreach ($r in $script:RegistryEntries) {
+            foreach ($hive in @($r.Entry.Hive)) {
+                $id = "$hive|$($r.Entry.Path)|$($r.Entry.Name)".ToLowerInvariant()
+                $value = "$($r.Entry.Type)|$($r.Entry.Data)"
+                if ($seen.ContainsKey($id) -and $seen[$id] -ne $value) { $conflicts.Add("$id : $($seen[$id]) vs $value ($($r.File))") }
+                $seen[$id] = $value
+            }
+        }
+        foreach ($c in $conflicts) { Write-Warning "registry tables: duplicate key with different data: $c" }
+        $true | Should Be $true
+    }
+
+    It "has a table for every Invoke-WinEaseRegistryTable -Section call of the phase" {
+        $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\10-registry.ps1'))
+        $sections = [regex]::Matches($text, 'Invoke-WinEaseRegistryTable -Section ([a-z-]+)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique
+        @($sections).Count | Should BeGreaterThan 0
+        foreach ($s in $sections) { (Test-Path -LiteralPath (Join-Path $script:RegistryTableDir "$s.psd1")) | Should Be $true }
+    }
+
+    It "has no table that the phase never applies" {
+        $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\10-registry.ps1'))
+        foreach ($file in $script:RegistryTableFiles) {
+            $text.Contains("-Section $($file.BaseName)") | Should Be $true
+        }
+    }
+}
+
+Describe "Invoke-WinEaseRegistryTable" {
+    BeforeAll {
+        . (Join-Path $script:RepoRoot 'lib\WinEaseRegistry.ps1')
+        $script:TblRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("regtbl_" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:TblRoot -Force | Out-Null
+        $sample = @(
+            '@{'
+            "    Version = '1.0'"
+            '    Entries = @('
+            "        @{ Tweak = 'TblOn'; Default = `$true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\T'; Name = 'A'; Type = 'REG_DWORD'; Data = '1' }"
+            "        @{ Tweak = 'TblOff'; Default = `$false; Hive = 'zSOFTWARE'; Path = 'T'; Name = 'B'; Type = 'REG_DWORD'; Data = '1' }"
+            "        @{ Tweak = 'TblOn'; Default = `$true; Hive = 'zSOFTWARE'; Path = 'T'; Name = ''; Type = 'REG_SZ'; Data = '' }"
+            "        @{ Tweak = 'TblOn'; Default = `$true; Hive = 'zSOFTWARE'; Path = 'T'; Name = 'New'; Type = 'REG_DWORD'; Data = '1'; MinBuild = 26100 }"
+            "        @{ Tweak = 'TblOn'; Default = `$true; Hive = 'zSOFTWARE'; Path = 'T'; Name = 'Old'; Type = 'REG_DWORD'; Data = '1'; MaxBuild = 22631 }"
+            '    )'
+            '}'
+        )
+        Set-Content -LiteralPath (Join-Path $script:TblRoot 'sample.psd1') -Value $sample -Encoding UTF8
+        $script:TblCalls = [System.Collections.Generic.List[string]]::new()
+        function Test-TweakEnabled {
+            param([string]$Name, [bool]$Default = $true)
+            if ($script:TblSettings -and $script:TblSettings.Contains($Name)) { return [bool]$script:TblSettings[$Name] }
+            return $Default
+        }
+        function Invoke-WinEaseReg {
+            param($Action, $Key, $Name, [switch]$DefaultValue, $Type, $Data)
+            $script:TblCalls.Add("$Action|$Key|$(if ($DefaultValue) { '(default)' } else { $Name })|$Type|$Data")
+        }
+        function Invoke-Table {
+            param([string]$Tweak, [switch]$Unconditional)
+            $script:TblCalls.Clear()
+            Invoke-WinEaseRegistryTable -Section sample -TableRoot $script:TblRoot -Tweak $Tweak -Unconditional:$Unconditional
+            return @($script:TblCalls)
+        }
+    }
+    AfterAll { Remove-Item -LiteralPath $script:TblRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    BeforeEach { $script:TblSettings = $null; $script:WinEaseTargetBuild = $null }
+
+    It "writes an entry to every listed hive when its tweak is on by default" {
+        $calls = Invoke-Table -Tweak 'TblOn'
+        ($calls -contains 'Add|HKLM\zNTUSER\Software\T|A|REG_DWORD|1') | Should Be $true
+        ($calls -contains 'Add|HKLM\zDEFAULT\Software\T|A|REG_DWORD|1') | Should Be $true
+    }
+
+    It "skips an entry whose tweak is off and honours a setting" {
+        @(Invoke-Table -Tweak 'TblOff').Count | Should Be 0
+        $script:TblSettings = [ordered]@{ TblOff = $true; TblOn = $false }
+        @(Invoke-Table -Tweak 'TblOff').Count | Should Be 1
+        @(Invoke-Table -Tweak 'TblOn').Count | Should Be 0
+    }
+
+    It "-Unconditional ignores the tweak gate" {
+        $script:TblSettings = [ordered]@{ TblOff = $false }
+        @(Invoke-Table -Tweak 'TblOff' -Unconditional).Count | Should Be 1
+    }
+
+    It "writes an empty Data of a string value as the literal quotes and an empty Name as the default value" {
+        $calls = Invoke-Table -Tweak 'TblOn'
+        ($calls -contains 'Add|HKLM\zSOFTWARE\T|(default)|REG_SZ|""') | Should Be $true
+    }
+
+    It "applies MinBuild / MaxBuild to the target build and ignores them while the build is unknown" {
+        $calls = Invoke-Table -Tweak 'TblOn'
+        @($calls | Where-Object { $_ -like '*|New|*' -or $_ -like '*|Old|*' }).Count | Should Be 2
+        $script:WinEaseTargetBuild = 22631
+        $calls = Invoke-Table -Tweak 'TblOn'
+        @($calls | Where-Object { $_ -like '*|New|*' }).Count | Should Be 0
+        @($calls | Where-Object { $_ -like '*|Old|*' }).Count | Should Be 1
+        $script:WinEaseTargetBuild = 26100
+        $calls = Invoke-Table -Tweak 'TblOn'
+        @($calls | Where-Object { $_ -like '*|New|*' }).Count | Should Be 1
+        @($calls | Where-Object { $_ -like '*|Old|*' }).Count | Should Be 0
+    }
+
+    It "throws for a missing table" {
+        { Invoke-WinEaseRegistryTable -Section 'does-not-exist' -TableRoot $script:TblRoot } | Should Throw
+    }
+}
+
+Describe "Registry files in the bundles" {
+    It "lists lib\WinEaseRegistry.ps1 and the config\registry tables in the release zip check" {
+        $py = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot '.github\scripts\verify-release-zip.py'))
+        $py.Contains('"lib/WinEaseRegistry.ps1"') | Should Be $true
+        $py.Contains('"config/registry/') | Should Be $true
+    }
+
+    It "copies lib\WinEaseRegistry.ps1 into the flat Migration Assistant bundle" {
+        $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\11-unattend.ps1'))
+        $text.Contains("'lib\WinEaseRegistry.ps1'") | Should Be $true
+    }
+
+    It "is loaded by the builder with the other builder libraries" {
+        $text = [System.IO.File]::ReadAllText($script:BuilderPath)
+        $text.Contains("'WinEaseRegistry.ps1'") | Should Be $true
+    }
+}

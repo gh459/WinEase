@@ -109,6 +109,5 @@
         # The accessibility animation switch is the setting the shell honours even when
         # a theme or an app re-enables the explorer animations.
         @{ Tweak = 'OptimizeVisualEffects'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Control Panel\Accessibility\Animation'; Name = 'Flags'; Type = 'REG_SZ'; Data = '0' }
-
     )
 }
