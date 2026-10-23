@@ -1021,6 +1021,7 @@ if ($script:WinEaseRemovedAppxPackages -and $script:WinEaseRemovedAppxPackages.C
 
 # Windows Defender Removal / Disable
 if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
+    Write-Host "  [SECURITY WARNING] Disabling Windows Defender Real-Time Protection and security policies..." -ForegroundColor Yellow
     Write-Host "Elevating offline registry DACLs for Defender keys via regini.exe..." -ForegroundColor Cyan
     $reginiLines = @(
         '\Registry\Machine\zSYSTEM\ControlSet001\Services\WinDefend [1 17]',

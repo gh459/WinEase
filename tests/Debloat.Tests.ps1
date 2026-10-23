@@ -26,6 +26,10 @@ Describe "WinEase - the Defender stays usable unless its removal was asked for" 
         $script:Phase10 | Should Match ([regex]::Escape('$removeDefender -and (Test-WinEaseDebloatTargetSelected -Item ''Physical: Defender (complete removal) [~50MB]'')'))
     }
 
+    It "phase 10 outputs a security warning when disabling Defender real-time protection" {
+        $script:Phase10 | Should Match ([regex]::Escape('[SECURITY WARNING] Disabling Windows Defender Real-Time Protection and security policies...'))
+    }
+
     It "phase 15 verifies boot-start Defender drivers as disabled, not deleted" {
         $phase15 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\15-verify.ps1'))
         $phase15 | Should Match 'Defender driver keys disabled'
