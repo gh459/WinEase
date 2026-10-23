@@ -7,6 +7,38 @@ param()
 $script:RepoRoot = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { Get-Location | Select-Object -ExpandProperty Path }
 $script:BuilderPath = Join-Path -Path $script:RepoRoot -ChildPath "WinEasebuilder.ps1"
 $script:GuiPath = Join-Path -Path $script:RepoRoot -ChildPath "gui\WinEaseGui.ps1"
+$script:GuiSessionPath = Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseGuiSession.ps1"
+
+# The helper implementation is split into function-only modules. Keep this list in
+# sync with the loader in WinEasehelpers.ps1; tests that inspect "the helper source"
+# must read the loader plus every module, not just the loader.
+$script:HelperSourceFiles = @(
+    "WinEasehelpers.ps1"
+    "lib\WinEasePathSafety.ps1"
+    "lib\WinEaseSystem.ps1"
+    "lib\WinEaseFileSystem.ps1"
+    "lib\WinEaseConfig.ps1"
+    "lib\WinEaseBenchmarks.ps1"
+    "lib\WinEaseDependencies.ps1"
+)
+
+function Get-WinEaseHelperSourceText {
+    $parts = foreach ($relative in $script:HelperSourceFiles) {
+        $path = Join-Path -Path $script:RepoRoot -ChildPath $relative
+        if (-not (Test-Path -LiteralPath $path)) { throw "Missing helper source: $relative" }
+        [System.IO.File]::ReadAllText($path)
+    }
+    return ($parts -join "`n")
+}
+
+function Get-WinEaseHelperAst {
+    $tokens = $null
+    $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput(
+        (Get-WinEaseHelperSourceText), [ref]$tokens, [ref]$errors)
+    if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+    return $ast
+}
 $script:UnattendPath = Join-Path -Path $script:RepoRoot -ChildPath "autounattend.xml"
 # The GUI tests assume English (they match button texts like "Select All"); the
 # display-language tests in Gui.Tests.ps1 set and restore their own values.

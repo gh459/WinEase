@@ -15,14 +15,14 @@ if (-not (Get-Command -Name Test-WinEasePathWithin -ErrorAction SilentlyContinue
     . (Join-Path -Path $script:RepoRoot -ChildPath "WinEasehelpers.ps1")
 }
 
-Describe "Apply-WinEaseGuiResult in WinEasebuilder.ps1" {
+Describe "Apply-WinEaseGuiResult in lib\WinEaseGuiSession.ps1" {
     BeforeAll {
-        $builderText = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
-        $builderAst = [System.Management.Automation.Language.Parser]::ParseInput($builderText, [ref]$null, [ref]$null)
+        $guiSessionText = [System.IO.File]::ReadAllText($script:GuiSessionPath, [System.Text.Encoding]::UTF8)
+        $guiSessionAst = [System.Management.Automation.Language.Parser]::ParseInput($guiSessionText, [ref]$null, [ref]$null)
 
         # Load functions needed by Apply-WinEaseGuiResult
         $funcsToLoad = @('Apply-WinEaseGuiResult', 'Confirm-WinEasePhysicalDebloatConsent')
-        $funcs = $builderAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $funcsToLoad -contains $n.Name }, $true)
+        $funcs = $guiSessionAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $funcsToLoad -contains $n.Name }, $true)
         foreach ($fn in $funcs) { . ([scriptblock]::Create($fn.Extent.Text)) }
 
         # Initialize schema definitions in script scope
@@ -173,7 +173,7 @@ Describe "WinEase GUI wiring - every toggle is consumed by the build" {
 $phaseText += "`n" + [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1"))
 # config\schema.psd1 is the master schema: the lookup tables of the options live there
 $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\schema.psd1"))
-    $helpersText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "WinEasehelpers.ps1"))
+    $helpersText = Get-WinEaseHelperSourceText
     $scriptText = (Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "scripts") -Filter "*.ps1" -ErrorAction SilentlyContinue |
         ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"
 
@@ -734,6 +734,13 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
         New-Item -ItemType Directory -Force -Path $edge | Out-Null
         Set-Content -LiteralPath (Join-Path $edge "msedge.exe") -Value "x" -Encoding ascii
         $script:scratchDir = $scratch
+        # The safe engine may use the protected-directory helper now that the split
+        # helpers are loaded in one go. Treat the fake image as the workspace, as the
+        # builder does, so the safety guard accepts paths under it.
+        $savedBaseWorkDir = $script:BaseWorkDir
+        $savedDismMountDir = $script:DismMountDir
+        $script:BaseWorkDir = $scratch
+        $script:DismMountDir = $scratch
         $script:isDryRunMode = $false
         $script:WinEaseDebloatEngines = [ordered]@{}
         foreach ($def in $engineDefs) { $script:WinEaseDebloatEngines[[string]$def.Item] = $def }
@@ -762,6 +769,8 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
             (Test-Path -LiteralPath $edge) | Should Be $false
         } finally {
             Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
+            $script:BaseWorkDir = $savedBaseWorkDir
+            $script:DismMountDir = $savedDismMountDir
             $script:scratchDir = $null
             $script:WinEaseDebloatEngines = $null
             $script:DebloatEngineSelection = [ordered]@{}
@@ -1883,10 +1892,11 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
 
     It "the builder prefers the WinUI 3 window, keeps -ClassicGui and falls back to WinForms" {
         $builder = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'WinEasebuilder.ps1'))
+        $guiSession = [System.IO.File]::ReadAllText($script:GuiSessionPath)
         $builder | Should Match '\[switch\]\$ClassicGui'
-        $builder | Should Match 'Find-WinEaseWinUiExe'
-        $builder | Should Match 'Show-WinEaseWinUiGUI'
-        $builder | Should Match 'falling back to the classic window'
+        $guiSession | Should Match 'Find-WinEaseWinUiExe'
+        $guiSession | Should Match 'Show-WinEaseWinUiGUI'
+        $guiSession | Should Match 'falling back to the classic window'
     }
 
     It "handles WINEASE_WINUI_INIT_DUMP environment variable creating parent directories safely" {
@@ -1924,8 +1934,8 @@ Describe "Show-WinEaseGuiSessionWindow session launcher and error handling" {
             function Show-WinEaseGUI { return $null }
         }
 
-        $builderAst = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$null, [ref]$null)
-        $funcAst = $builderAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq "Show-WinEaseGuiSessionWindow" }, $true)
+        $guiSessionAst = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiSessionPath, [ref]$null, [ref]$null)
+        $funcAst = $guiSessionAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq "Show-WinEaseGuiSessionWindow" }, $true)
         . ([scriptblock]::Create($funcAst.Extent.Text))
     }
 

@@ -638,8 +638,7 @@ Describe "WinEase helpers - process token privileges (Enable-WinEaseTokenPrivile
     }
 
     It "has expected default parameter list containing standard token privileges" {
-        $root = if ($script:RepoRoot) { $script:RepoRoot } else { Split-Path -Parent $PSScriptRoot }
-        $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root "WinEasehelpers.ps1"), [ref]$null, [ref]$null)
+        $ast = Get-WinEaseHelperAst
         $func = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Enable-WinEaseTokenPrivileges' }, $true)
         $func | Should Not Be $null
         $privParam = $func.Body.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Privileges' }
@@ -1714,5 +1713,96 @@ Describe "WinEase structured logger (lib/WinEaseLogger.ps1)" {
         $script:WinEaseLogEntries.Count | Should Be 0
         $script:WinEaseLogWarningCount | Should Be 0
         $script:WinEaseLogErrorCount | Should Be 0
+    }
+}
+
+Describe "WinEase helpers - split module layout (R2)" {
+    It "keeps the compatibility loader as the only helper entry point" {
+        $loader = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "WinEasehelpers.ps1"))
+        $loader | Should Match 'WinEasePathSafety\.ps1'
+        $loader | Should Match 'WinEaseSystem\.ps1'
+        $loader | Should Match 'WinEaseFileSystem\.ps1'
+        $loader | Should Match 'WinEaseConfig\.ps1'
+        $loader | Should Match 'WinEaseBenchmarks\.ps1'
+        $loader | Should Match 'WinEaseDependencies\.ps1'
+        $loader | Should Match 'throw'
+    }
+
+    It "defines every helper function exactly once across the split modules" {
+        $ast = Get-WinEaseHelperAst
+        $functions = @($ast.FindAll({
+            param($n)
+            $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $n.Parent -is [System.Management.Automation.Language.NamedBlockAst]
+        }, $true))
+        # 42 functions moved out of WinEasehelpers.ps1 plus the 7 functions that
+        # already lived in lib\WinEaseFileSystem.ps1.
+        $functions.Count | Should Be 49
+        $duplicates = @($functions | Group-Object Name | Where-Object Count -gt 1)
+        $duplicates.Count | Should Be 0
+        @($ast.FindAll({
+            param($n) $n -is [System.Management.Automation.Language.TypeDefinitionAst] -and $n.Name -eq 'BuildContext'
+        }, $true)).Count | Should Be 1
+    }
+
+    It "keeps the split modules free of top-level executable statements" {
+        foreach ($relative in $script:HelperSourceFiles | Where-Object { $_ -like 'lib\*.ps1' }) {
+            $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot $relative))
+            $tokens = $null
+            $errors = $null
+            $fileAst = [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$tokens, [ref]$errors)
+            $errors.Count | Should Be 0
+            foreach ($statement in $fileAst.EndBlock.Statements) {
+                $allowed = $statement -is [System.Management.Automation.Language.FunctionDefinitionAst] -or
+                    $statement -is [System.Management.Automation.Language.TypeDefinitionAst]
+                $allowed | Should Be $true
+            }
+        }
+    }
+
+    It "loads the same flat layout used by the migration bundle" {
+        $flatDir = Join-Path ([System.IO.Path]::GetTempPath()) ("WinEase-r2-flat-" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $flatDir -Force | Out-Null
+        $savedHelperRoot = $script:WinEaseHelperRoot
+        try {
+            Copy-Item -LiteralPath (Join-Path $script:RepoRoot "WinEasehelpers.ps1") -Destination $flatDir
+            foreach ($relative in $script:HelperSourceFiles | Where-Object { $_ -like 'lib\*.ps1' }) {
+                Copy-Item -LiteralPath (Join-Path $script:RepoRoot $relative) -Destination $flatDir
+            }
+            Add-Content -LiteralPath (Join-Path $flatDir "WinEaseConfig.ps1") -Value "`nfunction Test-WinEaseR2FlatMarker { return 'flat' }`n"
+            $marker = & {
+                . (Join-Path $flatDir "WinEasehelpers.ps1")
+                Get-Command -Name Test-WinEaseR2FlatMarker -ErrorAction SilentlyContinue
+            }
+            $marker | Should Not Be $null
+        } finally {
+            $script:WinEaseHelperRoot = $savedHelperRoot
+            Remove-Item -LiteralPath $flatDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "throws a clear error when a required split module is missing" {
+        $missingDir = Join-Path ([System.IO.Path]::GetTempPath()) ("WinEase-r2-missing-" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $missingDir -Force | Out-Null
+        $savedHelperRoot = $script:WinEaseHelperRoot
+        try {
+            Copy-Item -LiteralPath (Join-Path $script:RepoRoot "WinEasehelpers.ps1") -Destination $missingDir
+            { . (Join-Path $missingDir "WinEasehelpers.ps1") } | Should Throw
+        } finally {
+            $script:WinEaseHelperRoot = $savedHelperRoot
+            Remove-Item -LiteralPath $missingDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "builder loads the GUI session helpers through the lib loop" {
+        $builderText = [System.IO.File]::ReadAllText($script:BuilderPath)
+        $builderText | Should Match 'WinEaseGuiSession\.ps1'
+        $builderText | Should Not Match "foreach \(\`$WinEaseLibFile in @\([^\)]*'WinEaseFileSystem\.ps1'"
+        $builderAst = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$null, [ref]$null)
+        @($builderAst.FindAll({
+            param($n)
+            $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $n.Name -in @('Apply-WinEaseGuiResult', 'Show-WinEaseGuiSessionWindow', 'Invoke-WinEaseGuiSession')
+        }, $true)).Count | Should Be 0
     }
 }

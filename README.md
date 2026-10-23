@@ -496,9 +496,15 @@ made on GitHub: [`docs/dev/github-automation-audit.md`](docs/dev/github-automati
 ```
 WinEase/
 ├── WinEasebuilder.ps1          # Main orchestrator (params, options, try/catch)
-├── WinEasehelpers.ps1          # Pure utility helpers (dot-sourced at startup)
+├── WinEasehelpers.ps1          # Compatibility loader for the split helper modules (dot-sourced at startup)
 ├── lib/                       # Builder function libraries (dot-sourced into the builder's scope)
 │   ├── WinEaseMount.ps1        # DISM mount discovery/cleanup, mount directories, offline hives
+│   ├── WinEasePathSafety.ps1   # Path normalization/containment and restore-path validation
+│   ├── WinEaseSystem.ps1       # BuildContext, DISM wrapper, hive unmount, capacity and timing helpers
+│   ├── WinEaseConfig.ps1       # Config conflict resolution, resume integrity, user config paths, config diff, feature-ID overrides
+│   ├── WinEaseBenchmarks.ps1   # Statistical analysis and benchmark comparison
+│   ├── WinEaseDependencies.ps1 # Dependency / feature-impact analysis (config/dependencies.psd1)
+│   ├── WinEaseGuiSession.ps1   # Builder GUI session handling
 │   ├── WinEaseFileSystem.ps1   # Directory safety checks, ownership/ACL, robust deletion, capacity
 │   ├── WinEaseWim.ps1          # Native WIM export, fingerprinting and repair
 │   ├── WinEaseDebloat.ps1      # Advanced Debloat engine (PowerShell / Rust) and per-target handlers

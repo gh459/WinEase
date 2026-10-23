@@ -2,7 +2,7 @@
 #
 # A preset is nothing but the list of the individual options it switches on. It
 # never forces a value on its own: an option the user set explicitly always wins
-# (see Resolve-WinEaseConfiguration in WinEasehelpers.ps1).
+# (see Resolve-WinEaseConfiguration in lib\WinEaseConfig.ps1).
 #
 # PresetOrder lists the presets in the order the windows show them; Presets holds
 # their values; Aliases maps the descriptive names onto the preset keys.
