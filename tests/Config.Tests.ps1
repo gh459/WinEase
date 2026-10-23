@@ -386,12 +386,12 @@ Describe "WinEase builder - Apply-WinEaseProfileTweaks" {
     }
 
     It "applies PSCustomObject TweakSettings in profile mode (SourceIsProfile = true)" {
-        $profile = [PSCustomObject]@{
+        $profileObj = [PSCustomObject]@{
             TweakSettings = [PSCustomObject]@{
                 DisableCopilot = $true
             }
         }
-        Apply-WinEaseProfileTweaks -TargetPreset $profile -SourceIsProfile $true
+        Apply-WinEaseProfileTweaks -TargetPreset $profileObj -SourceIsProfile $true
         $script:TweakSettings['DisableCopilot'] | Should Be $true
         $script:TweakSettings['DisableUAC'] | Should Be $false
     }
@@ -464,10 +464,10 @@ Describe "WinEase builder - Apply-WinEaseProfileTweaks" {
         Apply-WinEaseProfileTweaks -TargetPreset $preset -SourceIsProfile $false
         $script:TweakSettings['DisableUAC'] | Should Be $false
 
-        $profile = @{
+        $profileConfig = @{
             TweakSettings = @{ DisableUAC = $true }
         }
-        Apply-WinEaseProfileTweaks -TargetPreset $profile -SourceIsProfile $true
+        Apply-WinEaseProfileTweaks -TargetPreset $profileConfig -SourceIsProfile $true
         $script:TweakSettings['DisableUAC'] | Should Be $true
     }
 }
