@@ -417,13 +417,12 @@ function Compare-WinEaseConfig {
     $tweakGroupDiffs = [System.Collections.Generic.List[PSCustomObject]]::new()
     $tweakSettingDiffs = [System.Collections.Generic.List[PSCustomObject]]::new()
 
-    # Component diffs
-    $allCompKeysList = [System.Collections.Generic.List[object]]::new()
-    if ($ref.Data -is [System.Collections.IDictionary]) { $allCompKeysList.AddRange([object[]]@($ref.Data.Keys)) }
-    elseif ($ref.Data.PSObject) { $allCompKeysList.AddRange([object[]]@($ref.Data.PSObject.Properties.Name)) }
-    if ($diff.Data -is [System.Collections.IDictionary]) { $allCompKeysList.AddRange([object[]]@($diff.Data.Keys)) }
-    elseif ($diff.Data.PSObject) { $allCompKeysList.AddRange([object[]]@($diff.Data.PSObject.Properties.Name)) }
-    $allCompKeys = $allCompKeysList | Select-Object -Unique
+    # Component diffs (HashSet[string] avoids pipeline Select-Object -Unique overhead)
+    $allCompKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    if ($ref.Data -is [System.Collections.IDictionary]) { foreach ($k in $ref.Data.Keys) { [void]$allCompKeys.Add($k) } }
+    elseif ($ref.Data.PSObject) { foreach ($p in $ref.Data.PSObject.Properties) { [void]$allCompKeys.Add($p.Name) } }
+    if ($diff.Data -is [System.Collections.IDictionary]) { foreach ($k in $diff.Data.Keys) { [void]$allCompKeys.Add($k) } }
+    elseif ($diff.Data.PSObject) { foreach ($p in $diff.Data.PSObject.Properties) { [void]$allCompKeys.Add($p.Name) } }
     foreach ($k in $allCompKeys) {
         $rv = $null; $dv = $null
         if ($ref.Data -is [System.Collections.IDictionary]) { if ($ref.Data.Contains($k)) { $rv = $ref.Data[$k] } } elseif ($ref.Data.PSObject -and $ref.Data.PSObject.Properties[$k]) { $rv = $ref.Data.PSObject.Properties[$k].Value }
@@ -440,12 +439,11 @@ function Compare-WinEaseConfig {
     if ($diff.Data -is [System.Collections.IDictionary] -and $diff.Data.Contains('TweakSettings')) { $diffTS = $diff.Data['TweakSettings'] }
     elseif ($diff.Data.PSObject -and $diff.Data.PSObject.Properties['TweakSettings']) { $diffTS = $diff.Data.PSObject.Properties['TweakSettings'].Value }
 
-    $allTweakKeysList = [System.Collections.Generic.List[object]]::new()
-    if ($refTS -is [System.Collections.IDictionary]) { $allTweakKeysList.AddRange([object[]]@($refTS.Keys)) }
-    elseif ($refTS.PSObject) { $allTweakKeysList.AddRange([object[]]@($refTS.PSObject.Properties.Name)) }
-    if ($diffTS -is [System.Collections.IDictionary]) { $allTweakKeysList.AddRange([object[]]@($diffTS.Keys)) }
-    elseif ($diffTS.PSObject) { $allTweakKeysList.AddRange([object[]]@($diffTS.PSObject.Properties.Name)) }
-    $allTweakKeys = $allTweakKeysList | Select-Object -Unique
+    $allTweakKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    if ($refTS -is [System.Collections.IDictionary]) { foreach ($k in $refTS.Keys) { [void]$allTweakKeys.Add($k) } }
+    elseif ($refTS -and $refTS.PSObject) { foreach ($p in $refTS.PSObject.Properties) { [void]$allTweakKeys.Add($p.Name) } }
+    if ($diffTS -is [System.Collections.IDictionary]) { foreach ($k in $diffTS.Keys) { [void]$allTweakKeys.Add($k) } }
+    elseif ($diffTS -and $diffTS.PSObject) { foreach ($p in $diffTS.PSObject.Properties) { [void]$allTweakKeys.Add($p.Name) } }
     foreach ($k in $allTweakKeys) {
         $rv = $null; $dv = $null
         if ($refTS -is [System.Collections.IDictionary]) { if ($refTS.Contains($k)) { $rv = $refTS[$k] } } elseif ($refTS -and $refTS.PSObject -and $refTS.PSObject.Properties[$k]) { $rv = $refTS.PSObject.Properties[$k].Value }
@@ -463,12 +461,11 @@ function Compare-WinEaseConfig {
     elseif ($ref.Data.PSObject -and $ref.Data.PSObject.Properties['TweakGroups']) { $refTG = $ref.Data.PSObject.Properties['TweakGroups'].Value }
     if ($diff.Data -is [System.Collections.IDictionary] -and $diff.Data.Contains('TweakGroups')) { $diffTG = $diff.Data['TweakGroups'] }
     elseif ($diff.Data.PSObject -and $diff.Data.PSObject.Properties['TweakGroups']) { $diffTG = $diff.Data.PSObject.Properties['TweakGroups'].Value }
-    $allTGKeysList = [System.Collections.Generic.List[object]]::new()
-    if ($refTG -is [System.Collections.IDictionary]) { $allTGKeysList.AddRange([object[]]@($refTG.Keys)) }
-    elseif ($refTG.PSObject) { $allTGKeysList.AddRange([object[]]@($refTG.PSObject.Properties.Name)) }
-    if ($diffTG -is [System.Collections.IDictionary]) { $allTGKeysList.AddRange([object[]]@($diffTG.Keys)) }
-    elseif ($diffTG.PSObject) { $allTGKeysList.AddRange([object[]]@($diffTG.PSObject.Properties.Name)) }
-    $allTGKeys = $allTGKeysList | Select-Object -Unique
+    $allTGKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    if ($refTG -is [System.Collections.IDictionary]) { foreach ($k in $refTG.Keys) { [void]$allTGKeys.Add($k) } }
+    elseif ($refTG -and $refTG.PSObject) { foreach ($p in $refTG.PSObject.Properties) { [void]$allTGKeys.Add($p.Name) } }
+    if ($diffTG -is [System.Collections.IDictionary]) { foreach ($k in $diffTG.Keys) { [void]$allTGKeys.Add($k) } }
+    elseif ($diffTG -and $diffTG.PSObject) { foreach ($p in $diffTG.PSObject.Properties) { [void]$allTGKeys.Add($p.Name) } }
     foreach ($k in $allTGKeys) {
         $rv = $null; $dv = $null
         if ($refTG -is [System.Collections.IDictionary]) { if ($refTG.Contains($k)) { $rv = $refTG[$k] } } elseif ($refTG -and $refTG.PSObject -and $refTG.PSObject.Properties[$k]) { $rv = $refTG.PSObject.Properties[$k].Value }
