@@ -2,6 +2,8 @@
 setlocal
 title WinEase Builder GUI
 
+:: Fallback for source checkouts without WinEase.exe (built by tools\build-binaries.ps1). Same steps as the exe.
+
 :: Resolve builder script (WinEasebuilder.ps1 or WinEasebuilder-*.ps1)
 set "BUILDER=%~dp0WinEasebuilder.ps1"
 if not exist "%BUILDER%" (
