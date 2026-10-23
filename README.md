@@ -227,7 +227,7 @@ The settings window is a **WinUI 3** app (`gui/winui`, Windows App SDK, follows 
 .\gui\winui\build.ps1            # publishes gui\winui\bin\WinEaseGui.exe (self-contained, x64 or arm64)
 ```
 
-When `WinEaseGui.exe` is not built, or with `-ClassicGui`, the builder shows the classic WinForms window (`gui/WinEaseGui.ps1`) with the same features. The WinUI window runs as a separate process and talks to the builder over its standard input/output (one JSON message per line, see `gui/WinEaseWinUiHost.ps1`), so presets, the dependency check, Preset Diff and the migration engine still run in PowerShell.
+The WinUI window is the default. **The builder's WinForms window is frozen: new features land in WinUI only** (the Migrator keeps its WinForms window). It is kept as the fallback when `WinEaseGui.exe` is not built, or with `-ClassicGui`; it has the same tabs (including Custom Scripts, Migration and Preset Diff). CI builds both architectures with `tools/build-binaries.ps1 -Architecture x64|arm64` (solution: `src/WinEase.sln`). The WinUI window runs as a separate process and talks to the builder over its standard input/output (one JSON message per line, see `gui/WinEaseWinUiHost.ps1`), so presets, the dependency check, Preset Diff and the migration engine still run in PowerShell.
 
 The GUI allows you to:
 - Select an auto-detected installation media drive or browse directly to an official Windows 11 `.iso` file.
@@ -515,7 +515,7 @@ WinEase/
 │   ├── WinEaseSelfTest.ps1     # Self-test suite (loaded only for -TestSelf)
 │   └── WinEaseExtensions.ps1   # User extensibility engine (user tweaks, presets, custom scripts, config diff, recovery readiness)
 ├── gui/
-│   ├── WinEaseGui.ps1          # Classic WinForms GUI, one function per tab (loaded only for -GUI / menu [7]); the migrator window reuses its parts
+│   ├── WinEaseGui.ps1          # Classic WinForms GUI (frozen fallback), one function per tab (loaded only for -GUI / menu [7]); the migrator window reuses its parts
 │   ├── WinEaseWinUiHost.ps1    # Starts the WinUI 3 window and answers its requests (JSON lines over stdin/stdout)
 │   └── winui/                 # WinUI 3 window (C#, Windows App SDK); build.ps1 publishes it to winui/bin
 ├── phases/                    # 18 build phases (dot-sourced by orchestrator)

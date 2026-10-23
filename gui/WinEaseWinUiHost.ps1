@@ -310,6 +310,7 @@ function Invoke-WinEaseWinUiRequest {
                     Condition = [string]$e.Condition
                     OnError = [string]$e.OnError
                     Description = [string]$e.Description
+                    Location = [string]$e.Location
                 }
             }
             return @{ Data = $rows }
