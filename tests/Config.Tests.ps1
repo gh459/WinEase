@@ -1218,3 +1218,140 @@ Describe "WinEase builder - the UI preference table (config\ui-preferences.psd1)
         ($offenders -join ', ') | Should Be ''
     }
 }
+
+Describe "WinEase builder - Apply-WinEaseProfileComponents edge cases" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+
+        $builderPath = Join-Path $script:RepoRoot "WinEasebuilder.ps1"
+        $schemaPath  = Join-Path $script:RepoRoot "config\schema.psd1"
+
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($builderPath, [ref]$tokens, [ref]$errors)
+
+        $fnGetValStr    = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-WinEaseProfileValue' }, $true))[0].Extent.Text
+        $fnApplyCompStr = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Apply-WinEaseProfileComponents' }, $true))[0].Extent.Text
+
+        . ([scriptblock]::Create($fnGetValStr))
+        . ([scriptblock]::Create($fnApplyCompStr))
+
+        $schema = Import-PowerShellDataFile -Path $schemaPath
+        $script:ComponentDefs = [ordered]@{}
+        foreach ($cd in $schema.Components) {
+            $script:ComponentDefs[$cd.Key] = $cd
+        }
+    }
+
+    BeforeEach {
+        $script:ConfigOverrides = [ordered]@{}
+        foreach ($cd in $script:ComponentDefs.Values) {
+            if ($cd.Variable) {
+                Set-Variable -Name $cd.Variable -Scope Script -Value $null
+            }
+        }
+    }
+
+    It "handles null or empty TargetPreset by applying base defaults" {
+        Apply-WinEaseProfileComponents -TargetPreset $null -SourceIsProfile $false
+        foreach ($cd in $script:ComponentDefs.Values) {
+            if ($cd.Type -eq 'Special' -or -not $cd.ContainsKey('Default')) { continue }
+            $expected = if ($cd.Type -eq 'String') { [string]$cd.Default } else { [bool]$cd.Default }
+            $actual = Get-Variable -Name $cd.Variable -Scope Script -ValueOnly
+            $actual | Should Be $expected
+        }
+    }
+
+    It "applies component settings from an IDictionary (hashtable) preset" {
+        $boolCd = @($script:ComponentDefs.Values | Where-Object { $_.Type -eq 'Bool' -and $_.ContainsKey('Default') })[0]
+        $boolKey = $boolCd.Key
+        $targetVal = -not $boolCd.Default
+
+        $preset = @{ $boolKey = $targetVal }
+        Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+
+        $actual = Get-Variable -Name $boolCd.Variable -Scope Script -ValueOnly
+        $actual | Should Be $targetVal
+    }
+
+    It "applies component settings from a PSCustomObject preset" {
+        $boolCd = @($script:ComponentDefs.Values | Where-Object { $_.Type -eq 'Bool' -and $_.ContainsKey('Default') })[0]
+        $boolKey = $boolCd.Key
+        $targetVal = -not $boolCd.Default
+
+        $preset = [PSCustomObject]@{ $boolKey = $targetVal }
+        Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+
+        $actual = Get-Variable -Name $boolCd.Variable -Scope Script -ValueOnly
+        $actual | Should Be $targetVal
+    }
+
+    It "handles unsupported TargetPreset types gracefully without throwing" {
+        Apply-WinEaseProfileComponents -TargetPreset 12345 -SourceIsProfile $false
+        Apply-WinEaseProfileComponents -TargetPreset "invalid_preset_string" -SourceIsProfile $false
+        Apply-WinEaseProfileComponents -TargetPreset @("item1", "item2") -SourceIsProfile $true
+
+        $boolCd = @($script:ComponentDefs.Values | Where-Object { $_.Type -eq 'Bool' -and $_.ContainsKey('Default') })[0]
+        $expected = [bool]$boolCd.Default
+        $actual = Get-Variable -Name $boolCd.Variable -Scope Script -ValueOnly
+        $actual | Should Be $expected
+    }
+
+    It "gives user profile settings precedence when SourceIsProfile is true" {
+        $boolCd = @($script:ComponentDefs.Values | Where-Object { $_.Type -eq 'Bool' -and $_.ContainsKey('Default') })[0]
+        $boolKey = $boolCd.Key
+        $targetVal = -not $boolCd.Default
+
+        $profilePreset = [ordered]@{ $boolKey = $targetVal }
+        Apply-WinEaseProfileComponents -TargetPreset $profilePreset -SourceIsProfile $true
+
+        $actual = Get-Variable -Name $boolCd.Variable -Scope Script -ValueOnly
+        $actual | Should Be $targetVal
+    }
+
+    It "ensures explicit CLI overrides in script:ConfigOverrides take precedence over TargetPreset" {
+        $boolCd = @($script:ComponentDefs.Values | Where-Object { $_.Type -eq 'Bool' -and $_.ContainsKey('Default') })[0]
+        $boolKey = $boolCd.Key
+
+        $preset = @{ $boolKey = $true }
+        $script:ConfigOverrides[$boolKey] = $false
+
+        Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+
+        $actual = Get-Variable -Name $boolCd.Variable -Scope Script -ValueOnly
+        $actual | Should Be $false
+    }
+
+    It "skips components with Type=Special or missing Default key" {
+        $specialCd = @($script:ComponentDefs.Values | Where-Object { $_.Type -eq 'Special' -or -not $_.ContainsKey('Default') })[0]
+        if ($specialCd -and $specialCd.Variable) {
+            Set-Variable -Name $specialCd.Variable -Scope Script -Value "original_value"
+            $preset = @{ $specialCd.Key = "preset_value" }
+
+            Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+
+            $actual = Get-Variable -Name $specialCd.Variable -Scope Script -ValueOnly
+            $actual | Should Be "original_value"
+        }
+    }
+
+    It "correctly casts String component values to string and Bool values to bool" {
+        $stringCds = @($script:ComponentDefs.Values | Where-Object { $_.Type -eq 'String' -and $_.ContainsKey('Default') })
+        if ($stringCds.Count -gt 0) {
+            $strCd = $stringCds[0]
+            $preset = @{ $strCd.Key = 12345 }
+            Apply-WinEaseProfileComponents -TargetPreset $preset -SourceIsProfile $false
+
+            $actual = Get-Variable -Name $strCd.Variable -Scope Script -ValueOnly
+            $actual | Should Be "12345"
+            $actual -is [string] | Should Be $true
+        }
+
+        $boolCd = @($script:ComponentDefs.Values | Where-Object { $_.Type -eq 'Bool' -and $_.ContainsKey('Default') })[0]
+        $presetBool = @{ $boolCd.Key = $true }
+        Apply-WinEaseProfileComponents -TargetPreset $presetBool -SourceIsProfile $false
+
+        $actualBool = Get-Variable -Name $boolCd.Variable -Scope Script -ValueOnly
+        $actualBool -is [bool] | Should Be $true
+    }
+}
