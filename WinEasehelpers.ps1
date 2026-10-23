@@ -1181,7 +1181,7 @@ function Remove-WinEaseTreeRobust {
     $repairFailures = [System.Collections.Generic.Dictionary[string,string]]::new()
 
     try {
-        New-Item -Path $emptyTemp -ItemType Directory -Force -ErrorAction Stop | Out-Null
+        $null = New-Item -Path $emptyTemp -ItemType Directory -Force -ErrorAction Stop
     } catch {
         Write-Warning "Remove-WinEaseTreeRobust: could not create mirror source '$emptyTemp': $_"
     }
@@ -1311,7 +1311,7 @@ function Write-WinEaseTextFileAtomic {
     }
     $dir = [System.IO.Path]::GetDirectoryName($Path)
     if ($dir -and -not (Test-Path -LiteralPath $dir)) {
-        New-Item -ItemType Directory -Force -Path $dir -ErrorAction SilentlyContinue | Out-Null
+        $null = New-Item -ItemType Directory -Force -Path $dir -ErrorAction SilentlyContinue
     }
     $tempPath = "$Path.$([System.Guid]::NewGuid().ToString('N')).tmp"
     try {
@@ -1923,7 +1923,7 @@ function Test-WinEaseDependencies {
         $Config = $normalizedConfig
     }
     if (-not $script:WinEaseDependencyCatalog) {
-        try { Import-WinEaseDependencyCatalog | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        try { $null = Import-WinEaseDependencyCatalog } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
     $cat = $script:WinEaseDependencyCatalog
     $conflicts = [System.Collections.Generic.List[object]]::new()
