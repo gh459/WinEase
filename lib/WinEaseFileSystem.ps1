@@ -585,3 +585,385 @@ function Test-WinEaseMetadataAndCapacity {
         TargetFreeGB     = $targetFreeGB
     }
 }
+
+# ----------------------------------------------------------------------------
+# ACL-repair prerequisites: enable the token privileges that allow changing
+# owner/DACL on image-protected trees in-process (P/Invoke, Add-Type).
+# WHY not takeown/icacls: verified on the real leftover tree (2026-10-18) -
+#   * takeown.exe REJECTS "/f <dir> /d y" (needs /R): argv validation error,
+#     exit 1, NOTHING changed - and stderr went to $null, so the failure was
+#     invisible in every build log;
+#   * icacls reports "Access is denied" yet still exits 0, so exit codes alone
+#     cannot detect its failure either;
+#   * takeown /r and icacls /T recursively traverse junctions (verified hazard).
+# Set-Acl raises real catchable .NET exceptions instead, and stays non-recursive.
+# ----------------------------------------------------------------------------
+function Enable-WinEaseTokenPrivileges {
+    param([string[]]$Privileges = @('SeTakeOwnershipPrivilege', 'SeRestorePrivilege', 'SeBackupPrivilege'))
+    if (-not ('WinEase.TokenHelpers' -as [type])) {
+        try {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace WinEase {
+    public static class TokenHelpers {
+        [StructLayout(LayoutKind.Sequential)]
+        public struct LUID { public uint LowPart; public int HighPart; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct LUID_AND_ATTRIBUTES { public LUID Luid; public uint Attributes; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct TOKEN_PRIVILEGES {
+            public uint PrivilegeCount;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 1)]
+            public LUID_AND_ATTRIBUTES[] Privileges;
+        }
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool LookupPrivilegeValue(string lpSystemName, string lpName, out LUID lpLuid);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool AdjustTokenPrivileges(IntPtr TokenHandle, bool DisableAllPrivileges, ref TOKEN_PRIVILEGES NewState, uint BufferLength, IntPtr PreviousState, IntPtr ReturnLength);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetCurrentProcess();
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr hObject);
+
+        public static bool EnablePrivilege(string name) {
+            const uint TOKEN_ADJUST_PRIVILEGES = 0x0020;
+            const uint TOKEN_QUERY = 0x0008;
+            const uint SE_PRIVILEGE_ENABLED = 0x0002;
+            const int ERROR_NOT_ALL_ASSIGNED = 1300;
+
+            IntPtr token;
+            if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, out token)) { return false; }
+            try {
+                LUID luid;
+                if (!LookupPrivilegeValue(null, name, out luid)) { return false; }
+                TOKEN_PRIVILEGES tp = new TOKEN_PRIVILEGES();
+                tp.PrivilegeCount = 1;
+                tp.Privileges = new LUID_AND_ATTRIBUTES[1];
+                tp.Privileges[0].Luid = luid;
+                tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+                if (!AdjustTokenPrivileges(token, false, ref tp, (uint)Marshal.SizeOf(typeof(TOKEN_PRIVILEGES)), IntPtr.Zero, IntPtr.Zero)) { return false; }
+                return Marshal.GetLastWin32Error() != ERROR_NOT_ALL_ASSIGNED;
+            } finally {
+                CloseHandle(token);
+            }
+        }
+    }
+}
+'@ -ErrorAction Stop
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
+    if (-not ('WinEase.TokenHelpers' -as [type])) {
+        if (-not $script:WinEaseTokenHelperWarned) {
+            $script:WinEaseTokenHelperWarned = $true
+            Write-Warning "Enable-WinEaseTokenPrivileges: token helper type unavailable (Add-Type failed); ACL repair cannot elevate owner/DACL rights."
+        }
+        return $false
+    }
+    $allEnabled = $true
+    foreach ($privilege in $Privileges) {
+        try { if (-not ([WinEase.TokenHelpers]::EnablePrivilege($privilege))) { $allEnabled = $false } }
+        catch { $allEnabled = $false }
+    }
+    return $allEnabled
+}
+
+# NON-recursive repair of one unreadable directory: take ownership for
+# BUILTIN\Administrators (S-1-5-32-544), strip explicit Deny ACEs aimed at
+# Administrators, add an inheritable FullControl grant, write it back via Set-Acl.
+# The (OI)(CI) grant propagates to children inside this tree only (verified: it
+# does NOT cross junctions - a link target keeps its own ACLs). Protected child
+# directories are picked up by the next helper iteration.
+# NEVER make this recursive (links may live below - verified hazard).
+# Returns $null on success, or a one-line error message on failure (caller logs it).
+function Repair-WinEaseDeniedAcl {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    $null = Enable-WinEaseTokenPrivileges
+    $adminsSid = [System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
+    try { $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop }
+    catch {
+        # Unreadable DACL (e.g. owner is a service account and no Administrators ACE exists):
+        # build a FRESH descriptor. With the privileges enabled above, WRITE_OWNER/WRITE_DAC
+        # are granted regardless of the DACL, so one Set-Acl writes owner + inheritable grant.
+        try {
+            $fresh = New-Object System.Security.AccessControl.DirectorySecurity
+            $fresh.SetOwner($adminsSid)
+            $grant = New-Object System.Security.AccessControl.FileSystemAccessRule($adminsSid, [System.Security.AccessControl.FileSystemRights]::FullControl, [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit', [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)
+            [void]$fresh.AddAccessRule($grant)
+            Set-Acl -LiteralPath $Path -AclObject $fresh -ErrorAction Stop
+            return $null
+        } catch {
+            return "fresh-descriptor Set-Acl failed: $(($_ -split "`n")[0])"
+        }
+    }
+    try {
+        $acl.SetOwner($adminsSid)
+        foreach ($rule in @($acl.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]))) {
+            if ($rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Deny -and
+                $rule.IdentityReference.Value -eq 'S-1-5-32-544') {
+                [void]$acl.RemoveAccessRuleSpecific($rule)
+            }
+        }
+        $grant = New-Object System.Security.AccessControl.FileSystemAccessRule($adminsSid, [System.Security.AccessControl.FileSystemRights]::FullControl, [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit', [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)
+        [void]$acl.AddAccessRule($grant)
+        Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
+    } catch {
+        return "Set-Acl failed: $(($_ -split "`n")[0])"
+    }
+    return $null
+}
+
+# Robust directory removal (long paths + image ACLs) - lifecycle cleanup fix
+# WHY: PowerShell 5.1 Remove-Item fails with ACCESS DENIED on expanded Windows
+# images (files owned by TrustedInstaller with Administrators granted RX only)
+# and -ErrorAction SilentlyContinue turns that into a silent, invisible leak.
+# cmd "rd /s /q" fails on the same ACLs too. robocopy /MIR /B (backup mode,
+# SeBackupPrivilege) deletes them regardless of the DACL.
+# Reparse points are pruned first on purpose: applied-image junctions such as
+# 'Users\All Users' -> C:\ProgramData point at HOST paths, so nothing may ever
+# recurse through them.
+#   Pass: tolerant reparse prune -> [robocopy /MIR /XJ /B only when the tree is proven
+#         link-free] -> rd /s /q, retried up to 4x; unreadable directories receive a
+#         NON-recursive, in-process ACL repair between passes (take ownership +
+#         inheritable Administrators grant via Set-Acl, see Repair-WinEaseDeniedAcl).
+#         The previous takeown/icacls repair was a SILENT NO-OP: current Windows 11
+#         takeown rejects "/d y" without "/r" (argv validation, exit 1) and icacls
+#         reports "Access is denied" while still exiting 0 - and both stderr streams
+#         were discarded ("> $null 2>&1"), which is what leaked the 17.2 GB tree.
+#         VERIFIED HAZARDS: takeown /r and icacls /T traverse junctions, and robocopy /MIR
+#         purges THROUGH junctions even with /XJ - so no recursive ACL grant and no mirror
+#         purge may ever run while a link could remain (visible or hidden).
+#   Fallback: (opt-in) Reset-DirectoryWithRobocopy for locked trees / loaded hives
+# Returns $true when the path no longer exists.
+function Remove-WinEaseTreeRobust {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [string]$SafetyRoot,
+        [switch]$AllowLockedFallback
+    )
+    # rd and robocopy report failures on stderr. When the caller runs with
+    # $ErrorActionPreference = 'Stop' (the GitHub Actions powershell shell does), Windows
+    # PowerShell 5.1 turns those redirected lines into terminating errors, so this function
+    # threw "Access is denied" instead of retrying and returning $false. The result is
+    # reported through the return value, so keep native-tool noise non-terminating here.
+    # The assignment is local to this function and restored when it returns.
+    $ErrorActionPreference = 'Continue'
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $true }
+
+    $full = try { ConvertTo-WinEaseNormalizedPath -Path $Path } catch { [System.IO.Path]::GetFullPath($Path).TrimEnd('\') }
+
+    # Safety guards: never operate on a drive root, and (when given) only on a strict child of SafetyRoot
+    if ($full -match '^[A-Za-z]:$') {
+        Write-Warning "Remove-WinEaseTreeRobust: refusing to remove drive root '$full'."
+        return $false
+    }
+    if ($SafetyRoot) {
+        $normRoot = try { ConvertTo-WinEaseNormalizedPath -Path $SafetyRoot } catch { [System.IO.Path]::GetFullPath($SafetyRoot).TrimEnd('\') }
+        if (($full -ieq $normRoot) -or (-not (Test-WinEasePathWithin -Path $full -Root $normRoot))) {
+            Write-Warning "Remove-WinEaseTreeRobust: refusing '$full' (not a strict child of safety root '$normRoot')."
+            return $false
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath $full)) { return $true }
+
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+    # If the directory itself is a reparse point, remove the link only (never the target)
+    $rootItem = Get-Item -LiteralPath $full -Force -ErrorAction SilentlyContinue
+    if ($rootItem -and ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        try { [System.IO.Directory]::Delete($full, $false) } catch { Write-Warning "Remove-WinEaseTreeRobust: failed to remove reparse point '$full': $_" }
+        return (-not (Test-Path -LiteralPath $full))
+    }
+
+    # Tolerant reparse prune + native passes, iterated while progress is made.
+    # SAFETY (empirically verified on Windows 11): takeown /r and icacls /T DO traverse
+    # junctions, so no recursive ACL grant may ever meet a surviving link. ACL repair of
+    # unreadable directories is therefore done NON-recursively, one directory at a time.
+    $linkDeleteFailed = $false
+    $emptyTemp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "WinEase_empty_$([System.IO.Path]::GetRandomFileName())"
+    $enumDenied = [System.Collections.Generic.List[string]]::new()
+    $linkFailedParents = [System.Collections.Generic.List[string]]::new()
+    $repairFailures = [System.Collections.Generic.Dictionary[string,string]]::new()
+
+    try {
+        $null = New-Item -Path $emptyTemp -ItemType Directory -Force -ErrorAction Stop
+    } catch {
+        Write-Warning "Remove-WinEaseTreeRobust: could not create mirror source '$emptyTemp': $_"
+    }
+
+    try {
+        for ($iteration = 1; $iteration -le 4; $iteration++) {
+            # --- Repair ACLs on directories the previous pass could not read, plus the parents
+            # --- of links the previous pass could not delete (all non-recursive on the target;
+            # --- the (OI)(CI) grant then propagates inside this tree only) ---
+            if ($iteration -ge 2) {
+                foreach ($deniedPath in (@($enumDenied) + @($linkFailedParents) + @($full))) {
+                    if (-not (Test-WinEasePathExistsSafe -Path $deniedPath)) { continue }
+                    # Inheritable grant repairs the whole subtree in one pass and makes child
+                    # links deletable; ACL propagation is verified NOT to cross junctions (a
+                    # link target keeps its own ACLs). Children with protected ACLs are picked
+                    # up by the next iteration. Failures are recorded (first error per path)
+                    # and surfaced in the final warning instead of being swallowed.
+                    $repairError = Repair-WinEaseDeniedAcl -Path $deniedPath
+                    if ($repairError) {
+                        if (-not $repairFailures.ContainsKey($deniedPath)) { $repairFailures[$deniedPath] = $repairError }
+                        Write-Verbose "Remove-WinEaseTreeRobust: ACL repair failed for '$deniedPath': $repairError"
+                    }
+                }
+                $enumDenied.Clear()
+                $linkFailedParents.Clear()
+            }
+
+            # --- Prune visible reparse points (unreadable subdirs are recorded, not fatal) ---
+            $prunedLinks = 0
+            $linkDeleteFailed = $false
+            $queue = [System.Collections.Generic.Queue[string]]::new()
+            $queue.Enqueue($full)
+            while ($queue.Count -gt 0) {
+                $curr = $queue.Dequeue()
+                # Enumeration failures are expected for not-yet-repaired protected dirs; capture
+                # them via -ErrorVariable instead of try/catch so the transcript stays clean.
+                $walkErr = $null
+                $children = @(Get-ChildItem -LiteralPath $curr -Force -ErrorAction SilentlyContinue -ErrorVariable walkErr)
+                if ($null -ne $walkErr -and @($walkErr).Count -gt 0) { $enumDenied.Add($curr); continue }
+                foreach ($child in $children) {
+                    if ($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                        try {
+                            if ($child.PSIsContainer) { [System.IO.Directory]::Delete($child.FullName, $false) }
+                            else { [System.IO.File]::Delete($child.FullName) }
+                            $prunedLinks++
+                        } catch {
+                            Write-Warning "Remove-WinEaseTreeRobust: could not prune reparse point '$($child.FullName)': $_"
+                            $linkDeleteFailed = $true
+                            $linkParent = [System.IO.Path]::GetDirectoryName($child.FullName)
+                            if ($linkParent -and -not $linkFailedParents.Contains($linkParent)) { $linkFailedParents.Add($linkParent) }
+                        }
+                    } elseif ($child.PSIsContainer) {
+                        $queue.Enqueue($child.FullName)
+                    }
+                }
+            }
+            if ($linkDeleteFailed) { continue }   # links survived: skip robocopy/rd, retry after repairing their parents
+
+            # --- Backup-mode mirror: ONLY when the walk proved the tree is link-free.
+            # VERIFIED HAZARD: robocopy /MIR purges THROUGH junctions even with /XJ (every
+            # tested variant destroyed the junction target), so it must never meet an
+            # unverified tree - not even one whose links are merely hidden from us.
+            if ($enumDenied.Count -eq 0 -and (Test-Path -LiteralPath $emptyTemp)) {
+                $null = & robocopy.exe $emptyTemp $full /MIR /XJ /B /R:0 /W:0 /NFL /NDL /NP /NJH /NJS 2>&1
+            }
+
+            # rd never follows junctions (verified): safe even while denied dirs remain
+            & cmd.exe /c "rd /s /q `"$full`"" > $null 2>&1
+            if (-not (Test-Path -LiteralPath $full)) {
+                Write-Verbose "Remove-WinEaseTreeRobust: '$full' removed (iteration $iteration, $prunedLinks link(s) pruned, enumDenied=$($enumDenied.Count)) in $([math]::Round($sw.Elapsed.TotalSeconds,1))s."
+                return $true
+            }
+        }
+    } finally {
+        if (Test-Path -LiteralPath $emptyTemp) { Remove-Item -LiteralPath $emptyTemp -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    # --- Tier 3: heavy reset machinery for locked trees / loaded offline hives (opt-in) ---
+    if ($AllowLockedFallback) {
+        if (Get-Command -Name Reset-DirectoryWithRobocopy -ErrorAction SilentlyContinue) {
+            try { Reset-DirectoryWithRobocopy -Path $full -Retries 2 } catch { Write-Warning "Remove-WinEaseTreeRobust: heavy reset failed for '$full': $(($_ -split "`n")[0])" }
+            if (Test-Path -LiteralPath $full) {
+                if (-not $linkDeleteFailed) { & cmd.exe /c "rd /s /q `"$full`"" > $null 2>&1 }
+                else { try { [System.IO.Directory]::Delete($full, $false) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" } }
+            }
+            if (-not (Test-Path -LiteralPath $full)) {
+                Write-Verbose "Remove-WinEaseTreeRobust: '$full' removed via tier 3 in $([math]::Round($sw.Elapsed.TotalSeconds,1))s."
+                return $true
+            }
+        } else {
+            Write-Warning "Remove-WinEaseTreeRobust: Reset-DirectoryWithRobocopy not available; heavy fallback skipped for '$full'."
+        }
+    }
+
+    $repairDetail = ''
+    if ($repairFailures.Count -gt 0) {
+        $repairSamples = @($repairFailures.Keys | Select-Object -First 3 | ForEach-Object { "'$_': $($repairFailures[$_])" }) -join '; '
+        $repairDetail = " ACL repair errors ($($repairFailures.Count)): $repairSamples"
+    }
+    Write-Warning "Remove-WinEaseTreeRobust: '$full' could not be fully removed (linkPruneClean=$(-not $linkDeleteFailed), elapsed $([math]::Round($sw.Elapsed.TotalSeconds,1))s).$repairDetail"
+    return $false
+}
+# Helper function: Write text file atomically with retry logic to avoid external lock failure
+
+function Write-WinEaseTextFileAtomic {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path,
+        [Parameter(Mandatory=$true)]
+        [string]$Content,
+        [object]$Encoding = $null,
+        [int]$MaxRetries = 5,
+        [int]$RetryDelayMs = 200
+    )
+    $actualEncoding = if ($Encoding -is [System.Text.Encoding]) {
+        $Encoding
+    } elseif ($Encoding -is [string] -and $Encoding.ToLower() -eq 'ascii') {
+        [System.Text.Encoding]::ASCII
+    } elseif ($Encoding -is [string] -and $Encoding.ToLower() -eq 'unicode') {
+        [System.Text.Encoding]::Unicode
+    } else {
+        [System.Text.Encoding]::UTF8
+    }
+    $dir = [System.IO.Path]::GetDirectoryName($Path)
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        $null = New-Item -ItemType Directory -Force -Path $dir -ErrorAction SilentlyContinue
+    }
+    $tempPath = "$Path.$([System.Guid]::NewGuid().ToString('N')).tmp"
+    try {
+        [System.IO.File]::WriteAllText($tempPath, $Content, $actualEncoding)
+    } catch {
+        Write-Warning "Write-WinEaseTextFileAtomic: Failed to write initial temp file '$tempPath': $_"
+        return $false
+    }
+
+    for ($attempt = 1; $attempt -le $MaxRetries; $attempt++) {
+        try {
+            if ([System.IO.File]::Exists($Path)) {
+                try {
+                    [System.IO.File]::Replace($tempPath, $Path, $null, $true)
+                    return $true
+                } catch {
+                    [System.IO.File]::Delete($Path)
+                    [System.IO.File]::Move($tempPath, $Path)
+                    return $true
+                }
+            } else {
+                [System.IO.File]::Move($tempPath, $Path)
+                return $true
+            }
+        } catch {
+            if ($attempt -eq $MaxRetries) {
+                try {
+                    [System.IO.File]::WriteAllText($Path, $Content, $actualEncoding)
+                    if (Test-Path -LiteralPath $tempPath) { Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue }
+                    return $true
+                } catch {
+                    if (Test-Path -LiteralPath $tempPath) { Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue }
+                    Write-Warning "Write-WinEaseTextFileAtomic failed for '$Path': $_"
+                    return $false
+                }
+            }
+            Start-Sleep -Milliseconds ($RetryDelayMs * $attempt)
+        }
+    }
+    return $false
+}

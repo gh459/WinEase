@@ -1856,6 +1856,12 @@ if ($includeMigrationAssistant -eq $true) {
             'tools\migrator\migration-rules.psd1',
             'config\user\user-migration-rules.psd1',
             'WinEasehelpers.ps1',
+            'lib\WinEasePathSafety.ps1',
+            'lib\WinEaseSystem.ps1',
+            'lib\WinEaseFileSystem.ps1',
+            'lib\WinEaseConfig.ps1',
+            'lib\WinEaseBenchmarks.ps1',
+            'lib\WinEaseDependencies.ps1',
             'gui\WinEaseGui.ps1'
         )
         # The display strings of the wizard: config\ui-strings in the repository, ui-strings next to
