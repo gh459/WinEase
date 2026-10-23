@@ -291,37 +291,21 @@ if ($gpuLatencyEnabled) {
 # ============================================================================
 if (Test-TweakEnabled 'EnableClassicContextMenu' $true) {
     Write-Host "Enabling Windows 10 Classic Context Menu..." -ForegroundColor Green
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32" -DefaultValue -Type REG_SZ -Data '""'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32" -DefaultValue -Type REG_SZ -Data '""'
+    Invoke-WinEaseRegistryTable -Section ui -Tweak EnableClassicContextMenu
 }
 
 if (Test-TweakEnabled 'EnableDarkTheme' $true) {
     Write-Host "Enabling Dark Theme by default..." -ForegroundColor Green
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "AppsUseLightTheme" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "SystemUsesLightTheme" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "AppsUseLightTheme" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "SystemUsesLightTheme" -Type REG_DWORD -Data '0'
+    Invoke-WinEaseRegistryTable -Section ui -Tweak EnableDarkTheme
 }
 
-if (Test-TweakEnabled 'ShowFileExtensions' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "HideFileExt" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "HideFileExt" -Type REG_DWORD -Data '0'
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak ShowFileExtensions
 
-if (Test-TweakEnabled 'ShowHiddenFiles' $false) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Hidden" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Hidden" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak ShowHiddenFiles
 
-if (Test-TweakEnabled 'LaunchToThisPC' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "LaunchTo" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "LaunchTo" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak LaunchToThisPC
 
-if (Test-TweakEnabled 'TaskbarEndTask' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings" -Name "TaskbarEndTask" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings" -Name "TaskbarEndTask" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak TaskbarEndTask
 
 # The UI preferences seen in WinUtil / Win11Debloat / Bloatynosy / Debloat-Win11
 # (upstream sync 2026-10) live in config\ui-preferences.psd1. All of them are off
@@ -385,41 +369,21 @@ foreach ($v in $uiPreferenceTweaks) {
         Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\$($v.Path)" -Name $v.Name -Type $v.Type -Data $v.Data
     }
 }
-if (Test-TweakEnabled 'DisableLogonBlur' $false) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" -Name "DisableAcrylicBackgroundOnLogon" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak DisableLogonBlur
 
-if (Test-TweakEnabled 'TaskbarAlignLeft' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarAl" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarAl" -Type REG_DWORD -Data '0'
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak TaskbarAlignLeft
 
-if (Test-TweakEnabled 'HideMeetNow' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name "HideSCAMeetNow" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name "HideSCAMeetNow" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak HideMeetNow
 
-if (Test-TweakEnabled 'HideSyncNotifications' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowSyncProviderNotifications" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowSyncProviderNotifications" -Type REG_DWORD -Data '0'
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak HideSyncNotifications
 
-if (Test-TweakEnabled 'DisableStartupSound' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\BootAnimation" -Name "DisableStartupSound" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak DisableStartupSound
 
-if (Test-TweakEnabled 'DisableLockScreen' $false) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Personalization" -Name "NoLockScreen" -Type REG_DWORD -Data '1'
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak DisableLockScreen
 
-if (Test-TweakEnabled 'DisableSleepOption' $false) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FlyoutMenuSettings" -Name "ShowSleepOption" -Type REG_DWORD -Data '0'
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak DisableSleepOption
 
-if (Test-TweakEnabled 'MenuShowDelayZero' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Control Panel\Desktop" -Name "MenuShowDelay" -Type REG_SZ -Data "0"
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Control Panel\Desktop" -Name "MenuShowDelay" -Type REG_SZ -Data "0"
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak MenuShowDelayZero
 
 if (Test-TweakEnabled 'TakeOwnershipContextMenu' $true) {
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\*\shell\runas" -DefaultValue -Type REG_SZ -Data "Take Ownership"
@@ -894,24 +858,11 @@ Invoke-WinEaseRegistryTable -Section performance -Tweak DisableGameDVR
 
 Invoke-WinEaseRegistryTable -Section performance -Tweak DisableFastStartup
 
-if (Test-TweakEnabled 'TransparentShortcutOverlay' $false) {
-    # Resource -50 in shell32.dll is the transparent icon; the previous value
-    # pointed at a visible icon, so it replaced the arrow with a glyph instead
-    # of removing it.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Icons" -Name "29" -Type REG_EXPAND_SZ -Data "%SystemRoot%\System32\shell32.dll,-50"
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak TransparentShortcutOverlay
 
 Invoke-WinEaseRegistryTable -Section performance -Tweak OptimizeVisualEffects
 
-if (Test-TweakEnabled 'CleanContextMenus' $true) {
-    # Share, Give access to, Cast to Device
-    foreach ($shellExt in @('{e2bf9676-5f8f-435c-97eb-11607a5bedf7}', '{f81e9010-6ea4-11ce-a7ff-00aa003ca9f6}', '{7AD84985-87B4-4a16-BE58-8B72A5B390F7}')) {
-        # The empty string has to be passed as the literal '""': an empty argument is
-        # dropped by the PowerShell native call, so reg.exe would take the next switch
-        # ('/f') as the value and the extension would not be blocked at all.
-        Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked" -Name $shellExt -Type REG_SZ -Data '""'
-    }
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak CleanContextMenus
 
 # ReviOS 26.10 / main (registry/explorer/search.yml) and Revision Tool 2.14.x
 # (src/lib/core/services/win_registry_service.dart): the two shell features that
