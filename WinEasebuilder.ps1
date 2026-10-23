@@ -2130,7 +2130,7 @@ $script:IsVhdxMounted = $false
 # Diagnostic Session Isolation (Rule 2)
 $script:BuildId = New-WinEaseBuildId
 $script:DiagDir = Join-Path -Path $scriptDir -ChildPath "build_diagnostics\$($script:BuildId)"
-New-Item -ItemType Directory -Path $script:DiagDir -Force | Out-Null
+$null = New-Item -ItemType Directory -Path $script:DiagDir -Force
 
 $script:DiagnosticData = [ordered]@{
     BuildId                  = $script:BuildId
@@ -2173,7 +2173,7 @@ function Write-WinEaseDiagnosticReport {
         # parallel). It is therefore created again before the report is written, so a
         # failed build always leaves its report behind.
         if (-not (Test-Path -LiteralPath $script:DiagDir)) {
-            New-Item -ItemType Directory -Path $script:DiagDir -Force | Out-Null
+            $null = New-Item -ItemType Directory -Path $script:DiagDir -Force
         }
         $jsonPath = Join-Path -Path $script:DiagDir -ChildPath "build_diagnostic_report.json"
         $script:DiagnosticData | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $jsonPath -Encoding utf8
