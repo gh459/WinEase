@@ -750,7 +750,7 @@ Describe "WinEase advanced debloat - every engine can remove its target" {
         # the toggles that were removed: the WinRE cleanup is done by the KeepRecoveryEnv
         # option (the Rust engine must not touch winre.wim, the setup needs it) and the
         # Store cache lives in the user profile, not in the image
-        $guiAst = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiPath, [ref]$null, [ref]$null)
+        $guiAst = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiCorePath, [ref]$null, [ref]$null)
         $assigns = $guiAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in '$script:WinEaseDebloatStandardItems', '$script:WinEaseDebloatExperimentalItems' }, $true)
         $guiItems = @()
         foreach ($a in $assigns) { $guiItems += @($a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value }) }

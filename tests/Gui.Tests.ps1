@@ -397,7 +397,7 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
     #   * the engine "Rust" hands exactly that one key to the Rust binary
     $engineDefs = (Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")).DebloatEngines
     function Get-DebloatItemFromGuiSource {
-        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiPath, [ref]$null, [ref]$null)
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiCorePath, [ref]$null, [ref]$null)
         $assigns = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in '$script:WinEaseDebloatStandardItems', '$script:WinEaseDebloatExperimentalItems' }, $true)
         $items = @()
         foreach ($a in $assigns) { $items += @($a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value }) }
@@ -1149,7 +1149,7 @@ Describe "S8 - GUI user extensions tab and Preset Diff" -Tags 'slow' {
 Describe "S10 - GUI and migrator cleanup (shared parts)" -Tags 'slow' {
     $script:S10Gui = Join-Path -Path $script:RepoRoot -ChildPath "gui\WinEaseGui.ps1"
     $script:S10Mig = Join-Path -Path $script:RepoRoot -ChildPath "tools\migrator\WinEase-Migrator.ps1"
-    $script:S10GuiText = [System.IO.File]::ReadAllText($script:S10Gui)
+    $script:S10GuiText = [System.IO.File]::ReadAllText($script:S10Gui); $script:S10CoreText = [System.IO.File]::ReadAllText($script:GuiCorePath)
     $script:S10MigText = [System.IO.File]::ReadAllText($script:S10Mig)
     $script:S10GuiAst = [System.Management.Automation.Language.Parser]::ParseFile($script:S10Gui, [ref]$null, [ref]$null)
 
@@ -1188,7 +1188,7 @@ Describe "S10 - GUI and migrator cleanup (shared parts)" -Tags 'slow' {
     }
 
     It "the default backup folder name is spelled once per file" {
-        ([regex]::Matches($script:S10GuiText, 'WinEase_migration_backup')).Count | Should Be 1
+        ([regex]::Matches($script:S10CoreText, 'WinEase_migration_backup')).Count | Should Be 1
         ([regex]::Matches($script:S10MigText, 'WinEase_migration_backup')).Count | Should Be 1
     }
 
@@ -1334,7 +1334,7 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
     }
     # English Advanced Debloat item names written in the GUI source (both the tab and the dialog)
     function Get-DebloatItemFromSource {
-        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiPath, [ref]$null, [ref]$null)
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiCorePath, [ref]$null, [ref]$null)
         $assigns = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in '$script:WinEaseDebloatStandardItems', '$script:WinEaseDebloatExperimentalItems' }, $true)
         $items = @()
         foreach ($a in $assigns) { $items += @($a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value }) }
@@ -2061,5 +2061,35 @@ Describe "WinEase UI options that have to take effect" {
     It "uses the transparent shell32 icon for the shortcut overlay" {
         $script:UiPhase.Contains('%SystemRoot%\System32\shell32.dll,-50') | Should Be $true
         $script:UiPhase.Contains('imageres.dll,-17') | Should Be $false
+    }
+}
+
+Describe "GUI core (lib\WinEaseGuiCore.ps1)" {
+    $script:CoreText = [System.IO.File]::ReadAllText($script:GuiCorePath)
+
+    It "parses with zero parser errors and loads no WinForms or Drawing assembly" {
+        $errs = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile($script:GuiCorePath, [ref]$null, [ref]$errs)
+        @($errs).Count | Should Be 0
+        $script:CoreText | Should Not Match 'Add-Type\s+-AssemblyName'
+        $script:CoreText | Should Not Match 'System\.Drawing\.'
+    }
+
+    It "works in a fresh process that loads only the core and the WinUI host (no WinForms window functions)" {
+        $cmd = ". '$($script:GuiCorePath)'; . '$(Join-Path $script:RepoRoot 'gui\WinEaseWinUiHost.ps1')'; " +
+            "(Get-WinEaseUiString 'Button.SelectAll' -Language ja).Length; (Get-Command Get-WinEaseGuiDraftConfig).Name; " +
+            "[bool](Get-Command Show-WinEaseGUI -ErrorAction SilentlyContinue); [bool](Get-Command New-WinEaseForm -ErrorAction SilentlyContinue)"
+        $out = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -Command $cmd)
+        $out[-4] | Should Be '5'
+        $out[-3] | Should Be 'Get-WinEaseGuiDraftConfig'
+        $out[-2] | Should Be 'False'
+        $out[-1] | Should Be 'False'
+    }
+
+    It "the WinForms window, the migrator and the Migration Assistant bundle all reference the core" {
+        [System.IO.File]::ReadAllText($script:GuiPath) | Should Match 'WinEaseGuiCore\.ps1'
+        [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'tools\migrator\WinEase-Migrator.ps1')) | Should Match 'WinEaseGuiCore\.ps1'
+        [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\11-unattend.ps1')) | Should Match 'lib\\WinEaseGuiCore\.ps1'
+        [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot '.github\scripts\verify-release-zip.py')) | Should Match 'lib/WinEaseGuiCore\.ps1'
     }
 }

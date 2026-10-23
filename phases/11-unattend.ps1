@@ -1,4 +1,4 @@
-﻿# Phase 11: 11-unattend
+# Phase 11: 11-unattend
 # Extracted from WinEasebuilder.ps1
 # Dot-sourced by the main orchestrator
 
@@ -947,8 +947,9 @@ try {
 # Migration Assistant bundle: tool + engine + rule files, and optionally the default
 # migration backup (which does contain personal data) plus a desktop launcher.
 # The bundle has to be self-contained: the engine needs WinEasehelpers.ps1 (restore path validation,
-# see tools\migrator\WinEaseMigration.ps1) and the wizard needs gui\WinEaseGui.ps1 (shared WinForms
-# parts, see tools\migrator\WinEase-Migrator.ps1). They are copied flat into the Migration folder (the helpers with the lib modules it loads),
+# see tools\migrator\WinEaseMigration.ps1) and the wizard needs lib\WinEaseGuiCore.ps1 (language tables,
+# default backup folder) and gui\WinEaseGui.ps1 (shared WinForms parts, see tools\migrator\WinEase-Migrator.ps1).
+# They are copied flat into the Migration folder (the helpers with the lib modules it loads),
 # which is where the migrator looks for them (MigratorDir\<file>).
 if ($includeMigrationAssistant -eq $true) {
     try {
@@ -965,6 +966,7 @@ if ($includeMigrationAssistant -eq $true) {
             'lib\WinEaseBenchmarks.ps1',
             'lib\WinEaseDependencies.ps1',
             'lib\WinEaseRegistry.ps1',
+            'lib\WinEaseGuiCore.ps1',
             'gui\WinEaseGui.ps1'
         )
         # The display strings of the wizard: config\ui-strings in the repository, ui-strings next to
@@ -995,6 +997,12 @@ if ($includeMigrationAssistant -eq $true) {
                 }
             }
         } else {
+            # WinEasehelpers.ps1 throws at start when one of its lib modules is missing, so a partial
+            # helper set would leave a Migration Assistant that cannot start: fail the bundling instead.
+            $migrationMissingHelpers = @($migrationFiles | Where-Object { ($_ -eq 'WinEasehelpers.ps1' -or $_ -like 'lib\*') -and -not (Test-Path -LiteralPath (Join-Path -Path $scriptDir -ChildPath $_)) })
+            if ($migrationMissingHelpers.Count -gt 0) {
+                throw "Migration Assistant helper files are missing: $($migrationMissingHelpers -join ', ')"
+            }
             New-Item -ItemType Directory -Path $migrationDestDir -Force | Out-Null
             New-Item -ItemType Directory -Path $migrationDesktopDir -Force | Out-Null
             foreach ($mf in $migrationFiles) {

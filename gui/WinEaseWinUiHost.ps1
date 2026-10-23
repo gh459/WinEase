@@ -1,5 +1,6 @@
 # WinEaseWinUiHost.ps1 - runs the WinUI 3 window (gui\winui) for WinEasebuilder.ps1
-# Dot-sourced after gui\WinEaseGui.ps1 (language tables, migration helpers, debloat lists).
+# Needs only lib\WinEaseGuiCore.ps1 (language tables, migration helpers, debloat lists), which it loads itself;
+# it does not need the WinForms window (gui\WinEaseGui.ps1), though that file also dot-sources it.
 #
 # The window is a separate process (WinEaseGui.exe). It talks to this script over its standard streams,
 # one UTF-8 JSON object per line:
@@ -7,6 +8,14 @@
 #   window  -> builder: requests { id, op, lang, args }; the last one is op 'result' (the chosen settings or cancel)
 # Requests that need PowerShell (dependency check, preset diff, migration engine, ...) run here, in the builder
 # process, so the window never needs its own copy of the build logic.
+
+$script:WinEaseGuiDir = $PSScriptRoot
+if (-not (Get-Command -Name Get-WinEaseUiString -ErrorAction SilentlyContinue)) {
+    . (Join-Path -Path (Split-Path -Parent $PSScriptRoot) -ChildPath 'lib\WinEaseGuiCore.ps1')
+}
+# The custom-script requests need the user extensibility engine (the builder loads it too)
+$winUiExtensions = Join-Path -Path (Split-Path -Parent $PSScriptRoot) -ChildPath 'lib\WinEaseExtensions.ps1'
+if (-not (Get-Command -Name Add-WinEaseCustomScript -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $winUiExtensions)) { . $winUiExtensions }
 
 # WinEaseGui.exe: the published build (gui\winui\bin), then a local Debug/Release build output
 function Find-WinEaseWinUiExe {

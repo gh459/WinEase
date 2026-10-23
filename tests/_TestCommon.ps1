@@ -7,6 +7,7 @@ param()
 $script:RepoRoot = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { Get-Location | Select-Object -ExpandProperty Path }
 $script:BuilderPath = Join-Path -Path $script:RepoRoot -ChildPath "WinEasebuilder.ps1"
 $script:GuiPath = Join-Path -Path $script:RepoRoot -ChildPath "gui\WinEaseGui.ps1"
+$script:GuiCorePath = Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseGuiCore.ps1"
 $script:GuiSessionPath = Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseGuiSession.ps1"
 
 # The helper implementation is split into function-only modules. Keep this list in
