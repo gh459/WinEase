@@ -2126,7 +2126,7 @@ $script:IsVhdxMounted = $false
 # Diagnostic Session Isolation (Rule 2)
 $script:BuildId = New-WinEaseBuildId
 $script:DiagDir = Join-Path -Path $scriptDir -ChildPath "build_diagnostics\$($script:BuildId)"
-New-Item -ItemType Directory -Path $script:DiagDir -Force | Out-Null
+$null = New-Item -ItemType Directory -Path $script:DiagDir -Force
 
 $script:DiagnosticData = [ordered]@{
     BuildId                  = $script:BuildId
