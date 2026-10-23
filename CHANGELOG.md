@@ -5,6 +5,12 @@ WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
 ## Unreleased (local fork, 2026-10-23) - the migration tool runs from the ISO and custom scripts have a GUI
 
+### Changed
+- **Setup helpers and post-install tools moved out of phase 11.** The five setup helpers
+  are now files under `scripts\setup` and the Browser Grabber, Control Center and Atlas
+  tools under `scripts\tools`; the phase reads them like the Defender helper. Content
+  and write logic are unchanged (byte-identical, checked against recorded SHA256 values).
+
 ### Fixed
 - **Camera, Photos and Snipping Tool/ScreenSketch were listed but not removed.**
   They were only removed through the broad AppX list, so clearing that one switch

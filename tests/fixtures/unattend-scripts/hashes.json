@@ -1,0 +1,77 @@
+﻿[
+    {
+        "path":  "scripts/setup/ExtractUnattend.ps1",
+        "sha256":  "206189439781d76c2743671ce0211e7dbd5564a0a5ea16f3e2eba564bf2b16b3",
+        "bytes":  5717
+    },
+    {
+        "path":  "scripts/setup/ApplyDefaultUser.ps1",
+        "sha256":  "086053fa8342526461c3ccfa12314c5a742337ea360a7676f649e24c7fa1c97f",
+        "bytes":  4908
+    },
+    {
+        "path":  "scripts/setup/RunFirstLogon.ps1",
+        "sha256":  "fa1419e705d593a97b634f9e0304b7c0bd271ae12ec2e8c232201ef857eb3433",
+        "bytes":  10130
+    },
+    {
+        "path":  "scripts/setup/WinEase-oobe-autologon-repair.ps1",
+        "sha256":  "6a50cec1850937cd47ac93cad1c5ba382ef3f01b6b0546eedce4005b1a563aee",
+        "bytes":  1790
+    },
+    {
+        "path":  "scripts/setup/WinEase-transition-watchdog.ps1",
+        "sha256":  "9c102366fd0c7d594d424f07b8ac9ad9828bd8c14703c3d1bf91a983a95f26fc",
+        "bytes":  3295
+    },
+    {
+        "path":  "scripts/tools/Install-Browser.ps1",
+        "sha256":  "03acc853142767a5bfc72c755420a978de02b3e607cc76e5a8bc55bca57b2e6e",
+        "bytes":  5101
+    },
+    {
+        "path":  "scripts/tools/Install-Browser.cmd",
+        "sha256":  "a3c37c86277206ce7ee53fc6839fa7723c373ebb9b6adec8b7e94b1e46ff76f0",
+        "bytes":  103
+    },
+    {
+        "path":  "scripts/tools/WinEase Control Center.bat",
+        "sha256":  "d8643f201fdae88bf77d2f3d96e72ecccd96cf286ff59b99c1ffcadf32963ded",
+        "bytes":  5010
+    },
+    {
+        "path":  "scripts/tools/Atlas-ReviOS Tools/1. Toggle Windows Defender.bat",
+        "sha256":  "b5ddfe1827eced4ccb0033f715750f30b43749d2ce1d9165372845a169b36171",
+        "bytes":  1647
+    },
+    {
+        "path":  "scripts/tools/Atlas-ReviOS Tools/2. Toggle Windows Update.bat",
+        "sha256":  "bfb137dd42f5601bdd8b43bb4bfa8d42a51268112bbb38212ad645d437b72942",
+        "bytes":  1075
+    },
+    {
+        "path":  "scripts/tools/Atlas-ReviOS Tools/3. Toggle Hibernation.bat",
+        "sha256":  "fb1ebfa77f73c0fd239ada0787897482102442d254cbdbd0375b1d15d15b3b32",
+        "bytes":  492
+    },
+    {
+        "path":  "scripts/tools/Atlas-ReviOS Tools/4. Toggle Bluetooth.bat",
+        "sha256":  "5887cbaec08ef3525e08bd056ade366faa6bdfd6f50527e6a4a498322caf5c27",
+        "bytes":  755
+    },
+    {
+        "path":  "scripts/tools/Atlas-ReviOS Tools/5. Toggle Print Spooler.bat",
+        "sha256":  "00a3da1ce57decfc9cafc7406cdb1265d1805e995cc439cc9412d8cd31d268ed",
+        "bytes":  589
+    },
+    {
+        "path":  "scripts/tools/Atlas-ReviOS Tools/6. Free Memory \u0026 Clear Temp.bat",
+        "sha256":  "41c33b97a29c21d5d2c821e5bfb9ac518a21c061641705a2995af23cfca61229",
+        "bytes":  766
+    },
+    {
+        "path":  "scripts/tools/Atlas-ReviOS Tools/7. Check Activation Status.bat",
+        "sha256":  "bba024e7d2c553860523d18d6a03afea598d720ae30277e5aecd15273f048b7f",
+        "bytes":  484
+    }
+]

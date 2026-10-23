@@ -31,6 +31,8 @@ REQUIRED = [
     "config/dependencies.psd1",
     "config/WinEase.config.schema.json",
     "lib/WinEaseSelfTest.ps1",
+    "scripts/setup/RunFirstLogon.ps1",
+    "scripts/tools/Install-Browser.ps1",
     "gui/WinEaseGui.ps1",
     "phases/01-environment.ps1",
     "phases/18-iso.ps1",
