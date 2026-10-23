@@ -136,73 +136,12 @@ Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableActivityHistory
 # ============================================================================
 if (Test-TweakEnabled 'DisableWindowsAI' $true) {
     Write-Host "Disabling Windows AI, Recall, and Click-To-Do policies..." -ForegroundColor Green
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" -Name "DisableAIDataAnalysis" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\WindowsAI" -Name "DisableAIDataAnalysis" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\WindowsAI" -Name "DisableAIDataAnalysis" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" -Name "AllowRecallEnablement" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" -Name "AllowRecallToBeEnabled" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" -Name "TurnOffRecall" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\WindowsAI" -Name "TurnOffRecall" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\WindowsAI" -Name "TurnOffRecall" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" -Name "TurnOffSavingSnapshots" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\WindowsAI" -Name "TurnOffSavingSnapshots" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\WindowsAI" -Name "TurnOffSavingSnapshots" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" -Name "DisableClickToDo" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" -Name "DisableSettingsAgent" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" -Name "DisableAgentConnectors" -Type REG_DWORD -Data '2'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" -Name "DisableAgentWorkspaces" -Type REG_DWORD -Data '2'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" -Name "DisableRemoteAgentConnectors" -Type REG_DWORD -Data '2'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" -Name "AllowCopilotRuntime" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Notepad" -Name "EnableAIFeatures" -Type REG_DWORD -Data '0'
-    # WinUtil 26.10.07 (WPFTweaksWindowsAI): the machine policy for Notepad's AI features
-    # and the "AI components" page of the Settings app.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\WindowsNotepad" -Name "DisableAIFeatures" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name "SettingsPageVisibility" -Type REG_SZ -Data "hide:aicomponents"
-    # Debloat-Win11 v2.3.8 (WindowsAiPolicies.psd1, SystemTweaks_Privacy): Recall export and
-    # data providers, Paint's image generation, and the AI actions of the clipboard.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" -Name "AllowRecallExport" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\WindowsAI" -Name "DisableRecallDataProviders" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\WindowsAI" -Name "DisableRecallDataProviders" -Type REG_DWORD -Data '1'
-    foreach ($paintPolicy in 'DisableCocreator', 'DisableGenerativeFill', 'DisableImageCreator') {
-        Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint" -Name $paintPolicy -Type REG_DWORD -Data '1'
-    }
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" -Name "EnableSmartClipboard" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Paint" -Name "EnableCocreator" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "RecallPin" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "RecallPin" -Type REG_DWORD -Data '0'
-    # ReviOS 26.10 (meetrevision/packages, ai-removal-amd64.yaml): force-deny the
-    # "Let Windows apps make use of text and image generation" capabilities.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy" -Name "LetAppsAccessSystemAIModels" -Type REG_DWORD -Data '2'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy" -Name "LetAppsAccessGenerativeAI" -Type REG_DWORD -Data '2'
+    Invoke-WinEaseRegistryTable -Section ai -Tweak DisableWindowsAI
 }
 
 if (Test-TweakEnabled 'DisableCopilot' $true) {
     Write-Host "Disabling Copilot, DevHome, and Teams auto-install..." -ForegroundColor Green
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsCopilot" -Name "TurnOffWindowsCopilot" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\WindowsCopilot" -Name "TurnOffWindowsCopilot" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\WindowsCopilot" -Name "TurnOffWindowsCopilot" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowCopilotButton" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowCopilotButton" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "CopilotPWAPin" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "CopilotPWAPin" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Edge" -Name "HubsSidebarEnabled" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Edge" -Name "CopilotPageContext" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Edge" -Name "ShowCopilotButton" -Type REG_DWORD -Data '0'
-    # Debloat-Win11 v2.3.8: Copilot's page context in Edge and the policy that removes the
-    # Microsoft Copilot app.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Edge" -Name "CopilotCDPPageContext" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" -Name "RemoveMicrosoftCopilotApp" -Type REG_DWORD -Data '1'
-    # Bloatynosy 1.01.103 (WinRules.ini, "Disable Edge AI Features").
-    foreach ($edgePolicy in 'EdgeEntraCopilotPageContext', 'Microsoft365CopilotChatIconEnabled', 'EdgeHistoryAISearchEnabled', 'ComposeInlineEnabled', 'NewTabPageBingChatEnabled') {
-        Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Edge" -Name $edgePolicy -Type REG_DWORD -Data '0'
-    }
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Edge" -Name "GenAILocalFoundationalModelSettings" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Teams" -Name "DisableInstallation" -Type REG_DWORD -Data '1'
-    # Debloat-Win11 main (Modules/PolicyCatalog.psd1): the per-user flag that
-    # hides the Copilot entry in the shell.
-    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Microsoft\Windows\Shell\Copilot" -Name "IsCopilotAvailable" -Type REG_DWORD -Data '0'
-    }
+    Invoke-WinEaseRegistryTable -Section ai -Tweak DisableCopilot
 }
 
 # ============================================================================
