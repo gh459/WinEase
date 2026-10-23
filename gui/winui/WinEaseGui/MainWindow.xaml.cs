@@ -167,8 +167,13 @@ public sealed partial class MainWindow : Window
         AutomationProperties.SetName(DependenciesButton, _s.Get("Button.CheckDependencies"));
         AutomationProperties.SetName(StartButton, _s.Get("Button.StartBuild"));
         AutomationProperties.SetName(CancelButton, _s.Get("Button.Cancel"));
+        AutomationProperties.SetName(BusyRing, "Processing");
+        ToolTipService.SetToolTip(DryRunCheck, _s.Get("Main.DryRun"));
         ToolTipService.SetToolTip(PresetDiffButton, _s.Get("Button.PresetDiff"));
         ToolTipService.SetToolTip(DependenciesButton, _s.Get("Button.CheckDependencies"));
+        ToolTipService.SetToolTip(StartButton, _s.Get("Button.StartBuild"));
+        ToolTipService.SetToolTip(CancelButton, _s.Get("Button.Cancel"));
+        ToolTipService.SetToolTip(BusyRing, "Processing");
 
         BuildNav();
         UpdateEstimate();
@@ -461,12 +466,14 @@ public sealed partial class MainWindow : Window
         foreach (var (fmt, key) in new[] { ("WIM", "Media.Radio.WIM"), ("ESD", "Media.Radio.ESD"), ("SWM", "Media.Radio.SWM") })
         {
             var rb = new RadioButton { Content = _s.Get(key), GroupName = "payload", Tag = fmt, IsChecked = _payload == fmt };
+            AutomationProperties.SetName(rb, _s.Get(key));
             rb.Checked += (s, _) => { _payload = (string)((RadioButton)s).Tag; UpdateEstimate(); };
             radios.Children.Add(rb);
             _payloadRadios.Add(rb);
         }
         payload.Children.Add(radios);
         var vhdx = new CheckBox { Content = _s.Get("Media.Check.VHDX"), IsChecked = _useVhdx };
+        AutomationProperties.SetName(vhdx, _s.Get("Media.Check.VHDX"));
         vhdx.Checked += (_, _) => _useVhdx = true;
         vhdx.Unchecked += (_, _) => _useVhdx = false;
         payload.Children.Add(vhdx);
@@ -716,10 +723,12 @@ public sealed partial class MainWindow : Window
             if (p != null) root.Text = p;
         })));
         var secrets = new CheckBox { Content = _s.Get("Mig.Check.ExcludeSecrets"), IsChecked = _migExcludeSecrets };
+        AutomationProperties.SetName(secrets, _s.Get("Mig.Check.ExcludeSecrets"));
         secrets.Checked += (_, _) => _migExcludeSecrets = true;
         secrets.Unchecked += (_, _) => _migExcludeSecrets = false;
         backup.Children.Add(secrets);
         var conflict = new ComboBox { MinWidth = 220 };
+        AutomationProperties.SetName(conflict, _s.Get("Mig.Label.ConflictPolicy").TrimEnd(':', '：', ' '));
         foreach (string p in ConflictPolicies) conflict.Items.Add(p);
         conflict.SelectedIndex = Math.Max(0, Array.IndexOf(ConflictPolicies, _migConflict));
         conflict.SelectionChanged += (_, _) => { if (conflict.SelectedIndex >= 0) _migConflict = ConflictPolicies[conflict.SelectedIndex]; };
