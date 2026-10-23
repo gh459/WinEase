@@ -540,3 +540,58 @@ Describe "WinEase builder - Enter-Phase progress tracking and checkpoints" {
         }
     }
 }
+
+Describe "WinEase builder - ConvertTo-WinEaseCliArgument" {
+    BeforeAll {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcNode = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'ConvertTo-WinEaseCliArgument'
+        }, $true)
+        . ([scriptblock]::Create($funcNode.Extent.Text))
+    }
+
+    It "serializes present SwitchParameter as -Name" {
+        $sw = [System.Management.Automation.SwitchParameter]::new($true)
+        ConvertTo-WinEaseCliArgument -Name "NonInteractive" -Value $sw | Should Be "-NonInteractive"
+    }
+
+    It "serializes absent SwitchParameter as -Name:`$false" {
+        $sw = [System.Management.Automation.SwitchParameter]::new($false)
+        ConvertTo-WinEaseCliArgument -Name "NonInteractive" -Value $sw | Should Be "-NonInteractive:`$false"
+    }
+
+    It "serializes boolean `$true as -Name" {
+        ConvertTo-WinEaseCliArgument -Name "KeepDefender" -Value $true | Should Be "-KeepDefender"
+    }
+
+    It "serializes boolean `$false as -Name:`$false" {
+        ConvertTo-WinEaseCliArgument -Name "KeepDefender" -Value $false | Should Be "-KeepDefender:`$false"
+    }
+
+    It "serializes dictionary with boolean values as Key=1;Key2=0 syntax" {
+        $dict = [ordered]@{ 'NetworkStack' = $true; 'TimerBCD' = $false }
+        ConvertTo-WinEaseCliArgument -Name "TweakGroupOverrides" -Value $dict | Should Be "-TweakGroupOverrides 'NetworkStack=1;TimerBCD=0'"
+    }
+
+    It "serializes empty dictionary as parameter with empty string" {
+        $dict = @{}
+        ConvertTo-WinEaseCliArgument -Name "TweakGroupOverrides" -Value $dict | Should Be "-TweakGroupOverrides ''"
+    }
+
+    It "serializes string with single quotes escaped correctly" {
+        ConvertTo-WinEaseCliArgument -Name "UserName" -Value "User's PC" | Should Be "-UserName 'User''s PC'"
+    }
+
+    It "serializes string and numeric values wrapped in single quotes" {
+        ConvertTo-WinEaseCliArgument -Name "KeepLogs" -Value 10 | Should Be "-KeepLogs '10'"
+        ConvertTo-WinEaseCliArgument -Name "WorkDir" -Value "C:\WinEase Work" | Should Be "-WorkDir 'C:\WinEase Work'"
+    }
+
+    It "serializes `$null value as parameter with empty string" {
+        ConvertTo-WinEaseCliArgument -Name "SourceDrive" -Value $null | Should Be "-SourceDrive ''"
+    }
+}
