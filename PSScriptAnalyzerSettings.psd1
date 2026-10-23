@@ -1,6 +1,6 @@
 # PSScriptAnalyzer settings for WinEase.
 # Usage: Invoke-ScriptAnalyzer -Path <file> -Settings .\PSScriptAnalyzerSettings.psd1
-# tests\WinEase.Tests.ps1 runs the analyzer with this file and expects zero Error/Warning findings.
+# The Pester suite (tests\*.Tests.ps1) runs the analyzer with this file and expects zero Error/Warning findings.
 @{
     ExcludeRules = @(
         # WinEase is an interactive console tool: coloured Write-Host output is the UI, not pipeline data.

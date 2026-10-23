@@ -26,7 +26,7 @@
 | 6 | S11 ビルド本体・工程のコード整理 | `WinEasebuilder.ps1`, `phases/*`, `lib/*` | S9 | S10 |
 | 7 | S12 ドキュメント | `docs/`, `README.md`, `CHANGELOG.md` | すべて | なし |
 
-テストファイル `tests/WinEase.Tests.ps1` は全セッションが触ります。衝突を減らすため、新しいテストは **ファイル末尾に、セッションごとの新しい `Describe` ブロックとして追加** してください。
+テストは `tests/` 配下の領域別 `*.Tests.ps1` に置きます。共通設定は `_TestCommon.ps1` です。新しいテストは、該当する領域のファイルに追加してください。新しい領域なら `*.Tests.ps1` を追加し、`tests/README.md` の表を更新してください。
 
 ---
 
@@ -59,11 +59,11 @@ WinEase: Windows 11 のインストールメディアから軽量化した ISO �
 # 進め方
 - 自分専用のブランチ(git worktree)で作業する。main には取り込まない。
 - 1つの変更内容ごとに1コミット。コミットメッセージは英語で、何を・なぜ変えたかを書く。
-- テストは tests/WinEase.Tests.ps1 の末尾に、このセッション用の新しい Describe ブロックとして追加する。
+- テストは `tests/` の該当領域の `*.Tests.ps1` に追加する。新しい領域なら新しい `*.Tests.ps1` を作り、`tests/README.md` の表を更新する。
   このマシンの Pester は 3.4 なので、`Should Be` 形式(ハイフンなし)で書く。
 
 # 完了条件(すべて満たしてから終了報告)
-1. Invoke-Pester -Script tests\WinEase.Tests.ps1 -PassThru -Quiet がすべて成功(失敗 0)。
+1. Invoke-Pester -Path .\tests -PassThru -Quiet がすべて成功(失敗 0)。
 2. すべての .ps1 / .psd1 が構文エラーなしでパースできる。
 3. Invoke-ScriptAnalyzer を PSScriptAnalyzerSettings.psd1 付きで全 .ps1 に実行し、Error/Warning が 0 件。
 4. powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\WinEasebuilder.ps1 -TestSelf が成功。
@@ -494,4 +494,39 @@ implementation_plan.md §7 のガイドを仕上げ、README と CHANGELOG を�
 # 完了条件
 共通ルールのテストに加え、ドキュメントに出てくるファイルパスがすべて実在することを確認する
 (簡単なスクリプトで、バッククォートで囲まれたパスを抜き出して Test-Path する)。
+```
+
+---
+
+## R1 Pester テスト分割
+
+```text
+# 目的
+肥大化した tests/WinEase.Tests.ps1 を領域別の 8 ファイルに分割し、共通設定を _TestCommon.ps1 に集約する。
+テストの内容・名前・アサーションは変えない。Pester 3.4 / Windows PowerShell 5.1 を維持する。
+
+# 作業
+1. tests/_TestCommon.ps1 を作り、RepoRoot / BuilderPath / GuiPath / UnattendPath と
+   WINEASE_UI_LANGUAGE=en を移す。各テストファイルからドットソースする。
+2. 次の 8 ファイルに Describe を丸ごと移す（各ファイル内は元の順序）:
+   Layout, Build, Config, Helpers, Debloat, Migration, Gui, Quality。
+   対象は 74 Describe / 484 It。WinEase.Regression.Tests.ps1 は別のまま。
+   トップレベルのヘルパーロードも所有ファイルへ移す。Gui と Migration は helpers を明示ロードし、
+   Gui は Describe 51 の前に extensions と migration もロードする。Debloat は Describe 67 の前に
+   helpers、extensions、migration をロードする。
+3. 元の tests/WinEase.Tests.ps1 を削除する。
+4. .github/workflows/ci.yml の Pester を Invoke-Pester -Path .\tests に変える。
+5. tests/README.md にレイアウト、実行方法、slow タグ、追加ルールを書く。
+6. README / EXTENSIBILITY_GUIDE / github-automation-audit / PSScriptAnalyzerSettings の
+   テストパスを更新する。CHANGELOG のバッククォートされた旧パスも tests/ に直す
+   (Documentation S12 が存在チェックするため)。
+7. 遅い Describe に -Tags 'slow' を付け、Invoke-Pester -Path .\tests -ExcludeTag slow を
+   ローカルの fast suite とする。CI は全件実行する。
+
+# 完了条件(共通ルールに加えて)
+- Invoke-Pester -Path .\tests の Passed/Failed/Skipped/Inconclusive が分割前と同じ。
+- 8 ファイルの Describe/It の合計が 74/484。Regression は 4 Describe のまま。
+- 各ファイルを単独で Invoke-Pester しても失敗しない。
+- PSScriptAnalyzer の Error/Warning が 0。Documentation S12 が通る。
+- CI の lint / pester / self-test / dry-run がすべて成功する。
 ```

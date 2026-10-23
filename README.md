@@ -34,7 +34,7 @@ The goal of WinEase is to automate the creation of a streamlined Windows 11 imag
   - Dynamically mounts an expandable 30 GB VHDX volume as the DISM scratch directory, eliminating host NTFS fragmentation and accelerating image unpacking and exporting.
 - **📊 Visual HTML Build Report & Test Suite**:
   - Automatically exports a dark-themed visual report (`WinEase_report.html`) summarizing baseline vs optimized WIM sizes, saved GB, compression percentage, and feature status.
-  - Includes built-in self-test diagnostics (`-TestSelf`) and a complete Pester test suite (`tests/WinEase.Tests.ps1`).
+  - Includes built-in self-test diagnostics (`-TestSelf`) and a complete Pester test suite (`tests/`, split by area).
 - **📁 Custom Post-Install Scripts Hook**:
   - Place custom `.ps1`, `.bat`, `.cmd`, or `.reg` files in `tools/custom-scripts/` to have them automatically extracted and executed sequentially during post-install first logon (a metadata header can set the order, a tweak condition, the error policy and the description — in the comment syntax of the file type).
   - Manage the same folder from **Tab 10 "Custom Scripts"**: add, remove, reorder, edit the metadata and preview where each file lands in the image without touching the file system by hand.
@@ -473,7 +473,7 @@ This working copy carries the following changes on top of the upstream fork:
 
 | Workflow | Runs on | What it does |
 |---|---|---|
-| `ci.yml` | push / PR to `main` | `-TestSelf` (PowerShell 5.1 + 7), Pester (`tests\WinEase.Tests.ps1`, `tests\WinEase.Regression.Tests.ps1`), dry-runs of extreme / balanced / none / vm, Rust engine build |
+| `ci.yml` | push / PR to `main` | `-TestSelf` (PowerShell 5.1 + 7), Pester (`tests\`, split by area; includes `tests\WinEase.Regression.Tests.ps1`), dry-runs of extreme / balanced / none / vm, Rust engine build |
 | `lint.yml` | push / PR to `main` | PSScriptAnalyzer (errors fail) |
 | `workflow-audit.yml` | changes under `.github/` | actionlint + zizmor security audit of the workflows |
 | `release.yml` | `v*` tag | runs all of the above on the tagged commit, verifies the tag did not move, builds and checks the ZIP, publishes it with a `.sha256` file and a build provenance attestation |
@@ -544,9 +544,19 @@ WinEase/
 │   ├── EXTENSIBILITY_GUIDE.md    # Extensibility guide (English): quick start + reference
 │   ├── EXTENSIBILITY_GUIDE.ja.md # Same guide in Japanese
 │   ├── SECURITY_OPTIONS.md    # Security-relevant options, their cost and how to revert
-│   └── dev/SESSION_BRIEFS.md  # Work briefs used for the S1-S12 fix sessions
+│   └── dev/SESSION_BRIEFS.md  # Work briefs for the S1-S12 fixes and R1-R10 restructuring
 ├── tests/
-│   └── WinEase.Tests.ps1       # Pester test suite
+│   ├── _TestCommon.ps1       # Shared paths and English UI default (not a test)
+│   ├── Layout.Tests.ps1
+│   ├── Build.Tests.ps1
+│   ├── Config.Tests.ps1
+│   ├── Helpers.Tests.ps1
+│   ├── Debloat.Tests.ps1
+│   ├── Migration.Tests.ps1
+│   ├── Gui.Tests.ps1
+│   ├── Quality.Tests.ps1
+│   ├── WinEase.Regression.Tests.ps1
+│   └── README.md
 ├── .github/
 │   ├── dependabot.yml
 │   └── workflows/             # ci.yml (Pester), lint.yml (PSScriptAnalyzer), release.yml, claude-issue-agent.yml

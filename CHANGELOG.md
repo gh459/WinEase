@@ -1070,7 +1070,7 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
   `/StartComponentCleanup` (and `/ResetBase`) on Windows 11 24H2+ (26100+), overriding
   the safety block. Experimental; deep-apply verification and ISO payload hash check
   act as safety net.
-- `tests/WinEase.Tests.ps1`: Pester suite covering AST syntax, unattend schema,
+- `tests/`: Pester suite covering AST syntax, unattend schema,
   profile preset integrity, AppX wildcard safety, IME decoupling filter logic,
   language detection, path-safety guards, and end-to-end `-TestSelf` / `-DryRun`.
 - `tools/custom-scripts/` skeleton with README and a disabled example script.

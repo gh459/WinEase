@@ -1,6 +1,7 @@
 # WinEase.Regression.Tests.ps1 - regression tests for configuration resolution and file safety
 # Run with:  Invoke-Pester -Path .\tests\WinEase.Regression.Tests.ps1
-# Requires:  Pester 3.4+ (same syntax as WinEase.Tests.ps1); runs on Windows PowerShell 5.1 and PowerShell 7
+# Requires:  Pester 3.4 (same syntax as the split suite); the CI job runs Windows PowerShell 5.1
+# Tagged slow: the local fast suite is Invoke-Pester -Path .\tests -ExcludeTag slow.
 #
 # These tests run the builder as a child process with -DryRun -NonInteractive, so nothing is
 # mounted, built or deleted. Each run writes a configuration snapshot (logs\*.config.json) that
@@ -67,7 +68,7 @@ function New-WinEaseTestProfile {
     return $Path
 }
 
-Describe "Regression - every built-in preset resolves without prompts" {
+Describe "Regression - every built-in preset resolves without prompts" -Tags 'slow' {
     $presetDef = Import-PowerShellDataFile -LiteralPath (Join-Path (Join-Path $script:RepoRoot 'config') 'presets.psd1')
 
     foreach ($name in @($presetDef.PresetOrder)) {
@@ -112,7 +113,7 @@ Describe "Regression - every built-in preset resolves without prompts" {
     }
 }
 
-Describe "Regression - command line, profiles and precedence" {
+Describe "Regression - command line, profiles and precedence" -Tags 'slow' {
     It "-NonInteractive never waits for the console" {
         # Standard input is closed: a prompt would either throw or hang until the timeout.
         $r = Invoke-WinEaseBuilderProcess -Arguments @('-DryRun', '-NonInteractive', '-Profile', 'balanced') -TimeoutSeconds 240
@@ -222,7 +223,7 @@ Describe "Regression - command line, profiles and precedence" {
     }
 }
 
-Describe "Regression - config\WinEase.config.schema.json matches the real profile format" {
+Describe "Regression - config\WinEase.config.schema.json matches the real profile format" -Tags 'slow' {
     $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path (Join-Path $script:RepoRoot 'config') 'schema.psd1')
     $schemaText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $script:RepoRoot 'config') 'WinEase.config.schema.json'), [System.Text.Encoding]::UTF8)
     $schema = $schemaText | ConvertFrom-Json
@@ -259,7 +260,7 @@ Describe "Regression - config\WinEase.config.schema.json matches the real profil
     }
 }
 
-Describe "Regression - delete and restore safety (temporary directories only)" {
+Describe "Regression - delete and restore safety (temporary directories only)" -Tags 'slow' {
     . (Join-Path $script:RepoRoot 'WinEasehelpers.ps1')
     . (Join-Path (Join-Path (Join-Path $script:RepoRoot 'tools') 'migrator') 'WinEaseMigration.ps1')
 
