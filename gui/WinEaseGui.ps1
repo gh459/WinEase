@@ -816,15 +816,15 @@ function Set-WinEaseDebloatGridChecked {
 # The selected targets and the engine of every target of a debloat grid
 function Get-WinEaseDebloatGridState {
     param([Parameter(Mandatory = $true)][object]$Grid)
-    $selected = @()
+    $selected = [System.Collections.Generic.List[string]]::new()
     $engines = @{}
     for ($i = 0; $i -lt $Grid.Rows.Count; $i++) {
         $row = $Grid.Rows[$i]
         $item = [string]$row.Tag
-        if ([bool]$row.Cells['On'].Value) { $selected += $item }
+        if ([bool]$row.Cells['On'].Value) { $selected.Add($item) }
         $engines[$item] = [string]$row.Cells['Engine'].Value
     }
-    return @{ Selected = $selected; Engines = $engines }
+    return @{ Selected = $selected.ToArray(); Engines = $engines }
 }
 
 # The global engine switch: applies one engine to every target that supports it.
