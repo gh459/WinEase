@@ -159,69 +159,17 @@ if (Test-TweakEnabled 'DisableCrossDevice' $true) {
 # ============================================================================
 if (Test-TweakEnabled 'DisableWebSearch' $true) {
     Write-Host "Disabling Bing search & web suggestions in Start menu..." -ForegroundColor Green
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "DisableWebSearch" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "ConnectedSearchUseWeb" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "EnableDynamicContentInWSB" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCloudSearch" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowSearchToUseLocation" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCortana" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Explorer" -Name "DisableSearchBoxSuggestions" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Search" -Name "BingSearchEnabled" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Search" -Name "BingSearchEnabled" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\Explorer" -Name "DisableSearchBoxSuggestions" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\Explorer" -Name "DisableSearchBoxSuggestions" -Type REG_DWORD -Data '1'
-    # Win11Debloat 2026.08.24 (Disable_Search_Highlights, Disable_Search_History).
-    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\SearchSettings" -Name "IsDynamicSearchBoxEnabled" -Type REG_DWORD -Data '0'
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\SearchSettings" -Name "IsDeviceSearchHistoryEnabled" -Type REG_DWORD -Data '0'
-        # ReviOS 26.10 / main (registry/explorer/search.yml): the web and the
-        # Microsoft Store results that the Search box offers (26H2).
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\SearchSettings" -Name "IsWebSuggestionsEnabled" -Type REG_DWORD -Data '0'
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\SearchSettings" -Name "IsStoreSuggestionsEnabled" -Type REG_DWORD -Data '0'
-    }
-    # ReviOS 26.10 (registry/explorer/search.yml): the activatable class of the
-    # Store search task is disabled outright (25H2 and newer).
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\WinStore.Tasks.WindowsSearchTask" -Name "ActivationType" -Type REG_DWORD -Data '4294967295'
-    # The empty string has to be passed as the literal '""': an empty argument is
-    # dropped by the PowerShell native call, so reg.exe would take the next switch
-    # ('/f') as the value instead.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\WinStore.Tasks.WindowsSearchTask" -Name "Server" -Type REG_SZ -Data '""'
+    Invoke-WinEaseRegistryTable -Section start-search -Tweak DisableWebSearch
 }
 
-if (Test-TweakEnabled 'HideSearchBox' $true) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Search" -Name "SearchboxTaskbarMode" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Search" -Name "SearchboxTaskbarMode" -Type REG_DWORD -Data '0'
-}
+Invoke-WinEaseRegistryTable -Section start-search -Tweak HideSearchBox
 
 if (Test-TweakEnabled 'DisableWidgets' $true) {
     Write-Host "Disabling Windows 11 Widgets..." -ForegroundColor Green
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Dsh" -Name "AllowNewsAndInterests" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Widgets" -Name "AllowWidgets" -Type REG_DWORD -Data '0'
-    # Bloatynosy 1.01.103: the "News and interests" feeds policy.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Feeds" -Name "EnableFeeds" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarDa" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarDa" -Type REG_DWORD -Data '0'
+    Invoke-WinEaseRegistryTable -Section start-search -Tweak DisableWidgets
 }
 
-if (Test-TweakEnabled 'HideRecommendedSection' $true) {
-    # The Explorer policy alone is only honoured on Education/Enterprise editions.
-    # The PolicyManager bridge is the documented workaround that makes the same
-    # policy remove the section on Pro as well (WinUtil / elevenforum).
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Explorer" -Name "HideRecommendedSection" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\PolicyManager\current\device\Start" -Name "HideRecommendedSection" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\PolicyManager\current\device\Education" -Name "IsEducationEnvironment" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\Explorer" -Name "HideRecommendedSection" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\Explorer" -Name "HideRecommendedSection" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Start_IrisRecommendations" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Start_IrisRecommendations" -Type REG_DWORD -Data '0'
-    # Sophia Script 8.0.0 (RecentlyAddedStartApps, MostUsedStartApps, StartRecommendedSection):
-    # the recent / most used lists of the new Start menu and recent documents tracking.
-    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\Start" -Name "ShowRecentList" -Type REG_DWORD -Data '0'
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\Start" -Name "ShowFrequentList" -Type REG_DWORD -Data '0'
-        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Start_TrackDocs" -Type REG_DWORD -Data '0'
-    }
-}
+Invoke-WinEaseRegistryTable -Section start-search -Tweak HideRecommendedSection
 
 # ============================================================================
 # 8. Security & Stability Controls
