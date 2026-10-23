@@ -1,9 +1,12 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
   <!-- Integrated WinEase + Winhance Unattended Configuration -->
-  <settings pass="offlineServicing"></settings>
-  <settings pass="windowsPE"></settings>
-  <settings pass="generalize"></settings>
+  <settings pass="offlineServicing">
+  </settings>
+  <settings pass="windowsPE">
+  </settings>
+  <settings pass="generalize">
+  </settings>
   <settings pass="specialize">
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <ComputerName>WinEase</ComputerName>
@@ -52,13 +55,16 @@
       </RunSynchronous>
     </component>
   </settings>
-  <settings pass="auditSystem"></settings>
-  <settings pass="auditUser"></settings>
+  <settings pass="auditSystem">
+  </settings>
+  <settings pass="auditUser">
+  </settings>
   <settings pass="oobeSystem">
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
       <UserAccounts>
         <AdministratorPassword>
-          <Value></Value>
+          <Value>
+          </Value>
           <PlainText>true</PlainText>
         </AdministratorPassword>
         <LocalAccounts>
@@ -67,7 +73,8 @@
             <DisplayName>User</DisplayName>
             <Group>Administrators</Group>
             <Password>
-              <Value></Value>
+              <Value>
+              </Value>
               <PlainText>true</PlainText>
             </Password>
           </LocalAccount>
@@ -78,7 +85,8 @@
         <Enabled>true</Enabled>
         <LogonCount>1</LogonCount>
         <Password>
-          <Value></Value>
+          <Value>
+          </Value>
           <PlainText>true</PlainText>
         </Password>
       </AutoLogon>
@@ -99,7 +107,8 @@
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="arm64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
       <UserAccounts>
         <AdministratorPassword>
-          <Value></Value>
+          <Value>
+          </Value>
           <PlainText>true</PlainText>
         </AdministratorPassword>
         <LocalAccounts>
@@ -108,7 +117,8 @@
             <DisplayName>User</DisplayName>
             <Group>Administrators</Group>
             <Password>
-              <Value></Value>
+              <Value>
+              </Value>
               <PlainText>true</PlainText>
             </Password>
           </LocalAccount>
@@ -119,7 +129,8 @@
         <Enabled>true</Enabled>
         <LogonCount>1</LogonCount>
         <Password>
-          <Value></Value>
+          <Value>
+          </Value>
           <PlainText>true</PlainText>
         </Password>
       </AutoLogon>
@@ -464,26 +475,35 @@ try {
 	if (Test-Path -LiteralPath $initMarkerDir) {
 		Remove-Item -LiteralPath "$initMarkerDir\firstlogon.done", "$initMarkerDir\firstlogon_script.failed" -Force -ErrorAction SilentlyContinue;
 	}
-} catch {}
+} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 $scripts = @(
 	{
 		# Guarantee User account has NO password (completely blank) and cannot expire
 		try {
 			&amp; net.exe accounts /maxpwage:UNLIMITED /minpwlen:0 2&gt;$null;
 			&amp; net.exe user User "" /active:yes /passwordreq:no /expires:never 2&gt;$null;
-		} catch {}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Disable Computer Restore on System Drive
+		# Guarded by the DisableComputerRestore option: phase 11 only stages the flag when
+		# the option is enabled, because disabling System Restore removes the safety net the
+		# user may rely on.
 		try {
-			Disable-ComputerRestore -Drive "C:\" 2&gt;$null;
-		} catch {}
+			if (Test-Path "C:\Windows\Setup\Scripts\disable-computer-restore.flag") {
+				Disable-ComputerRestore -Drive "C:\" 2&gt;$null;
+			}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Enable CompactOS NTFS Compression
+		# Guarded by the EnableCompactOS option: the flag is only staged by phase 11 when
+		# the option is enabled, so an image that must not be compressed simply has no flag.
 		try {
-			&amp; Compact.exe /CompactOS:always 2&gt;$null;
-		} catch {}
+			if (Test-Path "C:\Windows\Setup\Scripts\enable-compactos.flag") {
+				&amp; Compact.exe /CompactOS:always 2&gt;$null;
+			}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Low-Latency BCD Boot &amp; Timer Tweaks
@@ -497,7 +517,7 @@ $scripts = @(
 			if (Test-Path "C:\Windows\Setup\Scripts\no-hypervisor.flag") {
 				&amp; bcdedit.exe /set hypervisorlaunchtype off 2&gt;$null;
 			}
-		} catch {}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Advanced Low-Latency Network &amp; Nagle Tuning
@@ -517,16 +537,18 @@ $scripts = @(
 			}
 			if (Test-Path "C:\Windows\Setup\Scripts\disable-netbios.flag") {
 				Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Services\NetBT\Parameters\Interfaces' -ErrorAction SilentlyContinue |
-					ForEach-Object { Set-ItemProperty $_.PSPath 'NetbiosOptions' 2 -Type DWord -Force -ErrorAction SilentlyContinue };
+					ForEach-Object { Set-ItemProperty -Path $_.PSPath -Name 'NetbiosOptions' -Value 2 -Type DWord -Force -ErrorAction SilentlyContinue };
 			}
-		} catch {}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# NTFS I/O Overhead Reduction
 		try {
-			&amp; fsutil.exe behavior set disablelastaccess 1 2&gt;$null;
-			&amp; fsutil.exe 8dot3name set 1 2&gt;$null;
-		} catch {}
+			if (Test-Path "C:\Windows\Setup\Scripts\enable-ntfs8dot3.flag") {
+				&amp; fsutil.exe behavior set disablelastaccess 1 2&gt;$null;
+				&amp; fsutil.exe 8dot3name set 1 2&gt;$null;
+			}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Custom Post-Install User Scripts Execution Hook (from tools/custom-scripts/)
@@ -750,7 +772,7 @@ $scripts = @(
 				&amp; schtasks.exe /change /tn "\Microsoft\Windows\SoftwareProtectionPlatform\SvcRestartTaskLogon" /disable 2&gt;$null;
 				&amp; schtasks.exe /change /tn "\Microsoft\Windows\SoftwareProtectionPlatform\SvcRestartTaskNetwork" /disable 2&gt;$null;
 				Remove-Item -LiteralPath $actFlag -Force -ErrorAction SilentlyContinue;
-			} catch {}
+			} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 		}
 	};
 	{
@@ -763,7 +785,7 @@ $scripts = @(
 				if (-not (Test-Path $statsDir)) { New-Item -ItemType Directory -Force -Path $statsDir | Out-Null; }
 				"{0},{1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $bootMs | Add-Content "$statsDir\boot-stats.csv";
 			}
-		} catch {}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# WinRE Online Dismantle if winre-cleanup.flag is present
@@ -778,7 +800,7 @@ $scripts = @(
 					Remove-Item -LiteralPath $winrePath -Force -ErrorAction SilentlyContinue;
 				}
 				Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue;
-			} catch {}
+			} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 		}
 	};
 	{
@@ -795,17 +817,134 @@ $scripts = @(
 			foreach ($t in $safeTasks) {
 				schtasks.exe /change /tn "$t" /disable &gt;$null 2&gt;&amp;1;
 			}
-		} catch {}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Cross-Device Resume enforcement: kill the resume host if it launched before IFEO applied,
 		# and re-assert the IFEO debugger block online (the executable is bundled inside the protected
 		# MicrosoftWindows.Client.CBS shell package, so it must be neutralized, never deleted).
+		# Guarded by the DisableCrossDevice option.
 		try {
-			Get-Process -Name CrossDeviceResume -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
-			New-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\CrossDeviceResume.exe' -Force -ErrorAction SilentlyContinue | Out-Null;
-			Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\CrossDeviceResume.exe' -Name 'Debugger' -Value 'rundll32.exe' -Force -ErrorAction SilentlyContinue;
-		} catch {}
+			if (Test-Path "C:\Windows\Setup\Scripts\disable-crossdevice.flag") {
+				Get-Process -Name CrossDeviceResume -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
+				New-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\CrossDeviceResume.exe' -Force -ErrorAction SilentlyContinue | Out-Null;
+				Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\CrossDeviceResume.exe' -Name 'Debugger' -Value 'rundll32.exe' -Force -ErrorAction SilentlyContinue;
+			}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+	};
+	{
+		# Accessibility tools enforcement (post-OOBE): osk.exe / Narrator.exe / Magnify.exe are
+		# RETAINED in System32 for OOBE stability (the offline debloat preserves them by design).
+		# Blocking them is opt-in: the flag is only staged by phase 11 when the
+		# DisableAccessibilityTools option is enabled. Without the option these tools keep
+		# working normally on the desktop.
+		try {
+			if (Test-Path "C:\Windows\Setup\Scripts\disable-accessibility.flag") {
+				foreach ($acc in 'osk.exe','Narrator.exe','Magnify.exe') {
+					$accKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$acc";
+					New-Item -Path $accKey -Force -ErrorAction SilentlyContinue | Out-Null;
+					Set-ItemProperty -LiteralPath $accKey -Name 'Debugger' -Value 'rundll32.exe' -Force -ErrorAction SilentlyContinue;
+					Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($acc)) -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
+				}
+			}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+	};
+	{
+		# Hibernate mode (staged by phase 11 from the HibernateMode option).
+		#   Off     -&gt; hibernation is disabled, hiberfil.sys is removed (reclaims disk)
+		#   Reduced -&gt; fast startup is disabled but hibernation itself is kept
+		#   Keep    -&gt; nothing is changed
+		# The flag carries the mode name; nothing happens when it is absent.
+		$hibernateFlag = "C:\Windows\Setup\Scripts\hibernate-mode.flag"
+		if (Test-Path $hibernateFlag) {
+			try {
+				$hibernateMode = (Get-Content -LiteralPath $hibernateFlag -Raw -ErrorAction SilentlyContinue)
+				if ($null -eq $hibernateMode) { $hibernateMode = '' }
+				$hibernateMode = $hibernateMode.Trim()
+				switch ($hibernateMode.ToLowerInvariant()) {
+					'off' {
+						&amp; powercfg.exe /hibernate off 2&gt;$null;
+						&amp; powercfg.exe /h off 2&gt;$null;
+					}
+					'reduced' {
+						# Keep hibernation but turn off fast startup, which is the part that
+						# restores the previous session on boot.
+						&amp; powercfg.exe /h off 2&gt;$null;
+					}
+					default {
+						# 'keep' - leave the power configuration alone.
+					}
+				}
+				Remove-Item -LiteralPath $hibernateFlag -Force -ErrorAction SilentlyContinue;
+			} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+		}
+	};
+	{
+		# Page file removal (staged by phase 11 when the Advanced Debloat tab asks for it).
+		# The page file cannot be deleted while Windows is running, so the paging file is
+		# switched off here; Windows removes pagefile.sys at the next boot.
+		$pagefileFlag = "C:\Windows\Setup\Scripts\remove-pagefile.flag"
+		if (Test-Path $pagefileFlag) {
+			try {
+				# The empty string has to be passed as the literal '""': an empty argument is
+				# dropped by the PowerShell native call, so reg.exe would take the next switch
+				# ('/f') as the value and Windows would keep the old paging file entry.
+				&amp; reg.exe add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" /v PagingFiles /t REG_MULTI_SZ /d '""' /f 2&gt;$null | Out-Null
+				&amp; reg.exe add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" /v ExistingPageFiles /t REG_MULTI_SZ /d '""' /f 2&gt;$null | Out-Null
+			} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+			Remove-Item -LiteralPath $pagefileFlag -Force -ErrorAction SilentlyContinue;
+		}
+	};
+	{
+		# USB selective suspend disable (staged by phase 11 when -DisableUSBSuspend is set).
+		# USB power management can only be changed on the running system through powercfg,
+		# so the offline build can only stage the request.
+		if (Test-Path "C:\Windows\Setup\Scripts\disable-usb-suspend.flag") {
+			try {
+				# 0 = disabled (never suspend USB), 1 = enabled.
+				&amp; powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_USB USBSELECTIVE 0 2&gt;$null;
+				&amp; powercfg.exe /setdcvalueindex SCHEME_CURRENT SUB_USB USBSELECTIVE 0 2&gt;$null;
+				&amp; powercfg.exe /setactive SCHEME_CURRENT 2&gt;$null;
+				Remove-Item "C:\Windows\Setup\Scripts\disable-usb-suspend.flag" -Force -ErrorAction SilentlyContinue;
+			} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+		}
+	};
+	{
+		# Windows Defender enforcement (post-OOBE): the offline build removes the Defender
+		# service keys, but CBS can re-register them from the WinSxS servicing payload during
+		# the first boot, which resurrects MsMpEng.exe / Sense.exe. This block re-asserts the
+		# removal online and terminates any engine process that is already running.
+		if (Test-Path "C:\Windows\Setup\Scripts\remove-defender.flag") {
+			try {
+				# The deployed enforcement helper does the full online removal (service
+				# keys, Security UI package, AppRepository rows, IFEO traps). The inline
+				# block below stays as a fallback for images built before the helper
+				# existed or when its execution is blocked by policy.
+				$defEnforce = "C:\Windows\Setup\Scripts\WinEase-DefenderEnforce.ps1";
+				if (Test-Path -LiteralPath $defEnforce) {
+					&amp; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $defEnforce -Quiet 2&gt;&amp;1 | Out-Null;
+				}
+				# Stop and disable every Defender-related service (idempotent: a missing
+				# service key is fine, the goal is "not running and not startable").
+				foreach ($svc in 'WinDefend','MDCoreSvc','WdNisSvc','Sense','SecurityHealthService','wscsvc','SgrmBroker','SgrmAgent') {
+					Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue;
+					Set-Service -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue;
+				}
+				# Terminate the engine and helper processes. MsMpEng.exe is the AV engine
+				# itself; Sense.exe is the Defender telemetry host; SecurityHealthSystray.exe
+				# and SecurityHealthHost.exe belong to the Windows Security UI.
+				foreach ($proc in 'MsMpEng','Sense','SecurityHealthSystray','SecurityHealthHost','MpCmdRun') {
+					Get-Process -Name $proc -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
+				}
+				# Remove the service keys again so a later CBS pass cannot re-enable them.
+				foreach ($svc in 'WinDefend','MDCoreSvc','WdNisSvc','Sense','SecurityHealthService','wscsvc') {
+					$svcKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$svc";
+					if (Test-Path -LiteralPath $svcKey) {
+						Remove-Item -LiteralPath $svcKey -Recurse -Force -ErrorAction SilentlyContinue;
+					}
+				}
+			} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+		}
 	};
 	{
 		# Windows Search disable enforcement (offline hive edit backup: stop &amp; disable WSearch online,
@@ -814,19 +953,74 @@ $scripts = @(
 			try {
 				Stop-Service -Name WSearch -Force -ErrorAction SilentlyContinue;
 				Set-Service -Name WSearch -StartupType Disabled -ErrorAction SilentlyContinue;
-				Get-Process -Name SearchHost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
-				Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' -Name 'SearchboxTaskbarMode' -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue;
-			} catch {}
+				if (Test-Path "C:\Windows\Setup\Scripts\disable-search-process.flag") {
+					Get-Process -Name SearchHost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
+				}
+			} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 			Remove-Item "C:\Windows\Setup\Scripts\disable-search.flag" -Force -ErrorAction SilentlyContinue;
+		}
+		# Hiding the taskbar search box follows the HideSearchBox option on its own; it used
+		# to be an unconditional side effect of disabling the search service.
+		try {
+			if (Test-Path "C:\Windows\Setup\Scripts\enable-hide-searchbox.flag") {
+				Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' -Name 'SearchboxTaskbarMode' -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue;
+			}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+	};
+	{
+		# Residual per-user Appx removal fallback: the packages the offline pass removed
+		# from the image. Phase 11 stages the list, so nothing is removed when the
+		# matching option is off.
+		$appxListFile = "C:\Windows\Setup\Scripts\remove-appx-packages.flag";
+		if (Test-Path $appxListFile) {
+			foreach ($appxName in @(Get-Content -LiteralPath $appxListFile -ErrorAction SilentlyContinue)) {
+				if ([string]::IsNullOrWhiteSpace($appxName)) { continue }
+				try {
+					# The list holds the identity name of every removed package
+					# ("Microsoft.BingWeather"), so the exact name is tried first. The
+					# wildcard is the fallback for the entries that are only a part of a
+					# name ("WindowsBackupApp" -&gt; Microsoft.WindowsBackupApp).
+					$appxPkgs = @(Get-AppxPackage -AllUsers -Name $appxName -ErrorAction SilentlyContinue);
+					if ($appxPkgs.Count -eq 0) {
+						$appxPkgs = @(Get-AppxPackage -AllUsers -Name "*$appxName*" -ErrorAction SilentlyContinue);
+					}
+					$appxPkgs | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue;
+				} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+			}
 		}
 	};
 	{
-		# Residual per-user Appx removal fallback: Windows Backup / Web Experience host / Get Started
+		# UI preference report for the first user. The offline phase writes the values
+		# into the default user hive; this confirms what the running user actually sees.
 		try {
-			Get-AppxPackage -AllUsers -Name *WindowsBackupApp* -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue;
-			Get-AppxPackage -AllUsers -Name *Client.WebExperience* -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue;
-			Get-AppxPackage -AllUsers -Name *Getstarted* -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue;
-		} catch {}
+			$uiStatusPath = "C:\ProgramData\WinEase\ui-status.txt";
+			$uiLines = @(
+				"WinEase UI status",
+				"Timestamp: " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+			);
+			$uiChecks = @(
+				@{ Label = "MinAnimate"; Path = "HKCU:\Control Panel\Desktop\WindowMetrics"; Name = "MinAnimate"; Expected = "0" },
+				@{ Label = "DragFullWindows"; Path = "HKCU:\Control Panel\Desktop"; Name = "DragFullWindows"; Expected = "0" },
+				@{ Label = "VisualFXSetting"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"; Name = "VisualFXSetting"; Expected = 2 },
+				@{ Label = "TaskbarAnimations"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "TaskbarAnimations"; Expected = 0 },
+				@{ Label = "MouseSpeed"; Path = "HKCU:\Control Panel\Mouse"; Name = "MouseSpeed"; Expected = "0" },
+				@{ Label = "MouseThreshold1"; Path = "HKCU:\Control Panel\Mouse"; Name = "MouseThreshold1"; Expected = "0" },
+				@{ Label = "MouseThreshold2"; Path = "HKCU:\Control Panel\Mouse"; Name = "MouseThreshold2"; Expected = "0" }
+			);
+			foreach ($uiCheck in $uiChecks) {
+				$actual = $null;
+				try { $actual = (Get-ItemProperty -LiteralPath $uiCheck.Path -Name $uiCheck.Name -ErrorAction SilentlyContinue).($uiCheck.Name) } catch { Write-Verbose "UI preference read failed: $($_.Exception.Message)" }
+				$state = if ("$actual" -eq "$($uiCheck.Expected)") { "OK" } else { "DIFF" };
+				$uiLines += ("{0}: {1} (expected {2}) [{3}]" -f $uiCheck.Label, $actual, $uiCheck.Expected, $state);
+			}
+			$noLock = $null;
+			try { $noLock = (Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" -Name "NoLockScreen" -ErrorAction SilentlyContinue).NoLockScreen } catch { Write-Verbose "Lock-screen policy read failed: $($_.Exception.Message)" }
+			$uiLines += ("NoLockScreen (policy): {0}" -f $noLock);
+			$photoCmd = $null;
+			try { $photoCmd = (Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Classes\PhotoViewer.FileAssoc.Jpeg\shell\open\command" -ErrorAction SilentlyContinue).'(default)' } catch { Write-Verbose "Photo Viewer registration read failed: $($_.Exception.Message)" }
+			$uiLines += ("Photo Viewer JPEG command: {0}" -f $(if ($photoCmd) { "present" } else { "absent" }));
+			[System.IO.File]::WriteAllLines($uiStatusPath, $uiLines, [System.Text.Encoding]::UTF8);
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Signal FirstLogon completion and restore persistent AutoLogon security
@@ -839,7 +1033,7 @@ $scripts = @(
 			Set-ItemProperty -LiteralPath 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name 'AutoAdminLogon' -Value '0' -Force -ErrorAction SilentlyContinue;
 			Set-ItemProperty -LiteralPath 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name 'ForceAutoLogon' -Value '0' -Force -ErrorAction SilentlyContinue;
 			Remove-ItemProperty -LiteralPath 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name 'DefaultPassword' -Force -ErrorAction SilentlyContinue;
-		} catch {}
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 );
 
@@ -849,7 +1043,6 @@ $scripts = @(
   $flErrors = @();
   foreach( $script in $scripts ) {
     Write-Progress -Activity 'Running scripts to finalize your Windows installation. Do not close this window.' -PercentComplete $complete;
-    $start = [datetime]::Now;
     try {
       &amp; $script;
     } catch {
