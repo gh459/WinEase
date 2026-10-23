@@ -1,0 +1,45 @@
+LOAD	HKLM\zSYSTEM
+LOAD	HKLM\zSOFTWARE
+LOAD	HKLM\zDEFAULT
+LOAD	HKLM\zCOMPONENTS
+LOAD	HKLM\zNTUSER
+ADD	HKLM\zSYSTEM\Setup\LabConfig	BypassCPUCheck	REG_DWORD	1
+ADD	HKLM\zSYSTEM\Setup\LabConfig	BypassRAMCheck	REG_DWORD	1
+ADD	HKLM\zSYSTEM\Setup\LabConfig	BypassSecureBootCheck	REG_DWORD	1
+ADD	HKLM\zSYSTEM\Setup\LabConfig	BypassStorageCheck	REG_DWORD	1
+ADD	HKLM\zSYSTEM\Setup\LabConfig	BypassTPMCheck	REG_DWORD	1
+ADD	HKLM\zSYSTEM\Setup\LabConfig	BypassDiskCheck	REG_DWORD	1
+ADD	HKLM\zSYSTEM\Setup\MoSetup	AllowUpgradesWithUnsupportedTPMOrCPU	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Control Panel\UnsupportedHardwareNotificationCache	SV1	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Control Panel\UnsupportedHardwareNotificationCache	SV2	REG_DWORD	0
+ADD	HKLM\zNTUSER\Control Panel\UnsupportedHardwareNotificationCache	SV1	REG_DWORD	0
+ADD	HKLM\zNTUSER\Control Panel\UnsupportedHardwareNotificationCache	SV2	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE	BypassNRO	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\ReserveManager	ShippedWithReserves	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Control\Lsa	LimitBlankPasswordUse	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio	Priority	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio	Scheduling Category	REG_SZ	High
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio	SFIO Priority	REG_SZ	High
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio	Background Only	REG_SZ	False
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio	Clock Rate	REG_DWORD	10000
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio	GPU Priority	REG_DWORD	8
+ADD	HKLM\zSYSTEM\ControlSet001\Services\Spooler	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\PrintNotify	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\bthserv	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\BthAvctpSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\BluetoothUserService	Start	REG_DWORD	3
+ADD	HKLM\zSYSTEM\ControlSet001\Services\TermService	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\UmRdpService	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\TabletInputService	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\fvevc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\MpsSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\SNMP	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\Fax	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\Telnet	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\TFTP	Start	REG_DWORD	4
+DELETE	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\InboxApp\Test.App_1.0.0.0_x64__abc			
+DELETE	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\InboxApp\Test.App_abc			
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE	BypassNRO	REG_DWORD	1
+ADD	HKLM\zSYSTEM\Setup\LabConfig	BypassNRO	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation	Manufacturer	REG_SZ	WinEase Project
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation	SupportURL	REG_SZ	https://github.com/gh459/WinEase
