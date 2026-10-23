@@ -746,6 +746,7 @@ function Export-WinEaseProfile {
         [string]$FilePath,
         [hashtable]$Config
     )
+    if ($null -eq $Config) { $Config = @{} }
     $parentDir = Split-Path -Parent $FilePath
     if ($parentDir -and (-not (Test-Path -LiteralPath $parentDir))) {
         $null = New-Item -ItemType Directory -Force -Path $parentDir

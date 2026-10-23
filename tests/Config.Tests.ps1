@@ -1827,3 +1827,122 @@ Describe "WinEase builder - Apply-WinEaseProfileComponents edge cases" {
         $actualBool -is [bool] | Should Be $true
     }
 }
+
+Describe "WinEase builder - Export-WinEaseProfile edge cases" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        $builderContent = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $builderAst = [System.Management.Automation.Language.Parser]::ParseInput($builderContent, [ref]$null, [ref]$null)
+
+        $exportFuncAst = $builderAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Export-WinEaseProfile' }, $true)
+        . ([scriptblock]::Create($exportFuncAst.Extent.Text))
+
+        $importFuncAst = $builderAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Import-WinEaseProfile' }, $true)
+        . ([scriptblock]::Create($importFuncAst.Extent.Text))
+    }
+
+    BeforeEach {
+        $script:WinEaseProfileKeys = @('RemoveDefender', 'KeepIME', 'DisableUAC', 'DebloatEngineSelection')
+        $script:WinEaseVersion = "2.1"
+        $script:ComponentDefs = @{
+            'RemoveDefender' = @{ Type = 'Bool'; Key = 'RemoveDefender' }
+            'KeepIME'        = @{ Type = 'Bool'; Key = 'KeepIME' }
+        }
+        $script:NonInteractive = $true
+    }
+
+    It "exports profile gracefully when Config parameter is null or omitted" {
+        $tmp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "export_null_config_$([guid]::NewGuid().ToString('N')).json"
+        try {
+            Export-WinEaseProfile -FilePath $tmp -Config $null
+            Test-Path -LiteralPath $tmp | Should Be $true
+            $content = Get-Content -LiteralPath $tmp -Raw | ConvertFrom-Json
+            $content.ProfileName | Should Be "WinEase Configuration Profile"
+            $content.Version | Should Be $script:WinEaseVersion
+            @($content.Settings.PSObject.Properties).Count | Should Be 0
+        } finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "exports profile when FilePath has no parent directory" {
+        $fileName = "export_standalone_$([guid]::NewGuid().ToString('N')).json"
+        $tmp = Join-Path -Path (Get-Location).Path -ChildPath $fileName
+        try {
+            $cfg = @{ ProfileName = "Standalone Test"; RemoveDefender = $true }
+            Export-WinEaseProfile -FilePath $fileName -Config $cfg
+            Test-Path -LiteralPath $tmp | Should Be $true
+            $content = Get-Content -LiteralPath $tmp -Raw | ConvertFrom-Json
+            $content.ProfileName | Should Be "Standalone Test"
+            $content.Settings.RemoveDefender | Should Be $true
+        } finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "creates missing parent directory structure if it does not exist" {
+        $subFolder = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "winease_export_test_$([guid]::NewGuid().ToString('N'))\nested\sub"
+        $tmp = Join-Path -Path $subFolder -ChildPath "nested_profile.json"
+        try {
+            $cfg = @{ ProfileName = "Nested Test"; KeepIME = $true }
+            Export-WinEaseProfile -FilePath $tmp -Config $cfg
+            Test-Path -LiteralPath $tmp | Should Be $true
+            $content = Get-Content -LiteralPath $tmp -Raw | ConvertFrom-Json
+            $content.ProfileName | Should Be "Nested Test"
+            $content.Settings.KeepIME | Should Be $true
+        } finally {
+            $rootDir = Split-Path (Split-Path (Split-Path $tmp -Parent) -Parent) -Parent
+            if (Test-Path -LiteralPath $rootDir) { Remove-Item -LiteralPath $rootDir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "overwrites an existing profile file cleanly" {
+        $tmp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "export_overwrite_$([guid]::NewGuid().ToString('N')).json"
+        try {
+            Set-Content -LiteralPath $tmp -Value "old content" -Encoding UTF8
+            $cfg = @{ ProfileName = "Overwritten Profile"; DisableUAC = $true }
+            Export-WinEaseProfile -FilePath $tmp -Config $cfg
+            $content = Get-Content -LiteralPath $tmp -Raw | ConvertFrom-Json
+            $content.ProfileName | Should Be "Overwritten Profile"
+            $content.Settings.DisableUAC | Should Be $true
+        } finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "filters out extra keys not present in script:WinEaseProfileKeys" {
+        $tmp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "export_filter_$([guid]::NewGuid().ToString('N')).json"
+        try {
+            $cfg = @{
+                ProfileName = "Filtered Profile"
+                RemoveDefender = $true
+                UnrecognizedExtraKey = "ShouldBeIgnored"
+            }
+            Export-WinEaseProfile -FilePath $tmp -Config $cfg
+            $content = Get-Content -LiteralPath $tmp -Raw | ConvertFrom-Json
+            $content.Settings.RemoveDefender | Should Be $true
+            $content.Settings.PSObject.Properties['UnrecognizedExtraKey'] | Should Be $null
+        } finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "round-trips exported profile through Import-WinEaseProfile" {
+        $tmp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "export_roundtrip_$([guid]::NewGuid().ToString('N')).json"
+        try {
+            $cfg = @{
+                ProfileName = "Roundtrip Test"
+                RemoveDefender = $true
+                KeepIME = $false
+            }
+            Export-WinEaseProfile -FilePath $tmp -Config $cfg
+            $imported = Import-WinEaseProfile -FilePath $tmp
+            $imported | Should Not Be $null
+            $imported.ProfileName | Should Be "Roundtrip Test"
+            $imported.RemoveDefender | Should Be $true
+            $imported.KeepIME | Should Be $false
+        } finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    }
+}
