@@ -51,7 +51,7 @@ Describe "Folder structure S9" {
         $text.Contains('WinEaseMigration.ps1') | Should Be $false
     }
     It "the GUI loads the migration engine from tools/migrator, and only inside a function" {
-        $gui = Join-Path $script:S9Root "gui\WinEaseGui.ps1"
+        $gui = Join-Path $script:S9Root "lib\WinEaseGuiCore.ps1"
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($gui, [ref]$null, [ref]$null)
         $hits = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.InvocationOperator -eq 'Dot' -and $n.Extent.Text -like '*WinEaseMigration.ps1*' }, $true))
         $hits.Count | Should Be 2

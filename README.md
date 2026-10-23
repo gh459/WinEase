@@ -505,6 +505,7 @@ WinEase/
 │   ├── WinEaseBenchmarks.ps1   # Statistical analysis and benchmark comparison
 │   ├── WinEaseDependencies.ps1 # Dependency / feature-impact analysis (config/dependencies.psd1)
 │   ├── WinEaseGuiSession.ps1   # Builder GUI session handling
+│   ├── WinEaseGuiCore.ps1      # UI-independent GUI logic (language tables, debloat items, draft config, migration helpers)
 │   ├── WinEaseFileSystem.ps1   # Directory safety checks, ownership/ACL, robust deletion, capacity
 │   ├── WinEaseWim.ps1          # Native WIM export, fingerprinting and repair
 │   ├── WinEaseDebloat.ps1      # Advanced Debloat engine (PowerShell / Rust) and per-target handlers

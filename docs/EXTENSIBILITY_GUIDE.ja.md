@@ -165,6 +165,7 @@ WinEase-main/
 | `WinEaseBenchmarks.ps1` | 統計分析とベンチマーク比較 |
 | `WinEaseDependencies.ps1` | 依存関係と機能影響の分析 |
 | `WinEaseGuiSession.ps1` | ビルダーの GUI セッション処理 |
+| `WinEaseGuiCore.ps1` | WinForms 画面・WinUI 3 ホスト・移行ツールが共有する、UI に依存しない GUI ロジック |
 | `WinEaseWim.ps1` | WIM の書き出し、フィンガープリント、修復 |
 | `WinEaseReport.ps1` | HTML レポート(`WinEase_report.html`) |
 | `WinEaseResume.ps1` | `-ResumeIsoOnly` と工程ごとのチェックポイント |

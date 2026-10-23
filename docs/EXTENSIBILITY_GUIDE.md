@@ -165,6 +165,7 @@ Load any new file the same way (turning it into a module would hide those variab
 | `WinEaseBenchmarks.ps1` | Statistical analysis and benchmark comparison |
 | `WinEaseDependencies.ps1` | Dependency / feature-impact analysis |
 | `WinEaseGuiSession.ps1` | Builder GUI session handling |
+| `WinEaseGuiCore.ps1` | UI-independent GUI logic shared by the WinForms window, the WinUI 3 host and the Migrator |
 | `WinEaseWim.ps1` | WIM export, fingerprinting, repair |
 | `WinEaseReport.ps1` | HTML report (`WinEase_report.html`) |
 | `WinEaseResume.ps1` | `-ResumeIsoOnly` and per-phase checkpoints |

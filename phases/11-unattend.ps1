@@ -1,4 +1,4 @@
-﻿# Phase 11: 11-unattend
+# Phase 11: 11-unattend
 # Extracted from WinEasebuilder.ps1
 # Dot-sourced by the main orchestrator
 
@@ -947,8 +947,9 @@ try {
 # Migration Assistant bundle: tool + engine + rule files, and optionally the default
 # migration backup (which does contain personal data) plus a desktop launcher.
 # The bundle has to be self-contained: the engine needs WinEasehelpers.ps1 (restore path validation,
-# see tools\migrator\WinEaseMigration.ps1) and the wizard needs gui\WinEaseGui.ps1 (shared WinForms
-# parts, see tools\migrator\WinEase-Migrator.ps1). They are copied flat into the Migration folder (the helpers with the lib modules it loads),
+# see tools\migrator\WinEaseMigration.ps1) and the wizard needs lib\WinEaseGuiCore.ps1 (language tables,
+# default backup folder) and gui\WinEaseGui.ps1 (shared WinForms parts, see tools\migrator\WinEase-Migrator.ps1).
+# They are copied flat into the Migration folder (the helpers with the lib modules it loads),
 # which is where the migrator looks for them (MigratorDir\<file>).
 if ($includeMigrationAssistant -eq $true) {
     try {
@@ -964,6 +965,7 @@ if ($includeMigrationAssistant -eq $true) {
             'lib\WinEaseConfig.ps1',
             'lib\WinEaseBenchmarks.ps1',
             'lib\WinEaseDependencies.ps1',
+            'lib\WinEaseGuiCore.ps1',
             'gui\WinEaseGui.ps1'
         )
         # The display strings of the wizard: config\ui-strings in the repository, ui-strings next to

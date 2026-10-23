@@ -1080,7 +1080,7 @@ Describe "WinEase dependency checker" {
 
     It "covers every Advanced Debloat item from the GUI" {
         $deps = Import-PowerShellDataFile -Path $depsPath
-        $guiLines = [System.IO.File]::ReadAllLines($script:GuiPath)
+        $guiLines = [System.IO.File]::ReadAllLines($script:GuiCorePath)
         $items = @()
         $i = 0
         while ($i -lt $guiLines.Count) {
