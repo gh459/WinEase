@@ -15,7 +15,7 @@ if (Test-Path -LiteralPath "C:\Windows\Setup\Scripts\remove-defender.flag") {
 
 & { try {
   # 1. User account password policy
-  & net.exe accounts /maxpwage:UNLIMITED /minpwlen:0 2>$null;
+  & net.exe accounts /maxpwage:UNLIMITED 2>$null;
 
   # 2. Dynamic Network Stack & TCP tuning if flagged
   if (Test-Path "C:\Windows\Setup\Scripts\network-stack.flag") {
