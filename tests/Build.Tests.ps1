@@ -89,6 +89,19 @@ Describe "WinEase builder - autounattend.xml" {
         [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$errors) | Out-Null
         $errors.Count | Should Be 0
     }
+    It "parameterizes UserPassword when set" {
+        $xmlPath = Join-Path $script:RepoRoot "autounattend.xml"
+        $raw = [System.IO.File]::ReadAllText($xmlPath, [System.Text.Encoding]::UTF8)
+        $doc = [xml]$raw
+        $UserPassword = "TestSecretPassword123!"
+        $targetUserPass = $UserPassword
+        $passValueNodes = $doc.SelectNodes("//*[local-name()='UserAccounts']//*[local-name()='Password']/*[local-name()='Value'] | //*[local-name()='AutoLogon']/*[local-name()='Password']/*[local-name()='Value']")
+        foreach ($pvNode in $passValueNodes) {
+            $pvNode.InnerText = $targetUserPass
+        }
+        $updatedVal = $doc.SelectSingleNode("//*[local-name()='LocalAccount']/*[local-name()='Password']/*[local-name()='Value']").InnerText
+        $updatedVal | Should Be "TestSecretPassword123!"
+    }
 }
 
 Describe "WinEase builder - IME decoupling filter logic (mock)" {

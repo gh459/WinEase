@@ -288,6 +288,15 @@ Describe "WinEase settings - config\schema.psd1 is the single source of truth" {
         }
     }
 
+    It "configures UserPassword in schema.psd1 and WinEasebuilder.ps1" {
+        $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+        $compKeys = @($settingsDef.Components | ForEach-Object { $_.Key })
+        ($compKeys -contains 'UserPassword') | Should Be $true
+
+        $builderText = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $builderText | Should Match '\[string\]\$UserPassword'
+    }
+
     It "CliSwitch matches a [switch] parameter of the builder, and every setting-named switch is marked" {
         foreach ($d in @($settingsDef.Tweaks) + @($settingsDef.Components)) {
             if ($d.CliSwitch) { $switchNames -contains $d.Key | Should Be $true }
