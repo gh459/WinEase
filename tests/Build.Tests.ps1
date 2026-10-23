@@ -383,3 +383,113 @@ Describe "WinEase builder - the tweak helper is available to every phase" {
         ($missing -join ', ') | Should Be ''
     }
 }
+
+Describe "WinEase builder - Enter-Phase progress tracking and checkpoints" {
+    BeforeAll {
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$tokens, [ref]$errors)
+        $fnAst = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Enter-Phase' }, $true))[0]
+        $script:EnterPhaseFnText = $fnAst.Extent.Text
+    }
+
+    BeforeEach {
+        $script:SavedCheckpoints = [System.Collections.ArrayList]::new()
+        $script:EnterPhaseProbe = New-Module -Name 'WinEaseEnterPhaseProbe' -ArgumentList $script:EnterPhaseFnText -ScriptBlock {
+            param($FnText)
+            $script:CurrentPhase = 0
+            $script:TotalPhases = 18
+            $script:PhaseTimings = [ordered]@{}
+            $script:PhaseStopwatch = $null
+            $script:ResumeMode = $false
+            $script:BaseWorkDir = $null
+            $script:CurrentBuildPhase = $null
+            $script:DiagnosticData = $null
+            $script:CheckpointLog = [System.Collections.ArrayList]::new()
+
+            function Save-WinEaseCheckpoint {
+                param([int]$CompletedPhase)
+                [void]$script:CheckpointLog.Add($CompletedPhase)
+            }
+
+            . ([scriptblock]::Create($FnText))
+
+            Export-ModuleMember -Function 'Enter-Phase' -Variable 'CurrentPhase', 'TotalPhases', 'PhaseTimings', 'PhaseStopwatch', 'ResumeMode', 'BaseWorkDir', 'CurrentBuildPhase', 'DiagnosticData', 'CheckpointLog'
+        }
+        Import-Module $script:EnterPhaseProbe -Force
+    }
+
+    AfterEach {
+        Remove-Module $script:EnterPhaseProbe -Force -ErrorAction SilentlyContinue
+    }
+
+    It "handles initial phase entry (CurrentPhase = 0) without saving checkpoints or recording prior phase timings" {
+        & $script:EnterPhaseProbe {
+            Enter-Phase -PhaseNumber 1 -PhaseName "Environment"
+
+            $script:CurrentPhase | Should Be 1
+            $script:CurrentBuildPhase | Should Be "Phase 1: Environment"
+            $script:PhaseStopwatch | Should Not Be $null
+            $script:PhaseTimings.Count | Should Be 0
+            $script:CheckpointLog.Count | Should Be 0
+        }
+    }
+
+    It "persists checkpoint and records previous phase timings on phase transition when BaseWorkDir is set and ResumeMode is false" {
+        & $script:EnterPhaseProbe {
+            $script:BaseWorkDir = "/tmp/winease-work"
+            $script:ResumeMode = $false
+
+            Enter-Phase -PhaseNumber 1 -PhaseName "Environment"
+            Start-Sleep -Milliseconds 50
+            Enter-Phase -PhaseNumber 2 -PhaseName "Mount"
+
+            $script:CurrentPhase | Should Be 2
+            $script:CurrentBuildPhase | Should Be "Phase 2: Mount"
+            $script:PhaseTimings.Contains("Phase 1") | Should Be $true
+            $script:CheckpointLog.Count | Should Be 1
+            $script:CheckpointLog[0] | Should Be 1
+        }
+    }
+
+    It "suppresses checkpoint saving when ResumeMode is enabled" {
+        & $script:EnterPhaseProbe {
+            $script:BaseWorkDir = "/tmp/winease-work"
+            $script:ResumeMode = $true
+
+            Enter-Phase -PhaseNumber 1 -PhaseName "Environment"
+            Enter-Phase -PhaseNumber 2 -PhaseName "Mount"
+
+            $script:CheckpointLog.Count | Should Be 0
+        }
+    }
+
+    It "suppresses checkpoint saving when BaseWorkDir is null or empty" {
+        & $script:EnterPhaseProbe {
+            $script:BaseWorkDir = $null
+            $script:ResumeMode = $false
+
+            Enter-Phase -PhaseNumber 1 -PhaseName "Environment"
+            Enter-Phase -PhaseNumber 2 -PhaseName "Mount"
+
+            $script:CheckpointLog.Count | Should Be 0
+        }
+    }
+
+    It "updates FailurePhase on DiagnosticData when present" {
+        & $script:EnterPhaseProbe {
+            $script:DiagnosticData = [pscustomobject]@{ FailurePhase = $null }
+
+            Enter-Phase -PhaseNumber 5 -PhaseName "Appx"
+
+            $script:DiagnosticData.FailurePhase | Should Be "Phase 5: Appx"
+        }
+    }
+
+    It "gracefully handles exceptions when setting host window title" {
+        & $script:EnterPhaseProbe {
+            # WindowTitle access in headless/Linux pwsh will throw or silently fail inside catch {} block
+            { Enter-Phase -PhaseNumber 10 -PhaseName "Registry" } | Should Not Throw
+            $script:CurrentPhase | Should Be 10
+        }
+    }
+}
