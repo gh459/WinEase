@@ -43,11 +43,11 @@ Describe "Apply-WinEaseGuiResult in WinEasebuilder.ps1" {
         }
 
         # Mock helper functions called inside Apply-WinEaseGuiResult
-        function Apply-ProfileSettings { param($ProfileName) return @{ ProfileName = $ProfileName } }
+        function Apply-ProfileSettings { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param($ProfileName) return @{ ProfileName = $ProfileName } }
         function Sync-WinEaseTweakVariables { }
         function Set-WinEaseDebloatEngineSelection { param($Selection) $script:DebloatEngineSelection = $Selection }
-        function Resolve-WinEaseDebloatEngine { param($Item) return "PowerShell" }
-        function Confirm-WinEasePhysicalDebloatConsent { param($GuiResult) }
+        function Resolve-WinEaseDebloatEngine { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param($Item) return "PowerShell" }
+        function Confirm-WinEasePhysicalDebloatConsent { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param($GuiResult) }
     }
 
     BeforeEach {
