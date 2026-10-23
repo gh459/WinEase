@@ -383,3 +383,78 @@ Describe "WinEase builder - the tweak helper is available to every phase" {
         ($missing -join ', ') | Should Be ''
     }
 }
+
+Describe "WinEase builder - New-WinEaseChildArguments and ConvertTo-WinEaseCliArgument edge cases" {
+    BeforeAll {
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$null, [ref]$null)
+        $functions = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('ConvertTo-WinEaseCliArgument', 'New-WinEaseChildArguments') }, $true)
+        foreach ($fn in $functions) {
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+    }
+
+    It "ConvertTo-WinEaseCliArgument handles SwitchParameter values" {
+        $swTrue = [switch]$true
+        $swFalse = [switch]$false
+        (ConvertTo-WinEaseCliArgument -Name "RemoveDefender" -Value $swTrue) | Should Be "-RemoveDefender"
+        (ConvertTo-WinEaseCliArgument -Name "RemoveDefender" -Value $swFalse) | Should Be "-RemoveDefender:`$false"
+    }
+
+    It "ConvertTo-WinEaseCliArgument handles boolean values" {
+        (ConvertTo-WinEaseCliArgument -Name "EnableWSL" -Value $true) | Should Be "-EnableWSL"
+        (ConvertTo-WinEaseCliArgument -Name "EnableWSL" -Value $false) | Should Be "-EnableWSL:`$false"
+    }
+
+    It "ConvertTo-WinEaseCliArgument serializes IDictionary hashtables" {
+        $dict = [ordered]@{ "GPULatency" = $true; "TimerBCD" = $false }
+        (ConvertTo-WinEaseCliArgument -Name "TweakGroupOverrides" -Value $dict) | Should Be "-TweakGroupOverrides 'GPULatency=1;TimerBCD=0'"
+    }
+
+    It "ConvertTo-WinEaseCliArgument escapes single quotes in string values" {
+        (ConvertTo-WinEaseCliArgument -Name "UserName" -Value "John's PC") | Should Be "-UserName 'John''s PC'"
+    }
+
+    It "New-WinEaseChildArguments formats and base64 encodes the script execution command" {
+        $scriptPath = "C:\WinEase\WinEasebuilder.ps1"
+        $args = @("-NonInteractive", "-Profile 'extreme'")
+        $result = New-WinEaseChildArguments -ScriptPath $scriptPath -ScriptArguments $args
+
+        $result | Should Match '^-NoProfile -ExecutionPolicy Bypass -InputFormat None -EncodedCommand ([A-Za-z0-9+/=]+)$'
+        $encoded = ($result -split '-EncodedCommand ')[1]
+        $decoded = [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded))
+
+        $decoded | Should Be "& 'C:\WinEase\WinEasebuilder.ps1' -NonInteractive -Profile 'extreme'; exit `$LASTEXITCODE"
+    }
+
+    It "New-WinEaseChildArguments handles script path with single quotes" {
+        $scriptPath = "C:\User's Path\WinEasebuilder.ps1"
+        $args = @("-NonInteractive")
+        $result = New-WinEaseChildArguments -ScriptPath $scriptPath -ScriptArguments $args
+
+        $encoded = ($result -split '-EncodedCommand ')[1]
+        $decoded = [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded))
+
+        $decoded | Should Be "& 'C:\User''s Path\WinEasebuilder.ps1' -NonInteractive; exit `$LASTEXITCODE"
+    }
+
+    It "New-WinEaseChildArguments handles empty or null script arguments array" {
+        $scriptPath = "C:\WinEase\WinEasebuilder.ps1"
+        $resultEmpty = New-WinEaseChildArguments -ScriptPath $scriptPath -ScriptArguments @()
+
+        $encodedEmpty = ($resultEmpty -split '-EncodedCommand ')[1]
+        $decodedEmpty = [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encodedEmpty))
+
+        $decodedEmpty | Should Be "& 'C:\WinEase\WinEasebuilder.ps1' ; exit `$LASTEXITCODE"
+    }
+
+    It "New-WinEaseChildArguments handles arguments with single quotes and spaces" {
+        $scriptPath = "C:\WinEase\WinEasebuilder.ps1"
+        $arg1 = ConvertTo-WinEaseCliArgument -Name "UserName" -Value "User's Name"
+        $result = New-WinEaseChildArguments -ScriptPath $scriptPath -ScriptArguments @($arg1)
+
+        $encoded = ($result -split '-EncodedCommand ')[1]
+        $decoded = [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded))
+
+        $decoded | Should Be "& 'C:\WinEase\WinEasebuilder.ps1' -UserName 'User''s Name'; exit `$LASTEXITCODE"
+    }
+}
