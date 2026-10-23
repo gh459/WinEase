@@ -67,7 +67,7 @@
             <DisplayName>User</DisplayName>
             <Group>Administrators</Group>
             <Password>
-              <Value></Value>
+              <Value>WinEase123!</Value>
               <PlainText>true</PlainText>
             </Password>
           </LocalAccount>
@@ -78,7 +78,7 @@
         <Enabled>true</Enabled>
         <LogonCount>1</LogonCount>
         <Password>
-          <Value></Value>
+          <Value>WinEase123!</Value>
           <PlainText>true</PlainText>
         </Password>
       </AutoLogon>
@@ -108,7 +108,7 @@
             <DisplayName>User</DisplayName>
             <Group>Administrators</Group>
             <Password>
-              <Value></Value>
+              <Value>WinEase123!</Value>
               <PlainText>true</PlainText>
             </Password>
           </LocalAccount>
@@ -119,7 +119,7 @@
         <Enabled>true</Enabled>
         <LogonCount>1</LogonCount>
         <Password>
-          <Value></Value>
+          <Value>WinEase123!</Value>
           <PlainText>true</PlainText>
         </Password>
       </AutoLogon>
