@@ -73,11 +73,17 @@ $script:MigratorParent = Split-Path -Parent (Split-Path -Parent $script:Migrator
 $script:GuiPartsPath = Find-WinEaseMigratorFile @(
     (Join-Path $script:MigratorParent 'gui\WinEaseGui.ps1'), (Join-Path $script:MigratorDir 'WinEaseGui.ps1'))
 if ($script:GuiPartsPath) { . $script:GuiPartsPath }
-$script:DefaultPackagePath = if (Get-Command -Name Get-WinEaseDefaultMigrationBackupPath -ErrorAction SilentlyContinue) {
-    Get-WinEaseDefaultMigrationBackupPath -Base Documents
+# The image ships a ready backup at C:\WinEaseBackup. Prefer it when it is a real
+# backup (a manifest is present), otherwise fall back to the folder the build GUI
+# uses on the source machine. Restore itself is always started by the user.
+$script:BundledMigrationBackupPath = 'C:\WinEaseBackup'
+$script:DefaultPackagePath = if (Test-Path -LiteralPath (Join-Path $script:BundledMigrationBackupPath 'migration-manifest.json')) {
+    $script:BundledMigrationBackupPath
+} elseif (Get-Command -Name Get-WinEaseDefaultMigrationBackupPath -ErrorAction SilentlyContinue) {
+    Get-WinEaseDefaultMigrationBackupPath -Base Profile
 } else {
     # Only without WinEaseGui.ps1 (CLI use of a bundle that does not ship it)
-    Join-Path -Path ([Environment]::GetFolderPath('MyDocuments')) -ChildPath 'WinEase_migration_backup'
+    Join-Path -Path ([Environment]::GetFolderPath('UserProfile')) -ChildPath 'WinEase_migration_backup'
 }
 $script:HelpersPath = Find-WinEaseMigratorFile @(
     (Join-Path $script:MigratorParent 'WinEasehelpers.ps1'), (Join-Path $script:MigratorDir 'WinEasehelpers.ps1'))

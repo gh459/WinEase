@@ -513,9 +513,13 @@ function Restore-WinEaseUserData {
                 if ($h -ne $entry.Sha256) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Hash mismatch (corrupt)' }; continue }
             } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         }
-        # The restore target is relative to the user profile home. The relative path is
-        # validated again for that root: it must not leave the profile.
-        $destCheck = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $env:USERPROFILE -Label 'restore path'
+        # The restore target is the same kind of folder in the new profile: the category
+        # (Documents, Desktop, Pictures, ...) followed by the relative path inside it.
+        # Without the category every personal folder would be flattened into the profile
+        # root (Documents\a.txt and Downloads\a.txt would collide). The manifest is not
+        # trusted: the combined path is validated against the profile.
+        $destRel = if ([string]::IsNullOrWhiteSpace($cat)) { $rel } else { "$cat\$rel" }
+        $destCheck = Resolve-WinEaseSafeRelativePath -RelativePath $destRel -Root $env:USERPROFILE -Label 'restore path'
         if (-not $destCheck.IsSafe) {
             $failed += [PSCustomObject]@{ Path = $rel; Error = "Refused: $($destCheck.Reason)" }
             Write-Verbose "Ignored: $($destCheck.Reason)"

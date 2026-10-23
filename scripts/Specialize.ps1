@@ -3,6 +3,16 @@ if (-not (Test-Path -LiteralPath $markerDir)) { New-Item -ItemType Directory -Fo
 Remove-Item -LiteralPath "$markerDir\specialize.succeeded", "$markerDir\specialize.failed" -Force -ErrorAction SilentlyContinue;
 Set-Content -LiteralPath "$markerDir\specialize.started" -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding ascii -ErrorAction SilentlyContinue;
 
+# 0. Defender / Security UI enforcement in the SYSTEM specialize pass. The offline
+#    image has already lost the service keys and the payload; this catches services
+#    that CBS re-registered during the first boot before SetupComplete runs.
+if (Test-Path -LiteralPath "C:\Windows\Setup\Scripts\remove-defender.flag") {
+    $defEnforce = "C:\Windows\Setup\Scripts\WinEase-DefenderEnforce.ps1";
+    if (Test-Path -LiteralPath $defEnforce) {
+        try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $defEnforce -Quiet 2>&1 | Out-File -FilePath "C:\Windows\Setup\Scripts\Specialize.log" -Append -Encoding utf8 } catch { Write-Verbose "Defender enforcement invocation failed: $($_.Exception.Message)" }
+    }
+}
+
 & { try {
   # 1. User account password policy
   & net.exe accounts /maxpwage:UNLIMITED /minpwlen:0 2>$null;

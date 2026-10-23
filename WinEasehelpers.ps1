@@ -1496,11 +1496,18 @@ function Test-WinEaseConfigConflicts {
     }
 
     # 2. Defender conflict
+    # The Defender targets are looked up in BOTH debloat lists. The Advanced Debloat tab
+    # has a standard and an experimental list, and a target that ends up in the standard
+    # list (an older profile put the "Physical: ..." entries there) disables the Defender
+    # services in phase 10 exactly like the one in the experimental list. Scanning only
+    # the experimental list left that path open, so the Defender was disabled and its
+    # payload was deleted while the "RemoveDefender" setting was off.
     if ((& $getVal 'KeepDefender') -or (-not (& $getVal 'RemoveDefender'))) {
-        $expDef = $expItems | Where-Object { $_ -match 'Defender|Firewall' }
-        if ($expDef) {
-            $msg = "Defender is kept, but advancedDebloatExperimental contains '$($expDef -join ', ')lib'."
-            $conf = [PSCustomObject]@{ Rule = "Defender"; Type = "Security"; Details = $msg; Resolution = "Removed Defender items from experimental debloat"; Safeguard = [PSCustomObject]@{ Action = "RemoveItems"; Items = @($expDef) } }
+        $defenderItems = @(@($stdItems) + @($expItems))
+        $expDef = @($defenderItems | Where-Object { $_ -match 'Defender|Firewall' } | Select-Object -Unique)
+        if ($expDef.Count -gt 0) {
+            $msg = "Defender is kept, but the debloat lists contain '$($expDef -join ', ')lib'."
+            $conf = [PSCustomObject]@{ Rule = "Defender"; Type = "Security"; Details = $msg; Resolution = "Removed Defender items from the debloat lists"; Safeguard = [PSCustomObject]@{ Action = "RemoveItems"; Items = @($expDef) } }
             $conflicts.Add($conf)
             $warnings.Add("Conflict: $msg")
         }
@@ -1901,8 +1908,20 @@ function Test-WinEaseDependencies {
     [CmdletBinding()]
     [OutputType([hashtable])]
     param(
-        [hashtable]$Config
+        # The builder and phase 18 pass a PSCustomObject; older callers pass a
+        # hashtable. Normalize here instead of requiring the caller to know the
+        # internal representation.
+        [object]$Config
     )
+    if ($null -ne $Config -and -not ($Config -is [System.Collections.IDictionary])) {
+        $normalizedConfig = @{}
+        foreach ($prop in $Config.PSObject.Properties) { $normalizedConfig[$prop.Name] = $prop.Value }
+        $Config = $normalizedConfig
+    } elseif ($null -ne $Config -and -not ($Config -is [hashtable])) {
+        $normalizedConfig = @{}
+        foreach ($key in $Config.Keys) { $normalizedConfig[$key] = $Config[$key] }
+        $Config = $normalizedConfig
+    }
     if (-not $script:WinEaseDependencyCatalog) {
         try { Import-WinEaseDependencyCatalog | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
@@ -2388,8 +2407,18 @@ function Test-WinEaseRecoveryReadiness {
 
     $migrationBackupFound = $false
     try {
-        $manifestPath = Join-Path -Path (Join-Path -Path $env:USERPROFILE -ChildPath 'Documents\WinEase_workspace') -ChildPath 'migration-manifest.json'
-        if (Test-Path -LiteralPath $manifestPath) { $migrationBackupFound = $true }
+        # The build GUI writes its backup to %USERPROFILE%\WinEase_migration_backup.
+        # Documents was the old default. C:\WinEaseBackup only exists after an image
+        # with the bundled backup was installed, but checking it keeps the readiness
+        # report correct when the helper runs from such an installation.
+        $backupCandidates = @(
+            (Join-Path -Path $env:USERPROFILE -ChildPath 'WinEase_migration_backup\migration-manifest.json'),
+            (Join-Path -Path ([Environment]::GetFolderPath('MyDocuments')) -ChildPath 'WinEase_migration_backup\migration-manifest.json'),
+            'C:\WinEaseBackup\migration-manifest.json'
+        )
+        foreach ($manifestPath in $backupCandidates) {
+            if ($manifestPath -and (Test-Path -LiteralPath $manifestPath)) { $migrationBackupFound = $true; break }
+        }
     } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 
     $score = 'Low'

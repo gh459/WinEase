@@ -866,6 +866,18 @@ exit 0
         Write-Host "  [AutoLogon] ConfigureWinlogon is off: the blank-password auto-logon helpers are not deployed." -ForegroundColor Yellow
     }
 
+    # Deploy the online Defender / Security UI enforcement helper. It is only invoked
+    # when remove-defender.flag is present, but keeping the source in scripts\ avoids
+    # duplicating the same logic as a here-string inside this phase.
+    if ($removeDefender) {
+        $defEnforceSrc = Join-Path -Path $scriptDir -ChildPath 'scripts\WinEase-DefenderEnforce.ps1'
+        if (Test-Path -LiteralPath $defEnforceSrc) {
+            $helperScripts['WinEase-DefenderEnforce.ps1'] = [System.IO.File]::ReadAllText($defEnforceSrc)
+        } else {
+            Write-Warning "  Defender enforcement helper not found: $defEnforceSrc"
+        }
+    }
+
     foreach ($hName in $helperScripts.Keys) {
         $hContent = $helperScripts[$hName]
         $hDest = Join-Path -Path $setupScriptsDir -ChildPath $hName
@@ -902,6 +914,11 @@ exit 0
     ))
     if ($removeDefender) {
         $setupCompleteLines.AddRange([string[]]@(
+            "rem --- Stage 0: Online Defender / Security UI enforcement (service keys, package, IFEO) ---",
+            "if exist `"%SystemDrive%\Windows\Setup\Scripts\WinEase-DefenderEnforce.ps1`" (",
+            "    powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%SystemDrive%\Windows\Setup\Scripts\WinEase-DefenderEnforce.ps1`" -Quiet >> `"!LOGFILE!`" 2>&1",
+            "    if !errorlevel! neq 0 echo [%DATE% %TIME%] [WARN] Defender enforcement helper returned code !errorlevel! >> `"!LOGFILE!`"",
+            ")",
             "rem --- Stage 1: Configure Defender services to disabled with separated result and state tracking ---",
             "for %%S in (WinDefend MDCoreSvc WdBoot WdFilter Sense SecurityHealthService WdNisSvc) do (",
             "    sc.exe query %%S >nul 2>&1",
@@ -1114,9 +1131,20 @@ exit 0
     if (Test-TweakEnabled 'RemoveWindowsBackup' $true)    { $appxResidualPackages += 'WindowsBackupApp' }
     if (Test-TweakEnabled 'RemoveWebExperienceHost' $true) { $appxResidualPackages += 'Client.WebExperience' }
     if ($removeAppxBloatware)                               { $appxResidualPackages += 'Getstarted' }
+    # Every package phase 05 really removed. The three names above only covered a part of
+    # the removal list, so the other apps stayed registered for the first user while their
+    # payload folder was gone: the app started and rendered a white window. The identity
+    # name of a package is the part before the first underscore ("Microsoft.BingWeather"),
+    # and it is what Get-AppxPackage -Name matches against.
+    if ($script:WinEaseRemovedAppxPackages -and $script:WinEaseRemovedAppxPackages.Count -gt 0) {
+        foreach ($removedPkg in $script:WinEaseRemovedAppxPackages) {
+            if ($removedPkg.ShortName) { $appxResidualPackages += $removedPkg.ShortName }
+        }
+    }
+    $appxResidualPackages = @($appxResidualPackages | Where-Object { $_ } | Select-Object -Unique)
     if ($appxResidualPackages.Count -gt 0) {
         Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "remove-appx-packages.flag") -Value ($appxResidualPackages -join "`r`n") -Encoding ascii -Force
-        Write-Host "  - Staged remove-appx-packages.flag ($($appxResidualPackages -join ', '))" -ForegroundColor Green
+        Write-Host "  - Staged remove-appx-packages.flag ($($appxResidualPackages.Count) package(s): $($appxResidualPackages -join ', '))" -ForegroundColor Green
     }
     if ($bypassActivationRestrictions) {
         Set-Content -LiteralPath (Join-Path -Path $setupScriptsDir -ChildPath "bypass-activation.flag") -Value "1" -Encoding ascii -Force
@@ -1737,7 +1765,7 @@ if (Get-Command -Name Invoke-WinEaseUserExtensionActions -ErrorAction SilentlyCo
 }
 # M2: Custom scripts (OfflineImage stage) - runs after the registry/unattend work, before FirstLogon/UserOnce staging
 if (Get-Command -Name Invoke-WinEaseCustomScriptsStage -ErrorAction SilentlyContinue) {
-    try { Invoke-WinEaseCustomScriptsStage -Stage 'OfflineImage' -Context @{ ScratchDir = $scratchDir; WinEaseDir = $WinEaseDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    try { Invoke-WinEaseCustomScriptsStage -Stage 'OfflineImage' -Context @{ ScratchDir = $scratchDir; WinEaseDir = $WinEaseDir; ScriptRoot = $scriptDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
 # M2: Custom scripts (FirstLogon & UserOnce stages -> copy to offline image)
 $customFirstLogonDir = Join-Path -Path $scratchDir -ChildPath 'Windows\Setup\Scripts\Custom\FirstLogon'
@@ -1745,8 +1773,8 @@ $customUserOnceDir = Join-Path -Path $scratchDir -ChildPath 'Windows\Setup\Scrip
 Write-Verbose "Custom dirs: $customFirstLogonDir, $customUserOnceDir"
 if (Get-Command -Name Invoke-WinEaseCustomScriptsStage -ErrorAction SilentlyContinue) {
     try {
-        Invoke-WinEaseCustomScriptsStage -Stage 'FirstLogon' -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null
-        Invoke-WinEaseCustomScriptsStage -Stage 'UserOnce' -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null
+        Invoke-WinEaseCustomScriptsStage -Stage 'FirstLogon' -Context @{ ScratchDir = $scratchDir; ScriptRoot = $scriptDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null
+        Invoke-WinEaseCustomScriptsStage -Stage 'UserOnce' -Context @{ ScratchDir = $scratchDir; ScriptRoot = $scriptDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null
     } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
 
@@ -1803,26 +1831,49 @@ try {
     Write-Warning "Could not register custom FirstLogon script(s) in autounattend.xml: $($_.Exception.Message)"
 }
 
-# Migration Assistant bundle: tool + engine + rule files only (no personal data) and a desktop launcher
+# Migration Assistant bundle: tool + engine + rule files, and optionally the default
+# migration backup (which does contain personal data) plus a desktop launcher.
+# The bundle has to be self-contained: the engine needs WinEasehelpers.ps1 (restore path validation,
+# see tools\migrator\WinEaseMigration.ps1) and the wizard needs gui\WinEaseGui.ps1 (shared WinForms
+# parts, see tools\migrator\WinEase-Migrator.ps1). Both are copied flat into the Migration folder,
+# which is where the migrator looks for them (MigratorDir\<file>).
 if ($includeMigrationAssistant -eq $true) {
     try {
         $migrationFiles = @(
             'tools\migrator\WinEase-Migrator.ps1',
             'tools\migrator\WinEaseMigration.ps1',
             'tools\migrator\migration-rules.psd1',
-            'config\user\user-migration-rules.psd1'
+            'config\user\user-migration-rules.psd1',
+            'WinEasehelpers.ps1',
+            'gui\WinEaseGui.ps1'
         )
+        # The display strings of the wizard: config\ui-strings in the repository, ui-strings next to
+        # WinEaseGui.ps1 in the bundle (Get-WinEaseUiStringsDir looks there as a fallback).
+        $migrationUiStringFiles = @('en.json', 'ja.json')
         $migrationDestDir = Join-Path -Path $scratchDir -ChildPath 'Windows\Setup\Scripts\Migration'
+        $migrationUiDir = Join-Path -Path $migrationDestDir -ChildPath 'ui-strings'
         $migrationDesktopDir = Join-Path -Path $scratchDir -ChildPath 'Users\Public\Desktop'
         $migrationLauncherPath = Join-Path -Path $migrationDesktopDir -ChildPath 'Launch-MigrationAssistant.cmd'
-        $migrationLauncherLines = @(
-            '@echo off',
-            'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Windows\Setup\Scripts\Migration\WinEase-Migrator.ps1" -GUI'
-        )
+        $migrationBackupSource = Join-Path -Path $env:USERPROFILE -ChildPath 'WinEase_migration_backup'
+        $migrationBackupDest = Join-Path -Path $scratchDir -ChildPath 'WinEaseBackup'
+        $bundleMigrationBackup = [bool]$includeMigrationBackup -and (Test-Path -LiteralPath $migrationBackupSource)
+        $migrationLauncherCommand = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Windows\Setup\Scripts\Migration\WinEase-Migrator.ps1" -GUI'
+        if ($bundleMigrationBackup) {
+            $migrationLauncherCommand += ' -PackagePath "C:\WinEaseBackup"'
+        }
+        $migrationLauncherLines = @('@echo off', $migrationLauncherCommand)
         if ($DryRun) {
             Write-Host "  [DryRun] Would copy Migration Assistant files to $migrationDestDir" -ForegroundColor DarkYellow
             foreach ($mf in $migrationFiles) { Write-Host "    - $mf" -ForegroundColor DarkYellow }
+            foreach ($uf in $migrationUiStringFiles) { Write-Host "    - config\ui-strings\$uf -> ui-strings\$uf" -ForegroundColor DarkYellow }
             Write-Host "  [DryRun] Would create $migrationLauncherPath" -ForegroundColor DarkYellow
+            if ($includeMigrationBackup) {
+                if ($bundleMigrationBackup) {
+                    Write-Host "  [DryRun] Would copy the default migration backup $migrationBackupSource -> $migrationBackupDest" -ForegroundColor DarkYellow
+                } else {
+                    Write-Host "  [DryRun] Migration backup inclusion is on, but $migrationBackupSource does not exist" -ForegroundColor Yellow
+                }
+            }
         } else {
             New-Item -ItemType Directory -Path $migrationDestDir -Force | Out-Null
             New-Item -ItemType Directory -Path $migrationDesktopDir -Force | Out-Null
@@ -1835,8 +1886,56 @@ if ($includeMigrationAssistant -eq $true) {
                     Write-Warning "Migration Assistant file not found, skipped: $mfSrc"
                 }
             }
+            # The UI strings of the wizard (without them the keys are shown instead of the texts)
+            $uiStringSrcDir = Join-Path -Path $scriptDir -ChildPath 'config\ui-strings'
+            New-Item -ItemType Directory -Path $migrationUiDir -Force | Out-Null
+            foreach ($uf in $migrationUiStringFiles) {
+                $ufSrc = Join-Path -Path $uiStringSrcDir -ChildPath $uf
+                if (Test-Path -LiteralPath $ufSrc) {
+                    Copy-Item -LiteralPath $ufSrc -Destination (Join-Path -Path $migrationUiDir -ChildPath $uf) -Force
+                } else {
+                    Write-Warning "Migration Assistant UI string file not found, skipped: $ufSrc"
+                }
+            }
             Set-Content -LiteralPath $migrationLauncherPath -Value $migrationLauncherLines -Encoding ASCII
             Write-Host "  Migration Assistant bundled into the image" -ForegroundColor Green
+
+            # Include the default migration backup (the one the GUI creates in
+            # %USERPROFILE%\WinEase_migration_backup) as C:\WinEaseBackup. The restore
+            # stays manual: the launcher only points -PackagePath at the folder and the
+            # user decides when to restore. restore-state.json is the recovery journal
+            # of the build machine's last run and must not travel into a new image.
+            if ($includeMigrationBackup) {
+                if (-not $bundleMigrationBackup) {
+                    Write-Warning "  Migration backup inclusion is on, but '$migrationBackupSource' does not exist; no backup was bundled."
+                } else {
+                    $backupStats = Get-ChildItem -LiteralPath $migrationBackupSource -Recurse -Force -File -ErrorAction SilentlyContinue |
+                        Measure-Object -Property Length -Sum
+                    $manifestSource = Join-Path -Path $migrationBackupSource -ChildPath 'migration-manifest.json'
+                    if (-not (Test-Path -LiteralPath $manifestSource)) {
+                        Write-Warning "  The migration backup has no migration-manifest.json: $migrationBackupSource"
+                    }
+                    Write-Host ("  Copying migration backup ({0} files, {1:N2} GB) to C:\\WinEaseBackup..." -f [int]$backupStats.Count, ($backupStats.Sum / 1GB)) -ForegroundColor Cyan
+                    New-Item -ItemType Directory -Path $migrationBackupDest -Force | Out-Null
+                    & robocopy.exe $migrationBackupSource $migrationBackupDest /E /COPY:DAT /DCOPY:DAT /R:1 /W:1 /XF restore-state.json *.tmp *.partial /XD '$Recycle.Bin' 'System Volume Information' /NFL /NDL /NJH /NJS /NP 2>&1 | Out-Null
+                    $robocopyExit = $LASTEXITCODE
+                    if ($robocopyExit -ge 8) {
+                        throw "robocopy failed to copy the migration backup (exit $robocopyExit)."
+                    }
+                    # Restore needs to read the files from an administrator/SYSTEM
+                    # context. Keep the archive files writable for the restore tool.
+                    & icacls.exe $migrationBackupDest /grant '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /T /C /Q 2>&1 | Out-Null
+                    & icacls.exe $migrationBackupDest /setowner '*S-1-5-32-544' /T /C /Q 2>&1 | Out-Null
+                    $copiedManifest = Join-Path -Path $migrationBackupDest -ChildPath 'migration-manifest.json'
+                    if (-not (Test-Path -LiteralPath $copiedManifest)) {
+                        Write-Warning "  Bundled migration backup is missing migration-manifest.json: $migrationBackupDest"
+                    }
+                    if (Test-Path -LiteralPath (Join-Path -Path $migrationBackupDest -ChildPath 'restore-state.json')) {
+                        Write-Warning "  Bundled migration backup unexpectedly contains restore-state.json."
+                    }
+                    Write-Host "  Migration backup bundled at the image root as C:\WinEaseBackup" -ForegroundColor Green
+                }
+            }
         }
     } catch {
         Write-Warning "Migration Assistant bundling failed: $($_.Exception.Message)"

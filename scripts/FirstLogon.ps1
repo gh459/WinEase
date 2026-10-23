@@ -444,6 +444,14 @@ $scripts = @(
 		# removal online and terminates any engine process that is already running.
 		if (Test-Path "C:\Windows\Setup\Scripts\remove-defender.flag") {
 			try {
+				# The deployed enforcement helper does the full online removal (service
+				# keys, Security UI package, AppRepository rows, IFEO traps). The inline
+				# block below stays as a fallback for images built before the helper
+				# existed or when its execution is blocked by policy.
+				$defEnforce = "C:\Windows\Setup\Scripts\WinEase-DefenderEnforce.ps1";
+				if (Test-Path -LiteralPath $defEnforce) {
+					& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $defEnforce -Quiet 2>&1 | Out-Null;
+				}
 				# Stop and disable every Defender-related service (idempotent: a missing
 				# service key is fine, the goal is "not running and not startable").
 				foreach ($svc in 'WinDefend','MDCoreSvc','WdNisSvc','Sense','SecurityHealthService','wscsvc','SgrmBroker','SgrmAgent') {
@@ -504,10 +512,51 @@ $scripts = @(
 			foreach ($appxName in @(Get-Content -LiteralPath $appxListFile -ErrorAction SilentlyContinue)) {
 				if ([string]::IsNullOrWhiteSpace($appxName)) { continue }
 				try {
-					Get-AppxPackage -AllUsers -Name "*$appxName*" -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue;
+					# The list holds the identity name of every removed package
+					# ("Microsoft.BingWeather"), so the exact name is tried first. The
+					# wildcard is the fallback for the entries that are only a part of a
+					# name ("WindowsBackupApp" -> Microsoft.WindowsBackupApp).
+					$appxPkgs = @(Get-AppxPackage -AllUsers -Name $appxName -ErrorAction SilentlyContinue);
+					if ($appxPkgs.Count -eq 0) {
+						$appxPkgs = @(Get-AppxPackage -AllUsers -Name "*$appxName*" -ErrorAction SilentlyContinue);
+					}
+					$appxPkgs | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue;
 				} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 			}
 		}
+	};
+	{
+		# UI preference report for the first user. The offline phase writes the values
+		# into the default user hive; this confirms what the running user actually sees.
+		try {
+			$uiStatusPath = "C:\ProgramData\WinEase\ui-status.txt";
+			$uiLines = @(
+				"WinEase UI status",
+				"Timestamp: " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+			);
+			$uiChecks = @(
+				@{ Label = "MinAnimate"; Path = "HKCU:\Control Panel\Desktop\WindowMetrics"; Name = "MinAnimate"; Expected = "0" },
+				@{ Label = "DragFullWindows"; Path = "HKCU:\Control Panel\Desktop"; Name = "DragFullWindows"; Expected = "0" },
+				@{ Label = "VisualFXSetting"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"; Name = "VisualFXSetting"; Expected = 2 },
+				@{ Label = "TaskbarAnimations"; Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "TaskbarAnimations"; Expected = 0 },
+				@{ Label = "MouseSpeed"; Path = "HKCU:\Control Panel\Mouse"; Name = "MouseSpeed"; Expected = "0" },
+				@{ Label = "MouseThreshold1"; Path = "HKCU:\Control Panel\Mouse"; Name = "MouseThreshold1"; Expected = "0" },
+				@{ Label = "MouseThreshold2"; Path = "HKCU:\Control Panel\Mouse"; Name = "MouseThreshold2"; Expected = "0" }
+			);
+			foreach ($uiCheck in $uiChecks) {
+				$actual = $null;
+				try { $actual = (Get-ItemProperty -LiteralPath $uiCheck.Path -Name $uiCheck.Name -ErrorAction SilentlyContinue).($uiCheck.Name) } catch { Write-Verbose "UI preference read failed: $($_.Exception.Message)" }
+				$state = if ("$actual" -eq "$($uiCheck.Expected)") { "OK" } else { "DIFF" };
+				$uiLines += ("{0}: {1} (expected {2}) [{3}]" -f $uiCheck.Label, $actual, $uiCheck.Expected, $state);
+			}
+			$noLock = $null;
+			try { $noLock = (Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" -Name "NoLockScreen" -ErrorAction SilentlyContinue).NoLockScreen } catch { Write-Verbose "Lock-screen policy read failed: $($_.Exception.Message)" }
+			$uiLines += ("NoLockScreen (policy): {0}" -f $noLock);
+			$photoCmd = $null;
+			try { $photoCmd = (Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Classes\PhotoViewer.FileAssoc.Jpeg\shell\open\command" -ErrorAction SilentlyContinue).'(default)' } catch { Write-Verbose "Photo Viewer registration read failed: $($_.Exception.Message)" }
+			$uiLines += ("Photo Viewer JPEG command: {0}" -f $(if ($photoCmd) { "present" } else { "absent" }));
+			[System.IO.File]::WriteAllLines($uiStatusPath, $uiLines, [System.Text.Encoding]::UTF8);
+		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
 	{
 		# Signal FirstLogon completion and restore persistent AutoLogon security

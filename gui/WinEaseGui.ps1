@@ -12,6 +12,12 @@ Add-Type -AssemblyName System.Drawing
 # Repository root (this file lives in <repo>\gui)
 $script:WinEaseGuiRepoRoot = Split-Path -Parent $PSScriptRoot
 
+# The user extensibility engine (user tweaks, presets, custom scripts, Tab 10). Loading it inside a
+# function would define its functions in that function's scope only, so it is loaded here once. The
+# migration bundle has no lib\ folder: the file is simply absent there and the tab reports it.
+$script:WinEaseExtensionsPath = Join-Path -Path $script:WinEaseGuiRepoRoot -ChildPath 'lib\WinEaseExtensions.ps1'
+if (Test-Path -LiteralPath $script:WinEaseExtensionsPath) { . $script:WinEaseExtensionsPath }
+
 # Default backup folder for the migration tools: <base>\<folder name below>.
 # Base 'Profile' = the user profile (GUI Tab 8), 'Documents' = the Documents folder (WinEase-Migrator).
 $script:WinEaseMigrationBackupFolderName = 'WinEase_migration_backup'
@@ -507,14 +513,22 @@ function Show-WinEaseGuiMessage {
     param(
         [Parameter(Mandatory = $true)][string]$Text,
         [string]$Title = (Get-WinEaseUiString 'Msg.Title.Default'),
-        [ValidateSet('Info', 'Warning', 'Error')][string]$Kind = 'Info'
+        [ValidateSet('Info', 'Warning', 'Error', 'Question')][string]$Kind = 'Info',
+        [switch]$YesNo
     )
     $icon = switch ($Kind) {
         'Warning' { [System.Windows.Forms.MessageBoxIcon]::Warning }
         'Error'   { [System.Windows.Forms.MessageBoxIcon]::Error }
+        'Question' { [System.Windows.Forms.MessageBoxIcon]::Question }
         default   { [System.Windows.Forms.MessageBoxIcon]::Information }
     }
+    if ($YesNo) {
+        # -YesNo asks the question and returns $true when the user says yes
+        $answer = [System.Windows.Forms.MessageBox]::Show($Text, $Title, [System.Windows.Forms.MessageBoxButtons]::YesNo, $icon)
+        return ($answer -eq [System.Windows.Forms.DialogResult]::Yes)
+    }
     [void][System.Windows.Forms.MessageBox]::Show($Text, $Title, [System.Windows.Forms.MessageBoxButtons]::OK, $icon)
+    return $true
 }
 
 # Runs -Action (called with -ArgumentList) while -Button is disabled and -Form shows the wait cursor;
@@ -1875,7 +1889,8 @@ function New-WinEaseMigrationTab {
     $flowMig = New-WinEaseFlowPanel -Parent $tabMigration
 
     # Top card: Post-Install Migration Assistant (a component switch from config\schema.psd1, Gui.Tab = 'Migration')
-    $grpAssist = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'Mig.Group.Assistant') -Width 840 -Height 60 -Parent $flowMig
+    $grpAssist = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'Mig.Group.Assistant') -Width 840 -Height 92 -Parent $flowMig
+    $chkAssist = $null
     $asDef = $script:ComponentDefs['IncludeMigrationAssistant']
     if ($asDef -and $asDef.Gui) {
         $asInit = [bool]$asDef.Gui.Default
@@ -1883,9 +1898,32 @@ function New-WinEaseMigrationTab {
         $asDesc = Get-WinEaseUiString -Key 'Component.IncludeMigrationAssistant.Description' -Default $asDef.Gui.Description
         if ($InitialSettings.ContainsKey('IncludeMigrationAssistant')) { $asInit = [bool]$InitialSettings['IncludeMigrationAssistant'] }
         $chkAssist = New-WinEaseToggleCheckBox -Parent $grpAssist -Key 'IncludeMigrationAssistant' -Text "IncludeMigrationAssistant - $asText" -ToolTip $toolTip -ToolTipText $asDesc -Checked $asInit
-        $chkAssist.Location = New-Object System.Drawing.Point(15, 24)
+        $chkAssist.Location = New-Object System.Drawing.Point(15, 22)
         $chkAssist.Size = New-Object System.Drawing.Size(800, 28)
         $gui.ComponentCheckboxes['IncludeMigrationAssistant'] = $chkAssist
+    }
+    $bkDef = $script:ComponentDefs['IncludeMigrationBackup']
+    if ($bkDef -and $bkDef.Gui) {
+        $bkInit = [bool]$bkDef.Gui.Default
+        $bkText = Get-WinEaseUiString -Key 'Component.IncludeMigrationBackup.Text' -Default $bkDef.Gui.Text
+        $bkDesc = Get-WinEaseUiString -Key 'Component.IncludeMigrationBackup.Description' -Default $bkDef.Gui.Description
+        if ($InitialSettings.ContainsKey('IncludeMigrationBackup')) { $bkInit = [bool]$InitialSettings['IncludeMigrationBackup'] }
+        $chkBackup = New-WinEaseToggleCheckBox -Parent $grpAssist -Key 'IncludeMigrationBackup' -Text "IncludeMigrationBackup - $bkText" -ToolTip $toolTip -ToolTipText $bkDesc -Checked $bkInit
+        $chkBackup.Location = New-Object System.Drawing.Point(34, 55)
+        $chkBackup.Size = New-Object System.Drawing.Size(790, 26)
+        $chkBackup.Enabled = ($chkAssist -and $chkAssist.Checked)
+        if ($chkAssist) {
+            # Event scripts must not close over function locals: read both controls from the
+            # shared GUI context instead, which is still alive when the user clicks.
+            $chkAssist.Add_CheckedChanged({
+                $g = if ($this.FindForm()) { $this.FindForm().Tag } else { $null }
+                if ($g -and $g.ComponentCheckboxes) {
+                    $backup = $g.ComponentCheckboxes['IncludeMigrationBackup']
+                    if ($backup) { $backup.Enabled = $this.Checked }
+                }
+            })
+        }
+        $gui.ComponentCheckboxes['IncludeMigrationBackup'] = $chkBackup
     }
 
     # Backup settings: destination, credential handling, conflict policy
@@ -1963,6 +2001,273 @@ function New-WinEaseUserTweaksTab {
     if ($userTweakCount -eq 0) {
         [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'UserTweaks.None') -X 0 -Y 0 -AutoSize -Parent $pageUser.Flow)
     }
+}
+
+# =========================================================================
+# Tab 10: custom scripts (tools\custom-scripts\<Stage>)
+# =========================================================================
+
+# The extension engine owns the custom script helpers; it is loaded with this file (see the top).
+function Initialize-WinEaseGuiCustomScriptEngine {
+    return $null -ne (Get-Command -Name Get-WinEaseCustomScriptInventory -ErrorAction SilentlyContinue)
+}
+
+# The description of a stage: where the scripts run and with which rights.
+function Get-WinEaseGuiCustomScriptStageInfo {
+    param([string]$Stage)
+    $info = @(Get-WinEaseCustomScriptStageMap | Where-Object { $_.Stage -eq $Stage })[0]
+    if (-not $info) { return '' }
+    $runsAs = switch ($info.RunsAs) {
+        'Administrator' { Get-WinEaseUiString 'CS.RunsAs.Admin' }
+        'StandardUser' { Get-WinEaseUiString 'CS.RunsAs.User' }
+        default { Get-WinEaseUiString 'CS.RunsAs.Build' }
+    }
+    $where = if ($info.ImageFolder) { Get-WinEaseUiString 'CS.Stage.InImage' -Format $info.ImageFolder } else { Get-WinEaseUiString 'CS.Stage.BuildOnly' }
+    return (Get-WinEaseUiString 'CS.Stage.Info' -Format $info.Stage, $runsAs, $where)
+}
+
+# Fills the list with the scripts of the selected stage.
+function Update-WinEaseGuiCustomScriptsList {
+    param([hashtable]$Gui)
+    if (-not $Gui.CsList) { return }
+    $stage = [string]$Gui.CsStage.SelectedItem
+    try {
+        if ($Gui.CsStageInfo) { $Gui.CsStageInfo.Text = (Get-WinEaseGuiCustomScriptStageInfo -Stage $stage) }
+        $items = @(Get-WinEaseCustomScriptInventory -RepoRoot $script:WinEaseGuiRepoRoot -Stage $stage)
+    } catch { $items = @() }
+    $list = $Gui.CsList
+    $list.BeginUpdate()
+    try {
+        $list.Items.Clear()
+        foreach ($it in $items) {
+            $row = New-Object System.Windows.Forms.ListViewItem([string]$it.Name)
+            [void]$row.SubItems.Add([string]$it.EffectiveOrder)
+            [void]$row.SubItems.Add([string]$it.Extension)
+            [void]$row.SubItems.Add([string]$it.Size)
+            [void]$row.SubItems.Add([string]$it.Condition)
+            [void]$row.SubItems.Add([string]$it.OnError)
+            [void]$row.SubItems.Add([string]$it.Description)
+            if ($it.Location -eq 'Legacy') { $row.ForeColor = $script:WinEaseGuiColors.Warn }
+            $row.Tag = $it
+            [void]$list.Items.Add($row)
+        }
+    } finally { $list.EndUpdate() }
+    if ($Gui.CsCount) {
+        $Gui.CsCount.Text = (Get-WinEaseUiString 'CS.Count' -Format @($items).Count, $stage)
+    }
+}
+
+# The script the user picked in the list ($null when nothing is selected).
+function Get-WinEaseGuiSelectedCustomScript {
+    param([hashtable]$Gui)
+    if (-not $Gui.CsList) { return $null }
+    if ($Gui.CsList.SelectedItems.Count -eq 0) { return $null }
+    return $Gui.CsList.SelectedItems[0].Tag
+}
+
+# Metadata editor: order, condition, error handling and description of one script.
+function Show-WinEaseGuiCustomScriptMetadataDialog {
+    param([hashtable]$Gui, [object]$Script)
+    $dlg = New-WinEaseForm -Text (Get-WinEaseUiString 'CS.Dlg.Meta.Title') -Width 520 -Height 300 -ClientSize -FixedDialog -NoMaximize -NoMinimize -ForeColor ([System.Drawing.Color]::White)
+    try {
+        $dlg.Tag = @{ Gui = $Gui; Script = $Script; Order = $null; Condition = $null; OnError = $null; Description = $null }
+        [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'CS.Dlg.Meta.Order') -X 15 -Y 22 -Width 120 -Height 20 -Parent $dlg)
+        $dlg.Tag.Order = New-WinEaseTextBox -X 140 -Y 19 -Width 120 -Height 24 -Text ([string]$Script.EffectiveOrder) -Parent $dlg
+        [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'CS.Dlg.Meta.Condition') -X 15 -Y 57 -Width 120 -Height 20 -Parent $dlg)
+        $dlg.Tag.Condition = New-WinEaseTextBox -X 140 -Y 54 -Width 340 -Height 24 -Text ([string]$Script.Condition) -Parent $dlg
+        [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'CS.Dlg.Meta.OnError') -X 15 -Y 92 -Width 120 -Height 20 -Parent $dlg)
+        $dlg.Tag.OnError = New-WinEaseComboBox -Items @('Warn', 'Stop', 'Ignore') -SelectedIndex 0 -DropList -X 140 -Y 89 -Width 140 -Parent $dlg
+        if ([string]$Script.OnError -in @('Warn', 'Stop', 'Ignore')) { $dlg.Tag.OnError.SelectedIndex = @('Warn', 'Stop', 'Ignore').IndexOf([string]$Script.OnError) }
+        [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'CS.Dlg.Meta.Description') -X 15 -Y 127 -Width 120 -Height 20 -Parent $dlg)
+        $dlg.Tag.Description = New-WinEaseTextBox -X 140 -Y 124 -Width 340 -Height 24 -Text ([string]$Script.Description) -Parent $dlg
+        [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'CS.Dlg.Meta.Hint') -X 15 -Y 160 -Width 480 -Height 40 -Parent $dlg)
+        [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.Save') -X 140 -Y 210 -Width 120 -Height 32 -Parent $dlg -OnClick {
+            $f = $this.FindForm()
+            $t = $f.Tag
+            try {
+                $order = 100
+                if (-not [int]::TryParse($t.Order.Text.Trim(), [ref]$order)) { $order = 100 }
+                Set-WinEaseCustomScriptMetadata -Path ([string]$t.Script.FullPath) -Order $order `
+                    -Condition $t.Condition.Text.Trim() -OnError ([string]$t.OnError.SelectedItem) -Description $t.Description.Text.Trim() | Out-Null
+                $f.Tag = 'OK'
+                $f.Close()
+            } catch {
+                Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'CS.Dlg.Meta.Title') -Kind Error
+            }
+        })
+        $btnCancel = New-WinEaseButton -Text (Get-WinEaseUiString 'Button.Cancel') -X 280 -Y 210 -Width 120 -Height 32 -Parent $dlg
+        $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $dlg.CancelButton = $btnCancel
+        [void]$dlg.ShowDialog()
+        return ($dlg.Tag -is [string] -and $dlg.Tag -eq 'OK')
+    } finally { $dlg.Dispose() }
+}
+
+# Tab 10: the custom scripts of the four stages
+function New-WinEaseCustomScriptsTab {
+    param(
+        [hashtable]$Gui,
+        [System.Windows.Forms.TabControl]$TabControl
+    )
+    $tabCs = New-WinEaseTabPage -Text (Get-WinEaseUiString 'Tab.CustomScripts') -TabControl $TabControl
+    $flowCs = New-WinEaseFlowPanel -Parent $tabCs
+
+    # Stage selection
+    $grpStage = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'CS.Group.Stage') -Width 840 -Height 92 -Parent $flowCs
+    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'CS.Label.Stage') -X 15 -Y 26 -Width 70 -Height 20 -Parent $grpStage)
+    $cmbStage = New-WinEaseComboBox -Items @('PreBuild', 'OfflineImage', 'FirstLogon', 'UserOnce') -SelectedIndex 2 -DropList -X 90 -Y 23 -Width 170 -Parent $grpStage
+    $gui.CsStage = $cmbStage
+    $cmbStage.Add_SelectedIndexChanged({
+        $g = $this.FindForm().Tag
+        Update-WinEaseGuiCustomScriptsList -Gui $g
+    })
+    $gui.CsStageInfo = New-WinEaseLabel -Text ' ' -X 275 -Y 24 -Width 470 -Height 44 -Parent $grpStage
+    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'CS.Button.OpenFolder') -X 750 -Y 21 -Width 80 -Height 28 -Parent $grpStage -OnClick {
+        $g = $this.FindForm().Tag
+        $stage = [string]$g.CsStage.SelectedItem
+        $info = @(Get-WinEaseCustomScriptStageMap | Where-Object { $_.Stage -eq $stage })[0]
+        if (-not $info) { return }
+        $folder = Join-Path $script:WinEaseGuiRepoRoot $info.RepoFolder
+        if (-not (Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Force -Path $folder | Out-Null }
+        Start-Process -FilePath 'explorer.exe' -ArgumentList "`"$folder`""
+    })
+
+    # The scripts of the stage
+    $grpList = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'CS.Group.Scripts') -Width 840 -Height 330 -Parent $flowCs
+    $list = New-Object System.Windows.Forms.ListView
+    $list.Location = New-Object System.Drawing.Point(10, 20)
+    $list.Size = New-Object System.Drawing.Size(820, 240)
+    $list.View = [System.Windows.Forms.View]::Details
+    $list.FullRowSelect = $true
+    $list.GridLines = $true
+    $list.MultiSelect = $false
+    $list.HideSelection = $false
+    $list.BackColor = $script:WinEaseGuiColors.Input
+    $list.ForeColor = $script:WinEaseGuiColors.Text
+    $list.BorderStyle = [System.Windows.Forms.BorderStyle]::None
+    $cols = @(
+        @((Get-WinEaseUiString 'CS.Column.Name'), 210),
+        @((Get-WinEaseUiString 'CS.Column.Order'), 60),
+        @((Get-WinEaseUiString 'CS.Column.Type'), 60),
+        @((Get-WinEaseUiString 'CS.Column.Size'), 70),
+        @((Get-WinEaseUiString 'CS.Column.Condition'), 130),
+        @((Get-WinEaseUiString 'CS.Column.OnError'), 80),
+        @((Get-WinEaseUiString 'CS.Column.Description'), 210)
+    )
+    foreach ($c in $cols) {
+        $col = New-Object System.Windows.Forms.ColumnHeader
+        $col.Text = [string]$c[0]
+        $col.Width = [int]$c[1]
+        [void]$list.Columns.Add($col)
+    }
+    [void]$grpList.Controls.Add($list)
+    $gui.CsList = $list
+    $gui.CsCount = New-WinEaseLabel -Text ' ' -X 10 -Y 264 -Width 400 -Height 20 -Parent $grpList
+
+    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'CS.Button.Add') -X 10 -Y 288 -Width 120 -Height 30 -Parent $grpList -OnClick {
+        $g = $this.FindForm().Tag
+        try {
+            $dlg = New-Object System.Windows.Forms.OpenFileDialog
+            try {
+                $dlg.Title = (Get-WinEaseUiString 'CS.Dialog.Add')
+                $dlg.Filter = (Get-WinEaseUiString 'CS.Dialog.Filter')
+                $dlg.Multiselect = $true
+                if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+                $paths = @($dlg.FileNames)
+            } finally { $dlg.Dispose() }
+            $stage = [string]$g.CsStage.SelectedItem
+            $res = Add-WinEaseCustomScript -RepoRoot $script:WinEaseGuiRepoRoot -Stage $stage -Paths $paths
+            Update-WinEaseGuiCustomScriptsList -Gui $g
+            $msg = (Get-WinEaseUiString 'CS.Msg.Added' -Format @($res.Added).Count, $stage)
+            if (@($res.Errors).Count -gt 0) { $msg += "`n" + (@($res.Errors) -join "`n") }
+            Show-WinEaseGuiMessage -Text $msg -Title (Get-WinEaseUiString 'CS.Button.Add') -Kind $(if (@($res.Errors).Count -gt 0) { 'Warning' } else { 'Info' })
+        } catch {
+            Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'CS.Button.Add') -Kind Error
+        }
+    })
+    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'CS.Button.Remove') -X 140 -Y 288 -Width 120 -Height 30 -Parent $grpList -OnClick {
+        $g = $this.FindForm().Tag
+        $sel = Get-WinEaseGuiSelectedCustomScript -Gui $g
+        if (-not $sel) {
+            Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'CS.Msg.NoSelection') -Title (Get-WinEaseUiString 'CS.Button.Remove') -Kind Warning
+            return
+        }
+        $ask = Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'CS.Msg.ConfirmRemove' -Format $sel.Name) -Title (Get-WinEaseUiString 'CS.Button.Remove') -Kind Question -YesNo
+        if (-not $ask) { return }
+        try {
+            Remove-WinEaseCustomScript -RepoRoot $script:WinEaseGuiRepoRoot -Stage ([string]$sel.Stage) -Path ([string]$sel.FullPath) | Out-Null
+            Update-WinEaseGuiCustomScriptsList -Gui $g
+        } catch {
+            Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'CS.Button.Remove') -Kind Error
+        }
+    })
+    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'CS.Button.Edit') -X 270 -Y 288 -Width 120 -Height 30 -Parent $grpList -OnClick {
+        $g = $this.FindForm().Tag
+        $sel = Get-WinEaseGuiSelectedCustomScript -Gui $g
+        if (-not $sel) {
+            Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'CS.Msg.NoSelection') -Title (Get-WinEaseUiString 'CS.Button.Edit') -Kind Warning
+            return
+        }
+        if (Show-WinEaseGuiCustomScriptMetadataDialog -Gui $g -Script $sel) {
+            Update-WinEaseGuiCustomScriptsList -Gui $g
+        }
+    })
+    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'CS.Button.Reorder') -X 400 -Y 288 -Width 120 -Height 30 -Parent $grpList -OnClick {
+        $g = $this.FindForm().Tag
+        $sel = Get-WinEaseGuiSelectedCustomScript -Gui $g
+        if (-not $sel) {
+            Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'CS.Msg.NoSelection') -Title (Get-WinEaseUiString 'CS.Button.Reorder') -Kind Warning
+            return
+        }
+        $newOrder = 0
+        if (-not [int]::TryParse($sel.EffectiveOrder, [ref]$newOrder)) { $newOrder = 100 }
+        $dlg = New-WinEaseForm -Text (Get-WinEaseUiString 'CS.Dlg.Reorder.Title') -Width 380 -Height 150 -ClientSize -FixedDialog -NoMaximize -NoMinimize -ForeColor ([System.Drawing.Color]::White)
+        try {
+            [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'CS.Dlg.Reorder.Hint' -Format $sel.Name) -X 15 -Y 20 -Width 340 -Height 20 -Parent $dlg)
+            $dlg.Tag = @{ Script = $sel; Order = (New-WinEaseTextBox -X 15 -Y 48 -Width 100 -Height 24 -Text ([string]$newOrder) -Parent $dlg) }
+            [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.Save') -X 15 -Y 90 -Width 110 -Height 30 -Parent $dlg -OnClick {
+                $f = $this.FindForm()
+                $t = $f.Tag
+                try {
+                    $order = 100
+                    if (-not [int]::TryParse($t.Order.Text.Trim(), [ref]$order)) { $order = 100 }
+                    Move-WinEaseCustomScriptOrder -Path ([string]$t.Script.FullPath) -NewOrder $order | Out-Null
+                    $f.Tag = 'OK'
+                    $f.Close()
+                } catch {
+                    Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'CS.Dlg.Reorder.Title') -Kind Error
+                }
+            })
+            $btnCancel = New-WinEaseButton -Text (Get-WinEaseUiString 'Button.Cancel') -X 140 -Y 90 -Width 110 -Height 30 -Parent $dlg
+            $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+            $dlg.CancelButton = $btnCancel
+            [void]$dlg.ShowDialog()
+            if ($dlg.Tag -is [string] -and $dlg.Tag -eq 'OK') { Update-WinEaseGuiCustomScriptsList -Gui $g }
+        } finally { $dlg.Dispose() }
+    })
+    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'CS.Button.Preview') -X 530 -Y 288 -Width 140 -Height 30 -Parent $grpList -OnClick {
+        try {
+            $rows = @(Get-WinEaseCustomScriptPreview -RepoRoot $script:WinEaseGuiRepoRoot)
+            $lines = @()
+            foreach ($r in $rows) { $lines += ("{0}  {1}  ({2})" -f $r.Stage, $r.ImagePath, $r.RunsAs) }
+            if ($lines.Count -eq 0) { $lines = @((Get-WinEaseUiString 'CS.Msg.Empty')) }
+            Show-WinEaseGuiTextDialog -Title (Get-WinEaseUiString 'CS.Msg.PreviewTitle') -Text ($lines -join "`r`n")
+        } catch {
+            Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'CS.Button.Preview') -Kind Error
+        }
+    })
+
+    # The engine is loaded when the tab is opened for the first time
+    $tabCs.Tag = @{ Loaded = $false }
+    $gui.CsTab = $tabCs
+    $tabCs.Add_Enter({
+        $st = $this.Tag
+        if (-not $st.Loaded) {
+            $st.Loaded = $true
+            Initialize-WinEaseGuiCustomScriptEngine | Out-Null
+        }
+        Update-WinEaseGuiCustomScriptsList -Gui $this.FindForm().Tag
+    })
 }
 
 # =========================================================================
@@ -2081,6 +2386,7 @@ function Initialize-WinEaseGuiContent {
     New-WinEaseDebloatTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -UiFontName $UiFontName -ToolTip $toolTip
     New-WinEaseMigrationTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
     New-WinEaseUserTweaksTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
+    New-WinEaseCustomScriptsTab -Gui $Gui -TabControl $tabControl
     $cmbPreset = $Gui.Preset
 
     # =========================================================================
@@ -2272,5 +2578,8 @@ function Show-WinEaseGUI {
     return @{ Success = $false }
 }
 
-# The WinUI 3 window host (Show-WinEaseWinUiGUI) shares the helpers above
-. (Join-Path -Path $PSScriptRoot -ChildPath 'WinEaseWinUiHost.ps1')
+# The WinUI 3 window host (Show-WinEaseWinUiGUI) shares the helpers above.
+# The Migration Assistant bundle ships this file without the WinUI host (the window is a separate
+# process and cannot run from the bundle), so the host is only loaded when it is really there.
+$winUiHostPath = Join-Path -Path $PSScriptRoot -ChildPath 'WinEaseWinUiHost.ps1'
+if (Test-Path -LiteralPath $winUiHostPath) { . $winUiHostPath }

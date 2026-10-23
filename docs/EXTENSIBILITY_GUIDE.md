@@ -214,7 +214,7 @@ An old `user-*.psd1` directly under `config/` is still read, with a warning, whe
 | `tools/Measure-WinEaseGuestBaseline.ps1` / `tools/Compare-WinEaseBenchmarks.ps1` | Post-install measurement and comparison |
 
 GUI tab **8. Migration & Backup** loads `tools/migrator/WinEaseMigration.ps1` the first time it is opened (the builder itself does not load the migration engine).
-With `-IncludeMigrationAssistant` the migrator and its rules are bundled into the ISO under `Windows\Setup\Scripts\Migration` (no personal data included).
+With `-IncludeMigrationAssistant` the migrator and its rules are bundled into the ISO under `Windows\Setup\Scripts\Migration`. With `-IncludeMigrationBackup` (on by default when the assistant is on) the default backup from `%USERPROFILE%\WinEase_migration_backup` is also copied to `C:\WinEaseBackup`; that backup **contains personal data** and is restored only on explicit request.
 
 ## 2. The four custom-script stages
 

@@ -3,6 +3,188 @@
 All notable changes to this fork are documented here. Versions follow the upstream
 WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
+## Unreleased (local fork, 2026-10-23) - the migration tool runs from the ISO and custom scripts have a GUI
+
+### Fixed
+- **Camera, Photos and Snipping Tool/ScreenSketch were listed but not removed.**
+  They were only removed through the broad AppX list, so clearing that one switch
+  silently kept them. Each app now has its own switch (`RemoveCameraApp`,
+  `RemovePhotosApp`, `RemoveScreenSketchApp`), on by default and independent of
+  `RemoveAppxBloatware`; the `none` preset turns them off.
+- **RemoveDefender left the engine and the Windows Security app behind.**
+  `Microsoft.SecHealthUI` is protected against normal provisioned-package removal,
+  so phase 05 now force-removes its payload and phase 10 clears its staged
+  registration; the Defender user-mode service keys, IFEO entries and payload are
+  removed rather than only disabled, and the boot-start filter drivers are taken out
+  of the boot path. The online enforcement helper refuses to run unless phase 11
+  staged the `remove-defender.flag`.
+- **Accessibility hotkeys were disabled by removing the features.** The old
+  `Flags=0` values deleted StickyKeys, FilterKeys, ToggleKeys and MouseKeys
+  entirely. The image now writes the Windows "shortcut off" values
+  (`506/122/58/58`) so the features stay available from Settings.
+- **"Hide Recommended" did not work on Windows 11 Pro.** The Explorer policy alone
+  is honoured only by Education/Enterprise; the build also writes the PolicyManager
+  bridge (`Start\HideRecommendedSection` and `Education\IsEducationEnvironment`).
+- **"Transparent shortcut overlay" used a visible icon.** The old
+  `imageres.dll,-17` value replaced the shortcut arrow with a glyph; it now points at
+  the transparent `shell32.dll,-50` resource.
+- **The recovery check always reported no migration backup.** It looked for
+  `Documents\WinEase_workspace\migration-manifest.json` instead of the default
+  `%USERPROFILE%\WinEase_migration_backup` folder (with the old Documents location as
+  a fallback).
+- **Phase 13 aborted after the image had already been committed when
+  `build_diagnostics` disappeared.** A parallel Pester/dry-run invocation rotated the
+  diagnostics folder and removed the still-empty directory of the running build, so
+  `File.AppendAllText` for `dism_export_integrity_report.txt` threw
+  `DirectoryNotFoundException` (and DISM's `/LogPath` pointed into the missing folder).
+  Phases 13 and 15 now re-create the directory before they write, and dry runs / test
+  mode no longer rotate the diagnostics of a running build.
+- **The bundled Migration Assistant could not start.** The bundling block of phase 11
+  copied four files (`WinEase-Migrator.ps1`, `WinEaseMigration.ps1`, the rules and the
+  user rules) but not `WinEasehelpers.ps1` (the safe-relative-path validator the restore
+  path needs) and not `gui\WinEaseGui.ps1` (the shared WinForms parts the wizard builds
+  its window from). The launcher failed with `gui\WinEaseGui.ps1 (shared WinForms parts)
+  not found next to '...'` and `'Resolve-WinEaseSafeRelativePath' is not recognized`.
+  Both files and the `ui-strings` folder (en/ja) are part of the bundle now, and the
+  DryRun output lists them.
+- **The wizard pulled the WinUI host into the image.** `gui\WinEaseGui.ps1` dot-sourced
+  `WinEaseWinUiHost.ps1` unconditionally. The host is not part of the migration bundle
+  (the WinUI window is a separate build), so the dot-source is conditional now: a
+  bundle without the host keeps working, a repository keeps loading it.
+- **Scripts of `tools/custom-scripts/` were copied into a folder nothing reads.** The
+  stage runner copied a script into `Custom\<Stage>\`, but the first-logon pipeline
+  reads the flat `Custom` folder with a non-recursive `Get-ChildItem -File`, so a
+  `.ps1` in `Custom\FirstLogon\` was copied into the image and never ran (the folder
+  was dead weight, the stage itself ran from `Custom`). Every declared script is now
+  copied flat into `Custom` (FirstLogon) or `UserCustom` (UserOnce) and registered in
+  `custom-scripts-manifest.json`; the `Custom\<Stage>` copy stays for the
+  `FirstLogonCommands` of `autounattend.xml`.
+- **A numeric prefix was doubled when a script was added or reordered.** A file named
+  '01-setup.ps1' was copied as '01--setup.ps1' and reordering produced '09--move.ps1': the
+  tail kept the separator the pattern had already consumed. The separator is part of the
+  pattern.
+- **A restore scattered the personal folders into the profile root.** The manifest keeps
+  the category (`Documents`, `Desktop`, ...) next to the relative path, but the restore
+  built the target from the relative path alone: `Documents\a.txt` and `Downloads\a.txt`
+  both landed as `%USERPROFILE%\a.txt`, so the folders were flattened and files with the
+  same name overwrote each other. The target is `<new profile>\<category>\<relative path>`
+  now; the combined path is still validated against the profile.
+
+### Added
+- **The ISO can carry the default migration backup.** With the Migration
+  Assistant on, `IncludeMigrationBackup` (default on) copies
+  `%USERPROFILE%\WinEase_migration_backup` into the image as `C:\WinEaseBackup`.
+  `restore-state.json` and temporary files are excluded; the files get
+  SYSTEM/Administrators ACLs and a file count/size report. The launcher passes
+  `-PackagePath "C:\WinEaseBackup"`, the migrator prefers that folder when it
+  contains a manifest, and every restore still needs an explicit user action.
+- **Tab 10 "Custom Scripts" (WinForms and WinUI).** Shows the scripts of a stage with
+  their order, extension, size, condition, error policy and description, and offers
+  Add (file picker, `.ps1` / `.bat` / `.cmd` / `.reg`, next free number), Remove,
+  Edit Metadata, Change Order, Image Preview (which file lands in which image folder
+  with which rights) and Open Folder. The tab edits the repository; a rebuild bundles
+  the change.
+- **The metadata header understands every script type.** `#` for `.ps1`, `REM` for
+  `.bat` / `.cmd`, `;` for `.reg`; the writer keeps the encoding (BOM stays BOM, no BOM
+  stays no BOM) and replaces a header line instead of adding a second one.
+- **Helpers of the script engine**: stage map, extension list, image folder, manifest
+  key, manifest writer, path resolver, header-order reader, inventory, add/remove,
+  encoding probe, metadata writer, order move and image preview. The GUI and the phase
+  use the same functions, so a script added in the GUI is bundled exactly like a
+  hand-placed file.
+- Twelve tests: the stage map and the extension list, add (next number, unsupported
+  type refused), the metadata writer for `.ps1` / `.cmd` / `.reg` (comment syntax,
+  replacing, no duplicate header), inventory and preview (stage, order, image path),
+  order move and the refusal to delete outside the repository, the flat copy plus the
+  manifest entry of both stages, Tab 10 in the WinForms window, the bundle content
+  of the ISO (helpers, GUI parts, ui-strings), and a restore test that keeps the same
+  file name of `Documents` and `Downloads` apart.
+
+## Unreleased (local fork, 2026-10-22) - the Defender stays usable unless its removal was asked for
+
+### Fixed
+- **The Defender was disabled while "RemoveDefender" was off.** The conflict matrix
+  (`Test-WinEaseConfigConflicts`, rule `Defender`) only looked at the *experimental*
+  debloat list. A `Physical: Defender (complete removal) [~50MB]` target that reached
+  the *standard* list - an older profile put the "Physical: ..." entries there - was
+  therefore never seen by the rule, and phase 10 disabled `WinDefend`, `MDCoreSvc`,
+  `WdNisSvc`, `Sense` and `SecurityHealthService` anyway (`Test-WinEaseDebloatTargetSelected`
+  counts both lists). The payload of the target was deleted on top of that. The rule
+  looks at both lists now.
+- **Phase 10 has a second line of defence.** The Defender services are only disabled
+  when `$removeDefender` is on, so a target that reaches the phase can never kill the
+  Defender on its own. The target is not gated by `-AllowPhysicalDebloat` either, so
+  the guard was the only thing between a selected target and a Defender-less image.
+- **The apps of the removal list started and rendered a white window.** Phase 05 removes
+  the provisioned package *and* deletes its payload folder under `Program Files\WindowsApps`,
+  but the image keeps the *staged* copy of the inbox app
+  (`AppxAllUserStore\InboxApp`). Windows installs that staged copy for the first user,
+  so the app was registered while its payload was gone. Phase 10 now takes the staged
+  registration of every removed package out of the SOFTWARE hive.
+- **The per-user cleanup of the removed apps covered three of them.** Phase 11 staged
+  three hardcoded names in `remove-appx-packages.flag` while the offline pass removes
+  every package of the removal list (79 patterns by default). The list is now built from
+  the packages phase 05 really removed, and `FirstLogon.ps1` matches the identity name
+  of a package exactly (`Get-AppxPackage -Name` matches the name, not the full package
+  name, so the wildcard alone never matched).
+- **The safe engine deleted binaries of the system directory.** The dual-engine work
+  gave the safe (PowerShell) engine the payloads of the physical targets, and those
+  payloads reach into `Windows\System32`. A binary of the system directory is hardlinked
+  into the component store, and deleting one of the two links desyncs the hardlink set
+  of the image (the export then fails with 0x80070570 and the installer ends in a reboot
+  loop). A shared library breaks even more: `wmisnmp.dll` and `snmpapi.dll` belong to
+  WMI, `WinFax.dll` is the fax API of the whole system. The safe engine refuses those
+  files now (Directive 2.1 of phase 08), the shared libraries left the payload of their
+  targets, and the forced (Rust) engine does not delete the boot driver `mpsdrv.sys`
+  and the WMI provider `wmisnmp.dll` either.
+
+### Added
+- Eleven tests: the `Defender` rule fires for the standard *and* for the experimental
+  debloat list, it stays silent when the Defender is removed on purpose, phase 10 only
+  disables the Defender services when the removal was asked for, phase 05 records every
+  package it removed, phase 10 takes the staged registration out of the hive, phase 11
+  stages the per-user cleanup of the removed packages, the first logon matches the
+  identity name of a package, the safe engine recognizes the binaries of the system
+  directory, the payload of a target holds no shared library, and the firewall target
+  declares no payload for the safe engine.
+
+## Unreleased (local fork, 2026-10-22) - the build no longer hangs in phase 10
+
+### Fixed
+- **The build hung in phase 10 and no ISO was produced.** The per-user UI
+  preferences were a nested array literal in the phase. PowerShell's `@()`
+  operator unwraps a group that holds a single entry, so a group with one entry
+  arrived as four separate strings: the four fields of the entry (`Path`, `Name`,
+  `Type`, `Data`) were then read one by one and `reg.exe` was called with an
+  empty value name, an empty type and an empty data. A native call drops an
+  empty argument, so `reg.exe` read the `/f` switch as the data and wrote a key
+  named after the first character of the data (`0`, `1` or `3`) into the user
+  hives, holding a single value named `/t`. On the next build that value already
+  existed, `reg.exe` asked `Value /t already exists. Overwrite (Yes/No)?` and
+  waited for a key press that never came - the build stopped in phase 10 and the
+  ISO was never created. The UI preferences themselves were never applied.
+  The table now lives in `config\ui-preferences.psd1` as a list of hashtables.
+  A hashtable cannot be unwrapped by `@()`, so every entry keeps its fields, and
+  the phase skips an entry with an empty field instead of calling `reg.exe`.
+- **The keys that the broken table left behind are removed again.** A key whose
+  only value is named `/t` is deleted from the two per-user hives, so an image
+  that was built with the old code does not keep the leftovers. A real key of
+  the image is never touched: the name has to be one of `0`, `1` and `3` and the
+  value has to be the only one the key holds.
+
+### Added
+- `config\ui-preferences.psd1` is parsed by the self-test that checks the
+  extension catalogs, so a broken table is caught before a build starts.
+- Ten tests: the table holds the UI preferences, every entry is a hashtable that
+  `@()` cannot unwrap, every entry names its tweak, path, value, type and data,
+  every entry writes a registry type that `reg.exe` knows, every tweak of the
+  table is defined in `config\schema.psd1`, the phase reads the table from the
+  data file, the phase does not read the fields of a tuple by index any more,
+  the phase skips an entry with an empty field, the phase removes the leftover
+  keys of the old table, and every `reg.exe` call of the repository passes the
+  `/f` switch - without it `reg.exe` asks `Overwrite (Yes/No)?` and waits for a
+  key press.
+
 ## Unreleased (local fork, 2026-10-22) - every Advanced Debloat target can be removed by both engines
 
 ### Fixed
@@ -725,7 +907,9 @@ subjects for S1-S11 are in `git log f484228^..77cd929`; the briefs are in
   custom-script stage now run in the builder right after the dependency check.
 - `-IncludeMigrationAssistant` now does something: Phase 11 copies the migrator, engine
   and rule files to `Windows\Setup\Scripts\Migration` and adds a public-desktop
-  launcher (DryRun only prints). No personal data is included.
+  launcher (DryRun only prints). No personal data is included by the assistant
+  itself; the later `-IncludeMigrationBackup` option can bundle the default backup,
+  which does contain personal data.
 - GUI Tab 8 "Migration & Backup": recovery check (using the current window's draft
   config), app inventory export (SaveFileDialog), Estimate Size, Verify Backup Integrity,
   Retry Failed Tasks Only, Browse for the backup folder, credential exclusion and conflict

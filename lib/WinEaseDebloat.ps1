@@ -206,9 +206,13 @@ function Get-WinEaseAppxRemovalPatterns {
     # Every definition names the setting that controls it:
     #   Option = ''      the pattern belongs to the default removal list and is
     #                    controlled by RemoveAppxBloatware as a whole
-    #   Option = '<key>' the pattern is applied when that setting is on
+    #   Option = '<key>' a non-inverted pattern is independent of RemoveAppxBloatware:
+    #                    it is applied when that setting is on. This is what makes the
+    #                    Camera / Photos / Screen Sketch / Store / Defender options work
+    #                    even when the general bloatware pass is off.
     #   Invert = $true   the setting is a "Keep..." option: the pattern is applied when
-    #                    that setting is off
+    #                    that setting is off. Keep options only belong to the default
+    #                    removal list, so they need RemoveAppxBloatware to be on.
     [CmdletBinding()]
     [OutputType([string[]])]
     param(
@@ -217,12 +221,16 @@ function Get-WinEaseAppxRemovalPatterns {
     )
     if (-not $Definitions -or @($Definitions).Count -eq 0) { $Definitions = Get-WinEaseAppxRemovalDefinitions }
     if (@($Definitions).Count -eq 0) { return @() }
-    if (-not $Settings.ContainsKey('RemoveAppxBloatware') -or -not [bool]$Settings['RemoveAppxBloatware']) { return @() }
+    $removeDefault = $Settings.ContainsKey('RemoveAppxBloatware') -and [bool]$Settings['RemoveAppxBloatware']
     $patterns = @()
     foreach ($d in $Definitions) {
         if (-not $d -or -not $d.Pattern) { continue }
         $option = [string]$d.Option
-        if ([string]::IsNullOrWhiteSpace($option)) { $patterns += [string]$d.Pattern; continue }
+        if ([string]::IsNullOrWhiteSpace($option)) {
+            if ($removeDefault) { $patterns += [string]$d.Pattern }
+            continue
+        }
+        if ([bool]$d.Invert -and -not $removeDefault) { continue }
         if (-not $Settings.ContainsKey($option)) { continue }
         $on = [bool]$Settings[$option]
         if ([bool]$d.Invert) { $on = -not $on }
@@ -311,6 +319,21 @@ function Remove-WinEaseDebloatPath {
     return $true
 }
 
+function Test-WinEaseSystem32BinaryPath {
+    # True when the payload path points at a binary of the system directory.
+    #
+    # The safe engine must not delete those (Directive 2.1 of phase 08): the file is
+    # hardlinked into the component store (WinSxS), and deleting one of the two links
+    # desyncs the hardlink set of the image. The export then fails with 0x80070570
+    # (Data Error) and the installer ends in a reboot loop. A shared library makes it
+    # worse: wmisnmp.dll and snmpapi.dll belong to WMI, mpssvc.dll to the firewall.
+    # The service of the target is disabled in phase 10 instead, which is what the
+    # removal of a service is about.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $norm = (([string]$Path) -replace '/', '\').TrimStart('\')
+    return [bool]($norm -match '^(?i)Windows\\(System32|SysWOW64|SysNative)\\')
+}
+
 function Remove-WinEaseDebloatPayload {
     # Deletes the payload of a target (config\schema.psd1 -> DebloatEngines -> Payload).
     #
@@ -366,6 +389,19 @@ function Remove-WinEaseDebloatPayload {
                     Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
                 }
             } else {
+                # Directive 2.1: a binary of the system directory is never deleted by the
+                # safe engine. The path is checked relative to the mount, so the check
+                # works for the wildcard payloads as well.
+                $relTarget = [string]$rel
+                $scratchNorm = (([string]$scratchDir) -replace '/', '\').TrimEnd('\')
+                $targetNorm = (([string]$target) -replace '/', '\')
+                if ($scratchNorm -and $targetNorm.StartsWith($scratchNorm, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $relTarget = $targetNorm.Substring($scratchNorm.Length).TrimStart('\')
+                }
+                if (Test-WinEaseSystem32BinaryPath -Path $relTarget) {
+                    Write-Host "    [SKIP] System32 binary, not deleted by the safe engine: $target" -ForegroundColor Yellow
+                    continue
+                }
                 Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
             }
             if (Test-Path -LiteralPath $target) {

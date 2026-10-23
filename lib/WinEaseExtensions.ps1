@@ -184,6 +184,23 @@ function Invoke-WinEaseUserExtensionActions {
 }
 
 # 3. Get-WinEaseCustomScriptMetadata
+# The metadata header uses the comment syntax of the file type: '#' for .ps1, 'REM' for
+# .bat/.cmd and ';' for .reg. Without this a batch or registry file could never carry a
+# description, an order or a condition.
+function Get-WinEaseCustomScriptCommentPrefix {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([string]$Path)
+    $ext = ''
+    try { $ext = [System.IO.Path]::GetExtension([string]$Path).ToLowerInvariant() } catch { $ext = '' }
+    switch ($ext) {
+        '.bat' { return 'REM' }
+        '.cmd' { return 'REM' }
+        '.reg' { return ';' }
+        default { return '#' }
+    }
+}
+
 function Get-WinEaseCustomScriptMetadata {
     [CmdletBinding()]
     param(
@@ -199,6 +216,7 @@ function Get-WinEaseCustomScriptMetadata {
         OnError     = 'Warn'
         Description = ''
         Sha256      = ''
+        Comment     = (Get-WinEaseCustomScriptCommentPrefix -Path $ScriptPath)
     }
     if (-not (Test-Path -LiteralPath $ScriptPath)) { return $meta }
     try {
@@ -207,12 +225,12 @@ function Get-WinEaseCustomScriptMetadata {
     try {
         $lines = [System.IO.File]::ReadAllLines($ScriptPath) | Select-Object -First 30
         foreach ($ln in $lines) {
-            if ($ln -match '^\s*#\s*@WinEase-Stage:\s*(.+)$') { $meta.Stage = $matches[1].Trim() }
-            elseif ($ln -match '^\s*#\s*@WinEase-Order:\s*(\d+)') { $meta.Order = [int]$matches[1] }
-            elseif ($ln -match '^\s*#\s*@WinEase-Condition:\s*(.+)$') { $meta.Condition = $matches[1].Trim() }
-            elseif ($ln -match '^\s*#\s*@WinEase-OnError:\s*(Stop|Warn|Ignore)') { $meta.OnError = $matches[1] }
-            elseif ($ln -match '^\s*#\s*@WinEase-Description:\s*(.+)$') { $meta.Description = $matches[1].Trim() }
-            elseif ($ln -match '^\s*#\s*@WinEase-Id:\s*(.+)$') { $meta.Id = $matches[1].Trim() }
+            if ($ln -match '^\s*(?:#|REM|;)\s*@WinEase-Stage:\s*(.+)$') { $meta.Stage = $matches[1].Trim() }
+            elseif ($ln -match '^\s*(?:#|REM|;)\s*@WinEase-Order:\s*(\d+)') { $meta.Order = [int]$matches[1] }
+            elseif ($ln -match '^\s*(?:#|REM|;)\s*@WinEase-Condition:\s*(.+)$') { $meta.Condition = $matches[1].Trim() }
+            elseif ($ln -match '^\s*(?:#|REM|;)\s*@WinEase-OnError:\s*(Stop|Warn|Ignore)') { $meta.OnError = $matches[1] }
+            elseif ($ln -match '^\s*(?:#|REM|;)\s*@WinEase-Description:\s*(.+)$') { $meta.Description = $matches[1].Trim() }
+            elseif ($ln -match '^\s*(?:#|REM|;)\s*@WinEase-Id:\s*(.+)$') { $meta.Id = $matches[1].Trim() }
         }
     } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     if (-not $meta.Id) { $meta.Id = [System.IO.Path]::GetFileNameWithoutExtension($ScriptPath) }
@@ -243,6 +261,394 @@ function Get-WinEaseCustomScriptFiles {
     }
     return $found
 }
+
+# The four stages of the custom script pipeline: where the scripts live in the repository, where
+# they end up in the image and with which rights they run.
+function Get-WinEaseCustomScriptStageMap {
+    [CmdletBinding()]
+    [OutputType([object[]])]
+    param()
+    return @(
+        [PSCustomObject]@{ Stage = 'PreBuild';    RepoFolder = 'tools\custom-scripts\PreBuild';    ImageFolder = '';                                   RunsAs = 'BuildHost';     LegacyFolder = '' }
+        [PSCustomObject]@{ Stage = 'OfflineImage'; RepoFolder = 'tools\custom-scripts\OfflineImage'; ImageFolder = '';                                   RunsAs = 'BuildHost';     LegacyFolder = '' }
+        [PSCustomObject]@{ Stage = 'FirstLogon';  RepoFolder = 'tools\custom-scripts\FirstLogon';  ImageFolder = 'Windows\Setup\Scripts\Custom';     RunsAs = 'Administrator'; LegacyFolder = 'tools\custom-scripts' }
+        [PSCustomObject]@{ Stage = 'UserOnce';    RepoFolder = 'tools\custom-scripts\UserOnce';    ImageFolder = 'Windows\Setup\Scripts\UserCustom'; RunsAs = 'StandardUser'; LegacyFolder = 'tools\custom-scripts\user' }
+    )
+}
+
+# The file types the first logon and the user context execute.
+function Get-WinEaseCustomScriptExtensions {
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param()
+    return @('.ps1', '.bat', '.cmd', '.reg')
+}
+
+# The folder of the image a stage script is executed from. The scripts are copied flat: the first
+# logon and the user context read the folder with a non-recursive Get-ChildItem -File, so a script
+# in a sub folder would never run.
+function Get-WinEaseCustomScriptImageDir {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('PreBuild','OfflineImage','FirstLogon','UserOnce')][string]$Stage,
+        [Parameter(Mandatory = $true)][string]$ScratchDir
+    )
+    $sub = if ($Stage -eq 'UserOnce') { 'Windows\Setup\Scripts\UserCustom' } else { 'Windows\Setup\Scripts\Custom' }
+    return (Join-Path -Path $ScratchDir -ChildPath $sub)
+}
+
+# The key of a script in the build-time integrity manifest: the plain file name for the elevated
+# first logon, "user/<name>" for the standard user context (that is how both pipelines look it up).
+function Get-WinEaseCustomScriptManifestKey {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)][string]$Stage,
+        [Parameter(Mandatory = $true)][string]$FileName
+    )
+    if ($Stage -eq 'UserOnce') { return "user/$FileName" }
+    return $FileName
+}
+
+# Registers a copied script in the build-time integrity manifest. The first logon refuses every
+# file that is not listed there, so a script that is copied into the image has to be registered.
+function Add-WinEaseCustomScriptManifestEntry {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory = $true)][string]$ScratchDir,
+        [Parameter(Mandatory = $true)][string]$Stage,
+        [Parameter(Mandatory = $true)][string]$FileName,
+        [Parameter(Mandatory = $true)][string]$FilePath
+    )
+    $manifestPath = Join-Path -Path $ScratchDir -ChildPath 'Windows\Setup\Scripts\custom-scripts-manifest.json'
+    $manifest = [ordered]@{}
+    if (Test-Path -LiteralPath $manifestPath) {
+        try {
+            $raw = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach ($p in $raw.PSObject.Properties) { $manifest[$p.Name] = [string]$p.Value }
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
+    $hash = ''
+    try { $hash = (Get-FileHash -LiteralPath $FilePath -Algorithm SHA256).Hash } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    if ([string]::IsNullOrWhiteSpace($hash)) { return $false }
+    $manifest[(Get-WinEaseCustomScriptManifestKey -Stage $Stage -FileName $FileName)] = $hash
+    try {
+        $json = $manifest | ConvertTo-Json -Depth 2
+        if (Get-Command -Name 'Write-WinEaseTextFileAtomic' -ErrorAction SilentlyContinue) {
+            Write-WinEaseTextFileAtomic -Path $manifestPath -Content $json | Out-Null
+        } else {
+            [System.IO.File]::WriteAllText($manifestPath, $json, (New-Object System.Text.UTF8Encoding($false)))
+        }
+    } catch {
+        Write-Verbose "Ignored: $($_.Exception.Message)"
+        return $false
+    }
+    return $true
+}
+
+# Resolves a script path that may be relative to the repository (the user extension file stores
+# paths like 'tools\custom-scripts\PreBuild\01-check.ps1').
+function Resolve-WinEaseCustomScriptPath {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [hashtable]$Context = @{}
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    $p = $Path.Trim()
+    if ([System.IO.Path]::IsPathRooted($p)) { return $p }
+    $root = ''
+    if ($Context -and $Context.ContainsKey('ScriptRoot') -and $Context['ScriptRoot']) { $root = [string]$Context['ScriptRoot'] }
+    elseif ($Context -and $Context.ContainsKey('RepoRoot') -and $Context['RepoRoot']) { $root = [string]$Context['RepoRoot'] }
+    if (-not $root) { $root = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { (Get-Location).Path } }
+    return (Join-Path -Path $root -ChildPath $p)
+}
+
+# True when the file carries an @WinEase-Order header.
+function Test-WinEaseCustomScriptHasHeaderOrder {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory = $true)][string]$Path)
+    try {
+        foreach ($ln in @([System.IO.File]::ReadAllLines($Path) | Select-Object -First 30)) {
+            if ($ln -match '^\s*(?:#|REM|;)\s*@WinEase-Order:\s*\d+') { return $true }
+        }
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    return $false
+}
+
+# The order of a script: the @WinEase-Order header wins, otherwise the numeric prefix of the file
+# name decides (that is the order the first logon uses: it sorts the files by name).
+function Get-WinEaseCustomScriptEffectiveOrder {
+    [CmdletBinding()]
+    [OutputType([int])]
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [int]$HeaderOrder = 100,
+        [bool]$HasHeaderOrder = $false
+    )
+    if ($HasHeaderOrder) { return $HeaderOrder }
+    $name = [System.IO.Path]::GetFileNameWithoutExtension([string]$Path)
+    if ($name -match '^(\d+)') { return [int]$matches[1] }
+    return 100
+}
+
+# The scripts of one stage (or of all stages) with their metadata: what the GUI shows.
+function Get-WinEaseCustomScriptInventory {
+    [CmdletBinding()]
+    [OutputType([object[]])]
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [string]$Stage = ''
+    )
+    $map = @(Get-WinEaseCustomScriptStageMap)
+    if ($Stage) { $map = @($map | Where-Object { $_.Stage -eq $Stage }) }
+    $items = @()
+    foreach ($stageInfo in $map) {
+        $files = @(Get-WinEaseCustomScriptFiles -RepoRoot $RepoRoot -Stage $stageInfo.Stage)
+        if ($stageInfo.LegacyFolder) {
+            $legacyDir = Join-Path -Path $RepoRoot -ChildPath $stageInfo.LegacyFolder
+            if (Test-Path -LiteralPath $legacyDir) {
+                $files += @(Get-ChildItem -LiteralPath $legacyDir -File -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -ne 'README.md' -and $_.Name -ne '.gitkeep' })
+            }
+        }
+        foreach ($f in $files) {
+            $meta = Get-WinEaseCustomScriptMetadata -ScriptPath $f.FullName
+            $hasOrder = Test-WinEaseCustomScriptHasHeaderOrder -Path $f.FullName
+            $inStage = ($f.DirectoryName -eq (Join-Path -Path $RepoRoot -ChildPath $stageInfo.RepoFolder))
+            $items += [PSCustomObject]@{
+                Stage          = $stageInfo.Stage
+                Name           = $f.Name
+                FullPath       = $f.FullName
+                Extension      = $f.Extension.ToLowerInvariant()
+                Size           = $f.Length
+                Sha256         = $meta.Sha256
+                Id             = $meta.Id
+                Order          = $meta.Order
+                HasHeaderOrder = $hasOrder
+                EffectiveOrder = (Get-WinEaseCustomScriptEffectiveOrder -Path $f.FullName -HeaderOrder $meta.Order -HasHeaderOrder $hasOrder)
+                Condition      = $meta.Condition
+                OnError        = $meta.OnError
+                Description    = $meta.Description
+                Comment        = $meta.Comment
+                RunsAs         = $stageInfo.RunsAs
+                ImageFolder    = $stageInfo.ImageFolder
+                Location       = if ($inStage) { 'Stage' } else { 'Legacy' }
+            }
+        }
+    }
+    return @($items | Sort-Object Stage, EffectiveOrder, Name)
+}
+
+# Copies a script into a stage folder. The file name gets a numeric prefix so that the order of
+# the scripts is visible and stable (the first logon runs them sorted by name).
+function Add-WinEaseCustomScript {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][ValidateSet('PreBuild','OfflineImage','FirstLogon','UserOnce')][string]$Stage,
+        [Parameter(Mandatory = $true)][string[]]$Paths,
+        [switch]$Overwrite
+    )
+    $added = @()
+    $skipped = @()
+    $errors = @()
+    $validExts = @(Get-WinEaseCustomScriptExtensions)
+    $stageInfo = @(Get-WinEaseCustomScriptStageMap | Where-Object { $_.Stage -eq $Stage })[0]
+    if (-not $stageInfo) { throw "Unknown stage '$Stage'." }
+    $targetDir = Join-Path -Path $RepoRoot -ChildPath $stageInfo.RepoFolder
+    foreach ($p in @($Paths)) {
+        if ([string]::IsNullOrWhiteSpace($p)) { continue }
+        $src = $p.Trim()
+        if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
+            $errors += "File not found: '$src'"
+            continue
+        }
+        $ext = [System.IO.Path]::GetExtension($src).ToLowerInvariant()
+        if ($validExts -notcontains $ext) {
+            $errors += "Unsupported file type '$ext' (allowed: $($validExts -join ', ')): '$src'"
+            continue
+        }
+        if (-not (Test-Path -LiteralPath $targetDir)) { New-Item -ItemType Directory -Force -Path $targetDir | Out-Null }
+        $leaf = [System.IO.Path]::GetFileNameWithoutExtension($src)
+        $rest = [System.IO.Path]::GetFileName($src)
+        if ($leaf -match '^(\d+)[-_]?(.*)$') {
+            $prefix = [int]$matches[1]
+            $tail = $matches[2] + [System.IO.Path]::GetExtension($src)
+        } else {
+            $prefix = 0
+            $tail = $rest
+        }
+        if ($prefix -le 0) {
+            # next free index (two digits, like 01- / 02-)
+            $used = @(Get-ChildItem -LiteralPath $targetDir -File -ErrorAction SilentlyContinue |
+                ForEach-Object { if ([System.IO.Path]::GetFileNameWithoutExtension($_.Name) -match '^(\d+)') { [int]$matches[1] } })
+            $prefix = 1
+            while ($used -contains $prefix) { $prefix++ }
+            $tail = $rest
+        }
+        $targetName = ('{0:D2}-{1}' -f $prefix, $tail)
+        $target = Join-Path -Path $targetDir -ChildPath $targetName
+        if (Test-Path -LiteralPath $target) {
+            if (-not $Overwrite) {
+                $errors += "A script with the name '$targetName' already exists in $stageInfo.RepoFolder."
+                continue
+            }
+            Remove-Item -LiteralPath $target -Force
+        }
+        try {
+            Copy-Item -LiteralPath $src -Destination $target -Force
+            $added += [PSCustomObject]@{ Name = $targetName; Path = $target; Stage = $Stage }
+        } catch {
+            $errors += "Could not copy '$src': $($_.Exception.Message)"
+        }
+    }
+    return [PSCustomObject]@{ Stage = $Stage; Added = $added; Skipped = $skipped; Errors = $errors }
+}
+
+# Deletes a script from a stage folder. The README and the .gitkeep of the stage folders stay.
+function Remove-WinEaseCustomScript {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$Stage,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) { throw 'No script was given.' }
+    $full = $Path
+    if (-not [System.IO.Path]::IsPathRooted($full)) { $full = Join-Path -Path $RepoRoot -ChildPath $full }
+    $full = [System.IO.Path]::GetFullPath($full)
+    $base = [System.IO.Path]::GetFullPath((Join-Path -Path $RepoRoot -ChildPath 'tools\custom-scripts'))
+    if (-not ($full.StartsWith($base, [System.StringComparison]::OrdinalIgnoreCase))) {
+        throw "Only scripts inside '$base' can be removed."
+    }
+    $leaf = [System.IO.Path]::GetFileName($full)
+    if ($leaf -eq 'README.md' -or $leaf -eq '.gitkeep') { throw "'$leaf' is part of the repository and cannot be removed." }
+    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { throw "Script not found: '$full'." }
+    Remove-Item -LiteralPath $full -Force
+    return [PSCustomObject]@{ Stage = $Stage; Removed = $leaf; Path = $full }
+}
+
+# The encoding of a script file: the BOM decides, without a BOM the system default (ANSI) is used
+# because Windows PowerShell 5.1 reads such a script that way.
+function Get-WinEaseCustomScriptEncoding {
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        return @{ Encoding = (New-Object System.Text.UTF8Encoding($true)); HasBom = $true }
+    }
+    if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+        return @{ Encoding = (New-Object System.Text.UnicodeEncoding($false, $true)); HasBom = $true }
+    }
+    if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+        return @{ Encoding = (New-Object System.Text.UnicodeEncoding($true, $true)); HasBom = $true }
+    }
+    return @{ Encoding = [System.Text.Encoding]::Default; HasBom = $false }
+}
+
+# Writes the metadata header of a script. The keys are written in the comment syntax of the file
+# type ('#' for .ps1, 'REM' for .bat/.cmd, ';' for .reg).
+function Set-WinEaseCustomScriptMetadata {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [int]$Order = -1,
+        [string]$Condition,
+        [string]$OnError,
+        [string]$Description,
+        [string]$Id
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Script not found: '$Path'." }
+    $info = Get-WinEaseCustomScriptEncoding -Path $Path
+    $text = [System.IO.File]::ReadAllText($Path, $info.Encoding)
+    $lineEnding = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $lines = [System.Collections.Generic.List[string]]::new()
+    foreach ($ln in ($text -split "`r`n|`n")) { $lines.Add($ln) }
+    $prefix = Get-WinEaseCustomScriptCommentPrefix -Path $Path
+    $keys = [ordered]@{}
+    if ($Order -ge 0) { $keys['Order'] = "$Order" }
+    if ($PSBoundParameters.ContainsKey('Condition')) { $keys['Condition'] = $Condition }
+    if ($PSBoundParameters.ContainsKey('OnError') -and $OnError) { $keys['OnError'] = $OnError }
+    if ($PSBoundParameters.ContainsKey('Description')) { $keys['Description'] = $Description }
+    if ($PSBoundParameters.ContainsKey('Id') -and $Id) { $keys['Id'] = $Id }
+    # replace the existing header lines, add the missing ones after the last header line
+    $lastHeader = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\s*(?:#|REM|;)\s*@WinEase-(Id|Stage|Order|Condition|OnError|Description)\s*:') { $lastHeader = $i }
+    }
+    foreach ($key in $keys.Keys) {
+        $pattern = '^\s*(?:#|REM|;)\s*@WinEase-' + $key + '\s*:.*$'
+        $found = -1
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match $pattern) { $found = $i; break }
+        }
+        # not $newLine: PowerShell does not distinguish case, it would overwrite the line ending
+        $metaLine = "$prefix @WinEase-$key`: $($keys[$key])"
+        if ($found -ge 0) {
+            $lines[$found] = $metaLine
+        } elseif ($lastHeader -ge 0) {
+            $lines.Insert($lastHeader + 1, $metaLine)
+            $lastHeader++
+        } else {
+            $lines.Insert(0, $metaLine)
+            $lastHeader = 0
+        }
+    }
+    $out = ($lines -join $lineEnding)
+    [System.IO.File]::WriteAllText($Path, $out, $info.Encoding)
+    return (Get-WinEaseCustomScriptMetadata -ScriptPath $Path)
+}
+
+# Changes the numeric prefix of a script file name: that is the order the first logon uses.
+function Move-WinEaseCustomScriptOrder {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][int]$NewOrder
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Script not found: '$Path'." }
+    if ($NewOrder -lt 0) { throw 'The new order must not be negative.' }
+    $dir = Split-Path -Parent $Path
+    $leaf = [System.IO.Path]::GetFileNameWithoutExtension($Path)
+    $ext = [System.IO.Path]::GetExtension($Path)
+    if ($leaf -match '^\d+[-_]?(.*)$') { $tail = $matches[1] } else { $tail = $leaf }
+    $newName = ('{0:D2}-{1}{2}' -f $NewOrder, $tail, $ext)
+    $target = Join-Path -Path $dir -ChildPath $newName
+    if ($target -eq $Path) { return [PSCustomObject]@{ Path = $Path; Name = $newName; Changed = $false } }
+    if (Test-Path -LiteralPath $target) { throw "A script named '$newName' already exists." }
+    Rename-Item -LiteralPath $Path -NewName $newName -Force
+    return [PSCustomObject]@{ Path = $target; Name = $newName; Changed = $true }
+}
+
+# What ends up in the image: the scripts of the post install stages with their target and hash.
+function Get-WinEaseCustomScriptPreview {
+    [CmdletBinding()]
+    [OutputType([object[]])]
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot
+    )
+    $items = @()
+    foreach ($stageInfo in @(Get-WinEaseCustomScriptStageMap)) {
+        if (-not $stageInfo.ImageFolder) { continue }
+        foreach ($entry in @(Get-WinEaseCustomScriptInventory -RepoRoot $RepoRoot -Stage $stageInfo.Stage)) {
+            $items += [PSCustomObject]@{
+                Stage     = $stageInfo.Stage
+                Name      = $entry.Name
+                ImagePath = (Join-Path -Path $stageInfo.ImageFolder -ChildPath $entry.Name)
+                RunsAs    = $stageInfo.RunsAs
+                Sha256    = $entry.Sha256
+                Location  = $entry.Location
+            }
+        }
+    }
+    return @($items)
+}
 # 4. Invoke-WinEaseCustomScriptsStage
 function Invoke-WinEaseCustomScriptsStage {
     [CmdletBinding()]
@@ -262,7 +668,19 @@ function Invoke-WinEaseCustomScriptsStage {
         foreach ($cs in $script:UserCustomScripts) {
             if ($cs.Enabled -ne $true) { continue }
             if ($cs.Stage -ne $Stage) { continue }
-            $candidates += $cs
+            # The path may be relative to the repository (config\user\user-tweaks.psd1)
+            $csPath = Resolve-WinEaseCustomScriptPath -Path ([string]$cs.Path) -Context $Context
+            if ([string]::IsNullOrWhiteSpace($csPath)) { continue }
+            $candidates += [PSCustomObject]@{
+                Id          = [string]$cs.Id
+                Path        = $csPath
+                Stage       = [string]$cs.Stage
+                Order       = [int]$cs.Order
+                Condition   = [string]$cs.Condition
+                OnError     = [string]$cs.OnError
+                Description = [string]$cs.Description
+                Sha256      = ''
+            }
         }
     }
 
@@ -314,12 +732,35 @@ function Invoke-WinEaseCustomScriptsStage {
                 else { Write-Verbose "Ignored: $($_.Exception.Message)" }
             }
         } else {
-            # FirstLogon / UserOnce: copy to offline image
+            # FirstLogon / UserOnce: copy into the offline image.
+            # Two destinations, because two different runners pick the scripts up:
+            #   1. Windows\Setup\Scripts\Custom\<Stage>  - the .ps1 files are registered as
+            #      FirstLogonCommands in autounattend.xml (phase 11 reads that folder).
+            #   2. Windows\Setup\Scripts\Custom (FirstLogon) or ...\UserCustom (UserOnce) - the
+            #      flat folder the custom script pipeline executes (it reads the folder with a
+            #      non-recursive Get-ChildItem -File, so a script in a sub folder would never run).
+            # The flat copy is what makes .bat/.cmd/.reg and the UserOnce stage work at all.
             $scratchDir = if ($Context.ScratchDir) { $Context.ScratchDir } else { $script:BaseWorkDir }
             if ($scratchDir) {
-                $targetDir = Join-Path -Path $scratchDir -ChildPath "Windows\Setup\Scripts\Custom\$Stage"
+                $fileName = [System.IO.Path]::GetFileName($meta.Path)
+                # 1. the stage folder: the .ps1 files of the FirstLogon stage are registered as
+                #    FirstLogonCommands in autounattend.xml (phase 11 reads that folder)
+                if ($Stage -eq 'FirstLogon') {
+                    $stageDir = Join-Path -Path $scratchDir -ChildPath "Windows\Setup\Scripts\Custom\$Stage"
+                    if (-not (Test-Path -LiteralPath $stageDir)) { New-Item -ItemType Directory -Force -Path $stageDir | Out-Null }
+                    Copy-Item -LiteralPath $meta.Path -Destination (Join-Path -Path $stageDir -ChildPath $fileName) -Force
+                }
+                # 2. the flat folder the custom script pipeline executes: it reads the folder with a
+                #    non-recursive Get-ChildItem -File, so a script in a sub folder would never run
+                $targetDir = Get-WinEaseCustomScriptImageDir -Stage $Stage -ScratchDir $scratchDir
                 if (-not (Test-Path -LiteralPath $targetDir)) { New-Item -ItemType Directory -Force -Path $targetDir | Out-Null }
-                Copy-Item -LiteralPath $meta.Path -Destination (Join-Path -Path $targetDir -ChildPath ([System.IO.Path]::GetFileName($meta.Path))) -Force
+                $targetFile = Join-Path -Path $targetDir -ChildPath $fileName
+                Copy-Item -LiteralPath $meta.Path -Destination $targetFile -Force
+                # The pipeline refuses every file that is not listed in the build-time integrity
+                # manifest, so the copied script is registered there with its hash.
+                if (-not (Add-WinEaseCustomScriptManifestEntry -ScratchDir $scratchDir -Stage $Stage -FileName $fileName -FilePath $targetFile)) {
+                    Write-Warning "Custom script '$fileName' was copied but could not be registered in the integrity manifest."
+                }
             }
             $executed += $meta
         }

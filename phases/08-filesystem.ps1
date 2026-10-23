@@ -213,6 +213,30 @@ if ($removeDefender) {
         }
     }
 
+    # 4. Remove the Defender CBS package itself when Windows exposes it as a removable
+    #    package. Removing only the FileMaps stops the current re-staging map, but a
+    #    later servicing pass can rebuild it from the package. DISM is used so the
+    #    component store stays internally consistent. This is best-effort: some builds
+    #    mark the package as a foundation package and refuse the removal; the phase 10
+    #    IFEO blocks and the online enforcement script remain the fallback.
+    try {
+        $defenderPackages = @(Get-WindowsPackage -Path $scratchDir -ErrorAction SilentlyContinue |
+            Where-Object { $_.PackageName -match 'Windows-Defender' -and $_.PackageName -match 'Package' })
+        if ($defenderPackages.Count -gt 0) {
+            Write-Host "  - Removing Defender CBS package(s) from the image ($($defenderPackages.Count))..." -ForegroundColor Cyan
+            foreach ($defPkg in $defenderPackages) {
+                & dism.exe /English "/image:$scratchDir" /Remove-Package "/PackageName:$($defPkg.PackageName)" /NoRestart > $null 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "    [OK] Removed $($defPkg.PackageName)" -ForegroundColor Green
+                } else {
+                    Write-Warning "    [WARN] DISM kept $($defPkg.PackageName) (exit $LASTEXITCODE); the online IFEO/service enforcement still applies."
+                }
+            }
+        }
+    } catch {
+        Write-Warning "  - Defender CBS package removal failed: $($_.Exception.Message)"
+    }
+
     # Note: WinSxS manifests, security catalogs (.cat), and System32 binaries are strictly preserved.
     # On Windows 11 24H2+, deleting hardlinked binaries outside DISM causes WIM stream corruption (Data Error 0x80070570)
     # and Code Integrity (ci.dll) failure with STATUS_INVALID_IMAGE_HASH (0xC0000428) -> Installer BSOD/reboot loop.

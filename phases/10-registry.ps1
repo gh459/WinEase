@@ -394,7 +394,12 @@ if (Test-TweakEnabled 'DisableWidgets' $true) {
 }
 
 if (Test-TweakEnabled 'HideRecommendedSection' $true) {
+    # The Explorer policy alone is only honoured on Education/Enterprise editions.
+    # The PolicyManager bridge is the documented workaround that makes the same
+    # policy remove the section on Pro as well (WinUtil / elevenforum).
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Explorer" /v "HideRecommendedSection" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\PolicyManager\current\device\Start" /v "HideRecommendedSection" /t REG_DWORD /d 1 /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\PolicyManager\current\device\Education" /v "IsEducationEnvironment" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\Explorer" /v "HideRecommendedSection" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\Explorer" /v "HideRecommendedSection" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "Start_IrisRecommendations" /t REG_DWORD /d 0 /f > $null 2>&1
@@ -630,66 +635,73 @@ if (Test-TweakEnabled 'TaskbarEndTask' $true) {
     reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings" /v "TaskbarEndTask" /t REG_DWORD /d 1 /f > $null 2>&1
 }
 
-# UI preferences seen in WinUtil / Win11Debloat / Bloatynosy / Debloat-Win11 (upstream sync
-# 2026-10). All of them are off by default; each one only writes the per-user hives.
-$uiPreferenceTweaks = @(
-    @{ On = (Test-TweakEnabled 'DisableSnapAssist' $false); Values = @(
-        @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced', 'SnapAssist', 'REG_DWORD', '0'),
-        @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced', 'EnableSnapAssistFlyout', 'REG_DWORD', '0'),
-        @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced', 'EnableSnapBar', 'REG_DWORD', '0')) }
-    @{ On = (Test-TweakEnabled 'DisableNotificationBanners' $false); Values = @(
-        @('Software\Microsoft\Windows\CurrentVersion\PushNotifications', 'ToastEnabled', 'REG_DWORD', '0')) }
-    @{ On = (Test-TweakEnabled 'HideExplorerHomeGallery' $false); Values = @(
-        @('Software\Classes\CLSID\{f874310e-b6b7-47dc-bc84-b9e6b38f5903}', 'System.IsPinnedToNameSpaceTree', 'REG_DWORD', '0'),
-        @('Software\Classes\CLSID\{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}', 'System.IsPinnedToNameSpaceTree', 'REG_DWORD', '0')) }
-    @{ On = (Test-TweakEnabled 'HideAltTabEdgeTabs' $false); Values = @(
-        @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced', 'MultiTaskingAltTabFilter', 'REG_DWORD', '3')) }
-    @{ On = (Test-TweakEnabled 'HideTaskViewButton' $false); Values = @(
-        @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced', 'ShowTaskViewButton', 'REG_DWORD', '0')) }
-    @{ On = (Test-TweakEnabled 'TaskbarNeverCombine' $false); Values = @(
-        @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced', 'TaskbarGlomLevel', 'REG_DWORD', '2'),
-        @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced', 'MMTaskbarGlomLevel', 'REG_DWORD', '2')) }
-    @{ On = (Test-TweakEnabled 'DisableGameMode' $false); Values = @(
-        @('Software\Microsoft\GameBar', 'AllowAutoGameMode', 'REG_DWORD', '0'),
-        @('Software\Microsoft\GameBar', 'AutoGameModeEnabled', 'REG_DWORD', '0')) }
-    @{ On = (Test-TweakEnabled 'ShowBatteryPercentage' $false); Values = @(
-        @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced', 'IsBatteryPercentageEnabled', 'REG_DWORD', '1')) }
-    @{ On = (Test-TweakEnabled 'AlwaysShowScrollbars' $false); Values = @(
-        @('Control Panel\Accessibility', 'DynamicScrollbars', 'REG_DWORD', '0')) }
-    @{ On = (Test-TweakEnabled 'HideOneDriveNavPane' $false); Values = @(
-        @('Software\Classes\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}', 'System.IsPinnedToNameSpaceTree', 'REG_DWORD', '0')) }
-    # AtlasOS main (AtlasModules/Scripts/Modules/Qol/Qol.psm1) and WinUtil main
-    # (config/tweaks.json): the accessibility hotkeys and the pointer / keyboard
-    # settings have to be REG_SZ, a REG_DWORD value is ignored by Windows.
-    @{ On = (Test-TweakEnabled 'DisableAccessibilityHotkeys' $false); Values = @(
-        @('Control Panel\Accessibility\StickyKeys', 'Flags', 'REG_SZ', '0'),
-        @('Control Panel\Accessibility\FilterKeys', 'Flags', 'REG_SZ', '0'),
-        @('Control Panel\Accessibility\ToggleKeys', 'Flags', 'REG_SZ', '0'),
-        @('Control Panel\Accessibility\MouseKeys', 'Flags', 'REG_SZ', '0'),
-        @('Control Panel\Accessibility\Keyboard Response', 'Flags', 'REG_SZ', '0'),
-        @('Keyboard Layout\Toggle', 'Hotkey', 'REG_SZ', '3'),
-        @('Keyboard Layout\Toggle', 'Language Hotkey', 'REG_SZ', '3'),
-        @('Keyboard Layout\Toggle', 'Layout Hotkey', 'REG_SZ', '3')) }
-    @{ On = (Test-TweakEnabled 'DisableMouseAcceleration' $false); Values = @(
-        @('Control Panel\Mouse', 'MouseSpeed', 'REG_SZ', '1'),
-        @('Control Panel\Mouse', 'MouseThreshold1', 'REG_SZ', '6'),
-        @('Control Panel\Mouse', 'MouseThreshold2', 'REG_SZ', '10')) }
-    @{ On = (Test-TweakEnabled 'DisableKeyboardDelay' $false); Values = @(
-        @('Control Panel\Keyboard', 'KeyboardDelay', 'REG_SZ', '0')) }
-)
-foreach ($uiTweak in $uiPreferenceTweaks) {
-    if (-not $uiTweak.On) { continue }
-    foreach ($v in $uiTweak.Values) {
-        foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
-            reg.exe add "HKLM\$userHive\$($v[0])" /v $v[1] /t $v[2] /d $v[3] /f > $null 2>&1
+# The UI preferences seen in WinUtil / Win11Debloat / Bloatynosy / Debloat-Win11
+# (upstream sync 2026-10) live in config\ui-preferences.psd1. All of them are off
+# by default; each one only writes the per-user hives.
+#
+# The table is a data file and not a nested array literal in this phase on
+# purpose. The @() operator unwraps a group that holds a single entry, so a
+# group with one entry arrived here as four separate strings: the four fields
+# of the entry were then read one by one and reg.exe was called with an empty
+# value name, an empty type and an empty data. A native call drops an empty
+# argument, so reg.exe read the '/f' switch as the data and wrote a key named
+# after the first character of the data, holding a value named '/t'. The next
+# build found that value, reg.exe asked "Overwrite (Yes/No)?" and waited for a
+# key press - the build hung in phase 10 and no ISO was produced.
+$uiPreferencePath = Join-Path -Path $scriptDir -ChildPath "config\ui-preferences.psd1"
+$uiPreferenceData = Import-PowerShellDataFile -LiteralPath $uiPreferencePath
+$uiPreferenceTweaks = @($uiPreferenceData.UiPreferences)
+
+# The keys that the broken table left behind are removed again, so an image
+# that was built with the old code does not keep them. Only a key whose single
+# value is named '/t' is removed - that is the signature of the bug, so a real
+# key of the image is never touched.
+function Remove-WinEaseBrokenUiPreferenceKey {
+    param([Parameter(Mandatory = $true)][string]$HiveName, [Parameter(Mandatory = $true)][string]$KeyName)
+    $hive = $null
+    try {
+        $hive = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($HiveName, $true)
+        if (-not $hive) { return }
+        $key = $hive.OpenSubKey($KeyName, $true)
+        if (-not $key) { return }
+        try {
+            $valueNames = @($key.GetValueNames())
+            if ($valueNames.Count -ne 1 -or $valueNames[0] -ne '/t') { return }
+        } finally {
+            $key.Close()
         }
+        $hive.DeleteSubKeyTree($KeyName, $false)
+        Write-Host "  -> Removed the leftover registry key '$HiveName\$KeyName' of the old UI preference table." -ForegroundColor Yellow
+    } catch {
+        Write-Verbose "Ignored: $($_.Exception.Message)"
+    } finally {
+        if ($hive) { $hive.Close() }
+    }
+}
+foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
+    foreach ($brokenKey in '0', '1', '3') {
+        Remove-WinEaseBrokenUiPreferenceKey -HiveName $userHive -KeyName $brokenKey | Out-Null
+    }
+}
+
+foreach ($v in $uiPreferenceTweaks) {
+    if (-not (Test-TweakEnabled $v.Tweak $false)) { continue }
+    # An empty field would be dropped by the native call and reg.exe would read
+    # the next switch as the value - the entry is skipped instead.
+    $emptyFields = @('Path', 'Name', 'Type', 'Data') | Where-Object { [string]::IsNullOrWhiteSpace([string]$v[$_]) }
+    if ($emptyFields.Count -gt 0) {
+        Write-Warning "Skipping the UI preference of '$($v.Tweak)': the field(s) $($emptyFields -join ', ') are empty."
+        continue
+    }
+    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
+        reg.exe add "HKLM\$userHive\$($v.Path)" /v $v.Name /t $v.Type /d $v.Data /f > $null 2>&1
     }
 }
 if (Test-TweakEnabled 'DisableLogonBlur' $false) {
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" /v "DisableAcrylicBackgroundOnLogon" /t REG_DWORD /d 1 /f > $null 2>&1
 }
 
-if (Test-TweakEnabled 'TaskbarAlignLeft' $false) {
+if (Test-TweakEnabled 'TaskbarAlignLeft' $true) {
     reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "TaskbarAl" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "TaskbarAl" /t REG_DWORD /d 0 /f > $null 2>&1
 }
@@ -721,7 +733,7 @@ if (Test-TweakEnabled 'MenuShowDelayZero' $true) {
     reg.exe add "HKLM\zDEFAULT\Control Panel\Desktop" /v "MenuShowDelay" /t REG_SZ /d "0" /f > $null 2>&1
 }
 
-if (Test-TweakEnabled 'TakeOwnershipContextMenu' $false) {
+if (Test-TweakEnabled 'TakeOwnershipContextMenu' $true) {
     reg.exe add "HKLM\zSOFTWARE\Classes\*\shell\runas" /f /ve /t REG_SZ /d "Take Ownership" > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Classes\*\shell\runas" /f /v "HasLUAShield" /t REG_SZ /d '""' > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Classes\*\shell\runas" /f /v "NoWorkingDirectory" /t REG_SZ /d '""' > $null 2>&1
@@ -732,7 +744,7 @@ if (Test-TweakEnabled 'TakeOwnershipContextMenu' $false) {
     reg.exe add "HKLM\zSOFTWARE\Classes\Directory\shell\runas\command" /f /ve /t REG_SZ /d 'powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f $p /r /d y; icacls.exe $p /grant administrators:F /t }" "%1"' > $null 2>&1
 }
 
-if (Test-TweakEnabled 'CmdAsAdminContextMenu' $false) {
+if (Test-TweakEnabled 'CmdAsAdminContextMenu' $true) {
     reg.exe add "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas" /f /ve /t REG_SZ /d "Open Command Prompt as Administrator" > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas" /f /v "HasLUAShield" /t REG_SZ /d '""' > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas\command" /f /ve /t REG_SZ /d 'PowerShell -windowstyle hidden -Command \"Start-Process cmd.exe -ArgumentList ''/s,/k,pushd,\"%V\"'' -Verb RunAs\"' > $null 2>&1
@@ -740,20 +752,50 @@ if (Test-TweakEnabled 'CmdAsAdminContextMenu' $false) {
 
 if (Test-TweakEnabled 'PhotoViewerAssociations' $true) {
     $photoViewerAssocs = @(
-        @{ Ext = ".bmp";  ProgId = "PhotoViewer.FileAssoc.Bitmap" },
-        @{ Ext = ".dib";  ProgId = "PhotoViewer.FileAssoc.Bitmap" },
-        @{ Ext = ".gif";  ProgId = "PhotoViewer.FileAssoc.Tiff" },
-        @{ Ext = ".jfif"; ProgId = "PhotoViewer.FileAssoc.JFIF" },
-        @{ Ext = ".jpe";  ProgId = "PhotoViewer.FileAssoc.Jpeg" },
-        @{ Ext = ".jpeg"; ProgId = "PhotoViewer.FileAssoc.Jpeg" },
-        @{ Ext = ".jpg";  ProgId = "PhotoViewer.FileAssoc.Jpeg" },
-        @{ Ext = ".png";  ProgId = "PhotoViewer.FileAssoc.Png" },
-        @{ Ext = ".tif";  ProgId = "PhotoViewer.FileAssoc.Tiff" },
-        @{ Ext = ".tiff"; ProgId = "PhotoViewer.FileAssoc.Tiff" },
-        @{ Ext = ".wdp";  ProgId = "PhotoViewer.FileAssoc.Wdp" }
+        @{ Ext = ".bmp";  ProgId = "PhotoViewer.FileAssoc.Bitmap"; Friendly = "Bitmap Image" },
+        @{ Ext = ".dib";  ProgId = "PhotoViewer.FileAssoc.Bitmap"; Friendly = "Bitmap Image" },
+        @{ Ext = ".gif";  ProgId = "PhotoViewer.FileAssoc.Gif";    Friendly = "GIF Image" },
+        @{ Ext = ".jfif"; ProgId = "PhotoViewer.FileAssoc.JFIF";   Friendly = "JPEG Image" },
+        @{ Ext = ".jpe";  ProgId = "PhotoViewer.FileAssoc.Jpeg";   Friendly = "JPEG Image" },
+        @{ Ext = ".jpeg"; ProgId = "PhotoViewer.FileAssoc.Jpeg";   Friendly = "JPEG Image" },
+        @{ Ext = ".jpg";  ProgId = "PhotoViewer.FileAssoc.Jpeg";   Friendly = "JPEG Image" },
+        @{ Ext = ".png";  ProgId = "PhotoViewer.FileAssoc.Png";    Friendly = "PNG Image" },
+        @{ Ext = ".tif";  ProgId = "PhotoViewer.FileAssoc.Tiff";   Friendly = "TIFF Image" },
+        @{ Ext = ".tiff"; ProgId = "PhotoViewer.FileAssoc.Tiff";   Friendly = "TIFF Image" },
+        @{ Ext = ".wdp";  ProgId = "PhotoViewer.FileAssoc.Wdp";    Friendly = "Windows Media Photo" }
     )
+    # The capabilities alone do not make a file type open with the classic viewer. The
+    # ProgID has to exist and the per-user UserChoice cache has to be cleared: Windows
+    # rejects a UserChoice key unless it contains the proprietary hash, so writing one
+    # offline never worked. Without the cache the per-user class default is used.
+    $photoViewerCommand = '"%SystemRoot%\System32\rundll32.exe" "%ProgramFiles%\Windows Photo Viewer\PhotoViewer.dll", ImageView_Fullscreen %1'
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities" /v "ApplicationName" /t REG_SZ /d "Windows Photo Viewer" /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities" /v "ApplicationDescription" /t REG_SZ /d "View pictures with Windows Photo Viewer" /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities" /v "ApplicationIcon" /t REG_SZ /d "%SystemRoot%\System32\imageres.dll,-70" /f > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\RegisteredApplications" /v "Windows Photo Viewer" /t REG_SZ /d "SOFTWARE\Microsoft\Windows Photo Viewer\Capabilities" /f > $null 2>&1
+    $registeredPhotoProgIds = @($photoViewerAssocs | ForEach-Object { $_.ProgId } | Sort-Object -Unique)
+    foreach ($progId in $registeredPhotoProgIds) {
+        $progKey = "HKLM\zSOFTWARE\Classes\$progId"
+        reg.exe add $progKey /ve /t REG_SZ /d "Windows Photo Viewer" /f > $null 2>&1
+        reg.exe add "$progKey\DefaultIcon" /ve /t REG_SZ /d "%SystemRoot%\System32\imageres.dll,-70" /f > $null 2>&1
+        # Do not pass the command through reg.exe: its embedded quotes make reg.exe
+        # interpret the value as extra arguments, so the open\command key was never
+        # created. The registry provider writes the string verbatim.
+        $commandKey = "Registry::HKEY_LOCAL_MACHINE\zSOFTWARE\Classes\$progId\shell\open\command"
+        New-Item -Path $commandKey -Force -ErrorAction Stop | Out-Null
+        Set-ItemProperty -Path $commandKey -Name '(default)' -Value $photoViewerCommand -ErrorAction Stop
+    }
     foreach ($pa in $photoViewerAssocs) {
         reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities\FileAssociations" /f /v $pa.Ext /t REG_SZ /d $pa.ProgId > $null 2>&1
+        # Expose the ProgID in "Open with" for all users.
+        reg.exe add "HKLM\zSOFTWARE\Classes\$($pa.Ext)\OpenWithProgids" /v $pa.ProgId /t REG_NONE /f > $null 2>&1
+        foreach ($uiHive in @('zNTUSER', 'zDEFAULT')) {
+            # A stale UserChoice wins over everything below it, and it cannot be forged
+            # offline (the hash depends on the user SID and the current time).
+            reg.exe delete "HKLM\$uiHive\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\$($pa.Ext)\UserChoice" /f > $null 2>&1
+            reg.exe add "HKLM\$uiHive\Software\Classes\$($pa.Ext)" /ve /t REG_SZ /d $pa.ProgId /f > $null 2>&1
+            reg.exe add "HKLM\$uiHive\Software\Classes\$($pa.Ext)\OpenWithProgids" /v $pa.ProgId /t REG_NONE /f > $null 2>&1
+        }
     }
 }
 
@@ -901,7 +943,12 @@ if (Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue) {
     # The targets below remove a service and its binary. The binary is removed by the
     # engine the user picked, so the service has to be disabled in any case - otherwise
     # the image keeps a service whose binary is gone.
-    if (Test-WinEaseDebloatTargetSelected -Item 'Physical: Defender (complete removal) [~50MB]') {
+    # The Defender services are only disabled when the user asked for the Defender to be
+    # removed. The "Physical: Defender" target of the Advanced Debloat tab is a second way
+    # to ask for the same thing, but it must never disable the Defender on its own: the
+    # conflict matrix removes the target when "RemoveDefender" is off, and this guard makes
+    # sure that a target that reaches this phase anyway cannot kill the Defender.
+    if ($removeDefender -and (Test-WinEaseDebloatTargetSelected -Item 'Physical: Defender (complete removal) [~50MB]')) {
         $advServices["WinDefend"] = 4
         $advServices["MDCoreSvc"] = 4
         $advServices["WdNisSvc"] = 4
@@ -927,6 +974,33 @@ if (Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue) {
     foreach ($svc in $advServices.GetEnumerator()) {
         Write-Host "  - Disabling service: $($svc.Key) (Advanced Debloat)" -ForegroundColor Cyan
         [void](Set-WinEaseServiceStartIfPresent -Name $svc.Key -Start $svc.Value)
+    }
+}
+
+# Staged AppX registrations of the packages phase 05 removed from the image.
+# The offline pass removes the provisioned package and deletes its payload folder under
+# "Program Files\WindowsApps", but the image keeps the STAGED copy of the inbox app
+# ("AppxAllUserStore\InboxApp"). Windows installs that staged copy for the first user, so
+# the app is registered while its payload is gone: it starts and renders a white window.
+# Taking the staged registration out of the SOFTWARE hive prevents the installation.
+if ($script:WinEaseRemovedAppxPackages -and $script:WinEaseRemovedAppxPackages.Count -gt 0) {
+    $inboxRemoved = 0
+    foreach ($removedPkg in $script:WinEaseRemovedAppxPackages) {
+        $inboxKeys = @("HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\InboxApp\$($removedPkg.FullName)")
+        if ($removedPkg.PublisherId) {
+            # some builds stage the package without its version
+            $inboxKeys += "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\InboxApp\$($removedPkg.ShortName)_$($removedPkg.PublisherId)"
+        }
+        foreach ($inboxKey in $inboxKeys) {
+            $null = & reg.exe query $inboxKey 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                reg.exe delete $inboxKey /f > $null 2>&1
+                if ($LASTEXITCODE -eq 0) { $inboxRemoved++ }
+            }
+        }
+    }
+    if ($inboxRemoved -gt 0) {
+        Write-Host "  - Removed $inboxRemoved staged AppX registration(s) of the removed packages" -ForegroundColor Green
     }
 }
 
@@ -977,7 +1051,7 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
     # redirected every reg.exe call to "> $null 2>&1", so a failed delete (e.g. a key still
     # owned by TrustedInstaller) was indistinguishable from a successful one and the build
     # continued with Defender still registered.
-    $defServices = @('WinDefend', 'MDCoreSvc', 'WdNisSvc', 'Sense', 'SecurityHealthService', 'wscsvc', 'webthreatdefsvc', 'webthreatdefusersvc', 'SgrmBroker', 'SgrmAgent', 'whesvc')
+    $defServices = @('WinDefend', 'MDCoreSvc', 'WdNisSvc', 'Sense', 'SecurityHealthService', 'wscsvc', 'webthreatdefsvc', 'webthreatdefusersvc', 'SgrmBroker', 'SgrmAgent')
     $failedDefSvc = [System.Collections.Generic.List[string]]::new()
     foreach ($svc in $defServices) {
         reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\$svc" /v "Start" /t REG_DWORD /d 4 /f > $null 2>&1
@@ -1017,6 +1091,62 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
     reg.exe delete "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v "SecurityHealth" /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.SecHealthUI_8wekyb3d8bbwe" /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.Windows.SecHealthUI_cw5n1h2txyewy" /f > $null 2>&1
+
+    # --- Windows Security UI: remove the package, not only its service -----------------
+    # Remove-AppxProvisionedPackage refuses to remove Microsoft.SecHealthUI ("protected by
+    # Windows"), so phase 05 removes the payload directly. Clear the staged registrations
+    # and the AppRepository rows here; otherwise the first user gets a registered app with
+    # no payload (a white window) or Windows re-installs it from the provisioning store.
+    foreach ($secRoot in @(
+        'Registry::HKEY_LOCAL_MACHINE\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Applications',
+        'Registry::HKEY_LOCAL_MACHINE\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\InboxApp',
+        'Registry::HKEY_LOCAL_MACHINE\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\PendingDeployment',
+        'Registry::HKEY_LOCAL_MACHINE\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned',
+        'Registry::HKEY_LOCAL_MACHINE\zSOFTWARE\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages'
+    )) {
+        if (Test-Path -LiteralPath $secRoot) {
+            Get-ChildItem -LiteralPath $secRoot -Force -ErrorAction SilentlyContinue |
+                Where-Object { $_.PSChildName -match 'SecHealthUI' } |
+                ForEach-Object {
+                    try { Remove-Item -LiteralPath $_.PSPath -Recurse -Force -ErrorAction Stop } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+                }
+        }
+    }
+    foreach ($secGlobRoot in @(
+        "$scratchDir\Program Files\WindowsApps",
+        "$scratchDir\Windows\SystemApps",
+        "$scratchDir\ProgramData\Microsoft\Windows\AppRepository\Packages"
+    )) {
+        if (Test-Path -LiteralPath $secGlobRoot) {
+            Get-ChildItem -LiteralPath $secGlobRoot -Force -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match 'SecHealthUI' } |
+                ForEach-Object { [void](Remove-WinEaseTreeRobust -Path $_.FullName -SafetyRoot $scratchDir) }
+        }
+    }
+
+    # --- IFEO traps: the engine cannot be started even if CBS re-registers a service ---
+    # A Debugger value makes Windows launch the stub instead of the requested image. The
+    # services are also deleted below; this is the second line of defence for a servicing
+    # pass that re-creates them.
+    $defIfeoNames = @(
+        'MsMpEng.exe', 'MpCmdRun.exe', 'NisSrv.exe', 'Sense.exe', 'MpCopyAccelerator.exe',
+        'MpSigStub.exe', 'SecurityHealthService.exe', 'SecurityHealthSystray.exe',
+        'SecurityHealthHost.exe', 'SecHealthUI.exe'
+    )
+    foreach ($ifeoName in $defIfeoNames) {
+        $ifeoKey = "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$ifeoName"
+        reg.exe add $ifeoKey /v "Debugger" /t REG_SZ /d "%SystemRoot%\System32\systray.exe" /f > $null 2>&1
+    }
+    # The Defender and Security Center scheduled tasks are re-created from the task store.
+    foreach ($taskFolder in @(
+        "$scratchDir\Windows\System32\Tasks\Microsoft\Windows\Windows Defender",
+        "$scratchDir\Windows\System32\Tasks\Microsoft\Windows\SecurityCenter",
+        "$scratchDir\Windows\System32\Tasks\Microsoft\Windows\Windows Security"
+    )) {
+        if (Test-Path -LiteralPath $taskFolder) {
+            [void](Remove-WinEaseTreeRobust -Path $taskFolder -SafetyRoot $scratchDir)
+        }
+    }
 
     # Windows Defender Remover release13-rev1: the Microsoft Security core drivers of 24H2+
     # (disabled, not deleted: they are boot-start filters), the Defender ETW autologgers,
@@ -1121,13 +1251,29 @@ if (Test-TweakEnabled 'DisableFastStartup' $false) {
 }
 
 if (Test-TweakEnabled 'TransparentShortcutOverlay' $false) {
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Icons" /v "29" /t REG_EXPAND_SZ /d "%SystemRoot%\System32\imageres.dll,-17" /f > $null 2>&1
+    # Resource -50 in shell32.dll is the transparent icon; the previous value
+    # pointed at a visible icon, so it replaced the arrow with a glyph instead
+    # of removing it.
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Icons" /v "29" /t REG_EXPAND_SZ /d "%SystemRoot%\System32\shell32.dll,-50" /f > $null 2>&1
 }
 
 if (Test-TweakEnabled 'OptimizeVisualEffects' $true) {
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v "VisualFXSetting" /t REG_DWORD /d 2 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Control Panel\Desktop\WindowMetrics" /v "MinAnimate" /t REG_SZ /d "0" /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "TaskbarAnimations" /t REG_DWORD /d 0 /f > $null 2>&1
+    # "Adjust for best performance" is more than VisualFXSetting=2: Windows reads the
+    # per-user UserPreferencesMask and the individual animation values. The old block
+    # wrote only three values, so window/menu/taskbar animations stayed enabled.
+    foreach ($uiHive in @('zNTUSER', 'zDEFAULT')) {
+        reg.exe add "HKLM\$uiHive\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v "VisualFXSetting" /t REG_DWORD /d 2 /f > $null 2>&1
+        reg.exe add "HKLM\$uiHive\Control Panel\Desktop\WindowMetrics" /v "MinAnimate" /t REG_SZ /d "0" /f > $null 2>&1
+        reg.exe add "HKLM\$uiHive\Control Panel\Desktop" /v "DragFullWindows" /t REG_SZ /d "0" /f > $null 2>&1
+        reg.exe add "HKLM\$uiHive\Control Panel\Desktop" /v "UserPreferencesMask" /t REG_BINARY /d "9012038010000000" /f > $null 2>&1
+        reg.exe add "HKLM\$uiHive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "TaskbarAnimations" /t REG_DWORD /d 0 /f > $null 2>&1
+        reg.exe add "HKLM\$uiHive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "ListviewAlphaSelect" /t REG_DWORD /d 0 /f > $null 2>&1
+        reg.exe add "HKLM\$uiHive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "ListviewShadow" /t REG_DWORD /d 0 /f > $null 2>&1
+        reg.exe add "HKLM\$uiHive\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v "EnableTransparency" /t REG_DWORD /d 0 /f > $null 2>&1
+        # The accessibility animation switch is the setting the shell honours even when
+        # a theme or an app re-enables the explorer animations.
+        reg.exe add "HKLM\$uiHive\Control Panel\Accessibility\Animation" /v "Flags" /t REG_SZ /d "0" /f > $null 2>&1
+    }
 }
 
 if (Test-TweakEnabled 'CleanContextMenus' $true) {
@@ -1172,7 +1318,10 @@ if ($bypassActivationRestrictions -or (Test-TweakEnabled 'BypassActivationRestri
     reg.exe add "HKLM\zDEFAULT\Control Panel\Desktop" /v "PaintDesktopVersion" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zNTUSER\Control Panel\Desktop" /v "PaintDesktopVersion" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows" /v "DisplayNotGenuine" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Personalization" /v "NoLockScreen" /t REG_DWORD /d 0 /f > $null 2>&1
+    # Do not force NoLockScreen=0 here: the personalization unlock used to overwrite the
+    # DisableLockScreen option. The value follows the user's lock-screen choice.
+    $noLockScreenValue = if (Test-TweakEnabled 'DisableLockScreen' $false) { 1 } else { 0 }
+    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Personalization" /v "NoLockScreen" /t REG_DWORD /d $noLockScreenValue /f > $null 2>&1
     reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Policies\ActiveDesktop" /v "NoChangingWallPaper" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Policies\ActiveDesktop" /v "NoChangingWallPaper" /t REG_DWORD /d 0 /f > $null 2>&1
     reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "NoThemesTab" /t REG_DWORD /d 0 /f > $null 2>&1

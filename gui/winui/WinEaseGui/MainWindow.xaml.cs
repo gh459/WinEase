@@ -197,6 +197,7 @@ public sealed partial class MainWindow : Window
             ("services", _s.Get("Tab.Services"), "\uE713"),
             ("debloat", _s.Get("Tab.Debloat"), "\uE74D"),
             ("migration", _s.Get("Tab.Migration"), "\uE895"),
+            ("customscripts", _s.Get("Tab.CustomScripts"), "\uE8C8"),
             ("user", _s.Get("Tab.UserTweaks"), "\uE77B"),
         };
         Nav.MenuItems.Clear();
@@ -242,6 +243,7 @@ public sealed partial class MainWindow : Window
             case "services": BuildServicesPage(); break;
             case "debloat": BuildDebloatPage(); break;
             case "migration": BuildMigrationPage(); break;
+            case "customscripts": BuildCustomScriptsPage(); break;
             case "user": BuildUserTweaksPage(); break;
         }
         PageScroll.ChangeView(null, 0, null, true);
@@ -685,13 +687,23 @@ public sealed partial class MainWindow : Window
     {
         PageTitle.Text = CleanTabText(_s.Get("Tab.Migration"));
 
-        // Post-install migration assistant switch
+        // Post-install migration assistant switch and the backup bundle opt-out
         var assist = _init.Components.FirstOrDefault(c => c.Key == "IncludeMigrationAssistant");
+        ToggleSwitch? backupToggle = null;
         if (assist != null)
         {
             PageHost.Children.Add(Section(_s.Get("Mig.Group.Assistant")));
             var toggle = Toggle(_components.GetValueOrDefault(assist.Key, assist.Default), v => _components[assist.Key] = v);
             PageHost.Children.Add(SettingCard(ComponentText(assist), ComponentDescription(assist), toggle, "\uE8F1"));
+
+            var backupDef = _init.Components.FirstOrDefault(c => c.Key == "IncludeMigrationBackup");
+            if (backupDef != null)
+            {
+                backupToggle = Toggle(_components.GetValueOrDefault(backupDef.Key, backupDef.Default), v => _components[backupDef.Key] = v);
+                backupToggle.IsEnabled = toggle.IsOn;
+                PageHost.Children.Add(SettingCard(ComponentText(backupDef), ComponentDescription(backupDef), backupToggle, "\uE8F1"));
+                toggle.Toggled += (_, _) => { if (backupToggle != null) backupToggle.IsEnabled = toggle.IsOn; };
+            }
         }
 
         // Backup destination, secrets, conflict policy
@@ -868,6 +880,194 @@ public sealed partial class MainWindow : Window
             ["IncludeSecrets"] = !_migExcludeSecrets,
             ["ConflictPolicy"] = _migConflict,
         };
+    }
+
+    // =======================================================================================================
+    // Page 10: custom scripts (tools\custom-scripts\<Stage>)
+    // =======================================================================================================
+    private static readonly string[] CustomScriptStages = { "PreBuild", "OfflineImage", "FirstLogon", "UserOnce" };
+    private static readonly string[] CustomScriptExtensions = { ".ps1", ".bat", ".cmd", ".reg" };
+    private readonly List<JsonObject> _csScripts = new();
+    private string _csStage = "FirstLogon";
+    private int _csSelected = -1;
+
+    private void BuildCustomScriptsPage()
+    {
+        PageTitle.Text = CleanTabText(_s.Get("Tab.CustomScripts"));
+
+        // Stage selection
+        PageHost.Children.Add(Section(_s.Get("CS.Group.Stage")));
+        var stagePanel = new StackPanel { Spacing = 6 };
+        var combo = new ComboBox { MinWidth = 220 };
+        foreach (string st in CustomScriptStages) combo.Items.Add(st);
+        combo.SelectedItem = _csStage;
+        var info = new TextBlock { Text = _s.Get("CS.Stage.Info", _csStage), TextWrapping = TextWrapping.Wrap, Foreground = Res("TextFillColorSecondaryBrush") };
+        var list = new StackPanel { Spacing = 2 };
+        combo.SelectionChanged += async (_, _) =>
+        {
+            _csStage = (combo.SelectedItem as string) ?? "FirstLogon";
+            _csSelected = -1;
+            info.Text = _s.Get("CS.Stage.Info", _csStage);
+            await LoadCustomScriptsAsync(list);
+        };
+        stagePanel.Children.Add(FieldRow(_s.Get("CS.Label.Stage"), combo,
+            Btn(_s.Get("CS.Button.OpenFolder"), async (_, _) => await RunAndShowAsync("customScriptOpenFolder", new JsonObject { ["Stage"] = _csStage }))));
+        stagePanel.Children.Add(info);
+        PageHost.Children.Add(Card(stagePanel));
+
+        // The scripts of the stage
+        PageHost.Children.Add(Section(_s.Get("CS.Group.Scripts")));
+        var scroll = new ScrollViewer { Content = list, MaxHeight = 320, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto };
+        PageHost.Children.Add(Card(scroll));
+        _ = LoadCustomScriptsAsync(list);
+
+        // Actions
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        actions.Children.Add(Btn(_s.Get("CS.Button.Add"), async (_, _) => await AddCustomScriptsAsync(list)));
+        actions.Children.Add(Btn(_s.Get("CS.Button.Remove"), async (_, _) => await RemoveCustomScriptAsync(list)));
+        actions.Children.Add(Btn(_s.Get("CS.Button.Edit"), async (_, _) => await EditCustomScriptAsync(list)));
+        actions.Children.Add(Btn(_s.Get("CS.Button.Reorder"), async (_, _) => await ReorderCustomScriptAsync(list)));
+        actions.Children.Add(Btn(_s.Get("CS.Button.Preview"), async (_, _) => await RunAndShowAsync("customScriptPreview", null, true)));
+        PageHost.Children.Add(Card(actions));
+    }
+
+    // The scripts of the selected stage (the engine runs in the builder process)
+    private async Task LoadCustomScriptsAsync(StackPanel host)
+    {
+        var r = await _bridge.RequestAsync("customScripts", _s.Language, new JsonObject { ["Stage"] = _csStage });
+        _csScripts.Clear();
+        foreach (var n in InitData.Arr(r["Data"]))
+        {
+            if (n is JsonObject o) _csScripts.Add(o);
+        }
+        host.Children.Clear();
+        if (_csScripts.Count == 0)
+        {
+            host.Children.Add(new TextBlock { Text = _s.Get("CS.Msg.Empty"), Foreground = Res("TextFillColorSecondaryBrush"), TextWrapping = TextWrapping.Wrap });
+            return;
+        }
+        for (int i = 0; i < _csScripts.Count; i++)
+        {
+            var s = _csScripts[i];
+            int index = i;
+            var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(4, 2, 4, 2) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var name = new TextBlock { Text = InitData.Str(s["Name"]), TextWrapping = TextWrapping.Wrap };
+            var order = new TextBlock { Text = InitData.Str(s["Order"]), Foreground = Res("TextFillColorSecondaryBrush") };
+            var type = new TextBlock { Text = InitData.Str(s["Type"]), Foreground = Res("TextFillColorSecondaryBrush") };
+            var desc = new TextBlock { Text = InitData.Str(s["Description"]), Foreground = Res("TextFillColorSecondaryBrush"), TextWrapping = TextWrapping.Wrap };
+            row.Children.Add(name);
+            Grid.SetColumn(order, 1);
+            row.Children.Add(order);
+            Grid.SetColumn(type, 2);
+            row.Children.Add(type);
+            Grid.SetColumn(desc, 3);
+            row.Children.Add(desc);
+            var btn = new Button { Content = row, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left };
+            btn.Click += (_, _) => _csSelected = index;
+            host.Children.Add(btn);
+        }
+    }
+
+    private JsonObject? SelectedCustomScript()
+    {
+        if (_csSelected < 0 || _csSelected >= _csScripts.Count) return null;
+        return _csScripts[_csSelected];
+    }
+
+    private async Task AddCustomScriptsAsync(StackPanel list)
+    {
+        var paths = await PickFilesAsync(CustomScriptExtensions);
+        if (paths.Count == 0) return;
+        var arr = new JsonArray();
+        foreach (string p in paths) arr.Add(p);
+        await RunAndShowAsync("customScriptAdd", new JsonObject { ["Stage"] = _csStage, ["Paths"] = arr });
+        await LoadCustomScriptsAsync(list);
+    }
+
+    private async Task RemoveCustomScriptAsync(StackPanel list)
+    {
+        var sel = SelectedCustomScript();
+        if (sel == null)
+        {
+            await MessageAsync(_s.Get("Msg.Title.Default"), _s.Get("CS.Msg.NoSelection"), "Warning");
+            return;
+        }
+        string name = InitData.Str(sel["Name"]);
+        if (!await ConfirmAsync(_s.Get("CS.Button.Remove"), _s.Format("CS.Msg.ConfirmRemove", name))) return;
+        await RunAndShowAsync("customScriptRemove", new JsonObject { ["Stage"] = _csStage, ["Path"] = InitData.Str(sel["Path"]) });
+        _csSelected = -1;
+        await LoadCustomScriptsAsync(list);
+    }
+
+    private async Task EditCustomScriptAsync(StackPanel list)
+    {
+        var sel = SelectedCustomScript();
+        if (sel == null)
+        {
+            await MessageAsync(_s.Get("Msg.Title.Default"), _s.Get("CS.Msg.NoSelection"), "Warning");
+            return;
+        }
+        var order = new TextBox { Text = InitData.Str(sel["Order"]) };
+        var condition = new TextBox { Text = InitData.Str(sel["Condition"]) };
+        var onError = new ComboBox { MinWidth = 140 };
+        foreach (string v in new[] { "Warn", "Stop", "Ignore" }) onError.Items.Add(v);
+        string current = InitData.Str(sel["OnError"], "Warn");
+        onError.SelectedItem = onError.Items.Contains(current) ? current : "Warn";
+        var description = new TextBox { Text = InitData.Str(sel["Description"]) };
+        var panel = new StackPanel { Spacing = 8 };
+        panel.Children.Add(FieldRow(_s.Get("CS.Dlg.Meta.Order"), order));
+        panel.Children.Add(FieldRow(_s.Get("CS.Dlg.Meta.Condition"), condition));
+        panel.Children.Add(FieldRow(_s.Get("CS.Dlg.Meta.OnError"), onError));
+        panel.Children.Add(FieldRow(_s.Get("CS.Dlg.Meta.Description"), description));
+        panel.Children.Add(new TextBlock { Text = _s.Get("CS.Dlg.Meta.Hint"), TextWrapping = TextWrapping.Wrap, Foreground = Res("TextFillColorSecondaryBrush") });
+        var dlg = new ContentDialog
+        {
+            XamlRoot = Content.XamlRoot,
+            Title = _s.Get("CS.Dlg.Meta.Title"),
+            Content = panel,
+            PrimaryButtonText = _s.Get("Button.Save", "Save"),
+            CloseButtonText = _s.Get("Button.Cancel", "Cancel"),
+        };
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+        await RunAndShowAsync("customScriptMeta", new JsonObject
+        {
+            ["Path"] = InitData.Str(sel["Path"]),
+            ["Order"] = order.Text.Trim(),
+            ["Condition"] = condition.Text.Trim(),
+            ["OnError"] = (onError.SelectedItem as string) ?? "Warn",
+            ["Description"] = description.Text.Trim(),
+        });
+        await LoadCustomScriptsAsync(list);
+    }
+
+    private async Task ReorderCustomScriptAsync(StackPanel list)
+    {
+        var sel = SelectedCustomScript();
+        if (sel == null)
+        {
+            await MessageAsync(_s.Get("Msg.Title.Default"), _s.Get("CS.Msg.NoSelection"), "Warning");
+            return;
+        }
+        string name = InitData.Str(sel["Name"]);
+        var order = new TextBox { Text = InitData.Str(sel["Order"]) };
+        var panel = new StackPanel { Spacing = 8 };
+        panel.Children.Add(new TextBlock { Text = _s.Format("CS.Dlg.Reorder.Hint", name), TextWrapping = TextWrapping.Wrap });
+        panel.Children.Add(FieldRow(_s.Get("CS.Dlg.Meta.Order"), order));
+        var dlg = new ContentDialog
+        {
+            XamlRoot = Content.XamlRoot,
+            Title = _s.Get("CS.Dlg.Reorder.Title"),
+            Content = panel,
+            PrimaryButtonText = _s.Get("Button.Save", "Save"),
+            CloseButtonText = _s.Get("Button.Cancel", "Cancel"),
+        };
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+        await RunAndShowAsync("customScriptReorder", new JsonObject { ["Path"] = InitData.Str(sel["Path"]), ["Order"] = order.Text.Trim() });
+        await LoadCustomScriptsAsync(list);
     }
 
     // =======================================================================================================
@@ -1224,6 +1424,23 @@ public sealed partial class MainWindow : Window
             await MessageAsync(_s.Get("Msg.Title.Default"), _s.Format("Msg.Error", ex.Message), "Error");
             return null;
         }
+    }
+
+    private async Task<List<string>> PickFilesAsync(IEnumerable<string> extensions)
+    {
+        var picked = new List<string>();
+        try
+        {
+            var picker = new FileOpenPicker(AppWindow.Id);
+            foreach (string e in extensions) picker.FileTypeFilter.Add(e);
+            var files = await picker.PickMultipleFilesAsync();
+            foreach (var f in files) picked.Add(f.Path);
+        }
+        catch (Exception ex)
+        {
+            await MessageAsync(_s.Get("Msg.Title.Default"), _s.Format("Msg.Error", ex.Message), "Error");
+        }
+        return picked;
     }
 
     private async Task<string?> PickSaveFileAsync(string suggestedName, string typeName, string extension)

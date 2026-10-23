@@ -69,6 +69,7 @@ param(
     [switch]$KeepBasicApps,
     [switch]$KeepSearchIndex,
     [switch]$IncludeMigrationAssistant,
+    [switch]$IncludeMigrationBackup,
     [string]$ComparePreset,
 
     # 1. Windows Defender
@@ -157,6 +158,9 @@ param(
     [switch]$KeepAppxBloatware,
     [alias("NoAppxBloatware")]
     [switch]$RemoveAppxBloatware,
+    [switch]$RemoveCameraApp,
+    [switch]$RemovePhotosApp,
+    [switch]$RemoveScreenSketchApp,
 
     # 16. Fast VHDX Scratch Disk
     [alias("FastVHDX", "VHDX")]
@@ -1233,8 +1237,10 @@ try {
     # directory of that other build: the directory of a running build is still empty, so the
     # "drop empty dirs" rule would pick it up and the report of the running build would be
     # lost. Only the directories that existed before this build started are rotated.
+    # Dry runs and test-mode invocations are not builds and must never rotate the
+    # diagnostics of a real build that is running in parallel.
     $diagRootDir = Join-Path -Path $scriptDir -ChildPath "build_diagnostics"
-    if (Test-Path -LiteralPath $diagRootDir) {
+    if ((-not $isDryRunMode) -and ($env:WINEASE_TEST_MODE -ne "1") -and (Test-Path -LiteralPath $diagRootDir)) {
         $rotatableDirs = @(Get-ChildItem -LiteralPath $diagRootDir -Directory -ErrorAction SilentlyContinue |
             Where-Object { $_.LastWriteTime -lt $script:BuilderStartTime })
         $rotatableDirs |
@@ -1934,34 +1940,47 @@ if (-not (Test-Path -LiteralPath $logsDir)) {
     New-Item -ItemType Directory -Force -Path $logsDir -ErrorAction SilentlyContinue | Out-Null
 }
 $configSnapshotPath = Join-Path -Path $logsDir -ChildPath "WinEase_$timestampStr.config.json"
+# Use the normalized current configuration instead of the individual script variables.
+# A [switch] that arrived through a GUI/profile object can otherwise be serialized as
+# {"IsPresent":true} and the snapshot then lies about booleans.
+$snapshotSource = Get-WinEaseCurrentConfig -ProfileName $(if ($selectedProfile) { $selectedProfile } else { 'Extreme (Default)' })
+$snapshotTweaks = [ordered]@{}
+if ($snapshotSource.TweakSettings) {
+    foreach ($tk in $snapshotSource.TweakSettings.Keys) { $snapshotTweaks[[string]$tk] = [bool]$snapshotSource.TweakSettings[$tk] }
+}
 $resolvedConfig = [PSCustomObject]@{
     Timestamp                  = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
     Version                    = $script:WinEaseVersion
     Profile                    = if ($selectedProfile) { $selectedProfile } else { 'Extreme (Default)' }
     Architecture               = $architecture
-    RemoveDefender             = $removeDefender
-    KeepAsianIME               = $keepAsianIME
-    KeepExtraFonts             = $keepExtraFonts
-    RemoveDrivers              = $removeDrivers
-    DisableWindowsUpdate       = $disableWU
-    KeepBluetooth              = $keepBT
-    WSLSupport                 = $wslSupport
-    KeepRecoveryEnv            = $keepRecoveryEnv
-    BypassActivationRestrictions = $bypassActivationRestrictions
-    RadicalRAM                 = $radicalRAM
-    SafeDebloatMode            = $safeDebloatMode
-    UltraSlimMode              = $ultraSlimMode
-    SetJapaneseKeyboard        = $setJapaneseKeyboard
-    AtlasReviOSMode            = $atlasReviOSMode
-    RemoveStore                = $removeStore
-    KeepXboxServices           = $keepXboxServices
-    RemoveAppxBloatware        = $removeAppxBloatware
-    KeepAudioTweaks            = $keepAudioTweaks
+    RemoveDefender             = [bool]$snapshotSource.RemoveDefender
+    KeepAsianIME               = [bool]$snapshotSource.KeepAsianIME
+    KeepExtraFonts             = [bool]$snapshotSource.KeepExtraFonts
+    RemoveDrivers              = [bool]$snapshotSource.RemoveDrivers
+    DisableWindowsUpdate       = [bool]$snapshotSource.DisableWindowsUpdate
+    KeepBluetooth              = [bool]$snapshotSource.KeepBluetooth
+    WSLSupport                 = [bool]$snapshotSource.WSLSupport
+    KeepRecoveryEnv            = [bool]$snapshotSource.KeepRecoveryEnv
+    BypassActivationRestrictions = [bool]$snapshotSource.BypassActivationRestrictions
+    RadicalRAM                 = [bool]$snapshotSource.RadicalRAM
+    SafeDebloatMode            = [bool]$snapshotSource.SafeDebloatMode
+    UltraSlimMode              = [bool]$snapshotSource.UltraSlimMode
+    SetJapaneseKeyboard        = [bool]$snapshotSource.SetJapaneseKeyboard
+    AtlasReviOSMode            = [bool]$snapshotSource.AtlasReviOSMode
+    RemoveStore                = [bool]$snapshotSource.RemoveStore
+    KeepXboxServices           = [bool]$snapshotSource.KeepXboxServices
+    RemoveAppxBloatware        = [bool]$snapshotSource.RemoveAppxBloatware
+    RemoveCameraApp            = [bool]$snapshotSource.RemoveCameraApp
+    RemovePhotosApp            = [bool]$snapshotSource.RemovePhotosApp
+    RemoveScreenSketchApp      = [bool]$snapshotSource.RemoveScreenSketchApp
+    IncludeMigrationAssistant  = [bool]$snapshotSource.IncludeMigrationAssistant
+    IncludeMigrationBackup     = [bool]$snapshotSource.IncludeMigrationBackup
+    KeepAudioTweaks            = [bool]$snapshotSource.KeepAudioTweaks
     AllowPhysicalDebloat       = [bool]$allowPhysicalDebloat
     AdvancedDebloatStandard    = @($script:advancedDebloatStandard)
     AdvancedDebloatExperimental = @($script:advancedDebloatExperimental)
     PayloadFormat              = if ($exportESDMode) { "ESD" } elseif ($splitWIMMode) { "SWM" } else { "WIM" }
-    TweakSettings              = $script:TweakSettings
+    TweakSettings              = $snapshotTweaks
 }
 try {
     $configJson = $resolvedConfig | ConvertTo-Json -Depth 6
@@ -1988,12 +2007,17 @@ Write-Host "  - AtlasOS & ReviOS Tuning: $atlasReviOSMode"
 Write-Host "  - Remove Microsoft Store:  $removeStore"
 Write-Host "  - Keep Xbox Services:      $keepXboxServices"
 Write-Host "  - Remove AppX Bloatware:   $removeAppxBloatware"
+Write-Host "  - Remove Camera app:       $removeCameraApp"
+Write-Host "  - Remove Photos app:       $removePhotosApp"
+Write-Host "  - Remove Screen Sketch:    $removeScreenSketchApp"
+Write-Host "  - Include Migration Tool:  $includeMigrationAssistant"
+Write-Host "  - Bundle Migration Backup: $includeMigrationBackup"
 Write-Host "  - Low-Latency Audio MMCSS: $keepAudioTweaks"
 Write-Host "  - Search Indexing:         $(if ($keepSearchIndex) { 'Enabled (kept)' } else { 'Disabled (WSearch service off + SearchHost blocked)' })"
 Write-Host "  - Force WinSxS Cleanup:    $ForceWinSxSCleanup (experimental, opt-in)"
 if ($removeDefender) {
     Write-Host "  [!] Defender is removed: the installed system has NO antivirus protection." -ForegroundColor Yellow
-    Write-Host "      Recovery: 'Set-MpPreference -DisableRealtimeMonitoring \$false' and 'sc.exe config WinDefend start= delayed-auto' (see docs\SECURITY_OPTIONS.md)" -ForegroundColor Yellow
+    Write-Host "      Recovery: Defender cannot be re-enabled in place; use a repair install or reinstall (see docs\SECURITY_OPTIONS.md)." -ForegroundColor Yellow
 }
 if ($disableWU) {
     Write-Host "  [!] Windows Update is disabled: the installed system receives no patches until it is re-enabled." -ForegroundColor Yellow
@@ -2346,7 +2370,11 @@ try {
     foreach ($cf in $conflictCheck.Conflicts) {
         if (-not $cf.Safeguard) { continue }
         if ($cf.Safeguard.Action -eq 'ClearExperimental') {
-            $removedBySafeguard.AddRange(@($script:advancedDebloatExperimental))
+            # The cast to [string[]] is required: AddRange takes an IEnumerable<string>,
+            # and a plain Object[] is not converted by the method binder (it throws a
+            # MethodException), so the build died here whenever the physical debloat
+            # needed its consent.
+            $removedBySafeguard.AddRange([string[]]@($script:advancedDebloatExperimental))
             $script:advancedDebloatExperimental = @()
             if ($script:TweakSettings.Contains('PhysicalDebloat')) { $script:TweakSettings['PhysicalDebloat'] = $false }
             Write-Host "  [Safety] The physical debloat needs the explicit consent (-AllowPhysicalDebloat): the experimental deletions were cleared." -ForegroundColor Yellow

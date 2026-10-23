@@ -1028,6 +1028,154 @@ Describe "WinEase helpers - configuration conflict resolution (Test-WinEaseConfi
         $gate.Count | Should Be 1
         $gate[0].Safeguard.Action | Should Be 'ClearExperimental'
     }
+
+    It "detects the Defender conflict in the experimental debloat list" {
+        $cfg = [PSCustomObject]@{
+            RemoveDefender = $false
+            AdvancedDebloatStandard = @()
+            AdvancedDebloatExperimental = @('Physical: Defender (complete removal) [~50MB]')
+        }
+        $res = Test-WinEaseConfigConflicts -Config $cfg
+        $rule = @($res.Conflicts | Where-Object { $_.Rule -eq 'Defender' })
+        $rule.Count | Should Be 1
+        $rule[0].Safeguard.Action | Should Be 'RemoveItems'
+        # "Should Contain" of Pester 3.4 checks the content of a file, so the collection
+        # is checked with -contains here.
+        (@($rule[0].Safeguard.Items) -contains 'Physical: Defender (complete removal) [~50MB]') | Should Be $true
+    }
+
+    It "detects the Defender conflict in the standard debloat list too" {
+        # The target reaches the standard list with an older profile (the "Physical: ..."
+        # entries used to be merged into that list). It disables the Defender services in
+        # phase 10 exactly like the one in the experimental list, so the rule has to look
+        # at both lists: only the experimental one left the Defender removable while the
+        # "RemoveDefender" setting was off.
+        $cfg = [PSCustomObject]@{
+            RemoveDefender = $false
+            AdvancedDebloatStandard = @('Physical: Defender (complete removal) [~50MB]')
+            AdvancedDebloatExperimental = @()
+        }
+        $res = Test-WinEaseConfigConflicts -Config $cfg
+        $rule = @($res.Conflicts | Where-Object { $_.Rule -eq 'Defender' })
+        $rule.Count | Should Be 1
+        $rule[0].Safeguard.Action | Should Be 'RemoveItems'
+        (@($rule[0].Safeguard.Items) -contains 'Physical: Defender (complete removal) [~50MB]') | Should Be $true
+    }
+
+    It "reports no Defender conflict when the Defender is removed on purpose" {
+        $cfg = [PSCustomObject]@{
+            RemoveDefender = $true
+            AdvancedDebloatStandard = @('Physical: Defender (complete removal) [~50MB]')
+            AdvancedDebloatExperimental = @('Physical: Defender (complete removal) [~50MB]')
+        }
+        $res = Test-WinEaseConfigConflicts -Config $cfg
+        @($res.Conflicts | Where-Object { $_.Rule -eq 'Defender' }).Count | Should Be 0
+    }
+}
+
+Describe "WinEase - the Defender stays usable unless its removal was asked for" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        $script:Phase05 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\05-appx.ps1"), [System.Text.Encoding]::UTF8)
+        $script:Phase10 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\10-registry.ps1"), [System.Text.Encoding]::UTF8)
+        $script:Phase11 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\11-unattend.ps1"), [System.Text.Encoding]::UTF8)
+        $script:FirstLogon = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "scripts\FirstLogon.ps1"), [System.Text.Encoding]::UTF8)
+    }
+
+    It "phase 10 only disables the Defender services when the Defender is removed on purpose" {
+        # The "Physical: Defender" target of the Advanced Debloat tab disables the
+        # Defender services. It must never do that on its own: the conflict matrix
+        # removes the target when the Defender is kept, and this guard is the second
+        # line of defence against a target that reaches the phase anyway.
+        $script:Phase10 | Should Match ([regex]::Escape('$removeDefender -and (Test-WinEaseDebloatTargetSelected -Item ''Physical: Defender (complete removal) [~50MB]'')'))
+    }
+
+    It "phase 15 verifies boot-start Defender drivers as disabled, not deleted" {
+        $phase15 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\15-verify.ps1'))
+        $phase15 | Should Match 'Defender driver keys disabled'
+        $phase15 | Should Match ([regex]::Escape('[int]$drvStart -ne 4'))
+        # WdBoot must not be in the list of service keys that are expected to be gone.
+        $phase15 | Should Not Match ([regex]::Escape("`$defSvc = @('WinDefend','MDCoreSvc','WdNisSvc','Sense','SecurityHealthService','wscsvc','webthreatdefsvc','webthreatdefusersvc','WdBoot'"))
+    }
+
+    It "phase 05 records every package it removed from the image" {
+        $script:Phase05 | Should Match ([regex]::Escape('$script:WinEaseRemovedAppxPackages'))
+        # the identity name is the part before the first underscore, it is what
+        # Get-AppxPackage -Name matches against
+        $script:Phase05 | Should Match ([regex]::Escape("ShortName"))
+    }
+
+    It "phase 10 takes the staged AppX registration of the removed packages out of the hive" {
+        # The staged copy of an inbox app lives in AppxAllUserStore\InboxApp. Windows
+        # installs it for the first user, so an app whose payload folder was deleted
+        # starts and renders a white window.
+        $script:Phase10 | Should Match ([regex]::Escape('AppxAllUserStore\InboxApp'))
+        $script:Phase10 | Should Match ([regex]::Escape('$script:WinEaseRemovedAppxPackages'))
+    }
+
+    It "phase 11 stages the per-user cleanup of every removed package" {
+        # The list used to hold three hardcoded names while the offline pass removes every
+        # package of the removal list, so the other apps stayed registered for the first
+        # user with a payload that was gone.
+        $script:Phase11 | Should Match ([regex]::Escape('$script:WinEaseRemovedAppxPackages'))
+        $script:Phase11 | Should Match ([regex]::Escape('remove-appx-packages.flag'))
+    }
+
+    It "the first logon cleanup matches the identity name of a package" {
+        $script:FirstLogon | Should Match ([regex]::Escape('Get-AppxPackage -AllUsers -Name $appxName'))
+    }
+
+    It "the builder applies the safeguards without breaking on the experimental list" {
+        # List[string].AddRange does not accept a plain Object[]: the method binder throws a
+        # MethodException, so the build died in the conflict check whenever the physical
+        # debloat needed its explicit consent.
+        $builder = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "WinEasebuilder.ps1"), [System.Text.Encoding]::UTF8)
+        $builder | Should Match ([regex]::Escape('AddRange([string[]]@($script:advancedDebloatExperimental))'))
+        $builder | Should Not Match ([regex]::Escape('AddRange(@($script:advancedDebloatExperimental))'))
+    }
+
+    It "a list of strings only accepts a cast array" {
+        $list = [System.Collections.Generic.List[string]]::new()
+        { $list.AddRange(@('a')) } | Should Throw
+        $list.AddRange([string[]]@('a'))
+        $list.Count | Should Be 1
+    }
+}
+
+Describe "WinEase - the safe engine never deletes a binary of the system directory" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseDebloat.ps1")
+        $script:Schema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+    }
+
+    It "recognizes the binaries of the system directory" {
+        Test-WinEaseSystem32BinaryPath -Path 'Windows\System32\snmp.exe' | Should Be $true
+        Test-WinEaseSystem32BinaryPath -Path 'Windows\System32\drivers\mpsdrv.sys' | Should Be $true
+        Test-WinEaseSystem32BinaryPath -Path 'Windows\SysWOW64\foo.dll' | Should Be $true
+        Test-WinEaseSystem32BinaryPath -Path 'ProgramData\Microsoft\Windows Defender' | Should Be $false
+        Test-WinEaseSystem32BinaryPath -Path 'Program Files\WindowsApps\MicrosoftEdge*' | Should Be $false
+        Test-WinEaseSystem32BinaryPath -Path 'Windows\System32Backup\foo.dll' | Should Be $false
+    }
+
+    It "the payload of a target holds no shared library" {
+        # wmisnmp.dll and snmpapi.dll belong to WMI, WinFax.dll is the fax API of the
+        # whole system: deleting one of them breaks components that have nothing to do
+        # with the target.
+        foreach ($def in @($script:Schema.DebloatEngines)) {
+            foreach ($path in @($def.Payload)) {
+                $path | Should Not Match '(?i)^Windows\\System32\\(snmpapi|wmisnmp|WinFax)\.dll$'
+            }
+        }
+    }
+
+    It "the firewall target declares no payload for the safe engine" {
+        # The binary of the firewall service and its driver live in System32. The safe
+        # engine disables the service instead, the forced engine removes the binary.
+        $fw = @($script:Schema.DebloatEngines | Where-Object { $_.Item -like 'Physical: Windows Firewall*' })
+        $fw.Count | Should Be 1
+        $fw[0].Payload | Should BeNullOrEmpty
+    }
 }
 
 Describe "WinEase helpers - Resolve-WinEaseConfigForDiff" {
@@ -2032,6 +2180,11 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
     }
 
     It "every AllTweakDefs key is read by a phase (Test-TweakEnabled) or mapped to a consumed variable" {
+        # The per-user UI preferences are consumed through config\ui-preferences.psd1:
+        # phase 10 reads the table and asks Test-TweakEnabled for the tweak of every
+        # entry, so a key of that table counts as consumed as well.
+        $uiPrefPath = Join-Path $script:RepoRoot "config\ui-preferences.psd1"
+        $uiPrefText = if (Test-Path -LiteralPath $uiPrefPath) { [System.IO.File]::ReadAllText($uiPrefPath) } else { '' }
         $unconsumed = @()
         foreach ($k in $tweakDefs.Keys) {
             if ($phaseText -match "Test-TweakEnabled\s+'$k'") { continue }
@@ -2039,6 +2192,7 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
             # names (for example the FoD package map in phase 06), so a key that only
             # appears as a table key counts as consumed as well.
             if ($phaseText -match "['`"]$([regex]::Escape($k))['`"]\s*=") { continue }
+            if ($uiPrefText -match "Tweak\s*=\s*['`"]$([regex]::Escape($k))['`"]") { continue }
             # the lookup tables of the options live in the master schema
             if ($schemaText -match "['`"]$([regex]::Escape($k))['`"]\s*=") { continue }
             if ($varMap.Contains($k)) {
@@ -3232,6 +3386,21 @@ Describe "User Extensibility Engine (lib/WinEaseExtensions.ps1)" {
         $rr.PSObject.Properties.Name -contains 'Recommendations' | Should Be $true
         $rr.WinReEnabledOnTarget | Should Be $false
     }
+    It "Test-WinEaseRecoveryReadiness finds the default profile backup" {
+        $oldProfile = $env:USERPROFILE
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('winease_readiness_' + [guid]::NewGuid().ToString('N'))
+        try {
+            $backup = Join-Path $tmp 'WinEase_migration_backup'
+            New-Item -ItemType Directory -Path $backup -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $backup 'migration-manifest.json') -Value '{}' -Encoding ASCII
+            $env:USERPROFILE = $tmp
+            $rr = Test-WinEaseRecoveryReadiness -Config @{ KeepRecoveryEnv = $false }
+            $rr.MigrationBackupFound | Should Be $true
+        } finally {
+            $env:USERPROFILE = $oldProfile
+            Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
     It "Compare-WinEaseConfig returns a diff result" {
         $diff = Compare-WinEaseConfig -ReferenceConfig @{ TweakSettings = @{ DisableUAC = $false } } -DifferenceConfig @{ TweakSettings = @{ DisableUAC = $true } }
         $diff.TotalDiffCount | Should BeGreaterThan 0
@@ -3388,6 +3557,148 @@ Describe "User Extensibility Engine (lib/WinEaseExtensions.ps1)" {
             Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+
+    It "Get-WinEaseCustomScriptStageMap maps the post install stages to their image folder" {
+        $map = @(Get-WinEaseCustomScriptStageMap)
+        $map.Count | Should Be 4
+        @($map | Where-Object { $_.Stage -eq 'PreBuild' })[0].ImageFolder | Should Be ''
+        @($map | Where-Object { $_.Stage -eq 'FirstLogon' })[0].ImageFolder | Should Be 'Windows\Setup\Scripts\Custom'
+        @($map | Where-Object { $_.Stage -eq 'UserOnce' })[0].ImageFolder | Should Be 'Windows\Setup\Scripts\UserCustom'
+        @(Get-WinEaseCustomScriptExtensions) -contains '.reg' | Should Be $true
+    }
+
+    It "Add-WinEaseCustomScript prefixes the order and rejects unsupported file types" {
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cs_add_" + [Guid]::NewGuid().ToString('N'))
+        $repo = Join-Path $tmp 'repo'
+        New-Item -ItemType Directory -Force -Path (Join-Path $repo 'tools\custom-scripts\FirstLogon') | Out-Null
+        try {
+            $good = Join-Path $tmp 'demo.ps1'
+            Set-Content -LiteralPath $good -Value "Write-Host 'demo'" -Encoding UTF8
+            $bad = Join-Path $tmp 'notes.txt'
+            Set-Content -LiteralPath $bad -Value 'not a script' -Encoding UTF8
+            $res = Add-WinEaseCustomScript -RepoRoot $repo -Stage FirstLogon -Paths @($good, $bad)
+            @($res.Added).Count | Should Be 1
+            @($res.Errors).Count | Should Be 1
+            @($res.Errors)[0] | Should Match 'Unsupported file type'
+            @($res.Added)[0].Name | Should Be '01-demo.ps1'
+            (Test-Path -LiteralPath (Join-Path $repo 'tools\custom-scripts\FirstLogon\01-demo.ps1')) | Should Be $true
+            # the next file gets the next free number
+            $second = Join-Path $tmp 'batch.cmd'
+            Set-Content -LiteralPath $second -Value '@echo off' -Encoding ASCII
+            $res2 = Add-WinEaseCustomScript -RepoRoot $repo -Stage FirstLogon -Paths @($second)
+            @($res2.Added)[0].Name | Should Be '02-batch.cmd'
+        } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "Set-WinEaseCustomScriptMetadata writes the comment syntax of the file type and replaces instead of duplicating" {
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cs_meta_" + [Guid]::NewGuid().ToString('N'))
+        $repo = Join-Path $tmp 'repo'
+        New-Item -ItemType Directory -Force -Path (Join-Path $repo 'tools\custom-scripts\FirstLogon') | Out-Null
+        try {
+            $ps1 = Join-Path $tmp 'setup.ps1'
+            Set-Content -LiteralPath $ps1 -Value "Write-Host 'setup'" -Encoding UTF8
+            $cmd = Join-Path $tmp 'batch.cmd'
+            Set-Content -LiteralPath $cmd -Value '@echo off' -Encoding ASCII
+            $reg = Join-Path $tmp 'tweak.reg'
+            Set-Content -LiteralPath $reg -Value 'Windows Registry Editor Version 5.00' -Encoding ASCII
+            $added = Add-WinEaseCustomScript -RepoRoot $repo -Stage FirstLogon -Paths @($ps1, $cmd, $reg)
+            @($added.Added).Count | Should Be 3
+
+            $mPs = Set-WinEaseCustomScriptMetadata -Path @($added.Added)[0].Path -Order 5 -Description 'setup' -OnError Stop
+            $mPs.Order | Should Be 5
+            $mPs.Description | Should Be 'setup'
+            $mPs.OnError | Should Be 'Stop'
+            $mPs.Comment | Should Be '#'
+
+            $mCmd = Set-WinEaseCustomScriptMetadata -Path @($added.Added)[1].Path -Order 6 -Description 'batch'
+            $mCmd.Order | Should Be 6
+            $mCmd.Description | Should Be 'batch'
+            $mCmd.Comment | Should Be 'REM'
+            @([System.IO.File]::ReadAllLines(@($added.Added)[1].Path) | Where-Object { $_ -match '@WinEase-Order' })[0] | Should Match '^REM @WinEase-Order: 6$'
+
+            $mReg = Set-WinEaseCustomScriptMetadata -Path @($added.Added)[2].Path -Order 7
+            $mReg.Comment | Should Be ';'
+            @([System.IO.File]::ReadAllLines(@($added.Added)[2].Path) | Where-Object { $_ -match '@WinEase-Order' })[0] | Should Match '^; @WinEase-Order: 7$'
+
+            # A second write must replace the header line, not add another one
+            $null = Set-WinEaseCustomScriptMetadata -Path @($added.Added)[0].Path -Description 'changed'
+            $lines = @([System.IO.File]::ReadAllLines(@($added.Added)[0].Path) | Where-Object { $_ -match '@WinEase-Description' })
+            $lines.Count | Should Be 1
+            $lines[0] | Should Match 'changed'
+        } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "Get-WinEaseCustomScriptInventory and Preview report the stage, order and image path" {
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cs_inv_" + [Guid]::NewGuid().ToString('N'))
+        $repo = Join-Path $tmp 'repo'
+        New-Item -ItemType Directory -Force -Path (Join-Path $repo 'tools\custom-scripts\FirstLogon'), (Join-Path $repo 'tools\custom-scripts\UserOnce') | Out-Null
+        try {
+            Set-Content -LiteralPath (Join-Path $repo 'tools\custom-scripts\FirstLogon\02-second.ps1') -Value "Write-Host 'second'" -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $repo 'tools\custom-scripts\FirstLogon\01-first.ps1') -Value "Write-Host 'first'" -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $repo 'tools\custom-scripts\UserOnce\05-user.cmd') -Value '@echo off' -Encoding ASCII
+
+            $inv = @(Get-WinEaseCustomScriptInventory -RepoRoot $repo -Stage FirstLogon)
+            $inv.Count | Should Be 2
+            $inv[0].Name | Should Be '01-first.ps1'
+            $inv[0].EffectiveOrder | Should Be 1
+            $inv[1].Name | Should Be '02-second.ps1'
+
+            $prev = @(Get-WinEaseCustomScriptPreview -RepoRoot $repo)
+            @($prev | Where-Object { $_.Stage -eq 'FirstLogon' }).Count | Should Be 2
+            @($prev | Where-Object { $_.Stage -eq 'UserOnce' })[0].ImagePath | Should Match '^Windows\\Setup\\Scripts\\UserCustom\\'
+            @($prev | Where-Object { $_.Stage -eq 'FirstLogon' })[0].ImagePath | Should Match '^Windows\\Setup\\Scripts\\Custom\\'
+        } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "Move-WinEaseCustomScriptOrder renames the file and Remove-WinEaseCustomScript refuses paths outside the repository" {
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cs_mv_" + [Guid]::NewGuid().ToString('N'))
+        $repo = Join-Path $tmp 'repo'
+        New-Item -ItemType Directory -Force -Path (Join-Path $repo 'tools\custom-scripts\FirstLogon') | Out-Null
+        try {
+            $src = Join-Path $tmp 'move.ps1'
+            Set-Content -LiteralPath $src -Value "Write-Host 'move'" -Encoding UTF8
+            $res = Add-WinEaseCustomScript -RepoRoot $repo -Stage FirstLogon -Paths @($src)
+            $path = @($res.Added)[0].Path
+            $mv = Move-WinEaseCustomScriptOrder -Path $path -NewOrder 9
+            $mv.Changed | Should Be $true
+            $mv.Name | Should Be '09-move.ps1'
+            (Test-Path -LiteralPath $mv.Path) | Should Be $true
+            (Test-Path -LiteralPath $path) | Should Be $false
+            { Remove-WinEaseCustomScript -RepoRoot $repo -Stage FirstLogon -Path $src } | Should Throw
+            $rm = Remove-WinEaseCustomScript -RepoRoot $repo -Stage FirstLogon -Path $mv.Path
+            $rm.Removed | Should Be '09-move.ps1'
+            (Test-Path -LiteralPath $mv.Path) | Should Be $false
+        } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "the stage runner copies declared scripts flat into the image and registers them in the manifest" {
+        $origCustomScripts = $script:UserCustomScripts
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cs_run_" + [Guid]::NewGuid().ToString('N'))
+        $repo = Join-Path $tmp 'repo'
+        New-Item -ItemType Directory -Force -Path (Join-Path $repo 'tools\custom-scripts\FirstLogon') | Out-Null
+        try {
+            Set-Content -LiteralPath (Join-Path $repo 'tools\custom-scripts\FirstLogon\01-declared.ps1') -Value "Write-Host 'declared'" -Encoding UTF8
+            $scratch = Join-Path $tmp 'scratch'
+            # relative path like config\user\user-tweaks.psd1 can carry it
+            $script:UserCustomScripts = @(
+                @{ Enabled = $true; Stage = 'FirstLogon'; Path = 'tools\custom-scripts\FirstLogon\01-declared.ps1' },
+                @{ Enabled = $true; Stage = 'UserOnce'; Path = 'tools\custom-scripts\FirstLogon\01-declared.ps1'; Id = 'DeclaredUser' }
+            )
+            $null = Invoke-WinEaseCustomScriptsStage -Stage FirstLogon -Context @{ ScratchDir = $scratch; ScriptRoot = $repo }
+            (Test-Path -LiteralPath (Join-Path $scratch 'Windows\Setup\Scripts\Custom\01-declared.ps1')) | Should Be $true
+            $null = Invoke-WinEaseCustomScriptsStage -Stage UserOnce -Context @{ ScratchDir = $scratch; ScriptRoot = $repo }
+            (Test-Path -LiteralPath (Join-Path $scratch 'Windows\Setup\Scripts\UserCustom\01-declared.ps1')) | Should Be $true
+            $manifestPath = Join-Path $scratch 'Windows\Setup\Scripts\custom-scripts-manifest.json'
+            (Test-Path -LiteralPath $manifestPath) | Should Be $true
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+            $names = @($manifest.PSObject.Properties.Name)
+            ($names -contains '01-declared.ps1') | Should Be $true
+            ($names -contains 'user/01-declared.ps1') | Should Be $true
+        } finally {
+            $script:UserCustomScripts = $origCustomScripts
+            Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 # --- PC Migration & Backup Engine tests (M3) ---
@@ -3433,18 +3744,25 @@ Describe "PC Migration & Backup Engine (tools/migrator/WinEaseMigration.ps1)" {
     It "Restore-WinEaseUserData creates .WinEase.bak on conflict" {
         $srcDir = Join-Path $env:TEMP "migtest_src3"
         $bkDir = Join-Path $env:TEMP "migtest_bk3"
+        $profileDir = Join-Path $env:TEMP ("migtest_profile3_" + [guid]::NewGuid().ToString('N'))
         if (Test-Path $srcDir) { Remove-Item $srcDir -Recurse -Force }
         if (Test-Path $bkDir) { Remove-Item $bkDir -Recurse -Force }
-        New-Item -ItemType Directory -Force -Path (Join-Path $srcDir 'Documents') | Out-Null
+        New-Item -ItemType Directory -Force -Path (Join-Path $srcDir 'Documents'), (Join-Path $profileDir 'Documents') | Out-Null
         'hello' | Set-Content (Join-Path $srcDir 'Documents\test.txt')
         Backup-WinEaseUserData -FolderMap @{ Documents = (Join-Path $srcDir 'Documents') } -BackupRoot $bkDir | Out-Null
-        $destFile = Join-Path $env:USERPROFILE 'test.txt'
+        $destFile = Join-Path $profileDir 'Documents\test.txt'
         'existing' | Set-Content $destFile
-        $r = Restore-WinEaseUserData -BackupRoot $bkDir -ConflictPolicy BackupExisting
-        $r.RestoredFiles | Should Be 1
-        Test-Path "$destFile.WinEase.bak" | Should Be $true
-        Remove-Item $destFile -Force -ErrorAction SilentlyContinue
-        Remove-Item "$destFile.WinEase.bak" -Force -ErrorAction SilentlyContinue
+        $savedProfile = $env:USERPROFILE
+        $env:USERPROFILE = $profileDir
+        try {
+            $r = Restore-WinEaseUserData -BackupRoot $bkDir -ConflictPolicy BackupExisting
+            $r.RestoredFiles | Should Be 1
+            Test-Path "$destFile.WinEase.bak" | Should Be $true
+            (Get-Content -LiteralPath $destFile -Raw).Trim() | Should Be 'hello'
+        } finally {
+            $env:USERPROFILE = $savedProfile
+            Remove-Item $profileDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
         Remove-Item $srcDir -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item $bkDir -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -3839,6 +4157,20 @@ Describe "S7 - GUI Tab 8 (Migration & Backup)" {
             @($texts | Where-Object { $_ -match '^(Select All|Clear All|Deselect All)$' }).Count | Should Be 14
         } finally { $gui.Form.Dispose() }
     }
+
+    It "Tab 10 lists the custom scripts of the selected stage" {
+        $gui = Show-WinEaseGUI -NoShow
+        try {
+            $tab = @($gui.Form.Controls | ForEach-Object { Get-S7Controls $_ } | Where-Object { $_ -is [System.Windows.Forms.TabPage] -and $_.Text -match '10\.' })[0]
+            $tab | Should Not BeNullOrEmpty
+            ($gui.CsStage.SelectedItem) | Should Be 'FirstLogon'
+            $gui.CsList | Should Not BeNullOrEmpty
+            @(Get-S7Controls $tab) -contains $gui.CsList | Should Be $true
+            Update-WinEaseGuiCustomScriptsList -Gui $gui
+            $gui.CsCount.Text | Should Match 'FirstLogon'
+            $gui.CsStageInfo.Text | Should Match 'FirstLogon'
+        } finally { $gui.Form.Dispose() }
+    }
 }
 
 Describe "WinEase structured logger (lib/WinEaseLogger.ps1)" {
@@ -3941,8 +4273,13 @@ Describe "S5: Migration Assistant bundling" {
             (Test-Path (Join-Path $scratchDir 'Windows')) | Should Be $false
             $null = & ([scriptblock]::Create($block)) $scratchDir $s5Root $false $true 6>$null
             $dest = Join-Path $scratchDir 'Windows\Setup\Scripts\Migration'
-            foreach ($n in 'WinEase-Migrator.ps1', 'WinEaseMigration.ps1', 'migration-rules.psd1', 'user-migration-rules.psd1') {
+            # WinEasehelpers.ps1 (restore path validation) and WinEaseGui.ps1 (the wizard window)
+            # are part of the bundle: without them the tool cannot start at all.
+            foreach ($n in 'WinEase-Migrator.ps1', 'WinEaseMigration.ps1', 'migration-rules.psd1', 'user-migration-rules.psd1', 'WinEasehelpers.ps1', 'WinEaseGui.ps1') {
                 (Test-Path (Join-Path $dest $n)) | Should Be $true
+            }
+            foreach ($n in 'en.json', 'ja.json') {
+                (Test-Path (Join-Path $dest "ui-strings\$n")) | Should Be $true
             }
             $cmd = Join-Path $scratchDir 'Users\Public\Desktop\Launch-MigrationAssistant.cmd'
             ([System.IO.File]::ReadAllText($cmd)).Contains('-File "C:\Windows\Setup\Scripts\Migration\WinEase-Migrator.ps1" -GUI') | Should Be $true
@@ -4124,12 +4461,12 @@ Describe "S10 - GUI and migrator cleanup (shared parts)" {
     }
 
     It "OK message boxes go through Show-WinEaseGuiMessage (only it and the YesNo confirm call MessageBox)" {
-        ([regex]::Matches($script:S10GuiText, 'MessageBox\]::Show')).Count | Should Be 2
+        ([regex]::Matches($script:S10GuiText, 'MessageBox\]::Show')).Count | Should Be 3
         ([regex]::Matches($script:S10MigText, 'MessageBox')).Count | Should Be 0
         $fn = $script:S10GuiAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Show-WinEaseGuiMessage' }, $true)
         $kind = $fn.Body.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Kind' }
         $set = ($kind.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateSet' }).PositionalArguments | ForEach-Object { $_.Value }
-        (@($set) -join ',') | Should Be 'Info,Warning,Error'
+        (@($set) -join ',') | Should Be 'Info,Warning,Error,Question'
     }
 
     It "the default backup folder name is spelled once per file" {
@@ -4577,7 +4914,7 @@ Describe "GUI display language (English / Japanese)" {
         try {
             $gui.Form.Text | Should Be 'WinEase Builder v2.1 - Next-Gen Windows 11 Modular Optimizer & Reducer'
             $tabs = @($gui.Tabs.TabPages | ForEach-Object { $_.Text })
-            ($tabs -join '|') | Should Be ' 1. Media & Output | 2. Security & Bypass | 3. Privacy & AI | 4. Performance | 5. UI & Shell | 6. Services & Apps | 7. Advanced Debloat | 8. Migration & Backup | 9. User Tweaks '
+            ($tabs -join '|') | Should Be ' 1. Media & Output | 2. Security & Bypass | 3. Privacy & AI | 4. Performance | 5. UI & Shell | 6. Services & Apps | 7. Advanced Debloat | 8. Migration & Backup | 9. User Tweaks | 10. Custom Scripts '
             $gui.Preset.Items[0] | Should Be 'Extreme Slim & Gaming (Max debloat, minimal memory, ultra-low latency)'
             $gui.DryRun.Text | Should Be 'DryRun (Simulation Mode)'
             $gui.TweakCheckboxes['DisableUAC'].Text | Should Be ('DisableUAC - ' + $script:AllTweakDefs['DisableUAC'].Description)
@@ -4985,7 +5322,7 @@ Describe "Migration restore - path validation" {
         }
     }
 
-    It "restores a normal backup into the profile" {
+    It "restores a normal backup into the matching folder of the profile" {
         $bk = Join-Path $TestDrive 'ok-backup'
         $userProfile = Join-Path $TestDrive 'ok-profile'
         New-Item -ItemType Directory -Force -Path $userProfile | Out-Null
@@ -4999,7 +5336,27 @@ Describe "Migration restore - path validation" {
             $r = Restore-WinEaseUserData -BackupRoot $bk -ConflictPolicy Overwrite
             $r.RestoredFiles | Should Be 1
             @($r.FailedFiles).Count | Should Be 0
-            (Test-Path -LiteralPath (Join-Path $userProfile 'a.txt')) | Should Be $true
+            (Test-Path -LiteralPath (Join-Path $userProfile 'Documents\a.txt')) | Should Be $true
+            (Test-Path -LiteralPath (Join-Path $userProfile 'a.txt')) | Should Be $false
+        } finally { $env:USERPROFILE = $saved }
+    }
+
+    It "keeps the personal folders apart when the same relative name exists in two of them" {
+        $bk = Join-Path $TestDrive 'split-backup'
+        $userProfile = Join-Path $TestDrive 'split-profile'
+        $srcDocs = Join-Path $TestDrive 'split-docs'
+        $srcDownloads = Join-Path $TestDrive 'split-downloads'
+        New-Item -ItemType Directory -Force -Path $userProfile, $srcDocs, $srcDownloads | Out-Null
+        Set-Content -LiteralPath (Join-Path $srcDocs 'same.txt') -Value 'from documents'
+        Set-Content -LiteralPath (Join-Path $srcDownloads 'same.txt') -Value 'from downloads'
+        Backup-WinEaseUserData -FolderMap @{ Documents = $srcDocs; Downloads = $srcDownloads } -BackupRoot $bk | Out-Null
+        $saved = $env:USERPROFILE
+        $env:USERPROFILE = $userProfile
+        try {
+            $r = Restore-WinEaseUserData -BackupRoot $bk -ConflictPolicy Overwrite
+            $r.RestoredFiles | Should Be 2
+            (Get-Content -LiteralPath (Join-Path $userProfile 'Documents\same.txt') -Raw).Trim() | Should Be 'from documents'
+            (Get-Content -LiteralPath (Join-Path $userProfile 'Downloads\same.txt') -Raw).Trim() | Should Be 'from downloads'
         } finally { $env:USERPROFILE = $saved }
     }
 
@@ -5154,7 +5511,7 @@ Describe "Migration restore - path validation" {
             $r.RestoredFiles | Should Be 0
             @($r.FailedFiles).Count | Should Be 1
             (@($r.FailedFiles)[0].Error) | Should Be 'Hash mismatch (corrupt)'
-            (Test-Path -LiteralPath (Join-Path $userProfile 'a.txt')) | Should Be $false
+            (Test-Path -LiteralPath (Join-Path $userProfile 'Docs\a.txt')) | Should Be $false
         } finally { $env:USERPROFILE = $saved }
     }
 
@@ -5170,7 +5527,7 @@ Describe "Migration restore - path validation" {
         try {
             $r = Restore-WinEaseUserData -BackupRoot $bk -ConflictPolicy Overwrite -DryRun
             $r.RestoredFiles | Should Be 1
-            (Test-Path -LiteralPath (Join-Path $userProfile 'a.txt')) | Should Be $false
+            (Test-Path -LiteralPath (Join-Path $userProfile 'Docs\a.txt')) | Should Be $false
         } finally { $env:USERPROFILE = $saved }
     }
 
@@ -5181,7 +5538,8 @@ Describe "Migration restore - path validation" {
         $hash = New-WinEaseTestPayload -Path (Join-Path $bk 'Docs\a.txt')
         $entry = New-WinEaseTestEntry -RelativePath 'a.txt' -Sha256 $hash
         New-WinEaseTestManifest -Path (Join-Path $bk 'migration-manifest.json') -Entries @($entry)
-        $dest = Join-Path $userProfile 'a.txt'
+        $dest = Join-Path $userProfile 'Docs\a.txt'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dest) | Out-Null
         Set-Content -LiteralPath $dest -Value 'existing'
         $saved = $env:USERPROFILE
         $env:USERPROFILE = $userProfile
@@ -5208,8 +5566,9 @@ Describe "Migration restore - path validation" {
         $hash = New-WinEaseTestPayload -Path (Join-Path $bk 'Docs\out\a.txt')
         $entry = New-WinEaseTestEntry -RelativePath 'out\a.txt' -Sha256 $hash
         New-WinEaseTestManifest -Path (Join-Path $bk 'migration-manifest.json') -Entries @($entry)
-        # but the target of the restore runs through a junction
-        & cmd.exe /c "mklink /J `"$(Join-Path $userProfile 'out')`" `"$canary`"" > $null 2>&1
+        # but the target of the restore runs through a junction (below the category folder)
+        New-Item -ItemType Directory -Force -Path (Join-Path $userProfile 'Docs') | Out-Null
+        & cmd.exe /c "mklink /J `"$(Join-Path $userProfile 'Docs\out')`" `"$canary`"" > $null 2>&1
         $saved = $env:USERPROFILE
         $env:USERPROFILE = $userProfile
         try {
@@ -5338,9 +5697,28 @@ Describe "AppX removal - the settings decide what is removed" {
         }
     }
 
-    It "nothing is removed when RemoveAppxBloatware is off" {
-        $patterns = @(Get-WinEaseAppxRemovalPatterns -Definitions $script:AppxDefinitions -Settings @{ RemoveAppxBloatware = $false; RemoveDefender = $true; RemoveStore = $true; KeepBasicApps = $false; KeepXboxServices = $false })
+    It "nothing is removed when RemoveAppxBloatware and every independent app option are off" {
+        $patterns = @(Get-WinEaseAppxRemovalPatterns -Definitions $script:AppxDefinitions -Settings @{
+            RemoveAppxBloatware = $false; RemoveDefender = $false; RemoveStore = $false
+            RemoveCameraApp = $false; RemovePhotosApp = $false; RemoveScreenSketchApp = $false
+            KeepBasicApps = $false; KeepXboxServices = $false
+        })
         $patterns.Count | Should Be 0
+    }
+
+    It "Camera, Photos and Screen Sketch are independent of RemoveAppxBloatware" {
+        $patterns = @(Get-WinEaseAppxRemovalPatterns -Definitions $script:AppxDefinitions -Settings @{
+            RemoveAppxBloatware = $false; RemoveDefender = $false; RemoveStore = $false
+            RemoveCameraApp = $true; RemovePhotosApp = $true; RemoveScreenSketchApp = $true
+            KeepBasicApps = $false; KeepXboxServices = $false
+        })
+        ($patterns -contains '*Microsoft.WindowsCamera*') | Should Be $true
+        ($patterns -contains '*Microsoft.Windows.Photos*') | Should Be $true
+        ($patterns -contains '*Microsoft.ScreenSketch*') | Should Be $true
+        # the default bloatware list stays off
+        ($patterns -contains '*Zune*') | Should Be $false
+        ($patterns -contains '*Clipchamp*') | Should Be $false
+        ($patterns -contains '*Paint*') | Should Be $false
     }
 
     It "the default removal list is applied when the option is on" {
@@ -5958,6 +6336,18 @@ Describe "WinEase builder - the diagnostic report survives a parallel build" {
         $script:BuilderSource | Should Match '\$_\.LastWriteTime\s+-lt\s+\$script:BuilderStartTime'
     }
 
+    It "dry runs and test mode never rotate the diagnostics of a running build" {
+        $script:BuilderSource | Should Match 'if\s*\(\(-not\s+\$isDryRunMode\)\s+-and\s+\(\$env:WINEASE_TEST_MODE\s+-ne\s+"1"\)'
+    }
+
+    It "the export and verification phases recreate the diagnostic directory before they write" {
+        foreach ($phaseName in @('13-export.ps1', '15-verify.ps1')) {
+            $phase = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\$phaseName"))
+            $phase | Should Match 'if\s*\(\$script:DiagDir\s+-and\s+-not\s+\(Test-Path\s+-LiteralPath\s+\$script:DiagDir\)\)'
+            $phase | Should Match 'New-Item\s+-ItemType\s+Directory\s+-Path\s+\$script:DiagDir'
+        }
+    }
+
     It "the physical debloat phase reports the errors of a failed engine run" {
         # the errors of the engine are the only place that says which target did not go
         # through, and they were only read when the engine exited with 0
@@ -6005,9 +6395,16 @@ Describe "WinEase builder - upstream registry additions (sync 2026-10-22)" {
     }
 
     It "writes the accessibility, pointer and keyboard values as REG_SZ" {
-        $script:RegistryPhaseText | Should Match "'Control Panel\\Accessibility\\StickyKeys', 'Flags', 'REG_SZ'"
-        $script:RegistryPhaseText | Should Match "'Control Panel\\Mouse', 'MouseSpeed', 'REG_SZ'"
-        $script:RegistryPhaseText | Should Match "'Control Panel\\Keyboard', 'KeyboardDelay', 'REG_SZ'"
+        # the values moved to config\ui-preferences.psd1 (see the Describe block below)
+        $prefs = @(Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\ui-preferences.psd1")).UiPreferences
+        foreach ($pair in @(
+                @('Control Panel\Accessibility\StickyKeys', 'Flags'),
+                @('Control Panel\Mouse', 'MouseSpeed'),
+                @('Control Panel\Keyboard', 'KeyboardDelay'))) {
+            $entry = @($prefs | Where-Object { $_.Path -eq $pair[0] -and $_.Name -eq $pair[1] })
+            $entry.Count | Should Be 1
+            $entry[0].Type | Should Be 'REG_SZ'
+        }
     }
 
     It "registers the new tweaks in the master schema" {
@@ -6034,6 +6431,96 @@ Describe "WinEase builder - upstream registry additions (sync 2026-10-22)" {
             $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot $file))
             $text | Should Not Match '/d\s+""\s+/f'
         }
+    }
+}
+
+Describe "WinEase builder - the UI preference table (config\ui-preferences.psd1)" {
+    # The per-user UI preferences used to be a nested array literal in phase 10.
+    # The @() operator unwraps a group that holds a single entry, so the four
+    # fields of that entry arrived one by one and reg.exe was called with an empty
+    # value name, an empty type and an empty data. A native call drops an empty
+    # argument, so reg.exe read the '/f' switch as the data and wrote a key named
+    # after the first character of the data, holding a value named '/t'. The next
+    # build found that value, reg.exe asked "Overwrite (Yes/No)?" and waited for a
+    # key press - the build hung in phase 10 and no ISO was produced.
+    BeforeAll {
+        $script:UiPrefPath = Join-Path $script:RepoRoot "config\ui-preferences.psd1"
+        $script:UiPrefData = Import-PowerShellDataFile -LiteralPath $script:UiPrefPath
+        $script:UiPrefEntries = @($script:UiPrefData.UiPreferences)
+        $script:UiPrefPhaseText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\10-registry.ps1"))
+        $script:UiPrefSchema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+    }
+
+    It "the table holds the UI preferences" {
+        $script:UiPrefEntries.Count | Should BeGreaterThan 0
+    }
+
+    It "every entry is a hashtable, so @() cannot unwrap it" {
+        foreach ($entry in $script:UiPrefEntries) {
+            $entry -is [System.Collections.IDictionary] | Should Be $true
+        }
+    }
+
+    It "every entry names the tweak, the path, the value, the type and the data" {
+        foreach ($entry in $script:UiPrefEntries) {
+            foreach ($field in 'Tweak', 'Path', 'Name', 'Type', 'Data') {
+                [string]::IsNullOrWhiteSpace([string]$entry[$field]) | Should Be $false
+            }
+        }
+    }
+
+    It "every entry writes a registry type that reg.exe knows" {
+        foreach ($entry in $script:UiPrefEntries) {
+            $entry.Type | Should Match '^(REG_DWORD|REG_SZ|REG_MULTI_SZ|REG_EXPAND_SZ|REG_BINARY|REG_QWORD)$'
+        }
+    }
+
+    It "every tweak of the table is defined in config\schema.psd1" {
+        $keys = @($script:UiPrefSchema.Tweaks | ForEach-Object { $_.Key })
+        foreach ($tweak in @($script:UiPrefEntries | ForEach-Object { $_.Tweak } | Sort-Object -Unique)) {
+            ($keys -contains $tweak) | Should Be $true
+        }
+    }
+
+    It "the phase reads the table from the data file" {
+        $script:UiPrefPhaseText | Should Match 'config\\ui-preferences\.psd1'
+        $script:UiPrefPhaseText | Should Match 'Import-PowerShellDataFile'
+    }
+
+    It "the phase does not read the fields of a tuple by index any more" {
+        # $v[0] / $v[1] ... is how the four fields of a tuple were read. With a
+        # table that @() can unwrap, that reads the first character of a string
+        # instead of a field.
+        $script:UiPrefPhaseText | Should Not Match '\$v\[\d+\]'
+    }
+
+    It "the phase skips an entry with an empty field instead of calling reg.exe" {
+        $script:UiPrefPhaseText | Should Match 'IsNullOrWhiteSpace'
+        $script:UiPrefPhaseText | Should Match 'Skipping the UI preference'
+    }
+
+    It "the phase removes the keys that the broken table left behind" {
+        $script:UiPrefPhaseText | Should Match 'Remove-WinEaseBrokenUiPreferenceKey'
+        $script:UiPrefPhaseText | Should Match 'GetValueNames'
+    }
+
+    It "every reg.exe call of the repository passes the force switch" {
+        # Without '/f' reg.exe asks "Overwrite (Yes/No)?" when the value already
+        # exists and waits for a key press - that is what stopped the build.
+        $offenders = @()
+        $files = @()
+        $files += Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "phases") -Filter '*.ps1' -File
+        $files += Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "lib") -Filter '*.ps1' -File
+        $files += Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "scripts") -Filter '*.ps1' -File
+        foreach ($file in $files) {
+            $lineNo = 0
+            foreach ($line in [System.IO.File]::ReadAllLines($file.FullName)) {
+                $lineNo++
+                if ($line -notmatch '^\s*&?\s*reg(\.exe)?\s+(add|delete)\b') { continue }
+                if ($line -notmatch '/f') { $offenders += "$($file.Name):$lineNo" }
+            }
+        }
+        ($offenders -join ', ') | Should Be ''
     }
 }
 
@@ -6123,5 +6610,167 @@ Describe "WinEase builder - the tweak helper is available to every phase" {
             if ($known -notcontains $td.Key) { $missing += $td.Key }
         }
         ($missing -join ', ') | Should Be ''
+    }
+}
+
+Describe "WinEase removal and migration wiring" {
+    BeforeAll {
+        $script:WiringText = @{
+            Phase05  = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\05-appx.ps1'))
+            Phase10  = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\10-registry.ps1'))
+            Phase11  = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\11-unattend.ps1'))
+            Defender = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'scripts\WinEase-DefenderEnforce.ps1'))
+            Migrator = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'tools\migrator\WinEase-Migrator.ps1'))
+            Gui      = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'gui\WinEaseGui.ps1'))
+        }
+    }
+
+    It "phase 05 force-removes the protected Security UI payload when Defender is removed" {
+        $text = $script:WiringText.Phase05
+        $text | Should Match 'SecHealthUI'
+        $text | Should Match 'Force-removed the protected Security UI package payload'
+        $text | Should Match '\$removeDefender'
+    }
+
+    It "phase 10 removes the Security UI payload, registration and AppRepository entry" {
+        $text = $script:WiringText.Phase10
+        $text | Should Match 'SecHealthUI'
+        $text | Should Match 'Windows\\AppRepository\\Packages'
+        $text | Should Match 'Windows\\SystemApps'
+    }
+
+    It "the Defender helper refuses to act without remove-defender.flag" {
+        $text = $script:WiringText.Defender
+        $text | Should Match 'remove-defender\.flag'
+        $text | Should Match 'if \(-not \(Test-Path -LiteralPath \$removeDefenderFlag\)\)'
+        $text | Should Match 'exit 0'
+    }
+
+    It "phase 11 stages the Defender helper only for RemoveDefender" {
+        $text = $script:WiringText.Phase11
+        $text | Should Match 'if \(\$removeDefender\)'
+        $text | Should Match 'WinEase-DefenderEnforce\.ps1'
+        $text | Should Match 'remove-defender\.flag'
+    }
+
+    It "the bundled backup excludes the restore journal and temporary files" {
+        $text = $script:WiringText.Phase11
+        $text | Should Match 'robocopy\.exe'
+        $text | Should Match '\/XF restore-state\.json \*\.tmp \*\.partial'
+        $text | Should Match 'migration-manifest\.json'
+        $text | Should Match 'C:\\WinEaseBackup'
+    }
+
+    It "the launcher points the migrator at the bundled backup" {
+        $text = $script:WiringText.Phase11
+        $text.Contains('$migrationLauncherCommand += '' -PackagePath "C:\WinEaseBackup"''') | Should Be $true
+    }
+
+    It "the migrator prefers C:\WinEaseBackup only when it has a manifest" {
+        $text = $script:WiringText.Migrator
+        $text.Contains('$script:BundledMigrationBackupPath = ''C:\WinEaseBackup''') | Should Be $true
+        $text.Contains("Join-Path `$script:BundledMigrationBackupPath 'migration-manifest.json'") | Should Be $true
+    }
+
+    It "the WinForms backup checkbox follows the assistant toggle through the form context" {
+        $text = $script:WiringText.Gui
+        $text.Contains("ComponentCheckboxes['IncludeMigrationBackup']") | Should Be $true
+        $text | Should Not Match 'Add_CheckedChanged\(\{ if \(\$chkBackup\)'
+    }
+
+    It "the bundling block really copies the backup to the image root and drops the journal" {
+        $text = $script:WiringText.Phase11
+        $start = $text.IndexOf('if ($includeMigrationAssistant -eq $true)')
+        $start | Should BeGreaterThan 0
+        $block = 'param($scratchDir, $scriptDir, $DryRun, $includeMigrationAssistant, $includeMigrationBackup)' + "`r`n" + $text.Substring($start)
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('winease_backup_' + [guid]::NewGuid().ToString('N'))
+        $oldProfile = $env:USERPROFILE
+        try {
+            $fakeProfile = Join-Path $tmp 'profile'
+            $sourceBackup = Join-Path $fakeProfile 'WinEase_migration_backup'
+            New-Item -ItemType Directory -Path $sourceBackup -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $sourceBackup 'migration-manifest.json') -Value '{}' -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $sourceBackup 'keep.txt') -Value 'keep' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $sourceBackup 'restore-state.json') -Value '{}' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $sourceBackup 'skip.tmp') -Value 'tmp' -Encoding ASCII
+            $scratchDir = Join-Path $tmp 'scratch'
+            New-Item -ItemType Directory -Path $scratchDir -Force | Out-Null
+            $env:USERPROFILE = $fakeProfile
+            $null = & ([scriptblock]::Create($block)) $scratchDir $script:RepoRoot $false $true $true 6>$null
+            $dest = Join-Path $scratchDir 'WinEaseBackup'
+            (Test-Path -LiteralPath (Join-Path $dest 'migration-manifest.json')) | Should Be $true
+            (Test-Path -LiteralPath (Join-Path $dest 'keep.txt')) | Should Be $true
+            (Test-Path -LiteralPath (Join-Path $dest 'restore-state.json')) | Should Be $false
+            (Test-Path -LiteralPath (Join-Path $dest 'skip.tmp')) | Should Be $false
+            $launcher = [System.IO.File]::ReadAllText((Join-Path $scratchDir 'Users\Public\Desktop\Launch-MigrationAssistant.cmd'))
+            $launcher.Contains('-PackagePath "C:\WinEaseBackup"') | Should Be $true
+        } finally {
+            $env:USERPROFILE = $oldProfile
+            Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Describe "WinEase UI options that have to take effect" {
+    BeforeAll {
+        $script:UiPrefs = @((Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot 'config\ui-preferences.psd1')).UiPreferences)
+        $script:UiPhase = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\10-registry.ps1'))
+    }
+
+    It "disables the accessibility shortcuts without removing the features" {
+        $expected = @{
+            'Control Panel\Accessibility\StickyKeys' = '506'
+            'Control Panel\Accessibility\FilterKeys' = '122'
+            'Control Panel\Accessibility\ToggleKeys' = '58'
+            'Control Panel\Accessibility\MouseKeys' = '58'
+            'Control Panel\Accessibility\Keyboard Response' = '122'
+        }
+        foreach ($path in $expected.Keys) {
+            $entry = @($script:UiPrefs | Where-Object { $_.Tweak -eq 'DisableAccessibilityHotkeys' -and $_.Path -eq $path -and $_.Name -eq 'Flags' })
+            $entry.Count | Should Be 1
+            $entry[0].Data | Should Be $expected[$path]
+        }
+    }
+
+    It "turns pointer acceleration off with the 0/0/0 trio" {
+        foreach ($name in 'MouseSpeed', 'MouseThreshold1', 'MouseThreshold2') {
+            $entry = @($script:UiPrefs | Where-Object { $_.Tweak -eq 'DisableMouseAcceleration' -and $_.Name -eq $name })
+            $entry.Count | Should Be 1
+            $entry[0].Data | Should Be '0'
+        }
+    }
+
+    It "carries the PolicyManager bridge that hides Recommended on Pro" {
+        $script:UiPhase | Should Match 'PolicyManager\\current\\device\\Start'
+        $script:UiPhase | Should Match 'PolicyManager\\current\\device\\Education'
+        $script:UiPhase | Should Match 'IsEducationEnvironment'
+    }
+
+    It "disables every animation through the visual-effects values" {
+        foreach ($needle in 'MinAnimate', 'UserPreferencesMask', 'TaskbarAnimations', 'ListviewAlphaSelect', 'Control Panel\Accessibility\Animation') {
+            $script:UiPhase.Contains($needle) | Should Be $true
+        }
+        $script:UiPhase | Should Match 'Test-TweakEnabled ''OptimizeVisualEffects'' \$true'
+    }
+
+    It "registers the GIF with its own Photo Viewer ProgID" {
+        $script:UiPhase.Contains('ProgId = "PhotoViewer.FileAssoc.Gif"') | Should Be $true
+        $script:UiPhase.Contains('PhotoViewer.FileAssoc.Jpeg') | Should Be $true
+        $script:UiPhase | Should Match 'UserChoice'
+    }
+
+    It "writes the Photo Viewer open command without passing embedded quotes through reg.exe" {
+        $script:UiPhase | Should Match 'New-Item -Path \$commandKey'
+        $script:UiPhase | Should Match 'Set-ItemProperty -Path \$commandKey -Name ''\(default\)'' -Value \$photoViewerCommand'
+    }
+
+    It "writes the lock-screen policy from the option instead of forcing it on" {
+        $script:UiPhase | Should Match 'Test-TweakEnabled ''DisableLockScreen'' \$false'
+        $script:UiPhase | Should Match '\$noLockScreenValue = if \(Test-TweakEnabled ''DisableLockScreen'' \$false\) \{ 1 \} else \{ 0 \}'
+    }
+
+    It "uses the transparent shell32 icon for the shortcut overlay" {
+        $script:UiPhase.Contains('%SystemRoot%\System32\shell32.dll,-50') | Should Be $true
+        $script:UiPhase.Contains('imageres.dll,-17') | Should Be $false
     }
 }

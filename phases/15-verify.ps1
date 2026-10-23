@@ -5,6 +5,11 @@
 param()
 
 
+# Re-create the diagnostic directory if it was removed during the build (see phase 13).
+if ($script:DiagDir -and -not (Test-Path -LiteralPath $script:DiagDir)) {
+    New-Item -ItemType Directory -Path $script:DiagDir -Force | Out-Null
+}
+
 # 15. Verify final installation payload
 $wimCheck = Join-Path -Path "$WinEaseDir\sources" -ChildPath "install.wim"
 
@@ -222,16 +227,40 @@ if ($removeDefender) {
         $defIssues.Add("CBS re-staging maps still present ($($defMaps.Count) entries) - Defender may be re-staged on first boot")
     }
 
-    # 2. Defender service keys in the offline SYSTEM hive
+    # 2. Defender service keys in the offline SYSTEM hive. The user-mode services are
+    #    deleted; the boot-start filter drivers are kept but must be out of the boot path
+    #    (Start=4, no Early-Launch group). Treating a correctly disabled driver as a
+    #    surviving service made this check warn on every successful removal.
     $sysHive = Join-Path -Path $verifyApply -ChildPath "Windows\System32\config\SYSTEM"
-    $defSvc = @('WinDefend','MDCoreSvc','WdNisSvc','Sense','SecurityHealthService','wscsvc')
+    $defSvc = @('WinDefend','MDCoreSvc','WdNisSvc','Sense','SecurityHealthService','wscsvc','webthreatdefsvc','webthreatdefusersvc','SgrmBroker','SgrmAgent')
+    $defDrv = @('WdBoot','WdFilter','WdNisDrv','MsSecCore','MsSecFlt','MsSecWfp')
     $presentSvc = @()
+    $presentDrv = @()
+    $badDrv = @()
     if (Test-Path -LiteralPath $sysHive) {
         $null = & reg.exe load "HKLM\zVERIFYDEF" "$sysHive" 2>&1
         if ($LASTEXITCODE -eq 0) {
             foreach ($s in $defSvc) {
                 $null = & reg.exe query "HKLM\zVERIFYDEF\ControlSet001\Services\$s" 2>&1
                 if ($LASTEXITCODE -eq 0) { $presentSvc += $s }
+            }
+            foreach ($d in $defDrv) {
+                $drvKey = "Registry::HKEY_LOCAL_MACHINE\zVERIFYDEF\ControlSet001\Services\$d"
+                if (-not (Test-Path -LiteralPath $drvKey)) { continue }
+                $presentDrv += $d
+                $drvStart = (Get-ItemProperty -LiteralPath $drvKey -Name 'Start' -ErrorAction SilentlyContinue).Start
+                if ($null -eq $drvStart -or [int]$drvStart -ne 4) {
+                    $badDrv += "$d (Start=$drvStart)"
+                }
+            }
+            foreach ($d in @('WdBoot','WdFilter')) {
+                $drvKey = "Registry::HKEY_LOCAL_MACHINE\zVERIFYDEF\ControlSet001\Services\$d"
+                if (Test-Path -LiteralPath $drvKey) {
+                    $group = (Get-ItemProperty -LiteralPath $drvKey -Name 'Group' -ErrorAction SilentlyContinue).Group
+                    if (-not [string]::IsNullOrWhiteSpace("$group")) {
+                        $badDrv += "$d (Group=$group)"
+                    }
+                }
             }
             & reg.exe unload "HKLM\zVERIFYDEF" > $null 2>&1
         }
@@ -240,9 +269,13 @@ if ($removeDefender) {
     if ($presentSvc.Count -gt 0) {
         $defIssues.Add("Defender service keys still registered: $($presentSvc -join ', ')")
     }
+    $defReport.Add("Defender driver keys disabled  : $(if($presentDrv.Count){$presentDrv -join ', '}else{'none present'})")
+    if ($badDrv.Count -gt 0) {
+        $defIssues.Add("Defender driver keys are still active: $($badDrv -join ', ')")
+    }
 
     # 3. Defender payload folders
-    foreach ($p in @("Program Files\Windows Defender", "ProgramData\Microsoft\Windows Defender")) {
+    foreach ($p in @("Program Files\Windows Defender", "ProgramData\Microsoft\Windows Defender", "ProgramData\Microsoft\Windows Defender Platform", "ProgramData\Microsoft\Windows Security Health")) {
         $full = Join-Path -Path $verifyApply -ChildPath $p
         $cnt = 0
         if (Test-Path -LiteralPath $full) {
@@ -254,6 +287,33 @@ if ($removeDefender) {
         }
     }
 
+    # 4. Defender CBS package (best-effort removal in phase 08). A remaining package is
+    #    not fatal, but it is the source a future servicing pass re-stages from.
+    $defPackagesLeft = @()
+    try {
+        $defPackagesLeft = @(Get-WindowsPackage -Path $verifyApply -ErrorAction SilentlyContinue |
+            Where-Object { $_.PackageName -match 'Windows-Defender' })
+    } catch { Write-Verbose "Could not enumerate Defender CBS packages: $($_.Exception.Message)" }
+    $defReport.Add("Defender CBS packages present : $(if($defPackagesLeft.Count){$defPackagesLeft.Count}else{'none'})")
+    if ($defPackagesLeft.Count -gt 0) {
+        $defIssues.Add("Defender CBS package(s) still present: $(($defPackagesLeft | ForEach-Object { $_.PackageName }) -join ', ')")
+    }
+
+    # 5. Windows Security UI AppX payload / registration
+    $secHealthDirs = @()
+    foreach ($secRoot in @("Program Files\WindowsApps", "Windows\SystemApps", "ProgramData\Microsoft\Windows\AppRepository\Packages")) {
+        $fullRoot = Join-Path -Path $verifyApply -ChildPath $secRoot
+        if (Test-Path -LiteralPath $fullRoot) {
+            $secHealthDirs += @(Get-ChildItem -LiteralPath $fullRoot -Force -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match 'SecHealthUI' } |
+                ForEach-Object { Join-Path -Path $secRoot -ChildPath $_.Name })
+        }
+    }
+    $defReport.Add("Security UI package entries  : $(if($secHealthDirs.Count){$secHealthDirs -join ', '}else{'none'})")
+    if ($secHealthDirs.Count -gt 0) {
+        $defIssues.Add("Windows Security UI package still present: $($secHealthDirs -join ', ')")
+    }
+
     foreach ($line in $defReport) { Write-Host "  - $line" -ForegroundColor Gray }
     $defReport | Out-File (Join-Path -Path $baseWorkDir -ChildPath "verify-defender.txt") -Encoding utf8
     if ($defIssues.Count -gt 0) {
@@ -263,6 +323,92 @@ if ($removeDefender) {
     } else {
         Write-Host "  - [PASS] Defender payload, service keys and CBS re-staging maps are all removed." -ForegroundColor Green
     }
+}
+
+# UI preference verification. Several UI options used to write values Windows ignores
+# (mouse acceleration 1/6/10 is the enabled default) or were overwritten later in the
+# phase (NoLockScreen). This checks the effective offline values, not only the code path.
+Write-Host "Verifying UI preferences in the final payload..." -ForegroundColor Cyan
+$uiReport = [System.Collections.Generic.List[string]]::new()
+$uiIssues = [System.Collections.Generic.List[string]]::new()
+$ntHivePath = Join-Path -Path $verifyApply -ChildPath "Users\Default\ntuser.dat"
+$softHivePath = Join-Path -Path $verifyApply -ChildPath "Windows\System32\config\SOFTWARE"
+$ntLoaded = $false
+$softLoaded = $false
+try {
+    if (Test-Path -LiteralPath $ntHivePath) {
+        $null = & reg.exe load "HKLM\zVERIFYNT" "$ntHivePath" 2>&1
+        $ntLoaded = ($LASTEXITCODE -eq 0)
+    }
+    if (Test-Path -LiteralPath $softHivePath) {
+        $null = & reg.exe load "HKLM\zVERIFYUISOFT" "$softHivePath" 2>&1
+        $softLoaded = ($LASTEXITCODE -eq 0)
+    }
+    $getUiValue = {
+        param([string]$Hive, [string]$Path, [string]$Name)
+        $key = "Registry::HKEY_LOCAL_MACHINE\$Hive\$Path"
+        try { return (Get-ItemProperty -LiteralPath $key -Name $Name -ErrorAction Stop).$Name } catch { return $null }
+    }
+    if (Test-TweakEnabled 'OptimizeVisualEffects' $true) {
+        if (-not $ntLoaded) {
+            $uiIssues.Add("Default user hive could not be loaded; visual effects cannot be verified")
+        } else {
+            foreach ($check in @(
+                @{ Name = 'MinAnimate'; Path = 'Control Panel\Desktop\WindowMetrics'; Expected = '0' },
+                @{ Name = 'DragFullWindows'; Path = 'Control Panel\Desktop'; Expected = '0' },
+                @{ Name = 'VisualFXSetting'; Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects'; Expected = 2 },
+                @{ Name = 'TaskbarAnimations'; Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Expected = 0 },
+                @{ Name = 'ListviewAlphaSelect'; Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Expected = 0 },
+                @{ Name = 'ListviewShadow'; Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Expected = 0 },
+                @{ Name = 'EnableTransparency'; Path = 'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'; Expected = 0 }
+            )) {
+                $actual = & $getUiValue 'zVERIFYNT' $check.Path $check.Name
+                $uiReport.Add("$($check.Name) = $actual (expected $($check.Expected))")
+                if ($null -eq $actual -or "$actual" -ne "$($check.Expected)") {
+                    $uiIssues.Add("$($check.Name) is '$actual', expected '$($check.Expected)'")
+                }
+            }
+        }
+    }
+    if (Test-TweakEnabled 'DisableMouseAcceleration' $false) {
+        if (-not $ntLoaded) {
+            $uiIssues.Add("Default user hive could not be loaded; mouse acceleration cannot be verified")
+        } else {
+            foreach ($name in @('MouseSpeed', 'MouseThreshold1', 'MouseThreshold2')) {
+                $actual = & $getUiValue 'zVERIFYNT' 'Control Panel\Mouse' $name
+                $uiReport.Add("$name = $actual (expected 0)")
+                if ($null -eq $actual -or "$actual" -ne '0') { $uiIssues.Add("$name is '$actual', expected '0'") }
+            }
+        }
+    }
+    if (Test-TweakEnabled 'DisableLockScreen' $false) {
+        $noLock = if ($softLoaded) { & $getUiValue 'zVERIFYUISOFT' 'Policies\Microsoft\Windows\Personalization' 'NoLockScreen' } else { $null }
+        # The SOFTWARE hive holds HKLM; zVERIFYUISOFT maps it, so the path is relative.
+        $uiReport.Add("NoLockScreen = $noLock (expected 1)")
+        if ($null -eq $noLock -or "$noLock" -ne '1') { $uiIssues.Add("NoLockScreen is '$noLock', expected '1'") }
+    }
+    if (Test-TweakEnabled 'PhotoViewerAssociations' $true) {
+        $photoCmd = if ($softLoaded) { & $getUiValue 'zVERIFYUISOFT' 'Classes\PhotoViewer.FileAssoc.Jpeg\shell\open\command' '(default)' } else { $null }
+        $photoJpg = if ($ntLoaded) { & $getUiValue 'zVERIFYNT' 'Software\Classes\.jpg' '(default)' } else { $null }
+        $uiReport.Add("Photo Viewer JPEG command registered = $(if($photoCmd){'yes'}else{'no'})")
+        $uiReport.Add("Default-user .jpg ProgID = $photoJpg (expected PhotoViewer.FileAssoc.Jpeg)")
+        if (-not $photoCmd -or "$photoCmd" -notmatch 'PhotoViewer\.dll') {
+            $uiIssues.Add("Photo Viewer JPEG ProgID command is not registered correctly")
+        }
+        if ("$photoJpg" -ne 'PhotoViewer.FileAssoc.Jpeg') {
+            $uiIssues.Add("Default-user .jpg ProgID is '$photoJpg', expected 'PhotoViewer.FileAssoc.Jpeg'")
+        }
+    }
+    foreach ($line in $uiReport) { Write-Host "  - $line" -ForegroundColor Gray }
+    $uiReport | Out-File (Join-Path -Path $baseWorkDir -ChildPath "verify-ui.txt") -Encoding utf8
+    if ($uiIssues.Count -gt 0) {
+        foreach ($issue in $uiIssues) { Write-Warning "UI verification: $issue" }
+    } else {
+        Write-Host "  - [PASS] Selected UI preferences are effective in the offline image." -ForegroundColor Green
+    }
+} finally {
+    if ($ntLoaded) { & reg.exe unload "HKLM\zVERIFYNT" > $null 2>&1 }
+    if ($softLoaded) { & reg.exe unload "HKLM\zVERIFYUISOFT" > $null 2>&1 }
 }
 
 # Clean up verification scratch on success (robust delete: expanded images contain

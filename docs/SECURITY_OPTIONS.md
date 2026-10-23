@@ -21,25 +21,31 @@ reached through the GUI ("Services & Apps" tab), the command line, a preset
 ### RemoveDefender (GUI: "Remove Windows Defender & Security UI")
 
 * **Default:** off
-* **What the build does:** the Defender services are disabled and their payload is
-  removed from the image, the Windows Security UI package is removed with it and the
-  `SecurityHealth` / SmartScreen IFEO entries are deleted.
-* **Impact:** the installed system has **no antivirus protection**. Nothing is
-  downloaded, nothing is scanned, and the re-enable of Defender after an update is
-  not guaranteed.
-* **Recovery:** on the installed system, as administrator:
-  ```powershell
-  Set-MpPreference -DisableRealtimeMonitoring $false
-  sc.exe config WinDefend start= delayed-auto
-  sc.exe config WdBoot start= boot
-  sc.exe config WdNisSvc start= delayed-auto
-  ```
-  A system restore point or a reinstall of the Defender platform payload
-  (`DISM /Online /Add-Package /PackageName:Microsoft-Windows-Defender-Client-Package~`)
-  repairs a removed payload.
+* **What the build does:** the Defender user-mode service keys are deleted, the
+  boot-start filter drivers are taken out of the boot path (`Start=4`, no Early-Launch
+  group), and their payload is removed from the image (including the CBS package when
+  DISM allows it), the Windows
+  Security UI (`Microsoft.SecHealthUI`) package and its staged registration are
+  removed with it, and the `SecurityHealth` / SmartScreen IFEO entries are deleted.
+  This is a removal, not a disable: `Set-MpPreference` cannot switch it back on.
+* **Impact:** the installed system has **no antivirus protection** and no Windows
+  Security app. Nothing is downloaded, nothing is scanned, and Windows Update may
+  fail or re-stage parts of the platform.
+* **Recovery:** there is no supported in-place re-enable. The reliable recovery is a
+  repair install or reinstall of Windows. A DISM
+  `/Online /Add-Package /PackageName:Microsoft-Windows-Defender-Client-Package~`
+  only works if the package payload still exists in `WinSxS`; a system restore point
+  is the only fast rollback if one was created before the build.
 * **Note:** the `extreme`, `fat32`, `handheld` and `audio` presets still switch this
   on explicitly. Selecting one of them is an explicit choice; the *default* of the
   setting itself is off.
+* **Note:** the Advanced Debloat tab has its own target for the same thing
+  (`Physical: Defender (complete removal) [~50MB]`). It is a *second* way to ask for the
+  removal, not an independent one: while this setting is off, the builder reports the
+  conflict and drops the target from the debloat lists, and phase 10 does not disable a
+  single Defender service without this setting being on. The target is also not covered
+  by the `-AllowPhysicalDebloat` gate, so it never removes the Defender payload on its
+  own either.
 
 ### DisableWindowsUpdate (GUI: "Disable Automatic Windows Update")
 
@@ -165,5 +171,5 @@ two options with the widest impact:
 ```
   - Remove Windows Defender: True
   [!] Defender is removed: the installed system has NO antivirus protection.
-      Recovery: 'Set-MpPreference -DisableRealtimeMonitoring $false' and 'sc.exe config WinDefend start= delayed-auto' (see docs\SECURITY_OPTIONS.md)
+      Recovery: Defender cannot be re-enabled in place; use a repair install or reinstall (see docs\SECURITY_OPTIONS.md).
 ```

@@ -130,7 +130,7 @@
         @{ Key = 'RemoveInternetExplorer'; Category = 'Privacy'; Default = $true; Description = 'Remove the Internet Explorer optional feature'; CliSwitch = $true }
         @{ Key = 'RemoveWordPad'; Category = 'Privacy'; Default = $true; Description = 'Remove the WordPad optional feature'; CliSwitch = $true }
         @{ Key = 'RemoveStepsRecorder'; Category = 'Privacy'; Default = $true; Description = 'Remove the Steps Recorder optional feature'; CliSwitch = $true }
-        @{ Key = 'RemoveSnippingTool'; Category = 'Privacy'; Default = $true; Description = 'Remove the Snipping Tool optional feature'; CliSwitch = $true }
+        @{ Key = 'RemoveSnippingTool'; Category = 'Privacy'; Default = $true; Description = 'Remove the legacy Snipping Tool optional feature (not the Screen Sketch app)'; CliSwitch = $true }
         @{ Key = 'RemovePaint'; Category = 'Privacy'; Default = $true; Description = 'Remove the MS Paint optional feature'; CliSwitch = $true }
         @{ Key = 'RemoveXpsViewer'; Category = 'Privacy'; Default = $true; Description = 'Remove the XPS Viewer optional feature'; CliSwitch = $true }
         @{ Key = 'RemovePowerShellISE'; Category = 'Privacy'; Default = $true; Description = 'Remove the Windows PowerShell ISE optional feature'; CliSwitch = $true }
@@ -140,7 +140,7 @@
         @{ Key = 'RemoveNarratorApp'; Category = 'Privacy'; Default = $true; Description = 'Remove the Narrator optional feature'; CliSwitch = $true }
         @{ Key = 'RemoveSearchEngineClient'; Category = 'Privacy'; Default = $true; Description = 'Remove the Search Engine Client optional feature'; CliSwitch = $true }
         @{ Key = 'RemovePrintingManagement'; Category = 'Privacy'; Default = $true; Description = 'Remove the printing management optional feature'; CliSwitch = $true }
-        @{ Key = 'RemoveWebcamExperience'; Category = 'Privacy'; Default = $true; Description = 'Remove the Webcam Experience optional feature'; CliSwitch = $true }
+        @{ Key = 'RemoveWebcamExperience'; Category = 'Privacy'; Default = $true; Description = 'Remove the Webcam Experience optional feature (not the Camera app)'; CliSwitch = $true }
         @{ Key = 'RemoveMediaPlayerFeature'; Category = 'Privacy'; Default = $true; Description = 'Remove the Media Player optional feature'; CliSwitch = $true }
         @{ Key = 'RemoveWallpaperContent'; Category = 'Privacy'; Default = $true; Description = 'Remove the extended wallpaper content optional feature'; CliSwitch = $true }
         @{ Key = 'RemoveMagnifierApp'; Category = 'Privacy'; Default = $true; Description = 'Remove the Magnifier optional feature'; CliSwitch = $true }
@@ -233,8 +233,12 @@
         @{ Key = 'UserName'; Variable = 'UserName'; Type = 'String' }
         @{ Key = 'AdvancedDebloatStandard'; Variable = ''; Type = 'Special' }
         @{ Key = 'AdvancedDebloatExperimental'; Variable = ''; Type = 'Special' }
-        @{ Key = 'IncludeMigrationAssistant'; Variable = 'includeMigrationAssistant'; Type = 'Bool'; Default = $false; CliSwitch = $true; Gui = @{ Tab = 'Migration'; Order = 21; Text = 'Include Migration Assistant (PC-to-PC transfer tools)'; Description = 'Bundle the Nano11-Migrator tool into the image for post-install PC migration'; Default = $false } }
-        @{ Key = 'RemoveAppxBloatware'; Variable = 'removeAppxBloatware'; Type = 'Bool'; Default = $true; Gui = @{ Order = 22; Text = 'Remove Preinstalled AppX Bloatware'; Description = 'Remove the inbox apps of the image (Zune, Clipchamp, Xbox, sponsored apps). Individual groups follow their own setting.'; Default = $true } }
+        @{ Key = 'IncludeMigrationAssistant'; Variable = 'includeMigrationAssistant'; Type = 'Bool'; Default = $false; CliSwitch = $true; Gui = @{ Tab = 'Migration'; Order = 21; Text = 'Include Migration Assistant (PC-to-PC transfer tools)'; Description = 'Bundle the WinEase-Migrator tool into the image for post-install PC migration'; Default = $false } }
+        @{ Key = 'IncludeMigrationBackup'; Variable = 'includeMigrationBackup'; Type = 'Bool'; Default = $true; CliSwitch = $true; Gui = @{ Tab = 'Migration'; Order = 22; Text = 'Bundle the default migration backup'; Description = 'Copy %USERPROFILE%\WinEase_migration_backup into C:\WinEaseBackup. Restore stays manual.'; Default = $true } }
+        @{ Key = 'RemoveAppxBloatware'; Variable = 'removeAppxBloatware'; Type = 'Bool'; Default = $true; Gui = @{ Order = 23; Text = 'Remove Preinstalled AppX Bloatware'; Description = 'Remove the inbox apps of the image (Zune, Clipchamp, Xbox, sponsored apps). Individual groups follow their own setting.'; Default = $true } }
+        @{ Key = 'RemoveCameraApp'; Variable = 'removeCameraApp'; Type = 'Bool'; Default = $true; CliSwitch = $true; Gui = @{ Order = 24; Text = 'Remove Camera app'; Description = 'Remove the Microsoft.WindowsCamera AppX package (works independently of the bloatware list)'; Default = $true } }
+        @{ Key = 'RemovePhotosApp'; Variable = 'removePhotosApp'; Type = 'Bool'; Default = $true; CliSwitch = $true; Gui = @{ Order = 25; Text = 'Remove Photos app'; Description = 'Remove the Microsoft.Windows.Photos AppX package (works independently of the bloatware list)'; Default = $true } }
+        @{ Key = 'RemoveScreenSketchApp'; Variable = 'removeScreenSketchApp'; Type = 'Bool'; Default = $true; CliSwitch = $true; Gui = @{ Order = 26; Text = 'Remove Screen Sketch / Snipping Tool app'; Description = 'Remove the Microsoft.ScreenSketch AppX package (works independently of the bloatware list)'; Default = $true } }
     )
 
     # CLI switch pairs nano11builder.ps1 applies in this order. For each entry the first
@@ -401,9 +405,12 @@
     #   Group    a logical group (documentation and reporting only)
     #   Option   the setting key that controls the group. An empty Option means the
     #            group belongs to the default removal list, which is controlled by
-    #            RemoveAppxBloatware as a whole.
+    #            RemoveAppxBloatware as a whole. A non-inverted Option is independent
+    #            of RemoveAppxBloatware: the package is removed when that option is on.
     #   Invert   the controlling setting is a "Keep..." option: the packages stay when
-    #            the setting is on and are removed when it is off.
+    #            the setting is on and are removed when it is off. Keep options belong
+    #            to the default removal list, so they only apply while
+    #            RemoveAppxBloatware is on.
     #
     # The protection whitelist (system-critical frameworks and shell hosts) is not part
     # of this table: it is a safety invariant of phase 05 and never depends on a setting.
@@ -509,6 +516,13 @@
         # --- Windows Security UI (RemoveDefender) ---
         @{ Pattern = '*Microsoft.SecHealthUI*'; Group = 'Defender'; Option = 'RemoveDefender' }
         @{ Pattern = '*Microsoft.Windows.SecHealthUI*'; Group = 'Defender'; Option = 'RemoveDefender' }
+        # --- individually removable inbox apps (independent of RemoveAppxBloatware) ---
+        @{ Pattern = '*Microsoft.WindowsCamera*'; Group = 'App'; Option = 'RemoveCameraApp' }
+        @{ Pattern = '*WindowsCamera*'; Group = 'App'; Option = 'RemoveCameraApp' }
+        @{ Pattern = '*Microsoft.Windows.Photos*'; Group = 'App'; Option = 'RemovePhotosApp' }
+        @{ Pattern = '*Windows.Photos*'; Group = 'App'; Option = 'RemovePhotosApp' }
+        @{ Pattern = '*Microsoft.ScreenSketch*'; Group = 'App'; Option = 'RemoveScreenSketchApp' }
+        @{ Pattern = '*ScreenSketch*'; Group = 'App'; Option = 'RemoveScreenSketchApp' }
     )
     # The execution engine of every Advanced Debloat target. Every field of an entry:
     #   Item               the exact text of the list entry (the value of the profile)
@@ -557,9 +571,14 @@
         @{ Item = 'Remove Windows PowerShell ISE [5MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_powershell_ise'; SupportsRustPhysical = $true; Phase = '06-fod'  ; Option = 'RemovePowerShellISE'; Payload = @('Windows\System32\WindowsPowerShell\v1.0\powershell_ise.exe','Windows\SysWOW64\WindowsPowerShell\v1.0\powershell_ise.exe','Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShellISE','Windows\SysWOW64\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShellISE') }
         @{ Item = 'Remove Steps Recorder [2MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_steps_recorder'; SupportsRustPhysical = $true; Phase = '06-fod'  ; Option = 'RemoveStepsRecorder'; Payload = @('Windows\System32\psr.exe') }
         @{ Item = 'Remove Telnet/TFTP client [1MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_telnet_tftp'; SupportsRustPhysical = $true; Phase = '06-fod'  ; Option = 'RemoveTelnetClient'; Payload = @('Windows\System32\telnet.exe','Windows\System32\tftp.exe') }
-        @{ Item = 'Remove SNMP service [2MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_snmp_client'; SupportsRustPhysical = $true; Phase = '06-fod'  ; Option = 'RemoveSnmpClient'; Payload = @('Windows\System32\snmpapi.dll','Windows\System32\snmp.exe','Windows\System32\wmisnmp.dll') }
+        # The payload of a target lists the files that are really removed. A shared library
+        # is never in it: wmisnmp.dll and snmpapi.dll belong to WMI and the SNMP client
+        # uses them, WinFax.dll is the fax API of the whole system. Deleting one of them
+        # breaks components that have nothing to do with the target. The service of the
+        # target is disabled in phase 10, which is what the removal is about.
+        @{ Item = 'Remove SNMP service [2MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_snmp_client'; SupportsRustPhysical = $true; Phase = '06-fod'  ; Option = 'RemoveSnmpClient'; Payload = @('Windows\System32\snmp.exe') }
         @{ Item = 'Remove Windows Identity Foundation [10MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_identity_foundation'; SupportsRustPhysical = $true; Phase = '06-fod'; Payload = @('Windows\Microsoft.NET\Framework\v3.0\WCF','Windows\Microsoft.NET\assembly\GAC_MSIL\Microsoft.IdentityModel*') }
-        @{ Item = 'Remove Fax service [5MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_fax'; SupportsRustPhysical = $true; Phase = '06-fod'  ; Option = 'RemoveFaxClient'; Payload = @('Windows\System32\fxssvc.exe','Windows\System32\WinFax.dll') }
+        @{ Item = 'Remove Fax service [5MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_fax'; SupportsRustPhysical = $true; Phase = '06-fod'  ; Option = 'RemoveFaxClient'; Payload = @('Windows\System32\fxssvc.exe') }
         @{ Item = 'Remove XPS Viewer [5MB]'; Engines = @('PowerShell','Rust'); Default = 'PowerShell'; RustKey = 'physical_xps_viewer'; SupportsRustPhysical = $true; Phase = '06-fod'  ; Option = 'RemoveXpsViewer'; Payload = @('Windows\System32\xpsrch.exe','Windows\System32\xpsviewer.exe','Program Files\WindowsApps\Microsoft.Windows.XPSViewer*') }
         # --- Physical targets (forced engine by default) ---
         # The targets below are removed by the Rust engine (the forced physical deletion of
@@ -573,7 +592,13 @@
         @{ Item = 'Physical: Telemetry/DiagTrack (complete removal) [~30MB]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_telemetry'; SupportsRustPhysical = $true; Phase = '08-filesystem' }
         @{ Item = 'Physical: Hyper-V / Virtualization stack [~200-400MB]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_hyperv'; SupportsRustPhysical = $true; Phase = '06-fod' }
         @{ Item = 'Physical: IIS (Web server) [~50-100MB]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_iis'; SupportsRustPhysical = $true; Phase = '06-fod' }
-        @{ Item = 'Physical: Windows Firewall (complete removal) [~20-40MB]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_firewall'; SupportsRustPhysical = $true; Phase = '08-filesystem'; Payload = @('Windows\System32\mpssvc.dll','Windows\System32\drivers\mpsdrv.sys') }
+        # The firewall has no payload for the safe engine: the binary of the service
+        # (mpssvc.dll) and its driver (mpsdrv.sys) live in System32, and the safe engine
+        # never deletes a binary of the system directory (Directive 2.1 of phase 08: the
+        # file is hardlinked into the component store, and deleting one of the two links
+        # desyncs the hardlink set of the image). The safe engine disables the service
+        # (MpsSvc, phase 10); the forced engine removes the binary.
+        @{ Item = 'Physical: Windows Firewall (complete removal) [~20-40MB]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_firewall'; SupportsRustPhysical = $true; Phase = '08-filesystem' }
         @{ Item = 'Physical: BitLocker (complete removal) [~30-50MB]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_bitlocker'; SupportsRustPhysical = $true; Phase = '10-registry'  ; Option = 'RemoveBitLockerFeature' }
         @{ Item = 'Physical: Windows Search index (complete removal) [varies]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_search_index'; SupportsRustPhysical = $true; Phase = '08-filesystem'; Payload = @('ProgramData\Microsoft\Search\Data') }
         @{ Item = 'Physical: Windows.old (complete removal) [varies]'; Engines = @('PowerShell','Rust'); Default = 'Rust'; RustKey = 'physical_windows_old'; SupportsRustPhysical = $true; Phase = '08-filesystem' }

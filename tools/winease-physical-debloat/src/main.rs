@@ -1146,10 +1146,10 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
     {
         targets.push(DeletionTarget {
             name: "Firewall",
-            files: vec![
-                "Windows\\System32\\mpssvc.dll",
-                "Windows\\System32\\drivers\\mpsdrv.sys",
-            ],
+            // mpsdrv.sys is a boot-start driver: it is loaded before the kernel hands over
+            // to the boot chain, so it is never deleted. The service itself is disabled in
+            // phase 10 of the builder.
+            files: vec!["Windows\\System32\\mpssvc.dll"],
             dirs: vec![],
             ..Default::default()
         });
@@ -1447,11 +1447,11 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
     {
         targets.push(DeletionTarget {
             name: "SNMP client",
-            files: vec![
-                "Windows\\System32\\snmpapi.dll",
-                "Windows\\System32\\snmp.exe",
-                "Windows\\System32\\wmisnmp.dll",
-            ],
+            // snmpapi.dll is the API of the SNMP client and wmisnmp.dll is its WMI
+            // provider: both are shared with WMI, and deleting them breaks the WMI stack
+            // of the image (and every application that uses it). Only the tool itself is
+            // removed; the service is disabled in phase 10 of the builder.
+            files: vec!["Windows\\System32\\snmp.exe"],
             dirs: vec![],
             ..Default::default()
         });
@@ -1482,10 +1482,9 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
     {
         targets.push(DeletionTarget {
             name: "Fax service",
-            files: vec![
-                "Windows\\System32\\fxssvc.exe",
-                "Windows\\System32\\WinFax.dll",
-            ],
+            // WinFax.dll is the fax API of the whole system and is used by more than the
+            // fax service, so only the service binary is removed.
+            files: vec!["Windows\\System32\\fxssvc.exe"],
             dirs: vec![],
             ..Default::default()
         });

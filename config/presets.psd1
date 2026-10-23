@@ -44,6 +44,10 @@
             UefiOnly = $false
             IncludeMigrationAssistant = $false
             RemoveAppxBloatware = $false
+            RemoveCameraApp = $false
+            RemovePhotosApp = $false
+            RemoveScreenSketchApp = $false
+            IncludeMigrationBackup = $false
             PayloadFormat = 'WIM'
             HibernateMode = 'Keep'
             CrashDumpMode = 'Automatic'
@@ -210,6 +214,10 @@
             AtlasReviOSMode = $true
             RemoveStore = $true
             RemoveAppxBloatware = $true
+            RemoveCameraApp = $true
+            RemovePhotosApp = $true
+            RemoveScreenSketchApp = $true
+            IncludeMigrationBackup = $true
             KeepBasicApps = $false
             KeepSearchIndex = $false
             KeepXboxServices = $false
@@ -261,6 +269,10 @@
             AtlasReviOSMode = $true
             RemoveStore = $false
             RemoveAppxBloatware = $true
+            RemoveCameraApp = $true
+            RemovePhotosApp = $true
+            RemoveScreenSketchApp = $true
+            IncludeMigrationBackup = $true
             KeepBasicApps = $true
             KeepSearchIndex = $true
             KeepXboxServices = $true
@@ -309,6 +321,10 @@
             AtlasReviOSMode = $true
             RemoveStore = $true
             RemoveAppxBloatware = $true
+            RemoveCameraApp = $true
+            RemovePhotosApp = $true
+            RemoveScreenSketchApp = $true
+            IncludeMigrationBackup = $true
             KeepBasicApps = $false
             KeepSearchIndex = $false
             KeepXboxServices = $false
@@ -360,6 +376,10 @@
             AtlasReviOSMode = $true
             RemoveStore = $true
             RemoveAppxBloatware = $true
+            RemoveCameraApp = $true
+            RemovePhotosApp = $true
+            RemoveScreenSketchApp = $true
+            IncludeMigrationBackup = $true
             KeepBasicApps = $false
             KeepSearchIndex = $false
             KeepXboxServices = $true
@@ -411,6 +431,10 @@
             AtlasReviOSMode = $false
             RemoveStore = $false
             RemoveAppxBloatware = $true
+            RemoveCameraApp = $true
+            RemovePhotosApp = $true
+            RemoveScreenSketchApp = $true
+            IncludeMigrationBackup = $true
             KeepBasicApps = $true
             KeepSearchIndex = $true
             KeepXboxServices = $false
@@ -459,6 +483,10 @@
             AtlasReviOSMode = $true
             RemoveStore = $false
             RemoveAppxBloatware = $true
+            RemoveCameraApp = $true
+            RemovePhotosApp = $true
+            RemoveScreenSketchApp = $true
+            IncludeMigrationBackup = $true
             KeepBasicApps = $true
             KeepSearchIndex = $false
             KeepXboxServices = $false

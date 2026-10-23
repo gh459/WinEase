@@ -283,6 +283,88 @@ function Invoke-WinEaseWinUiRequest {
             Start-Process -FilePath $guide
             return @{}
         }
+        # --- custom scripts (tools\custom-scripts\<Stage>) ---
+        'customScripts' {
+            $stage = "$($a.Stage)".Trim()
+            if (-not $stage) { $stage = 'FirstLogon' }
+            $engine = Join-Path $repo 'lib\WinEaseExtensions.ps1'
+            if (-not (Get-Command -Name Get-WinEaseCustomScriptInventory -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $engine)) {
+                . $engine
+            }
+            $rows = @()
+            foreach ($e in @(Get-WinEaseCustomScriptInventory -RepoRoot $repo -Stage $stage)) {
+                $rows += [ordered]@{
+                    Name = [string]$e.Name
+                    Path = [string]$e.FullPath
+                    Order = [string]$e.EffectiveOrder
+                    Type = [string]$e.Extension
+                    Size = [string]$e.Size
+                    Condition = [string]$e.Condition
+                    OnError = [string]$e.OnError
+                    Description = [string]$e.Description
+                }
+            }
+            return @{ Data = $rows }
+        }
+        'customScriptAdd' {
+            $stage = "$($a.Stage)".Trim()
+            if (-not $stage) { $stage = 'FirstLogon' }
+            $paths = @($a.Paths | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+            $engine = Join-Path $repo 'lib\WinEaseExtensions.ps1'
+            if (-not (Get-Command -Name Add-WinEaseCustomScript -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $engine)) { . $engine }
+            $res = Add-WinEaseCustomScript -RepoRoot $repo -Stage $stage -Paths $paths
+            $msg = (Get-WinEaseUiString 'CS.Msg.Added' -Format @($res.Added).Count, $stage)
+            $kind = 'Info'
+            if (@($res.Errors).Count -gt 0) { $msg += "`n" + (@($res.Errors) -join "`n"); $kind = 'Warning' }
+            return @{ Kind = $kind; Title = (Get-WinEaseUiString 'CS.Button.Add'); Text = $msg }
+        }
+        'customScriptRemove' {
+            $stage = "$($a.Stage)".Trim()
+            if (-not $stage) { $stage = 'FirstLogon' }
+            $engine = Join-Path $repo 'lib\WinEaseExtensions.ps1'
+            if (-not (Get-Command -Name Remove-WinEaseCustomScript -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $engine)) { . $engine }
+            $res = Remove-WinEaseCustomScript -RepoRoot $repo -Stage $stage -Path "$($a.Path)"
+            return @{ Title = (Get-WinEaseUiString 'CS.Button.Remove'); Text = (Get-WinEaseUiString 'CS.Msg.Removed' -Format $res.Removed) }
+        }
+        'customScriptMeta' {
+            $engine = Join-Path $repo 'lib\WinEaseExtensions.ps1'
+            if (-not (Get-Command -Name Set-WinEaseCustomScriptMetadata -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $engine)) { . $engine }
+            $order = 100
+            if (-not [int]::TryParse("$($a.Order)".Trim(), [ref]$order)) { $order = 100 }
+            $meta = Set-WinEaseCustomScriptMetadata -Path "$($a.Path)" -Order $order -Condition "$($a.Condition)" `
+                -OnError "$($a.OnError)" -Description "$($a.Description)"
+            return @{ Title = (Get-WinEaseUiString 'CS.Dlg.Meta.Title'); Text = (Get-WinEaseUiString 'CS.Msg.Saved' -Format $meta.Id) }
+        }
+        'customScriptReorder' {
+            $engine = Join-Path $repo 'lib\WinEaseExtensions.ps1'
+            if (-not (Get-Command -Name Move-WinEaseCustomScriptOrder -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $engine)) { . $engine }
+            $order = 100
+            if (-not [int]::TryParse("$($a.Order)".Trim(), [ref]$order)) { $order = 100 }
+            $res = Move-WinEaseCustomScriptOrder -Path "$($a.Path)" -NewOrder $order
+            return @{ Title = (Get-WinEaseUiString 'CS.Dlg.Reorder.Title'); Text = (Get-WinEaseUiString 'CS.Msg.Reordered' -Format $res.Name) }
+        }
+        'customScriptPreview' {
+            $engine = Join-Path $repo 'lib\WinEaseExtensions.ps1'
+            if (-not (Get-Command -Name Get-WinEaseCustomScriptPreview -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $engine)) { . $engine }
+            $lines = @()
+            foreach ($p in @(Get-WinEaseCustomScriptPreview -RepoRoot $repo)) {
+                $lines += ("{0}  {1}  ({2})" -f $p.Stage, $p.ImagePath, $p.RunsAs)
+            }
+            if ($lines.Count -eq 0) { $lines = @((Get-WinEaseUiString 'CS.Msg.Empty')) }
+            return @{ Title = (Get-WinEaseUiString 'CS.Msg.PreviewTitle'); Text = ($lines -join "`n") }
+        }
+        'customScriptOpenFolder' {
+            $stage = "$($a.Stage)".Trim()
+            if (-not $stage) { $stage = 'FirstLogon' }
+            $engine = Join-Path $repo 'lib\WinEaseExtensions.ps1'
+            if (-not (Get-Command -Name Get-WinEaseCustomScriptStageMap -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $engine)) { . $engine }
+            $info = @(Get-WinEaseCustomScriptStageMap | Where-Object { $_.Stage -eq $stage })[0]
+            if (-not $info) { throw "Unknown stage '$stage'." }
+            $folder = Join-Path $repo $info.RepoFolder
+            if (-not (Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Force -Path $folder | Out-Null }
+            Start-Process -FilePath 'explorer.exe' -ArgumentList "`"$folder`""
+            return @{}
+        }
         default { throw "Unknown request '$Op'" }
     }
 }

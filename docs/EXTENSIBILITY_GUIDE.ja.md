@@ -214,7 +214,7 @@ WinEase-main/
 | `tools/Measure-WinEaseGuestBaseline.ps1` / `tools/Compare-WinEaseBenchmarks.ps1` | インストール後の計測と比較 |
 
 GUI の **8. Migration & Backup** タブは、最初に開いたときに `tools/migrator/WinEaseMigration.ps1` を読み込みます(ビルダー本体は移行エンジンを読み込みません)。
-`-IncludeMigrationAssistant` を付けると、移行ツールとルールが ISO の `Windows\Setup\Scripts\Migration` に同梱されます(個人データは含みません)。
+`-IncludeMigrationAssistant` を付けると、移行ツールとルールが ISO の `Windows\Setup\Scripts\Migration` に同梱されます。`-IncludeMigrationBackup` (移行アシスタントと同時に既定でオン) を指定すると、`%USERPROFILE%\WinEase_migration_backup` の既定バックアップも `C:\WinEaseBackup` にコピーされます。このバックアップには**個人データが含まれ**、復元は明示的な操作でのみ実行されます。
 
 ## ② カスタムスクリプトの4ステージ
 

@@ -3,6 +3,14 @@
 # Dot-sourced by the main orchestrator
 
 
+# The diagnostic directory can disappear while a build is running (for example when
+# a concurrent test or dry run rotates build_diagnostics). Re-create it before DISM
+# writes its /LogPath and before the integrity report is appended, so the export is
+# not aborted by a missing directory.
+if ($script:DiagDir -and -not (Test-Path -LiteralPath $script:DiagDir)) {
+    New-Item -ItemType Directory -Path $script:DiagDir -Force | Out-Null
+}
+
 # 13. Export modified image
 $finalEsd = Join-Path -Path "$WinEaseDir\sources" -ChildPath "install.esd"
 $tempWim  = Join-Path -Path "$WinEaseDir\sources" -ChildPath "install_export.wim"

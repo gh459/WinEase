@@ -9,13 +9,17 @@ param()
 Write-Host "Removing provisioned AppX packages (bloatware)..." -ForegroundColor Cyan
 # The list of the packages that are removed lives in config\schema.psd1 (AppxRemoval):
 # every entry names the setting that controls it, so a package is only removed when
-# the user asked for it. The whole pass is controlled by RemoveAppxBloatware.
+# the user asked for it. The default removal list is controlled by RemoveAppxBloatware;
+# the Camera, Photos, Screen Sketch, Store and Defender entries are independent.
 $appxSettings = @{
-    RemoveAppxBloatware = [bool]$removeAppxBloatware
-    RemoveDefender      = [bool]$removeDefender
-    RemoveStore         = [bool]$removeStore
-    KeepBasicApps       = [bool]$keepBasicApps
-    KeepXboxServices    = [bool]$keepXboxServices
+    RemoveAppxBloatware    = [bool]$removeAppxBloatware
+    RemoveDefender         = [bool]$removeDefender
+    RemoveStore            = [bool]$removeStore
+    KeepBasicApps          = [bool]$keepBasicApps
+    KeepXboxServices       = [bool]$keepXboxServices
+    RemoveCameraApp        = [bool]$removeCameraApp
+    RemovePhotosApp        = [bool]$removePhotosApp
+    RemoveScreenSketchApp  = [bool]$removeScreenSketchApp
 }
 $appxPatterns = @()
 if (Get-Command -Name Get-WinEaseAppxRemovalPatterns -ErrorAction SilentlyContinue) {
@@ -23,10 +27,15 @@ if (Get-Command -Name Get-WinEaseAppxRemovalPatterns -ErrorAction SilentlyContin
 } elseif ($script:WinEaseSettingsDef -and $script:WinEaseSettingsDef.AppxRemoval) {
     # The shared library is not loaded: fall back to the definition file itself.
     $fallback = [ordered]@{}
+    $removeDefault = [bool]$appxSettings['RemoveAppxBloatware']
     foreach ($d in @($script:WinEaseSettingsDef.AppxRemoval)) {
         if (-not $d -or -not $d.Pattern) { continue }
         $option = [string]$d.Option
-        if ([string]::IsNullOrWhiteSpace($option)) { $fallback[[string]$d.Pattern] = $true; continue }
+        if ([string]::IsNullOrWhiteSpace($option)) {
+            if ($removeDefault) { $fallback[[string]$d.Pattern] = $true }
+            continue
+        }
+        if ([bool]$d.Invert -and -not $removeDefault) { continue }
         if (-not $appxSettings.ContainsKey($option)) { continue }
         $on = [bool]$appxSettings[$option]
         if ([bool]$d.Invert) { $on = -not $on }
@@ -37,7 +46,7 @@ if (Get-Command -Name Get-WinEaseAppxRemovalPatterns -ErrorAction SilentlyContin
 if ($appxPatterns.Count -eq 0) {
     Write-Host "  [Apps] No AppX removal requested - every provisioned package is kept." -ForegroundColor Green
 } else {
-    Write-Host "  [Apps] Removing the AppX bloatware of $($appxPatterns.Count) pattern(s) (RemoveAppxBloatware=$removeAppxBloatware)." -ForegroundColor Cyan
+    Write-Host "  [Apps] Removing AppX packages matching $($appxPatterns.Count) pattern(s) (RemoveAppxBloatware=$removeAppxBloatware, Camera=$removeCameraApp, Photos=$removePhotosApp, ScreenSketch=$removeScreenSketchApp)." -ForegroundColor Cyan
 }
 # Protection Whitelist: System-critical frameworks, shell hosts, and core dependencies
 # MUST NEVER be removed. Removing them breaks Start Menu, Taskbar, Modern File Explorer, or causes 0x80073cfa.
@@ -87,6 +96,12 @@ if ($appxRegex) {
 }
 
 $successfullyRemovedPackages = [System.Collections.Generic.List[object]]::new()
+# The packages the offline pass really removed. Phase 10 takes the staged registration of
+# every one of them out of the SOFTWARE hive and phase 11 stages the per-user cleanup of
+# the same list, so the apps are not installed for the first user with a payload that is
+# gone (the app starts and renders a white window). The list used to be three hardcoded
+# names while the offline pass removes every package of the removal list.
+$script:WinEaseRemovedAppxPackages = [System.Collections.Generic.List[object]]::new()
 foreach ($package in $packagesToRemove) {
     Write-Host "  - Removing: $($package.DisplayName)"
     if ($isDryRunMode) {
@@ -104,8 +119,54 @@ foreach ($package in $packagesToRemove) {
             $removed = $true
         }
     }
+    # Windows protects the Security UI package against Remove-AppxProvisionedPackage and
+    # DISM even when the user asked for Defender removal. Remove its payload directly;
+    # phase 10 removes the staged AppX registration and the AppRepository entry from the
+    # offline hives. Without this the Security app stays installed (and points at a
+    # Defender that no longer exists).
+    if (-not $removed -and $removeDefender -and $package.PackageName -match 'SecHealthUI') {
+        $secHealthPaths = @(
+            (Join-Path -Path "$scratchDir\Program Files\WindowsApps" -ChildPath $package.PackageName)
+        )
+        foreach ($globRoot in @(
+            "$scratchDir\Program Files\WindowsApps",
+            "$scratchDir\Windows\SystemApps",
+            "$scratchDir\ProgramData\Microsoft\Windows\AppRepository\Packages"
+        )) {
+            if (Test-Path -LiteralPath $globRoot) {
+                $secHealthPaths += @(Get-ChildItem -LiteralPath $globRoot -Force -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -match 'SecHealthUI' } |
+                    ForEach-Object { $_.FullName })
+            }
+        }
+        foreach ($secPath in @($secHealthPaths | Sort-Object -Unique)) {
+            if (Test-Path -LiteralPath $secPath) {
+                [void](Remove-WinEaseTreeRobust -Path $secPath -SafetyRoot $scratchDir)
+            }
+        }
+        $remainingSecHealth = @()
+        if (Test-Path -LiteralPath "$scratchDir\Program Files\WindowsApps") {
+            $remainingSecHealth = @(Get-ChildItem -LiteralPath "$scratchDir\Program Files\WindowsApps" -Force -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match 'SecHealthUI' })
+        }
+        if ($remainingSecHealth.Count -eq 0) {
+            $removed = $true
+            Write-Host "    [OK] Force-removed the protected Security UI package payload."
+        }
+    }
     if ($removed) {
         $successfullyRemovedPackages.Add($package)
+        # <Name>_<Version>_<Architecture>_<PublisherId> -> <Name>: the identity name is what
+        # Get-AppxPackage -Name matches, so the per-user cleanup needs it.
+        $fullName = [string]$package.PackageName
+        $shortName = ($fullName -split '_')[0]
+        $publisherId = ''
+        if ($fullName -match '^.+?_(?:[^_]+_)*([^_]+)$') { $publisherId = $Matches[1] }
+        $script:WinEaseRemovedAppxPackages.Add([PSCustomObject]@{
+            FullName    = $fullName
+            ShortName   = $shortName
+            PublisherId = $publisherId
+        })
     } else {
         Write-Warning "  - Package '$($package.DisplayName)' is protected by Windows. Preserving WindowsApps directory to prevent package manifest corruption."
     }

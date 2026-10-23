@@ -788,7 +788,7 @@ function Test-WinEaseSelfCheck21ExtensionCatalogs {
     param([string]$ScriptRoot)
     $catalogPass = $true
     $catalogMsg = ""
-    $catalogFiles = @('config\dependencies.psd1','config\user\user-tweaks.psd1','tools\migrator\migration-rules.psd1','config\user\user-migration-rules.psd1')
+    $catalogFiles = @('config\dependencies.psd1','config\user\user-tweaks.psd1','tools\migrator\migration-rules.psd1','config\user\user-migration-rules.psd1','config\ui-preferences.psd1')
     foreach ($cf in $catalogFiles) {
         $cp = Join-Path -Path $ScriptRoot -ChildPath $cf
         if (Test-Path -LiteralPath $cp) {
@@ -797,7 +797,7 @@ function Test-WinEaseSelfCheck21ExtensionCatalogs {
             $catalogPass = $false; $catalogMsg = "Missing: $cf"; break
         }
     }
-    if ($catalogPass) { $catalogMsg = "All 4 extension catalogs parse cleanly" }
+    if ($catalogPass) { $catalogMsg = "All $($catalogFiles.Count) extension catalogs parse cleanly" }
     return [PSCustomObject]@{ Test = "21. Extension Catalog Parse"; Passed = $catalogPass; Details = $catalogMsg }
 }
 
