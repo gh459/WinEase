@@ -149,22 +149,9 @@ if (Test-TweakEnabled 'DisableCopilot' $true) {
 # ============================================================================
 if (Test-TweakEnabled 'DisableCrossDevice' $true) {
     Write-Host "Disabling Cross-Device Experience / Phone Link & Resume..." -ForegroundColor Green
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CrossDevice" -Name "AllowCrossDeviceExperience" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CrossDevice" -Name "AllowCrossDeviceResume" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CrossDevice" -Name "DisableResume" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CrossDevice" -Name "DisableCrossDeviceResume" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" -Name "EnableCdp" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" -Name "EnableMmx" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" -Name "AllowCrossDeviceClipboard" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\CrossDeviceResume\Configuration" -Name "IsResumeAllowed" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\CrossDeviceResume\Configuration" -Name "IsResumeAllowed" -Type REG_DWORD -Data '0'
+    Invoke-WinEaseRegistryTable -Section cross-device -Tweak DisableCrossDevice
     Invoke-WinEaseReg -Action Delete -Key "HKLM\zSOFTWARE\Classes\Directory\Background\shellex\ContextMenuHandlers\SendToPhone"
     Invoke-WinEaseReg -Action Delete -Key "HKLM\zSOFTWARE\Classes\DesktopBackground\shellex\ContextMenuHandlers\SendToPhone"
-    # ReviOS 26.10 (registry/explorer/win-settings.yml): the shell host of the
-    # Cross Device Resume app is redirected to ShellHost.exe, so the resume host
-    # can never start. Upstream replaced the FeatureManagement override and the
-    # IFEO redirect with this one because it is the reliable variant.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Shell\ShellUIHosts\CrossDeviceResumeHost" -Name "ProcessPath" -Type REG_SZ -Data "%SystemRoot%\system32\ShellHost.exe"
 }
 
 # ============================================================================
