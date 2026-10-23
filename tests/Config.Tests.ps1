@@ -26,6 +26,110 @@ Describe "WinEase builder - profile presets" {
     }
 }
 
+Describe "WinEase builder - Apply-WinEaseProfileTweakGroupsAndFormat edge cases" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        $builderPath = Join-Path $script:RepoRoot "WinEasebuilder.ps1"
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($builderPath, [ref]$null, [ref]$null)
+        $funcs = $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)
+        foreach ($f in $funcs) {
+            if ($f.Name -in @('Get-WinEaseProfileValue', 'Apply-WinEaseProfileTweakGroupsAndFormat')) {
+                Invoke-Expression $f.Extent.Text
+            }
+        }
+    }
+
+    BeforeEach {
+        $script:TweakGroups = [ordered]@{
+            NetworkStack = @{ Default = $true }
+            TimerBCD     = @{ Default = $true }
+            GPULatency   = @{ Default = $true }
+            ServiceTrim  = @{ Default = $true }
+        }
+        $script:activeTweakGroups = [ordered]@{}
+        foreach ($k in $script:TweakGroups.Keys) {
+            $script:activeTweakGroups[$k] = $true
+        }
+        $script:exportESDMode = $false
+        $script:splitWIMMode = $false
+    }
+
+    It "applies tweak group overrides from an IDictionary (hashtable)" {
+        $preset = @{
+            TweakGroups   = @{ NetworkStack = $false; ServiceTrim = $false }
+            PayloadFormat = 'ESD'
+        }
+        Apply-WinEaseProfileTweakGroupsAndFormat -TargetPreset $preset
+        $script:activeTweakGroups.NetworkStack | Should Be $false
+        $script:activeTweakGroups.TimerBCD | Should Be $true
+        $script:activeTweakGroups.GPULatency | Should Be $true
+        $script:activeTweakGroups.ServiceTrim | Should Be $false
+        $script:exportESDMode | Should Be $true
+        $script:splitWIMMode | Should Be $false
+    }
+
+    It "applies tweak group overrides from a PSCustomObject (JSON profile)" {
+        $preset = [PSCustomObject]@{
+            TweakGroups   = [PSCustomObject]@{ TimerBCD = $false; GPULatency = $false }
+            PayloadFormat = 'SWM'
+        }
+        Apply-WinEaseProfileTweakGroupsAndFormat -TargetPreset $preset
+        $script:activeTweakGroups.NetworkStack | Should Be $true
+        $script:activeTweakGroups.TimerBCD | Should Be $false
+        $script:activeTweakGroups.GPULatency | Should Be $false
+        $script:activeTweakGroups.ServiceTrim | Should Be $true
+        $script:exportESDMode | Should Be $false
+        $script:splitWIMMode | Should Be $true
+    }
+
+    It "handles case-insensitive PayloadFormat strings ('esd', 'swm', 'wim')" {
+        Apply-WinEaseProfileTweakGroupsAndFormat -TargetPreset @{ PayloadFormat = 'esd' }
+        $script:exportESDMode | Should Be $true
+        $script:splitWIMMode | Should Be $false
+
+        Apply-WinEaseProfileTweakGroupsAndFormat -TargetPreset @{ PayloadFormat = 'swm' }
+        $script:exportESDMode | Should Be $false
+        $script:splitWIMMode | Should Be $true
+
+        Apply-WinEaseProfileTweakGroupsAndFormat -TargetPreset @{ PayloadFormat = 'wim' }
+        $script:exportESDMode | Should Be $false
+        $script:splitWIMMode | Should Be $false
+    }
+
+    It "defaults to WIM format when PayloadFormat is null, missing, or unknown" {
+        Apply-WinEaseProfileTweakGroupsAndFormat -TargetPreset @{ PayloadFormat = 'UNKNOWN_FORMAT' }
+        $script:exportESDMode | Should Be $false
+        $script:splitWIMMode | Should Be $false
+
+        Apply-WinEaseProfileTweakGroupsAndFormat -TargetPreset @{}
+        $script:exportESDMode | Should Be $false
+        $script:splitWIMMode | Should Be $false
+
+        Apply-WinEaseProfileTweakGroupsAndFormat -TargetPreset $null
+        $script:exportESDMode | Should Be $false
+        $script:splitWIMMode | Should Be $false
+    }
+
+    It "ignores unknown tweak group keys in dictionary or object without polluting activeTweakGroups" {
+        $presetDict = @{ TweakGroups = @{ NonExistentGroup = $true; NetworkStack = $false } }
+        Apply-WinEaseProfileTweakGroupsAndFormat -TargetPreset $presetDict
+        $script:activeTweakGroups.Contains('NonExistentGroup') | Should Be $false
+        $script:activeTweakGroups.NetworkStack | Should Be $false
+
+        $presetObj = [PSCustomObject]@{ TweakGroups = [PSCustomObject]@{ NonExistentGroup = $true; TimerBCD = $false } }
+        Apply-WinEaseProfileTweakGroupsAndFormat -TargetPreset $presetObj
+        $script:activeTweakGroups.Contains('NonExistentGroup') | Should Be $false
+        $script:activeTweakGroups.TimerBCD | Should Be $false
+    }
+
+    It "casts non-boolean values in TweakGroups to boolean values" {
+        $preset = @{ TweakGroups = @{ NetworkStack = 0; TimerBCD = 1 } }
+        Apply-WinEaseProfileTweakGroupsAndFormat -TargetPreset $preset
+        $script:activeTweakGroups.NetworkStack | Should Be $false
+        $script:activeTweakGroups.TimerBCD | Should Be $true
+    }
+}
+
 Describe "WinEase helpers - configuration conflict resolution (Test-WinEaseConfigConflicts)" {
     BeforeAll {
         if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
