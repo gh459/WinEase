@@ -1,0 +1,101 @@
+# Layout.Tests.ps1 - repository layout and folder structure
+# Run with:  Invoke-Pester -Path .\tests\Layout.Tests.ps1
+# Requires:  Pester 3.4 on Windows PowerShell 5.1
+# Split from the former tests\WinEase.Tests.ps1 in R1. Shared setup is in _TestCommon.ps1.
+
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '', Justification = 'Variables are assigned in BeforeAll/BeforeEach and read inside It blocks')]
+param()
+
+. (Join-Path -Path $PSScriptRoot -ChildPath '_TestCommon.ps1')
+
+
+Describe "WinEase builder - repository layout" {
+    It "builder script exists" {
+        Test-Path -LiteralPath $script:BuilderPath | Should Be $true
+    }
+    It "autounattend.xml exists" {
+        Test-Path -LiteralPath $script:UnattendPath | Should Be $true
+    }
+    It "LICENSE exists (MIT)" {
+        Test-Path -LiteralPath (Join-Path $script:RepoRoot "LICENSE") | Should Be $true
+    }
+    It "tools/custom-scripts skeleton exists" {
+        Test-Path -LiteralPath (Join-Path $script:RepoRoot "tools\custom-scripts") | Should Be $true
+    }
+    It "CHANGELOG.md exists" {
+        Test-Path -LiteralPath (Join-Path $script:RepoRoot "CHANGELOG.md") | Should Be $true
+    }
+}
+
+Describe "Folder structure S9" {
+    BeforeAll {
+        $script:S9Root = $script:RepoRoot
+        . (Join-Path -Path $script:S9Root -ChildPath "WinEasehelpers.ps1")
+        . (Join-Path -Path $script:S9Root -ChildPath "lib\WinEaseExtensions.ps1")
+    }
+    It "migrator files live under tools/migrator and the old paths are gone" {
+        foreach ($f in 'WinEaseMigration.ps1', 'WinEase-Migrator.ps1', 'migration-rules.psd1') {
+            Test-Path -LiteralPath (Join-Path $script:S9Root "tools\migrator\$f") | Should Be $true
+        }
+        Test-Path -LiteralPath (Join-Path $script:S9Root "lib\WinEaseMigration.ps1") | Should Be $false
+        Test-Path -LiteralPath (Join-Path $script:S9Root "tools\WinEase-Migrator.ps1") | Should Be $false
+        Test-Path -LiteralPath (Join-Path $script:S9Root "config\migration-rules.psd1") | Should Be $false
+    }
+    It "user config files live under config/user" {
+        Test-Path -LiteralPath (Join-Path $script:S9Root "config\user\user-tweaks.psd1") | Should Be $true
+        Test-Path -LiteralPath (Join-Path $script:S9Root "config\user\user-migration-rules.psd1") | Should Be $true
+        Test-Path -LiteralPath (Join-Path $script:S9Root "config\user-tweaks.psd1") | Should Be $false
+    }
+    It "the builder does not load the migration engine" {
+        $text = [System.IO.File]::ReadAllText($script:BuilderPath)
+        $text.Contains('WinEaseMigration.ps1') | Should Be $false
+    }
+    It "the GUI loads the migration engine from tools/migrator, and only inside a function" {
+        $gui = Join-Path $script:S9Root "gui\WinEaseGui.ps1"
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($gui, [ref]$null, [ref]$null)
+        $hits = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.InvocationOperator -eq 'Dot' -and $n.Extent.Text -like '*WinEaseMigration.ps1*' }, $true))
+        $hits.Count | Should Be 2
+        foreach ($h in $hits) {
+            $h.Extent.Text.Contains('tools\migrator\WinEaseMigration.ps1') | Should Be $true
+            $fn = $h.Parent
+            while ($fn -and $fn -isnot [System.Management.Automation.Language.FunctionDefinitionAst] -and $fn -isnot [System.Management.Automation.Language.ScriptBlockExpressionAst]) { $fn = $fn.Parent }
+            ($null -ne $fn) | Should Be $true
+        }
+    }
+    It "Resolve-WinEaseUserConfigPath prefers config/user, falls back to config with one warning" {
+        $root = Join-Path $TestDrive 'repo'
+        New-Item -ItemType Directory -Path (Join-Path $root 'config') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $root 'config\user-tweaks.psd1') -Value '@{}'
+        $script:WinEaseLegacyConfigWarned = $null
+        $first = Resolve-WinEaseUserConfigPath -RepoRoot $root -Name 'user-tweaks.psd1' -WarningVariable w1 -WarningAction SilentlyContinue
+        [void](Resolve-WinEaseUserConfigPath -RepoRoot $root -Name 'user-tweaks.psd1' -WarningVariable w2 -WarningAction SilentlyContinue)
+        $first | Should Be (Join-Path $root 'config\user-tweaks.psd1')
+        @($w1).Count | Should Be 1
+        @($w2).Count | Should Be 0
+        New-Item -ItemType Directory -Path (Join-Path $root 'config\user') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $root 'config\user\user-tweaks.psd1') -Value '@{}'
+        Resolve-WinEaseUserConfigPath -RepoRoot $root -Name 'user-tweaks.psd1' | Should Be (Join-Path $root 'config\user\user-tweaks.psd1')
+    }
+    It "Get-WinEaseCustomScriptFiles maps stage folders and the older layout" {
+        $root = Join-Path $TestDrive 'cs'
+        $base = Join-Path $root 'tools\custom-scripts'
+        foreach ($d in 'FirstLogon', 'UserOnce', 'user', 'PreBuild') { New-Item -ItemType Directory -Path (Join-Path $base $d) -Force | Out-Null }
+        foreach ($f in 'a.ps1', 'README.md', 'FirstLogon\b.ps1', 'FirstLogon\.gitkeep', 'user\c.ps1', 'UserOnce\d.ps1', 'PreBuild\e.ps1') { Set-Content -LiteralPath (Join-Path $base $f) -Value 'x' }
+        $names = { param($st, $legacy) @(Get-WinEaseCustomScriptFiles -RepoRoot $root -Stage $st -IncludeLegacy:$legacy | ForEach-Object { $_.Name } | Sort-Object) -join ',' }
+        (& $names 'FirstLogon' $false) | Should Be 'b.ps1'
+        (& $names 'FirstLogon' $true) | Should Be 'a.ps1,b.ps1'
+        (& $names 'UserOnce' $true) | Should Be 'c.ps1,d.ps1'
+        (& $names 'PreBuild' $false) | Should Be 'e.ps1'
+        (& $names 'OfflineImage' $true) | Should Be ''
+    }
+    It "scripts/custom is not used and every stage folder under tools/custom-scripts has a .gitkeep" {
+        Test-Path -LiteralPath (Join-Path $script:S9Root "scripts\custom") | Should Be $false
+        foreach ($st in 'PreBuild', 'OfflineImage', 'FirstLogon', 'UserOnce') {
+            Test-Path -LiteralPath (Join-Path $script:S9Root "tools\custom-scripts\$st\.gitkeep") | Should Be $true
+        }
+    }
+    It "WinEase_report.html is ignored by git and templates/report.html remains" {
+        ([System.IO.File]::ReadAllText((Join-Path $script:S9Root ".gitignore")) -split "`r?`n") -contains 'WinEase_report.html' | Should Be $true
+        Test-Path -LiteralPath (Join-Path $script:S9Root "templates\report.html") | Should Be $true
+    }
+}

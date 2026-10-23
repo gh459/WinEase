@@ -147,7 +147,7 @@ WinEase-main/
 ├── tools/                 Helper tools and custom scripts
 ├── profiles/              Saved profiles (JSON)
 ├── templates/report.html  Report template
-└── tests/WinEase.Tests.ps1 Pester tests
+└── tests/                 Pester tests (split by area; _TestCommon.ps1 is shared setup)
 ```
 
 `WinEasebuilder.ps1` **dot-sources** `phases/*.ps1` and `lib/*.ps1` and shares variables in script scope.
@@ -337,7 +337,7 @@ Before a real build (tens of minutes, needs administrator rights and disk space)
 5. **Pester tests** - checks the repository rules (syntax, zero PSScriptAnalyzer warnings, GUI wiring, ...):
 
    ```powershell
-   Invoke-Pester -Script .\tests\WinEase.Tests.ps1
+   Invoke-Pester -Path .\tests
    ```
 
 6. **Migrator** - run `-Mode Estimate` (size estimate) and `-DryRun` (no writes) first.

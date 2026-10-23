@@ -11,7 +11,7 @@ paths, Windows PowerShell 5.1) can only be confirmed by the Windows CI jobs.
 
 | Item | State on `main` |
 |---|---|
-| `ci.yml` | push/PR to main, `contents: read`. `-TestSelf` (pwsh), Pester 3.4.0 on Windows PowerShell 5.1 (`tests\WinEase.Tests.ps1`), `-DryRun -NonInteractive -Profile extreme` (pwsh). |
+| `ci.yml` | push/PR to main, `contents: read`. `-TestSelf` (pwsh), Pester 3.4.0 on Windows PowerShell 5.1 (`tests\`, split by area), `-DryRun -NonInteractive -Profile extreme` (pwsh). |
 | `lint.yml` | PSScriptAnalyzer, errors fail the job, `contents: read`. |
 | `claude-issue-agent.yml` | `issues: assigned`, `issue_comment`, `pull_request_review_comment`, `pull_request_review`. Workflow-wide `contents/pull-requests/issues: write`, `id-token: write`, `actions: read`. Started for **any** comment containing `@claude`. |
 | `release.yml` | `v*` tag: `git archive` of HEAD to a ZIP, `softprops/action-gh-release`. No tests, no checksum, `contents: write` for the whole workflow. |
@@ -108,7 +108,7 @@ path tests). Verified that R3 and R4 tests fail against the unfixed builder.
 
 ### Existing checks, before and after the change (Linux, PowerShell 7)
 
-- `tests\WinEase.Tests.ps1`: 234 passed / 53 failed both before and after; the failed set is
+- Before R1 (monolithic `tests\WinEase.Tests.ps1`): 234 passed / 53 failed on Linux/PowerShell 7; the failed set is
   identical (Windows-only tests: DISM, ACLs, drive letters, `powershell.exe`). The authoritative
   run is the Windows CI job.
 - `-TestSelf`: identical results before and after (checks 9, 10, 12, 16 need Windows).

@@ -66,8 +66,9 @@ jobs:
             Install-Module -Name Pester -RequiredVersion 3.4.0 -Force -SkipPublisherCheck -Scope CurrentUser
           }
           Import-Module Pester -RequiredVersion 3.4.0 -Force
-          $files = @('.\tests\WinEase.Tests.ps1', '.\tests\WinEase.Regression.Tests.ps1')
-          $result = Invoke-Pester -Path $files -PassThru -OutputFormat NUnitXml -OutputFile .\pester-results.xml
+          # Pester 3.4 discovers every *.Tests.ps1 under .\tests; _TestCommon.ps1 is
+          # dot-sourced by the test files and is not a test itself.
+          $result = Invoke-Pester -Path .\tests -PassThru -OutputFormat NUnitXml -OutputFile .\pester-results.xml
           # One annotation per failed test: test name, file and the failure message
           foreach ($t in @($result.TestResult | Where-Object { $_.Result -eq 'Failed' })) {
             $msg = ("$($t.FailureMessage)" -replace '\r?\n', ' ')

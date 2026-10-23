@@ -147,7 +147,7 @@ WinEase-main/
 ├── tools/                 補助ツールとカスタムスクリプト
 ├── profiles/              保存したプロファイル(JSON)
 ├── templates/report.html  レポートの雛形
-└── tests/WinEase.Tests.ps1 Pester テスト
+└── tests/                 Pester テスト(領域別に分割。_TestCommon.ps1 が共通設定)
 ```
 
 `WinEasebuilder.ps1` は `phases/*.ps1` と `lib/*.ps1` を**ドットソース**で読み込み、変数をスクリプトスコープで共有します。
@@ -338,7 +338,7 @@ Write-Host "ScratchDir: $($WinEaseContext.ScratchDir)"
 5. **Pester テスト**: リポジトリのルールを守っているか(構文、PSScriptAnalyzer の警告 0 件、GUI の配線など)を確認します。
 
    ```powershell
-   Invoke-Pester -Script .\tests\WinEase.Tests.ps1
+   Invoke-Pester -Path .\tests
    ```
 
 6. **移行ツール**: `-Mode Estimate`(容量の見積もり)と `-DryRun`(書き込みなしの試し実行)を先に実行します。
