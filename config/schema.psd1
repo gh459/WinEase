@@ -231,6 +231,7 @@
         @{ Key = 'Index'; Variable = 'Index'; Type = 'String' }
         @{ Key = 'ComputerName'; Variable = 'ComputerName'; Type = 'String' }
         @{ Key = 'UserName'; Variable = 'UserName'; Type = 'String' }
+        @{ Key = 'UserPassword'; Variable = 'UserPassword'; Type = 'String'; Default = 'WinEase123!' }
         @{ Key = 'AdvancedDebloatStandard'; Variable = ''; Type = 'Special' }
         @{ Key = 'AdvancedDebloatExperimental'; Variable = ''; Type = 'Special' }
         @{ Key = 'IncludeMigrationAssistant'; Variable = 'includeMigrationAssistant'; Type = 'Bool'; Default = $false; CliSwitch = $true; Gui = @{ Tab = 'Migration'; Order = 21; Text = 'Include Migration Assistant (PC-to-PC transfer tools)'; Description = 'Bundle the WinEase-Migrator tool into the image for post-install PC migration'; Default = $false } }

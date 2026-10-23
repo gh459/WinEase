@@ -62,13 +62,18 @@ if (Test-Path -LiteralPath $unattendSource) {
     # Dynamically purge any harmful ChildCompletion or SystemSetupInProgress forging that breaks Setup state machine
     $xmlContent = $xmlContent -replace '(?s)<RunSynchronousCommand[^>]*>\s*<Order>\d+</Order>\s*<Path>[^<]*ChildCompletion[^<]*</Path>\s*</RunSynchronousCommand>', ''
     $xmlContent = $xmlContent -replace '(?s)\t*\{\s*#[^\r\n]*Zero-Click Setup Completion[^\}]*\}\s*;\r?\n', ''
-    # Dynamically parameterize ComputerName and UserName
+    # Dynamically parameterize ComputerName, UserName, and UserPassword
     $xmlContent = $xmlContent -replace '<ComputerName>WinEase</ComputerName>', "<ComputerName>$ComputerName</ComputerName>"
     $xmlContent = $xmlContent -replace '<Username>User</Username>', "<Username>$UserName</Username>"
     $xmlContent = $xmlContent -replace '<Name>User</Name>', "<Name>$UserName</Name>"
     $xmlContent = $xmlContent -replace '<DisplayName>User</DisplayName>', "<DisplayName>$UserName</DisplayName>"
-    $xmlContent =$xmlContent -replace 'net\.exe user User ', "net.exe user `"$UserName`" "
-    $xmlContent =$xmlContent -replace 'Set-LocalUser -Name "User"', "Set-LocalUser -Name `"$UserName`""
+    if (-not [string]::IsNullOrEmpty($UserPassword)) {
+        $xmlContent = $xmlContent -replace 'net\.exe user User "" /active:yes /passwordreq:no', "net.exe user `"$UserName`" `"$UserPassword`" /active:yes /passwordreq:yes"
+        $xmlContent = $xmlContent -replace 'net\.exe user User ', "net.exe user `"$UserName`" `"$UserPassword`" "
+    } else {
+        $xmlContent = $xmlContent -replace 'net\.exe user User ', "net.exe user `"$UserName`" "
+    }
+    $xmlContent = $xmlContent -replace 'Set-LocalUser -Name "User"', "Set-LocalUser -Name `"$UserName`""
     $xmlContent = $xmlContent -replace "-Name 'DefaultUserName' -Type 'String' -Force -Value 'User'", "-Name 'DefaultUserName' -Type 'String' -Force -Value '$UserName'"
 
     # Clean and match target architecture via XML DOM (Resolves P0-07 Duplicate Component Bug)
@@ -76,6 +81,19 @@ if (Test-Path -LiteralPath $unattendSource) {
         $xmlDoc = [xml]$xmlContent
         $nsMgr = New-Object System.Xml.XmlNamespaceManager($xmlDoc.NameTable)
         $nsMgr.AddNamespace("u", $xmlDoc.DocumentElement.NamespaceURI)
+
+        # Inject UserPassword into LocalAccount and AutoLogon XML DOM if provided
+        if (-not [string]::IsNullOrEmpty($UserPassword)) {
+            $userPwNodes = @($xmlDoc.SelectNodes("//*[local-name()='LocalAccount']/*[local-name()='Password']/*[local-name()='Value']"))
+            foreach ($pNode in $userPwNodes) {
+                $pNode.InnerText = $UserPassword
+            }
+            $autoPwNodes = @($xmlDoc.SelectNodes("//*[local-name()='AutoLogon']/*[local-name()='Password']/*[local-name()='Value']"))
+            foreach ($pNode in $autoPwNodes) {
+                $pNode.InnerText = $UserPassword
+            }
+            Write-Host "  [UserPassword] Configured custom password for local account '$UserName'." -ForegroundColor Green
+        }
 
         # The blank-password auto-logon is only armed when the user asked for it
         # (ConfigureWinlogon). Without that option the AutoLogon section is removed
@@ -745,11 +763,12 @@ try {
 # Runs from SetupComplete.cmd as the LAST writer before the transition logon is attempted.
 $ErrorActionPreference = 'SilentlyContinue'
 $user = '__WINEASE_USERNAME__'
+$pass = '__WINEASE_USERPASSWORD__'
 $key  = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
 
 Set-ItemProperty -LiteralPath $key -Name 'AutoAdminLogon'  -Value '1'    -Type String -Force
 Set-ItemProperty -LiteralPath $key -Name 'DefaultUserName' -Value $user -Type String -Force
-Set-ItemProperty -LiteralPath $key -Name 'DefaultPassword' -Value ''    -Type String -Force
+Set-ItemProperty -LiteralPath $key -Name 'DefaultPassword' -Value $pass -Type String -Force
 Set-ItemProperty -LiteralPath $key -Name 'ForceAutoLogon'  -Value '1'    -Type String -Force
 
 $sid = $null
@@ -852,8 +871,9 @@ exit 0
 '@
     }
 
-    # Inject the configured account name into the OOBE transition repair helper
-    $helperScripts['WinEase-oobe-autologon-repair.ps1'] = $helperScripts['WinEase-oobe-autologon-repair.ps1'].Replace('__WINEASE_USERNAME__', $UserName)
+    # Inject the configured account name and password into the OOBE transition repair helper
+    $repairUserPw = if ($UserPassword) { $UserPassword.Replace("'", "''") } else { "" }
+    $helperScripts['WinEase-oobe-autologon-repair.ps1'] = $helperScripts['WinEase-oobe-autologon-repair.ps1'].Replace('__WINEASE_USERNAME__', $UserName).Replace('__WINEASE_USERPASSWORD__', $repairUserPw)
 
     # The blank-password auto-logon is only armed when the user asked for it
     # (ConfigureWinlogon). Without that option the OOBE -> first session transition

@@ -81,6 +81,26 @@ Describe "WinEase builder - autounattend.xml" {
     }
 }
 
+Describe "WinEase builder - UserPassword parameter support" {
+    It "WinEasebuilder.ps1 declares UserPassword parameter" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $content | Should Match '\[string\]\$UserPassword\s*=\s*'
+    }
+
+    It "schema.psd1 includes UserPassword component" {
+        $schema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+        $compKeys = @($schema.Components | ForEach-Object { $_.Key })
+        ($compKeys -contains 'UserPassword') | Should Be $true
+    }
+
+    It "phases\11-unattend.ps1 injects UserPassword into autounattend.xml DOM" {
+        $p11Path = Join-Path $script:RepoRoot "phases\11-unattend.ps1"
+        $p11Text = [System.IO.File]::ReadAllText($p11Path, [System.Text.Encoding]::UTF8)
+        $p11Text | Should Match 'Inject UserPassword into LocalAccount and AutoLogon'
+        $p11Text | Should Match '\$UserPassword'
+    }
+}
+
 Describe "WinEase builder - IME decoupling filter logic (mock)" {
     It "ja-JP target keeps foreign IME patterns in the removal list" {
         $primaryImeLang = $null

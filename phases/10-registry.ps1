@@ -110,9 +110,10 @@ if ($setJapaneseKeyboard -or (Test-TweakEnabled 'SetJapaneseKeyboard' $false)) {
 # password must never work over the network.
 reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Lsa" /v "LimitBlankPasswordUse" /t REG_DWORD /d 1 /f > $null 2>&1
 if (Test-TweakEnabled 'ConfigureWinlogon' $false) {
+    $pwArg = if ([string]::IsNullOrWhiteSpace($UserPassword)) { '""' } else { "$UserPassword" }
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v "AutoAdminLogon" /t REG_SZ /d "1" /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v "DefaultUserName" /t REG_SZ /d "$UserName" /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /f /v "DefaultPassword" /t REG_SZ /d '""' > $null 2>&1
+    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /f /v "DefaultPassword" /t REG_SZ /d $pwArg /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v "ForceAutoLogon" /t REG_SZ /d "1" /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" /v "AllowDomainDelayLock" /t REG_DWORD /d 1 /f > $null 2>&1
     reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v "FilterAdministratorToken" /t REG_DWORD /d 0 /f > $null 2>&1
