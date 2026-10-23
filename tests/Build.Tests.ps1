@@ -379,8 +379,6 @@ Describe "WinEase builder - the tweak helper is available to every phase" {
             $script:TweakKeyAliases = [ordered]@{ 'AliasKey' = 'CanonicalKey' }
             . ([scriptblock]::Create($FnText))
             Export-ModuleMember -Function 'Resolve-WinEaseTweakKey'
-            function Set-Aliases { param($Val) $script:TweakKeyAliases = $Val }
-            Export-ModuleMember -Function 'Set-Aliases'
         }
         Import-Module $probe -Force
         try {
@@ -389,7 +387,7 @@ Describe "WinEase builder - the tweak helper is available to every phase" {
             (Resolve-WinEaseTweakKey 'NonExistentKey') | Should Be 'NonExistentKey'
             (Resolve-WinEaseTweakKey '')               | Should Be ''
             (Resolve-WinEaseTweakKey $null)            | Should Be ''
-            Set-Aliases $null
+            & $probe { $script:TweakKeyAliases = $null }
             (Resolve-WinEaseTweakKey 'AliasKey')       | Should Be 'AliasKey'
         } finally {
             Remove-Module $probe -Force -ErrorAction SilentlyContinue
