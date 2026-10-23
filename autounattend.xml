@@ -227,7 +227,7 @@ Set-Content -LiteralPath "$markerDir\specialize.started" -Value (Get-Date -Forma
 
 &amp; { try {
   # 1. User account password policy
-  &amp; net.exe accounts /maxpwage:UNLIMITED /minpwlen:0 2&gt;$null;
+  &amp; net.exe accounts /maxpwage:UNLIMITED 2&gt;$null;
 
   # 2. Dynamic Network Stack &amp; TCP tuning if flagged
   if (Test-Path "C:\Windows\Setup\Scripts\network-stack.flag") {
@@ -467,10 +467,10 @@ try {
 } catch {}
 $scripts = @(
 	{
-		# Guarantee User account has NO password (completely blank) and cannot expire
+		# Configure account password policy and password expiration
 		try {
-			&amp; net.exe accounts /maxpwage:UNLIMITED /minpwlen:0 2&gt;$null;
-			&amp; net.exe user User "" /active:yes /passwordreq:no /expires:never 2&gt;$null;
+			&amp; net.exe accounts /maxpwage:UNLIMITED 2&gt;$null;
+			&amp; net.exe user User /active:yes /expires:never 2&gt;$null;
 		} catch {}
 	};
 	{

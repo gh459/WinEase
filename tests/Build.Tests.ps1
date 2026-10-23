@@ -16,6 +16,16 @@ Describe "WinEase builder - AST syntax" {
         [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$errors) | Out-Null
         $errors.Count | Should Be 0
     }
+    It "autounattend.xml and scripts/FirstLogon.ps1 do not contain blank password overrides" {
+        $firstLogonPath = Join-Path $script:RepoRoot "scripts\FirstLogon.ps1"
+        $flContent = [System.IO.File]::ReadAllText($firstLogonPath, [System.Text.Encoding]::UTF8)
+        $xmlContent = [System.IO.File]::ReadAllText($script:UnattendPath, [System.Text.Encoding]::UTF8)
+
+        $flContent | Should Not Match '/passwordreq:no'
+        $flContent | Should Not Match 'net\.exe user User ""'
+        $xmlContent | Should Not Match '/passwordreq:no'
+        $xmlContent | Should Not Match 'net\.exe user User ""'
+    }
     It "gui\WinEaseGui.ps1 parses with zero parser errors" {
         $content = [System.IO.File]::ReadAllText($script:GuiPath, [System.Text.Encoding]::UTF8)
         $tokens = $null; $errors = $null
