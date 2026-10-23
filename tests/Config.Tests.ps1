@@ -188,6 +188,135 @@ Describe "WinEase builder - Apply-WinEaseProfileComponents" {
     }
 }
 
+Describe "WinEase builder - Apply-WinEaseProfileDebloat edge cases" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+        . (Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1")
+
+        # Extract Apply-WinEaseProfileDebloat and Get-WinEaseProfileValue directly from WinEasebuilder.ps1 AST
+        $builderAst = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$null, [ref]$null)
+        $funcsToLoad = @('Get-WinEaseProfileValue', 'Apply-WinEaseProfileDebloat')
+        $funcNodes = $builderAst.FindAll({
+            param($n)
+            $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $funcsToLoad -contains $n.Name
+        }, $true)
+        foreach ($fnNode in $funcNodes) {
+            . ([scriptblock]::Create($fnNode.Extent.Text))
+        }
+
+        # Initialize schema and engine definitions required by debloat helpers
+        $schema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+        $script:WinEaseDebloatEngines = [ordered]@{}
+        $script:WinEaseDebloatLegacyMap = [ordered]@{}
+        foreach ($de in @($schema.DebloatEngines)) {
+            if (-not $de -or -not $de.Item) { continue }
+            $script:WinEaseDebloatEngines[[string]$de.Item] = $de
+            foreach ($legacyItem in @($de.Legacy)) {
+                if ($legacyItem) { $script:WinEaseDebloatLegacyMap[[string]$legacyItem] = [string]$de.Item }
+            }
+        }
+    }
+
+    BeforeEach {
+        $script:advancedDebloatStandard = @()
+        $script:advancedDebloatExperimental = @()
+        $script:DebloatEngineSelection = [ordered]@{}
+    }
+
+    It "handles null or empty preset gracefully" {
+        Apply-WinEaseProfileDebloat -TargetPreset $null
+        @($script:advancedDebloatStandard).Count | Should Be 0
+        @($script:advancedDebloatExperimental).Count | Should Be 0
+        @($script:DebloatEngineSelection.Keys).Count | Should Be 0
+
+        Apply-WinEaseProfileDebloat -TargetPreset @{}
+        @($script:advancedDebloatStandard).Count | Should Be 0
+        @($script:advancedDebloatExperimental).Count | Should Be 0
+        @($script:DebloatEngineSelection.Keys).Count | Should Be 0
+    }
+
+    It "normalizes scalar values, arrays containing null/empty strings, and removes duplicates" {
+        $preset = @{
+            AdvancedDebloatStandard     = 'Remove Print Spooler (service + binary) [20-30MB]'
+            AdvancedDebloatExperimental = @('Remove Fax service [5MB]', $null, '', 'Remove Fax service [5MB]')
+        }
+
+        Apply-WinEaseProfileDebloat -TargetPreset $preset
+
+        @($script:advancedDebloatStandard).Count | Should Be 1
+        $script:advancedDebloatStandard[0] | Should Be 'Remove Print Spooler (service + binary) [20-30MB]'
+
+        @($script:advancedDebloatExperimental).Count | Should Be 1
+        $script:advancedDebloatExperimental[0] | Should Be 'Remove Fax service [5MB]'
+    }
+
+    It "translates legacy debloat targets and defaults their engine to Rust" {
+        # 'Physical: Defender (complete removal) [~50MB]' maps to 'Physical: Defender (complete removal) [~50MB]' or legacy item
+        $legacyItem = $script:WinEaseDebloatLegacyMap.Keys | Select-Object -First 1
+        $canonicalTarget = $script:WinEaseDebloatLegacyMap[$legacyItem]
+
+        $preset = @{
+            AdvancedDebloatStandard = @($legacyItem)
+        }
+
+        Apply-WinEaseProfileDebloat -TargetPreset $preset
+
+        @($script:advancedDebloatStandard).Count | Should Be 1
+        $script:advancedDebloatStandard[0] | Should Be $canonicalTarget
+        $script:DebloatEngineSelection[$canonicalTarget] | Should Be 'Rust'
+    }
+
+    It "handles DebloatEngineSelection provided as PSCustomObject and IDictionary" {
+        $targetA = 'Remove Print Spooler (service + binary) [20-30MB]'
+        $targetB = 'Remove Fax service [5MB]'
+
+        # 1. IDictionary / Hashtable
+        $presetDict = @{
+            AdvancedDebloatStandard = @($targetA, $targetB)
+            DebloatEngineSelection  = @{
+                $targetA = 'Rust'
+                $targetB = 'PowerShell'
+            }
+        }
+
+        Apply-WinEaseProfileDebloat -TargetPreset $presetDict
+        $script:DebloatEngineSelection[$targetA] | Should Be 'Rust'
+        $script:DebloatEngineSelection[$targetB] | Should Be 'PowerShell'
+
+        # 2. PSCustomObject
+        $engineObj = [PSCustomObject]@{
+            $targetA = 'PowerShell'
+            $targetB = 'Rust'
+        }
+        $presetObj = [PSCustomObject]@{
+            AdvancedDebloatStandard = @($targetA, $targetB)
+            DebloatEngineSelection  = $engineObj
+        }
+
+        Apply-WinEaseProfileDebloat -TargetPreset $presetObj
+        $script:DebloatEngineSelection[$targetA] | Should Be 'PowerShell'
+        $script:DebloatEngineSelection[$targetB] | Should Be 'Rust'
+    }
+
+    It "preserves explicit DebloatEngineSelection over legacy Rust defaults" {
+        $legacyItem = $script:WinEaseDebloatLegacyMap.Keys | Select-Object -First 1
+        $canonicalTarget = $script:WinEaseDebloatLegacyMap[$legacyItem]
+
+        $preset = @{
+            AdvancedDebloatStandard = @($legacyItem)
+            DebloatEngineSelection  = @{
+                $canonicalTarget = 'PowerShell'
+            }
+        }
+
+        Apply-WinEaseProfileDebloat -TargetPreset $preset
+
+        $script:advancedDebloatStandard[0] | Should Be $canonicalTarget
+        $script:DebloatEngineSelection[$canonicalTarget] | Should Be 'PowerShell'
+    }
+}
+
 Describe "WinEase helpers - configuration conflict resolution (Test-WinEaseConfigConflicts)" {
     BeforeAll {
         if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
