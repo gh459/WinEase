@@ -99,3 +99,59 @@ Describe "Folder structure S9" {
         Test-Path -LiteralPath (Join-Path $script:S9Root "templates\report.html") | Should Be $true
     }
 }
+
+Describe "R3 - setup and tool scripts are files, not here-strings" {
+    BeforeAll {
+        $fixtureJson = Get-Content -LiteralPath (Join-Path $script:RepoRoot 'tests\fixtures\unattend-scripts\hashes.json') -Raw | ConvertFrom-Json
+        $script:R3Fixture = @(foreach ($item in $fixtureJson) { $item })
+        $script:R3PhasePath = Join-Path $script:RepoRoot 'phases\11-unattend.ps1'
+        $script:R3PhaseText = [System.IO.File]::ReadAllText($script:R3PhasePath)
+    }
+    It "the fixture lists 5 setup helpers and 10 tool scripts" {
+        @($script:R3Fixture | Where-Object { $_.path -like 'scripts/setup/*' }).Count | Should Be 5
+        @($script:R3Fixture | Where-Object { $_.path -like 'scripts/tools/*' }).Count | Should Be 10
+    }
+    It "every extracted file matches the SHA256 recorded before the extraction" {
+        foreach ($e in $script:R3Fixture) {
+            $p = Join-Path $script:RepoRoot ($e.path.Replace('/', '\'))
+            Test-Path -LiteralPath $p | Should Be $true
+            (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLower() | Should Be $e.sha256
+            (Get-Item -LiteralPath $p).Length | Should Be $e.bytes
+        }
+    }
+    It "Read-WinEaseEmbeddedScript returns the recorded content for every file" {
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($script:R3PhaseText, [ref]$null, [ref]$null)
+        $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Read-WinEaseEmbeddedScript' }, $true)
+        $fn | Should Not BeNullOrEmpty
+        $scriptDir = $script:RepoRoot
+        . ([scriptblock]::Create($fn.Extent.Text))
+        foreach ($e in $script:R3Fixture) {
+            $content = Read-WinEaseEmbeddedScript -RelativePath $e.path.Replace('/', '\')
+            $hash = [BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes($content))).Replace('-', '').ToLower()
+            $hash | Should Be $e.sha256
+        }
+    }
+    It "the phase no longer embeds them and references every file" {
+        $script:R3PhaseText | Should Not Match "(?m)^\s*\S+\s*=\s*@'\s*$"
+        foreach ($e in $script:R3Fixture) {
+            $script:R3PhaseText.Contains($e.path.Replace('/', '\')) | Should Be $true
+        }
+    }
+    It "the username placeholder stays in the autologon repair helper and is still substituted" {
+        $helper = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'scripts\setup\WinEase-oobe-autologon-repair.ps1'))
+        $helper.Contains('__WINEASE_USERNAME__') | Should Be $true
+        $script:R3PhaseText.Contains(".Replace('__WINEASE_USERNAME__', `$UserName)") | Should Be $true
+    }
+    It "every .ps1 under scripts/setup and scripts/tools parses" {
+        foreach ($f in Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot 'scripts') -Recurse -Filter *.ps1 | Where-Object { $_.FullName -match '[\\/]scripts[\\/](setup|tools)[\\/]' }) {
+            $errs = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errs)
+            @($errs).Count | Should Be 0
+        }
+    }
+    It ".gitattributes keeps line endings of the extracted scripts untouched" {
+        $ga = Get-Content -LiteralPath (Join-Path $script:RepoRoot '.gitattributes') -Raw
+        $ga | Should Match '(?m)^scripts/setup/\*\* -text\s*$'
+        $ga | Should Match '(?m)^scripts/tools/\*\* -text\s*$'
+    }
+}

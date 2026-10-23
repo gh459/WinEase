@@ -143,7 +143,7 @@ WinEase-main/
 ├── phases/                Build steps (01-18)
 ├── gui/WinEaseGui.ps1      WinForms GUI
 ├── config/                Configuration files
-├── scripts/               Setup scripts embedded into the image
+├── scripts/               Setup scripts embedded into the image (setup/ helpers, tools/ post-install tools)
 ├── tools/                 Helper tools and custom scripts
 ├── profiles/              Saved profiles (JSON)
 ├── templates/report.html  Report template
