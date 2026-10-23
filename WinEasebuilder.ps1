@@ -1363,7 +1363,7 @@ if ($bound.ContainsKey('LoadProfile') -and $bound['LoadProfile']) {
     if (-not $loadedSettings) {
         throw "Could not load JSON profile: $LoadProfile"
     }
-    Apply-ProfileSettings -ProfileObject $loadedSettings | Out-Null
+    $null = Apply-ProfileSettings -ProfileObject $loadedSettings
     $profileNameProp = $loadedSettings.PSObject.Properties['ProfileName']
     $selectedProfile = if ($profileNameProp -and $profileNameProp.Value) { "$($profileNameProp.Value)" } else { [System.IO.Path]::GetFileNameWithoutExtension($LoadProfile) }
 
