@@ -1912,6 +1912,78 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
     }
 }
 
+Describe "Show-WinEaseGuiSessionWindow session launcher and error handling" {
+    BeforeEach {
+        if (-not (Get-Command Find-WinEaseWinUiExe -ErrorAction SilentlyContinue)) {
+            function Find-WinEaseWinUiExe { return $null }
+        }
+        if (-not (Get-Command Show-WinEaseWinUiGUI -ErrorAction SilentlyContinue)) {
+            function Show-WinEaseWinUiGUI { return $null }
+        }
+        if (-not (Get-Command Show-WinEaseGUI -ErrorAction SilentlyContinue)) {
+            function Show-WinEaseGUI { return $null }
+        }
+
+        $builderAst = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$null, [ref]$null)
+        $funcAst = $builderAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq "Show-WinEaseGuiSessionWindow" }, $true)
+        . ([scriptblock]::Create($funcAst.Extent.Text))
+    }
+
+    It "executes WinUI 3 window when executable is found and succeeds" {
+        Mock Find-WinEaseWinUiExe { return "C:\path\to\WinEaseGui.exe" }
+        Mock Show-WinEaseWinUiGUI { return @{ Success = $true; Source = "WinUI3" } }
+        Mock Show-WinEaseGUI { return @{ Success = $true; Source = "Classic" } }
+
+        $res = Show-WinEaseGuiSessionWindow -InitialSettings @{}
+        $res.Source | Should Be "WinUI3"
+        Assert-MockCalled Find-WinEaseWinUiExe -Exactly 1 -Scope It
+        Assert-MockCalled Show-WinEaseWinUiGUI -Exactly 1 -Scope It
+        Assert-MockCalled Show-WinEaseGUI -Exactly 0 -Scope It
+    }
+
+    It "falls back to classic WinForms GUI when WinUI 3 window throws an exception" {
+        Mock Find-WinEaseWinUiExe { return "C:\path\to\WinEaseGui.exe" }
+        Mock Show-WinEaseWinUiGUI { throw "WinUI 3 failed to launch" }
+        Mock Show-WinEaseGUI { return @{ Success = $true; Source = "Classic" } }
+
+        $res = Show-WinEaseGuiSessionWindow -InitialSettings @{}
+        $res.Source | Should Be "Classic"
+        Assert-MockCalled Find-WinEaseWinUiExe -Exactly 1 -Scope It
+        Assert-MockCalled Show-WinEaseWinUiGUI -Exactly 1 -Scope It
+        Assert-MockCalled Show-WinEaseGUI -Exactly 1 -Scope It
+    }
+
+    It "launches classic WinForms GUI directly when ClassicGui switch is set" {
+        Mock Find-WinEaseWinUiExe { return "C:\path\to\WinEaseGui.exe" }
+        Mock Show-WinEaseWinUiGUI { return @{ Success = $true; Source = "WinUI3" } }
+        Mock Show-WinEaseGUI { return @{ Success = $true; Source = "Classic" } }
+
+        $script:ClassicGui = $true
+        try {
+            $res = Show-WinEaseGuiSessionWindow -InitialSettings @{}
+            $res.Source | Should Be "Classic"
+            Assert-MockCalled Show-WinEaseWinUiGUI -Exactly 0 -Scope It
+            Assert-MockCalled Show-WinEaseGUI -Exactly 1 -Scope It
+        } finally {
+            $script:ClassicGui = $false
+        }
+    }
+
+    It "passes UiLanguage argument to GUI when UiLanguage parameter is configured" {
+        Mock Find-WinEaseWinUiExe { return $null }
+        Mock Show-WinEaseGUI { param($InitialSettings, $UiLanguage) $null = $InitialSettings; return @{ Language = $UiLanguage } }
+
+        $script:UiLanguage = "ja"
+        try {
+            $res = Show-WinEaseGuiSessionWindow -InitialSettings @{}
+            $res.Language | Should Be "ja"
+            Assert-MockCalled Show-WinEaseGUI -Exactly 1 -Scope It
+        } finally {
+            $script:UiLanguage = $null
+        }
+    }
+}
+
 Describe "WinEase UI options that have to take effect" {
     BeforeAll {
         $script:UiPrefs = @((Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot 'config\ui-preferences.psd1')).UiPreferences)
