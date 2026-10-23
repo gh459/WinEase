@@ -15,6 +15,155 @@ if (-not (Get-Command -Name Test-WinEasePathWithin -ErrorAction SilentlyContinue
     . (Join-Path -Path $script:RepoRoot -ChildPath "WinEasehelpers.ps1")
 }
 
+Describe "Apply-WinEaseGuiResult in WinEasebuilder.ps1" {
+    BeforeAll {
+        $builderText = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $builderAst = [System.Management.Automation.Language.Parser]::ParseInput($builderText, [ref]$null, [ref]$null)
+
+        # Load functions needed by Apply-WinEaseGuiResult
+        $funcsToLoad = @('Apply-WinEaseGuiResult', 'Confirm-WinEasePhysicalDebloatConsent')
+        $funcs = $builderAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $funcsToLoad -contains $n.Name }, $true)
+        foreach ($fn in $funcs) { . ([scriptblock]::Create($fn.Extent.Text)) }
+
+        # Initialize schema definitions in script scope
+        $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+        $script:AllTweakDefs = [ordered]@{}
+        $script:TweakKeyAliases = [ordered]@{}
+        $script:TweakVariableMap = [ordered]@{}
+        foreach ($td in $settingsDef.Tweaks) {
+            $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description }
+            foreach ($alias in @($td.Aliases)) { if ($alias) { $script:TweakKeyAliases[$alias] = $td.Key } }
+            if ($td.Variable) { $script:TweakVariableMap[$td.Key] = $td.Variable }
+        }
+        $script:ComponentDefs = [ordered]@{}
+        foreach ($cd in $settingsDef.Components) { $script:ComponentDefs[$cd.Key] = $cd }
+        $script:WinEaseDebloatEngines = [ordered]@{}
+        foreach ($de in @($settingsDef.DebloatEngines)) {
+            if ($de -and $de.Item) { $script:WinEaseDebloatEngines[[string]$de.Item] = $de }
+        }
+
+        # Mock helper functions called inside Apply-WinEaseGuiResult
+        function Apply-ProfileSettings { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param($ProfileName) return @{ ProfileName = $ProfileName } }
+        function Sync-WinEaseTweakVariables { }
+        function Set-WinEaseDebloatEngineSelection { param($Selection) $script:DebloatEngineSelection = $Selection }
+        function Resolve-WinEaseDebloatEngine { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param($Item) return "PowerShell" }
+        function Confirm-WinEasePhysicalDebloatConsent { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param($GuiResult) }
+    }
+
+    BeforeEach {
+        $script:allowPhysicalDebloat = $false
+        $script:SourceDrive = "C:\ISO"
+        $script:WorkDir = "C:\Work"
+        $script:UserName = "User"
+        $script:ComputerName = "PC"
+        $script:Index = "1"
+        $script:InjectDrivers = ""
+        $script:useVHDX = $false
+        $script:exportESDMode = $false
+        $script:splitWIMMode = $false
+        $script:DryRun = $false
+        $script:isDryRunMode = $false
+        $script:selectedProfile = "Default"
+        $script:advancedDebloatStandard = @()
+        $script:advancedDebloatExperimental = @()
+        $script:DebloatEngineSelection = [ordered]@{}
+        $script:TweakSettings = [ordered]@{}
+        foreach ($tk in $script:AllTweakDefs.Keys) {
+            $script:TweakSettings[$tk] = [bool]$script:AllTweakDefs[$tk].Default
+        }
+    }
+
+    It "applies physical debloat consent when PhysicalDebloatConsent is true" {
+        $result = @{ PhysicalDebloatConsent = $true }
+        Apply-WinEaseGuiResult -GuiResult $result
+        $script:allowPhysicalDebloat | Should Be $true
+    }
+
+    It "applies full GUI result hashtable and updates session variables" {
+        $guiResult = @{
+            SourceDrive = "D:\Win11.iso"
+            WorkDir = "D:\WinEaseWork"
+            UserName = "TestUser"
+            ComputerName = "WIN-TESTPC"
+            UseVHDX = $true
+            ExportESDMode = $true
+            SplitWIMMode = $false
+            AdvancedDebloatStandard = @("TargetA")
+            AdvancedDebloatExperimental = @("TargetB")
+            Index = "2"
+            InjectDrivers = "D:\Drivers"
+            DryRun = $true
+            PresetKey = "custom_preset"
+            TweakSettings = @{ DisableUAC = $true }
+            DebloatEngineSelection = @{ "TargetA" = "Rust" }
+        }
+
+        Apply-WinEaseGuiResult -GuiResult $guiResult
+
+        $script:SourceDrive | Should Be "D:\Win11.iso"
+        $script:WorkDir | Should Be "D:\WinEaseWork"
+        $script:UserName | Should Be "TestUser"
+        $script:ComputerName | Should Be "WIN-TESTPC"
+        $script:useVHDX | Should Be $true
+        $script:exportESDMode | Should Be $true
+        $script:splitWIMMode | Should Be $false
+        $script:advancedDebloatStandard | Should Be @("TargetA")
+        $script:advancedDebloatExperimental | Should Be @("TargetB")
+        $script:Index | Should Be "2"
+        $script:InjectDrivers | Should Be "D:\Drivers"
+        $script:DryRun | Should Be $true
+        $script:isDryRunMode | Should Be $true
+        $script:selectedProfile | Should Be "custom_preset"
+        $script:TweakSettings["DisableUAC"] | Should Be $true
+        $script:DebloatEngineSelection["TargetA"] | Should Be "Rust"
+    }
+
+    It "handles null/missing debloat lists and debloat engine selection safely" {
+        $guiResult = @{
+            AdvancedDebloatStandard = $null
+            AdvancedDebloatExperimental = $null
+            DebloatEngineSelection = $null
+        }
+
+        Apply-WinEaseGuiResult -GuiResult $guiResult
+
+        @($script:advancedDebloatStandard).Count | Should Be 0
+        @($script:advancedDebloatExperimental).Count | Should Be 0
+        $script:DebloatEngineSelection.Count | Should Be 0
+    }
+
+    It "processes DebloatEngineSelection in PSCustomObject format" {
+        $engineObj = [PSCustomObject]@{
+            "Remove Bluetooth stack (service + binary) [20-40MB]" = "Rust"
+        }
+        $guiResult = @{
+            DebloatEngineSelection = $engineObj
+        }
+
+        Apply-WinEaseGuiResult -GuiResult $guiResult
+
+        $script:DebloatEngineSelection["Remove Bluetooth stack (service + binary) [20-40MB]"] | Should Be "Rust"
+    }
+
+    It "resolves selectedProfile correctly for BasePresetKey when PresetKey is missing" {
+        $guiResult = @{
+            BasePresetKey = "extreme"
+        }
+
+        Apply-WinEaseGuiResult -GuiResult $guiResult
+
+        $script:selectedProfile | Should Be "custom (based on extreme)"
+    }
+
+    It "resolves selectedProfile to 'GUI Selection' when PresetKey and BasePresetKey are both missing" {
+        $guiResult = @{}
+
+        Apply-WinEaseGuiResult -GuiResult $guiResult
+
+        $script:selectedProfile | Should Be "GUI Selection"
+    }
+}
+
 Describe "WinEase GUI wiring - every toggle is consumed by the build" {
     $builderText = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
     $builderAst = [System.Management.Automation.Language.Parser]::ParseInput($builderText, [ref]$null, [ref]$null)
