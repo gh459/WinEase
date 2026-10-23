@@ -1,0 +1,642 @@
+LOAD	HKLM\zSYSTEM
+LOAD	HKLM\zSOFTWARE
+LOAD	HKLM\zDEFAULT
+LOAD	HKLM\zCOMPONENTS
+LOAD	HKLM\zNTUSER
+ADD	HKLM\zSYSTEM\Setup\LabConfig	BypassCPUCheck	REG_DWORD	1
+ADD	HKLM\zSYSTEM\Setup\LabConfig	BypassRAMCheck	REG_DWORD	1
+ADD	HKLM\zSYSTEM\Setup\LabConfig	BypassSecureBootCheck	REG_DWORD	1
+ADD	HKLM\zSYSTEM\Setup\LabConfig	BypassStorageCheck	REG_DWORD	1
+ADD	HKLM\zSYSTEM\Setup\LabConfig	BypassTPMCheck	REG_DWORD	1
+ADD	HKLM\zSYSTEM\Setup\LabConfig	BypassDiskCheck	REG_DWORD	1
+ADD	HKLM\zSYSTEM\Setup\MoSetup	AllowUpgradesWithUnsupportedTPMOrCPU	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Control Panel\UnsupportedHardwareNotificationCache	SV1	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Control Panel\UnsupportedHardwareNotificationCache	SV2	REG_DWORD	0
+ADD	HKLM\zNTUSER\Control Panel\UnsupportedHardwareNotificationCache	SV1	REG_DWORD	0
+ADD	HKLM\zNTUSER\Control Panel\UnsupportedHardwareNotificationCache	SV2	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE	BypassNRO	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\ReserveManager	ShippedWithReserves	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Services\i8042prt\Parameters	LayerDriver JPN	REG_SZ	kbd106.dll
+ADD	HKLM\zSYSTEM\ControlSet001\Services\i8042prt\Parameters	OverrideKeyboardIdentifier	REG_SZ	PCAT_106KEY
+ADD	HKLM\zSYSTEM\ControlSet001\Services\i8042prt\Parameters	OverrideKeyboardType	REG_DWORD	7
+ADD	HKLM\zSYSTEM\ControlSet001\Services\i8042prt\Parameters	OverrideKeyboardSubtype	REG_DWORD	2
+ADD	HKLM\zSYSTEM\ControlSet001\Control\Lsa	LimitBlankPasswordUse	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon	AutoAdminLogon	REG_SZ	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon	DefaultUserName	REG_SZ	TestUser
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon	DefaultPassword	REG_SZ	""
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon	ForceAutoLogon	REG_SZ	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\System	AllowDomainDelayLock	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System	FilterAdministratorToken	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell	ExecutionPolicy	REG_SZ	RemoteSigned
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\PowerShell	EnableScripts	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\PowerShell	ExecutionPolicy	REG_SZ	RemoteSigned
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	ContentDeliveryAllowed	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	ContentDeliveryAllowed	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	FeatureManagementEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	FeatureManagementEnabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	OemPreInstalledAppsEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	OemPreInstalledAppsEnabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	PreInstalledAppsEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	PreInstalledAppsEnabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	PreInstalledAppsEverEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	PreInstalledAppsEverEnabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SilentInstalledAppsEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SilentInstalledAppsEnabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SoftLandingEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SoftLandingEnabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SubscribedContentEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SubscribedContentEnabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SubscribedContent-310093Enabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SubscribedContent-310093Enabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SubscribedContent-338387Enabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SubscribedContent-338387Enabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SubscribedContent-338388Enabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SubscribedContent-338388Enabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SubscribedContent-338389Enabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SubscribedContent-338389Enabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SubscribedContent-338393Enabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SubscribedContent-338393Enabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SubscribedContent-353694Enabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SubscribedContent-353694Enabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SubscribedContent-353696Enabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SubscribedContent-353696Enabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SubscribedContent-353698Enabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SubscribedContent-353698Enabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SystemPaneSuggestionsEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	SystemPaneSuggestionsEnabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	RotatingImageOverlayEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	RotatingImageOverlayEnabled	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent	DisableWindowsConsumerFeatures	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent	DisableConsumerAccountStateContent	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent	DisableCloudOptimizedContent	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent	DisableSoftLanding	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent	DisableWindowsSpotlightFeatures	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent	DisableAccountBasedInSettings	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\PushToInstall	DisablePushToInstall	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\MRT	DontOfferThroughWUAU	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	DefaultBrowserSettingsCampaignEnabled	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	DefaultBrowserSettingEnabled	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	ShowRecommendationsEnabled	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	SpotlightExperiencesAndRecommendationsEnabled	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	UserFeedbackAllowed	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	ShowAcrobatSubscriptionButton	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	WalletDonationEnabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.BackupReminder	Enabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement	ScoobeSystemSettingEnabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	Start_AccountNotifications	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\SystemSettings\AccountNotifications	EnableAccountNotifications	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.BackupReminder	Enabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement	ScoobeSystemSettingEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	Start_AccountNotifications	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\SystemSettings\AccountNotifications	EnableAccountNotifications	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent	DisableWindowsSpotlightOnDesktop	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	RotatingLockScreenOverlayEnabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	RotatingLockScreenEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	RotatingLockScreenOverlayEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager	RotatingLockScreenEnabled	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	EdgeShoppingAssistantEnabled	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	StartupBoostEnabled	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	HideFirstRunExperience	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\WindowsMediaPlayer	DisableAutoUpdate	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\PolicyManager\current\device\Start	ConfigureStartPins	REG_SZ	{\"pinnedList\": [{}]}
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo	Enabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo	Enabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Privacy	TailoredExperiencesWithDiagnosticDataEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Privacy	TailoredExperiencesWithDiagnosticDataEnabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy	HasAccepted	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy	HasAccepted	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Input\TIPC	Enabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Input\TIPC	Enabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\InputPersonalization	RestrictImplicitInkCollection	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Microsoft\InputPersonalization	RestrictImplicitTextCollection	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Software\Microsoft\InputPersonalization	RestrictImplicitInkCollection	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Software\Microsoft\InputPersonalization	RestrictImplicitTextCollection	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection	AllowTelemetry	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection	MaxTelemetryAllowed	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\SQMClient\Windows	CEIPEnable	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\Device Metadata	PreventDeviceMetadataFromNetwork	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Microsoft\InputPersonalization\TrainedDataStore	HarvestContacts	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Personalization\Settings	AcceptedPrivacyPolicy	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	Start_TrackProgs	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\InputPersonalization\TrainedDataStore	HarvestContacts	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Personalization\Settings	AcceptedPrivacyPolicy	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	Start_TrackProgs	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Environment	POWERSHELL_TELEMETRY_OPTOUT	REG_SZ	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	DiagnosticData	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	PersonalizationReportingEnabled	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\InputPersonalization	AllowInputPersonalization	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Policies\Microsoft\Windows\CloudContent	DisableTailoredExperiencesWithDiagnosticData	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Microsoft\Narrator\NoRoam	OnlineServicesEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\CloudContent	DisableTailoredExperiencesWithDiagnosticData	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Software\Microsoft\Narrator\NoRoam	OnlineServicesEnabled	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Power	SleepStudyDisabled	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	Edge3PSerpTelemetryEnabled	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting	Disabled	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting	DontSendAdditionalData	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\System	UploadUserActivities	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\System	PublishUserActivities	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\Backup	DisableCloudBackup	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\SettingSync	DisableBackupRestore	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\SettingSync	DisableSettingSync	REG_DWORD	2
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\SettingSync	DisableSettingSyncUserOverride	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsBackup	DisableBackupUI	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\WindowsBackup	DisableMonitoring	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI	DisableAIDataAnalysis	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\WindowsAI	DisableAIDataAnalysis	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Policies\Microsoft\Windows\WindowsAI	DisableAIDataAnalysis	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI	AllowRecallEnablement	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI	AllowRecallToBeEnabled	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI	TurnOffRecall	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\WindowsAI	TurnOffRecall	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Policies\Microsoft\Windows\WindowsAI	TurnOffRecall	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI	TurnOffSavingSnapshots	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\WindowsAI	TurnOffSavingSnapshots	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Policies\Microsoft\Windows\WindowsAI	TurnOffSavingSnapshots	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI	DisableClickToDo	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI	DisableSettingsAgent	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI	DisableAgentConnectors	REG_DWORD	2
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI	DisableAgentWorkspaces	REG_DWORD	2
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI	DisableRemoteAgentConnectors	REG_DWORD	2
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI	AllowCopilotRuntime	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Notepad	EnableAIFeatures	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\WindowsNotepad	DisableAIFeatures	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer	SettingsPageVisibility	REG_SZ	hide:aicomponents
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI	AllowRecallExport	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\WindowsAI	DisableRecallDataProviders	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Policies\Microsoft\Windows\WindowsAI	DisableRecallDataProviders	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint	DisableCocreator	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint	DisableGenerativeFill	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint	DisableImageCreator	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\System	EnableSmartClipboard	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Paint	EnableCocreator	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	RecallPin	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	RecallPin	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy	LetAppsAccessSystemAIModels	REG_DWORD	2
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy	LetAppsAccessGenerativeAI	REG_DWORD	2
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsCopilot	TurnOffWindowsCopilot	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\WindowsCopilot	TurnOffWindowsCopilot	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Policies\Microsoft\Windows\WindowsCopilot	TurnOffWindowsCopilot	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	ShowCopilotButton	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	ShowCopilotButton	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	CopilotPWAPin	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	CopilotPWAPin	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	HubsSidebarEnabled	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	CopilotPageContext	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	ShowCopilotButton	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	CopilotCDPPageContext	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI	RemoveMicrosoftCopilotApp	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	EdgeEntraCopilotPageContext	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	Microsoft365CopilotChatIconEnabled	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	EdgeHistoryAISearchEnabled	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	ComposeInlineEnabled	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	NewTabPageBingChatEnabled	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Edge	GenAILocalFoundationalModelSettings	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Teams	DisableInstallation	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\Shell\Copilot	IsCopilotAvailable	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\Shell\Copilot	IsCopilotAvailable	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\CrossDevice	AllowCrossDeviceExperience	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\CrossDevice	AllowCrossDeviceResume	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\CrossDevice	DisableResume	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\CrossDevice	DisableCrossDeviceResume	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\System	EnableCdp	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\System	EnableMmx	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\System	AllowCrossDeviceClipboard	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\CrossDeviceResume\Configuration	IsResumeAllowed	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\CrossDeviceResume\Configuration	IsResumeAllowed	REG_DWORD	0
+DELETE	HKLM\zSOFTWARE\Classes\Directory\Background\shellex\ContextMenuHandlers\SendToPhone			
+DELETE	HKLM\zSOFTWARE\Classes\DesktopBackground\shellex\ContextMenuHandlers\SendToPhone			
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Shell\ShellUIHosts\CrossDeviceResumeHost	ProcessPath	REG_SZ	%SystemRoot%\system32\ShellHost.exe
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search	DisableWebSearch	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search	ConnectedSearchUseWeb	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search	EnableDynamicContentInWSB	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search	AllowCloudSearch	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search	AllowSearchToUseLocation	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search	AllowCortana	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\Explorer	DisableSearchBoxSuggestions	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Search	BingSearchEnabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Search	BingSearchEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\Explorer	DisableSearchBoxSuggestions	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Policies\Microsoft\Windows\Explorer	DisableSearchBoxSuggestions	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\SearchSettings	IsDynamicSearchBoxEnabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\SearchSettings	IsDeviceSearchHistoryEnabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\SearchSettings	IsWebSuggestionsEnabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\SearchSettings	IsStoreSuggestionsEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\SearchSettings	IsDynamicSearchBoxEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\SearchSettings	IsDeviceSearchHistoryEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\SearchSettings	IsWebSuggestionsEnabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\SearchSettings	IsStoreSuggestionsEnabled	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\WinStore.Tasks.WindowsSearchTask	ActivationType	REG_DWORD	4294967295
+ADD	HKLM\zSOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\WinStore.Tasks.WindowsSearchTask	Server	REG_SZ	""
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Search	SearchboxTaskbarMode	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Search	SearchboxTaskbarMode	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Dsh	AllowNewsAndInterests	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\Widgets	AllowWidgets	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Feeds	EnableFeeds	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	TaskbarDa	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	TaskbarDa	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\Explorer	HideRecommendedSection	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\PolicyManager\current\device\Start	HideRecommendedSection	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\PolicyManager\current\device\Education	IsEducationEnvironment	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\Explorer	HideRecommendedSection	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Policies\Microsoft\Windows\Explorer	HideRecommendedSection	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	Start_IrisRecommendations	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	Start_IrisRecommendations	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Start	ShowRecentList	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Start	ShowFrequentList	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	Start_TrackDocs	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Start	ShowRecentList	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Start	ShowFrequentList	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	Start_TrackDocs	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization	DODownloadMode	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Control\Power\PowerThrottling	PowerThrottlingOff	REG_DWORD	1
+ADD	HKLM\zSYSTEM\ControlSet001\Control\PriorityControl	Win32PrioritySeparation	REG_DWORD	38
+ADD	HKLM\zSYSTEM\ControlSet001\Control\FileSystem	NtfsDisable8dot3NameCreation	REG_DWORD	1
+ADD	HKLM\zSYSTEM\ControlSet001\Control\FileSystem	NtfsDisableLastAccessUpdate	REG_DWORD	1
+ADD	HKLM\zSYSTEM\ControlSet001\Control\FileSystem	LongPathsEnabled	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio	Priority	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio	Scheduling Category	REG_SZ	High
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio	SFIO Priority	REG_SZ	High
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio	Background Only	REG_SZ	False
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio	Clock Rate	REG_DWORD	10000
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio	GPU Priority	REG_DWORD	8
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games	Priority	REG_DWORD	6
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games	Scheduling Category	REG_SZ	High
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games	SFIO Priority	REG_SZ	High
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games	GPU Priority	REG_DWORD	8
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games	Affinity	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games	Background Only	REG_SZ	False
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games	Clock Rate	REG_DWORD	10000
+ADD	HKLM\zNTUSER\System\GameConfigStore	GameDVR_FSEBehaviorMode	REG_DWORD	2
+ADD	HKLM\zNTUSER\System\GameConfigStore	GameDVR_HonorUserFSEBehaviorMode	REG_DWORD	1
+ADD	HKLM\zDEFAULT\System\GameConfigStore	GameDVR_FSEBehaviorMode	REG_DWORD	2
+ADD	HKLM\zDEFAULT\System\GameConfigStore	GameDVR_HonorUserFSEBehaviorMode	REG_DWORD	1
+ADD	HKLM\zSYSTEM\ControlSet001\Control\GraphicsDrivers	HwSchMode	REG_DWORD	2
+ADD	HKLM\zDEFAULT\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32	(default)	REG_SZ	""
+ADD	HKLM\zNTUSER\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32	(default)	REG_SZ	""
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize	AppsUseLightTheme	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize	SystemUsesLightTheme	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize	AppsUseLightTheme	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize	SystemUsesLightTheme	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	HideFileExt	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	HideFileExt	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	LaunchTo	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	LaunchTo	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings	TaskbarEndTask	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings	TaskbarEndTask	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	TaskbarAl	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	TaskbarAl	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer	HideSCAMeetNow	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer	HideSCAMeetNow	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	ShowSyncProviderNotifications	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	ShowSyncProviderNotifications	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\BootAnimation	DisableStartupSound	REG_DWORD	1
+ADD	HKLM\zNTUSER\Control Panel\Desktop	MenuShowDelay	REG_SZ	0
+ADD	HKLM\zDEFAULT\Control Panel\Desktop	MenuShowDelay	REG_SZ	0
+ADD	HKLM\zSOFTWARE\Classes\*\shell\runas	(default)	REG_SZ	Take Ownership
+ADD	HKLM\zSOFTWARE\Classes\*\shell\runas	HasLUAShield	REG_SZ	""
+ADD	HKLM\zSOFTWARE\Classes\*\shell\runas	NoWorkingDirectory	REG_SZ	""
+ADD	HKLM\zSOFTWARE\Classes\*\shell\runas\command	(default)	REG_SZ	powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f $p; icacls.exe $p /grant administrators:F }" "%1"
+ADD	HKLM\zSOFTWARE\Classes\Directory\shell\runas	(default)	REG_SZ	Take Ownership
+ADD	HKLM\zSOFTWARE\Classes\Directory\shell\runas	HasLUAShield	REG_SZ	""
+ADD	HKLM\zSOFTWARE\Classes\Directory\shell\runas	NoWorkingDirectory	REG_SZ	""
+ADD	HKLM\zSOFTWARE\Classes\Directory\shell\runas\command	(default)	REG_SZ	powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f $p /r /d y; icacls.exe $p /grant administrators:F /t }" "%1"
+ADD	HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas	(default)	REG_SZ	Open Command Prompt as Administrator
+ADD	HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas	HasLUAShield	REG_SZ	""
+ADD	HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas\command	(default)	REG_SZ	PowerShell -windowstyle hidden -Command \"Start-Process cmd.exe -ArgumentList '/s,/k,pushd,\"%V\"' -Verb RunAs\"
+ADD	HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities	ApplicationName	REG_SZ	Windows Photo Viewer
+ADD	HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities	ApplicationDescription	REG_SZ	View pictures with Windows Photo Viewer
+ADD	HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities	ApplicationIcon	REG_SZ	%SystemRoot%\System32\imageres.dll,-70
+ADD	HKLM\zSOFTWARE\RegisteredApplications	Windows Photo Viewer	REG_SZ	SOFTWARE\Microsoft\Windows Photo Viewer\Capabilities
+ADD	HKLM\zSOFTWARE\Classes\PhotoViewer.FileAssoc.Bitmap	(default)	REG_SZ	Windows Photo Viewer
+ADD	HKLM\zSOFTWARE\Classes\PhotoViewer.FileAssoc.Bitmap\DefaultIcon	(default)	REG_SZ	%SystemRoot%\System32\imageres.dll,-70
+ADD	HKLM\zSOFTWARE\Classes\PhotoViewer.FileAssoc.Gif	(default)	REG_SZ	Windows Photo Viewer
+ADD	HKLM\zSOFTWARE\Classes\PhotoViewer.FileAssoc.Gif\DefaultIcon	(default)	REG_SZ	%SystemRoot%\System32\imageres.dll,-70
+ADD	HKLM\zSOFTWARE\Classes\PhotoViewer.FileAssoc.JFIF	(default)	REG_SZ	Windows Photo Viewer
+ADD	HKLM\zSOFTWARE\Classes\PhotoViewer.FileAssoc.JFIF\DefaultIcon	(default)	REG_SZ	%SystemRoot%\System32\imageres.dll,-70
+ADD	HKLM\zSOFTWARE\Classes\PhotoViewer.FileAssoc.Jpeg	(default)	REG_SZ	Windows Photo Viewer
+ADD	HKLM\zSOFTWARE\Classes\PhotoViewer.FileAssoc.Jpeg\DefaultIcon	(default)	REG_SZ	%SystemRoot%\System32\imageres.dll,-70
+ADD	HKLM\zSOFTWARE\Classes\PhotoViewer.FileAssoc.Png	(default)	REG_SZ	Windows Photo Viewer
+ADD	HKLM\zSOFTWARE\Classes\PhotoViewer.FileAssoc.Png\DefaultIcon	(default)	REG_SZ	%SystemRoot%\System32\imageres.dll,-70
+ADD	HKLM\zSOFTWARE\Classes\PhotoViewer.FileAssoc.Tiff	(default)	REG_SZ	Windows Photo Viewer
+ADD	HKLM\zSOFTWARE\Classes\PhotoViewer.FileAssoc.Tiff\DefaultIcon	(default)	REG_SZ	%SystemRoot%\System32\imageres.dll,-70
+ADD	HKLM\zSOFTWARE\Classes\PhotoViewer.FileAssoc.Wdp	(default)	REG_SZ	Windows Photo Viewer
+ADD	HKLM\zSOFTWARE\Classes\PhotoViewer.FileAssoc.Wdp\DefaultIcon	(default)	REG_SZ	%SystemRoot%\System32\imageres.dll,-70
+ADD	HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities\FileAssociations	.bmp	REG_SZ	PhotoViewer.FileAssoc.Bitmap
+ADD	HKLM\zSOFTWARE\Classes\.bmp\OpenWithProgids	PhotoViewer.FileAssoc.Bitmap	REG_NONE	
+DELETE	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.bmp\UserChoice			
+ADD	HKLM\zNTUSER\Software\Classes\.bmp	(default)	REG_SZ	PhotoViewer.FileAssoc.Bitmap
+ADD	HKLM\zNTUSER\Software\Classes\.bmp\OpenWithProgids	PhotoViewer.FileAssoc.Bitmap	REG_NONE	
+DELETE	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.bmp\UserChoice			
+ADD	HKLM\zDEFAULT\Software\Classes\.bmp	(default)	REG_SZ	PhotoViewer.FileAssoc.Bitmap
+ADD	HKLM\zDEFAULT\Software\Classes\.bmp\OpenWithProgids	PhotoViewer.FileAssoc.Bitmap	REG_NONE	
+ADD	HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities\FileAssociations	.dib	REG_SZ	PhotoViewer.FileAssoc.Bitmap
+ADD	HKLM\zSOFTWARE\Classes\.dib\OpenWithProgids	PhotoViewer.FileAssoc.Bitmap	REG_NONE	
+DELETE	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.dib\UserChoice			
+ADD	HKLM\zNTUSER\Software\Classes\.dib	(default)	REG_SZ	PhotoViewer.FileAssoc.Bitmap
+ADD	HKLM\zNTUSER\Software\Classes\.dib\OpenWithProgids	PhotoViewer.FileAssoc.Bitmap	REG_NONE	
+DELETE	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.dib\UserChoice			
+ADD	HKLM\zDEFAULT\Software\Classes\.dib	(default)	REG_SZ	PhotoViewer.FileAssoc.Bitmap
+ADD	HKLM\zDEFAULT\Software\Classes\.dib\OpenWithProgids	PhotoViewer.FileAssoc.Bitmap	REG_NONE	
+ADD	HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities\FileAssociations	.gif	REG_SZ	PhotoViewer.FileAssoc.Gif
+ADD	HKLM\zSOFTWARE\Classes\.gif\OpenWithProgids	PhotoViewer.FileAssoc.Gif	REG_NONE	
+DELETE	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.gif\UserChoice			
+ADD	HKLM\zNTUSER\Software\Classes\.gif	(default)	REG_SZ	PhotoViewer.FileAssoc.Gif
+ADD	HKLM\zNTUSER\Software\Classes\.gif\OpenWithProgids	PhotoViewer.FileAssoc.Gif	REG_NONE	
+DELETE	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.gif\UserChoice			
+ADD	HKLM\zDEFAULT\Software\Classes\.gif	(default)	REG_SZ	PhotoViewer.FileAssoc.Gif
+ADD	HKLM\zDEFAULT\Software\Classes\.gif\OpenWithProgids	PhotoViewer.FileAssoc.Gif	REG_NONE	
+ADD	HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities\FileAssociations	.jfif	REG_SZ	PhotoViewer.FileAssoc.JFIF
+ADD	HKLM\zSOFTWARE\Classes\.jfif\OpenWithProgids	PhotoViewer.FileAssoc.JFIF	REG_NONE	
+DELETE	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.jfif\UserChoice			
+ADD	HKLM\zNTUSER\Software\Classes\.jfif	(default)	REG_SZ	PhotoViewer.FileAssoc.JFIF
+ADD	HKLM\zNTUSER\Software\Classes\.jfif\OpenWithProgids	PhotoViewer.FileAssoc.JFIF	REG_NONE	
+DELETE	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.jfif\UserChoice			
+ADD	HKLM\zDEFAULT\Software\Classes\.jfif	(default)	REG_SZ	PhotoViewer.FileAssoc.JFIF
+ADD	HKLM\zDEFAULT\Software\Classes\.jfif\OpenWithProgids	PhotoViewer.FileAssoc.JFIF	REG_NONE	
+ADD	HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities\FileAssociations	.jpe	REG_SZ	PhotoViewer.FileAssoc.Jpeg
+ADD	HKLM\zSOFTWARE\Classes\.jpe\OpenWithProgids	PhotoViewer.FileAssoc.Jpeg	REG_NONE	
+DELETE	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.jpe\UserChoice			
+ADD	HKLM\zNTUSER\Software\Classes\.jpe	(default)	REG_SZ	PhotoViewer.FileAssoc.Jpeg
+ADD	HKLM\zNTUSER\Software\Classes\.jpe\OpenWithProgids	PhotoViewer.FileAssoc.Jpeg	REG_NONE	
+DELETE	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.jpe\UserChoice			
+ADD	HKLM\zDEFAULT\Software\Classes\.jpe	(default)	REG_SZ	PhotoViewer.FileAssoc.Jpeg
+ADD	HKLM\zDEFAULT\Software\Classes\.jpe\OpenWithProgids	PhotoViewer.FileAssoc.Jpeg	REG_NONE	
+ADD	HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities\FileAssociations	.jpeg	REG_SZ	PhotoViewer.FileAssoc.Jpeg
+ADD	HKLM\zSOFTWARE\Classes\.jpeg\OpenWithProgids	PhotoViewer.FileAssoc.Jpeg	REG_NONE	
+DELETE	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.jpeg\UserChoice			
+ADD	HKLM\zNTUSER\Software\Classes\.jpeg	(default)	REG_SZ	PhotoViewer.FileAssoc.Jpeg
+ADD	HKLM\zNTUSER\Software\Classes\.jpeg\OpenWithProgids	PhotoViewer.FileAssoc.Jpeg	REG_NONE	
+DELETE	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.jpeg\UserChoice			
+ADD	HKLM\zDEFAULT\Software\Classes\.jpeg	(default)	REG_SZ	PhotoViewer.FileAssoc.Jpeg
+ADD	HKLM\zDEFAULT\Software\Classes\.jpeg\OpenWithProgids	PhotoViewer.FileAssoc.Jpeg	REG_NONE	
+ADD	HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities\FileAssociations	.jpg	REG_SZ	PhotoViewer.FileAssoc.Jpeg
+ADD	HKLM\zSOFTWARE\Classes\.jpg\OpenWithProgids	PhotoViewer.FileAssoc.Jpeg	REG_NONE	
+DELETE	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.jpg\UserChoice			
+ADD	HKLM\zNTUSER\Software\Classes\.jpg	(default)	REG_SZ	PhotoViewer.FileAssoc.Jpeg
+ADD	HKLM\zNTUSER\Software\Classes\.jpg\OpenWithProgids	PhotoViewer.FileAssoc.Jpeg	REG_NONE	
+DELETE	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.jpg\UserChoice			
+ADD	HKLM\zDEFAULT\Software\Classes\.jpg	(default)	REG_SZ	PhotoViewer.FileAssoc.Jpeg
+ADD	HKLM\zDEFAULT\Software\Classes\.jpg\OpenWithProgids	PhotoViewer.FileAssoc.Jpeg	REG_NONE	
+ADD	HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities\FileAssociations	.png	REG_SZ	PhotoViewer.FileAssoc.Png
+ADD	HKLM\zSOFTWARE\Classes\.png\OpenWithProgids	PhotoViewer.FileAssoc.Png	REG_NONE	
+DELETE	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.png\UserChoice			
+ADD	HKLM\zNTUSER\Software\Classes\.png	(default)	REG_SZ	PhotoViewer.FileAssoc.Png
+ADD	HKLM\zNTUSER\Software\Classes\.png\OpenWithProgids	PhotoViewer.FileAssoc.Png	REG_NONE	
+DELETE	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.png\UserChoice			
+ADD	HKLM\zDEFAULT\Software\Classes\.png	(default)	REG_SZ	PhotoViewer.FileAssoc.Png
+ADD	HKLM\zDEFAULT\Software\Classes\.png\OpenWithProgids	PhotoViewer.FileAssoc.Png	REG_NONE	
+ADD	HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities\FileAssociations	.tif	REG_SZ	PhotoViewer.FileAssoc.Tiff
+ADD	HKLM\zSOFTWARE\Classes\.tif\OpenWithProgids	PhotoViewer.FileAssoc.Tiff	REG_NONE	
+DELETE	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.tif\UserChoice			
+ADD	HKLM\zNTUSER\Software\Classes\.tif	(default)	REG_SZ	PhotoViewer.FileAssoc.Tiff
+ADD	HKLM\zNTUSER\Software\Classes\.tif\OpenWithProgids	PhotoViewer.FileAssoc.Tiff	REG_NONE	
+DELETE	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.tif\UserChoice			
+ADD	HKLM\zDEFAULT\Software\Classes\.tif	(default)	REG_SZ	PhotoViewer.FileAssoc.Tiff
+ADD	HKLM\zDEFAULT\Software\Classes\.tif\OpenWithProgids	PhotoViewer.FileAssoc.Tiff	REG_NONE	
+ADD	HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities\FileAssociations	.tiff	REG_SZ	PhotoViewer.FileAssoc.Tiff
+ADD	HKLM\zSOFTWARE\Classes\.tiff\OpenWithProgids	PhotoViewer.FileAssoc.Tiff	REG_NONE	
+DELETE	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.tiff\UserChoice			
+ADD	HKLM\zNTUSER\Software\Classes\.tiff	(default)	REG_SZ	PhotoViewer.FileAssoc.Tiff
+ADD	HKLM\zNTUSER\Software\Classes\.tiff\OpenWithProgids	PhotoViewer.FileAssoc.Tiff	REG_NONE	
+DELETE	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.tiff\UserChoice			
+ADD	HKLM\zDEFAULT\Software\Classes\.tiff	(default)	REG_SZ	PhotoViewer.FileAssoc.Tiff
+ADD	HKLM\zDEFAULT\Software\Classes\.tiff\OpenWithProgids	PhotoViewer.FileAssoc.Tiff	REG_NONE	
+ADD	HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities\FileAssociations	.wdp	REG_SZ	PhotoViewer.FileAssoc.Wdp
+ADD	HKLM\zSOFTWARE\Classes\.wdp\OpenWithProgids	PhotoViewer.FileAssoc.Wdp	REG_NONE	
+DELETE	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.wdp\UserChoice			
+ADD	HKLM\zNTUSER\Software\Classes\.wdp	(default)	REG_SZ	PhotoViewer.FileAssoc.Wdp
+ADD	HKLM\zNTUSER\Software\Classes\.wdp\OpenWithProgids	PhotoViewer.FileAssoc.Wdp	REG_NONE	
+DELETE	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.wdp\UserChoice			
+ADD	HKLM\zDEFAULT\Software\Classes\.wdp	(default)	REG_SZ	PhotoViewer.FileAssoc.Wdp
+ADD	HKLM\zDEFAULT\Software\Classes\.wdp\OpenWithProgids	PhotoViewer.FileAssoc.Wdp	REG_NONE	
+ADD	HKLM\zDEFAULT\Software\Microsoft\IME\15.0\IMEJP\MSIME	CloudCandidate	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\IME\15.0\IMEJP\MSIME	SendFeedback	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\IME\15.0\IMEJP\MSIME	CloudCandidate	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\IME\15.0\IMEJP\MSIME	SendFeedback	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Services\AJRouter	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\AppVClient	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\AssignedAccessManagerSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\CertPropSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\CscService	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\DialogBlockingService	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\DiagTrack	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\diagnosticshub.standardcollector.service	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\diagsvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\dmwappushservice	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\DoSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\DPS	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\DusmSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\edgeupdate	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\edgeupdatem	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\Fax	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\GpuEnergyDrv	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\GraphicsPerfSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\HomeGroupListener	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\HomeGroupProvider	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\icssvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\InventorySvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\iphlpsvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\lfsvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\MapsBroker	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\NetTcpPortSharing	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\Ndu	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\PcaSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\PhoneSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\RemoteRegistry	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\RetailDemo	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\SCardSvr	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\ScDeviceEnum	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\SEMgrSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\SensorDataService	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\SensorService	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\SensrSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\SharedAccess	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\SharedRealitySvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\SmsRouter	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\SysMain	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\TrkWks	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\TroubleshootingSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\WalletService	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\WarpJITSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\WdiServiceHost	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\WdiSystemHost	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\wercplsupport	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\WerSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\wisvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\WMPNetworkSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\WpcMonSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\WSAIFabricSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\IsoEnvBroker	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\CDPSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\CDPUserSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\WSearch	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\XblAuthManager	Start	REG_DWORD	3
+ADD	HKLM\zSYSTEM\ControlSet001\Services\XblGameSave	Start	REG_DWORD	3
+ADD	HKLM\zSYSTEM\ControlSet001\Services\XboxGipSvc	Start	REG_DWORD	3
+ADD	HKLM\zSYSTEM\ControlSet001\Services\XboxNetApiSvc	Start	REG_DWORD	3
+ADD	HKLM\zSYSTEM\ControlSet001\Services\wuauserv	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\UsoSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\WaaSMedicSVC	Start	REG_DWORD	4
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\EMDMgmt	GroupPolicyDisallowCaches	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\EMDMgmt	AllowNewCachesByDefault	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Services\Spooler	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\PrintNotify	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\bthserv	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\BthAvctpSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\BluetoothUserService	Start	REG_DWORD	3
+ADD	HKLM\zSYSTEM\ControlSet001\Services\TermService	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\UmRdpService	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\TabletInputService	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\fvevc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\WinDefend	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\MDCoreSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\WdNisSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\Sense	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\SecurityHealthService	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\MpsSvc	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\SNMP	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\Fax	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\Telnet	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\TFTP	Start	REG_DWORD	4
+DELETE	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\InboxApp\Test.App_1.0.0.0_x64__abc			
+DELETE	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\InboxApp\Test.App_abc			
+ADD	HKLM\zSYSTEM\ControlSet001\Services\WdBoot	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\WdFilter	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\WdNisDrv	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\WdBoot	SupportElamHive	REG_DWORD	0
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\WdBoot	Group		
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\WdFilter	Group		
+ADD	HKLM\zSYSTEM\ControlSet001\Services\WinDefend	Start	REG_DWORD	4
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\WinDefend\TriggerInfo			
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\WinDefend			
+ADD	HKLM\zSYSTEM\ControlSet001\Services\MDCoreSvc	Start	REG_DWORD	4
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\MDCoreSvc\TriggerInfo			
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\MDCoreSvc			
+ADD	HKLM\zSYSTEM\ControlSet001\Services\WdNisSvc	Start	REG_DWORD	4
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\WdNisSvc\TriggerInfo			
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\WdNisSvc			
+ADD	HKLM\zSYSTEM\ControlSet001\Services\Sense	Start	REG_DWORD	4
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\Sense\TriggerInfo			
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\Sense			
+ADD	HKLM\zSYSTEM\ControlSet001\Services\SecurityHealthService	Start	REG_DWORD	4
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\SecurityHealthService\TriggerInfo			
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\SecurityHealthService			
+ADD	HKLM\zSYSTEM\ControlSet001\Services\wscsvc	Start	REG_DWORD	4
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\wscsvc\TriggerInfo			
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\wscsvc			
+ADD	HKLM\zSYSTEM\ControlSet001\Services\webthreatdefsvc	Start	REG_DWORD	4
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\webthreatdefsvc\TriggerInfo			
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\webthreatdefsvc			
+ADD	HKLM\zSYSTEM\ControlSet001\Services\webthreatdefusersvc	Start	REG_DWORD	4
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\webthreatdefusersvc\TriggerInfo			
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\webthreatdefusersvc			
+ADD	HKLM\zSYSTEM\ControlSet001\Services\SgrmBroker	Start	REG_DWORD	4
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\SgrmBroker\TriggerInfo			
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\SgrmBroker			
+ADD	HKLM\zSYSTEM\ControlSet001\Services\SgrmAgent	Start	REG_DWORD	4
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\SgrmAgent\TriggerInfo			
+DELETE	HKLM\zSYSTEM\ControlSet001\Services\SgrmAgent			
+ADD	HKLM\zSOFTWARE\Microsoft\Windows Defender\Features	TamperProtection	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender	DisableAntiSpyware	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender	DisableAntiVirus	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection	DisableBehaviorMonitoring	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection	DisableOnAccessProtection	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection	DisableScanOnRealtimeEnable	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\MpEngine	MpEngineEnableFileNameFiltering	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet	SubmitSamplesConsent	REG_DWORD	2
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet	SpynetReporting	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet	SpynetProtection	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Signature Updates	SignatureUpdateInterval	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender	PUAProtection	REG_DWORD	0
+DELETE	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Run	SecurityHealth		
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.SecHealthUI_8wekyb3d8bbwe			
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.Windows.SecHealthUI_cw5n1h2txyewy			
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\MsMpEng.exe	Debugger	REG_SZ	%SystemRoot%\System32\systray.exe
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\MpCmdRun.exe	Debugger	REG_SZ	%SystemRoot%\System32\systray.exe
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\NisSrv.exe	Debugger	REG_SZ	%SystemRoot%\System32\systray.exe
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\Sense.exe	Debugger	REG_SZ	%SystemRoot%\System32\systray.exe
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\MpCopyAccelerator.exe	Debugger	REG_SZ	%SystemRoot%\System32\systray.exe
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\MpSigStub.exe	Debugger	REG_SZ	%SystemRoot%\System32\systray.exe
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SecurityHealthService.exe	Debugger	REG_SZ	%SystemRoot%\System32\systray.exe
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SecurityHealthSystray.exe	Debugger	REG_SZ	%SystemRoot%\System32\systray.exe
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SecurityHealthHost.exe	Debugger	REG_SZ	%SystemRoot%\System32\systray.exe
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SecHealthUI.exe	Debugger	REG_SZ	%SystemRoot%\System32\systray.exe
+ADD	HKLM\zSYSTEM\ControlSet001\Services\MsSecCore	Start	REG_DWORD	4
+ADD	HKLM\zSYSTEM\ControlSet001\Services\MsSecFlt	Start	REG_DWORD	4
+DELETE	HKLM\zSYSTEM\ControlSet001\Control\WMI\Autologger\DefenderApiLogger			
+DELETE	HKLM\zSYSTEM\ControlSet001\Control\WMI\Autologger\DefenderAuditLogger			
+DELETE	HKLM\zSYSTEM\ControlSet001\Control\Ubpm	CriticalMaintenance_DefenderCleanup		
+DELETE	HKLM\zSYSTEM\ControlSet001\Control\Ubpm	CriticalMaintenance_DefenderVerification		
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer	SettingsPageVisibility	REG_SZ	hide:aicomponents;windowsdefender
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE	BypassNRO	REG_DWORD	1
+ADD	HKLM\zSYSTEM\Setup\LabConfig	BypassNRO	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo	Enabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo	Enabled	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo	DisabledByGroupPolicy	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy	LetAppsAccessLocation	REG_DWORD	2
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy	LetAppsAccessMicrophone	REG_DWORD	2
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy	LetAppsAccessContacts	REG_DWORD	2
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy	LetAppsAccessCalendar	REG_DWORD	2
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy	LetAppsAccessCallHistory	REG_DWORD	2
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy	LetAppsAccessMessaging	REG_DWORD	2
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy	LetAppsAccessAccountInfo	REG_DWORD	2
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications	DisableEnhancedNotifications	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender Security Center\Systray	HideSystray	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search	AllowCortana	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search	AllowCortanaAboveLock	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\System	EnableActivityFeed	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection	DoNotShowFeedbackNotifications	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection	LimitDiagnosticLogCollection	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection	LimitDumpCollection	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection	DisableDiagnosticDataViewer	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Microsoft\Siuf\Rules	NumberOfSIUFInPeriod	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Siuf\Rules	NumberOfSIUFInPeriod	REG_DWORD	0
+DELETE	HKLM\zNTUSER\Software\Microsoft\Siuf\Rules	PeriodInNanoSeconds		
+DELETE	HKLM\zDEFAULT\Software\Microsoft\Siuf\Rules	PeriodInNanoSeconds		
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet	SubmitSamplesConsent	REG_DWORD	2
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\MRT	DontReportInfectionInformation	REG_DWORD	1
+ADD	HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management	ClearPageFileAtShutdown	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management	LargeSystemCache	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile	NetworkThrottlingIndex	REG_DWORD	0xffffffff
+ADD	HKLM\zSOFTWARE\Microsoft\MSMQ\Parameters	TCPNoDelay	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy	LetAppsRunInBackground	REG_DWORD	2
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications	GlobalUserDisabled	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\GameDVR	AllowGameDVR	REG_DWORD	0
+ADD	HKLM\zNTUSER\System\GameConfigStore	GameDVR_Enabled	REG_DWORD	0
+ADD	HKLM\zDEFAULT\System\GameConfigStore	GameDVR_Enabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\GameDVR	AppCaptureEnabled	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects	VisualFXSetting	REG_DWORD	2
+ADD	HKLM\zNTUSER\Control Panel\Desktop\WindowMetrics	MinAnimate	REG_SZ	0
+ADD	HKLM\zNTUSER\Control Panel\Desktop	DragFullWindows	REG_SZ	0
+ADD	HKLM\zNTUSER\Control Panel\Desktop	UserPreferencesMask	REG_BINARY	9012038010000000
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	TaskbarAnimations	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	ListviewAlphaSelect	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	ListviewShadow	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize	EnableTransparency	REG_DWORD	0
+ADD	HKLM\zNTUSER\Control Panel\Accessibility\Animation	Flags	REG_SZ	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects	VisualFXSetting	REG_DWORD	2
+ADD	HKLM\zDEFAULT\Control Panel\Desktop\WindowMetrics	MinAnimate	REG_SZ	0
+ADD	HKLM\zDEFAULT\Control Panel\Desktop	DragFullWindows	REG_SZ	0
+ADD	HKLM\zDEFAULT\Control Panel\Desktop	UserPreferencesMask	REG_BINARY	9012038010000000
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	TaskbarAnimations	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	ListviewAlphaSelect	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	ListviewShadow	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize	EnableTransparency	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Control Panel\Accessibility\Animation	Flags	REG_SZ	0
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked	{e2bf9676-5f8f-435c-97eb-11607a5bedf7}	REG_SZ	""
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked	{f81e9010-6ea4-11ce-a7ff-00aa003ca9f6}	REG_SZ	""
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked	{7AD84985-87B4-4a16-BE58-8B72A5B390F7}	REG_SZ	""
+ADD	HKLM\zSYSTEM\ControlSet001\Policies\Microsoft\FeatureManagement\Overrides	3369582732	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Control\FeatureManagement\Overrides\8\3369582732	EnabledState	REG_DWORD	1
+ADD	HKLM\zSYSTEM\ControlSet001\Control\FeatureManagement\Overrides\8\3369582732	EnabledStateOptions	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Control\FeatureManagement\Overrides\8\3369582732	Variant	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Control\FeatureManagement\Overrides\8\3369582732	VariantPayload	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Control\FeatureManagement\Overrides\8\3369582732	VariantPayloadKind	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Policies\Microsoft\FeatureManagement\Overrides	1694661260	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Control\FeatureManagement\Overrides\8\1694661260	EnabledState	REG_DWORD	1
+ADD	HKLM\zSYSTEM\ControlSet001\Control\FeatureManagement\Overrides\8\1694661260	EnabledStateOptions	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Control\FeatureManagement\Overrides\8\1694661260	Variant	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Control\FeatureManagement\Overrides\8\1694661260	VariantPayload	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Control\FeatureManagement\Overrides\8\1694661260	VariantPayloadKind	REG_DWORD	0
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation	Manufacturer	REG_SZ	WinEase Project
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation	SupportURL	REG_SZ	https://github.com/gh459/WinEase

@@ -505,6 +505,7 @@ WinEase/
 │   ├── WinEaseBenchmarks.ps1   # Statistical analysis and benchmark comparison
 │   ├── WinEaseDependencies.ps1 # Dependency / feature-impact analysis (config/dependencies.psd1)
 │   ├── WinEaseGuiSession.ps1   # Builder GUI session handling
+│   ├── WinEaseRegistry.ps1     # Invoke-WinEaseReg (every reg.exe call of phase 10), hive loading, config/registry table runner
 │   ├── WinEaseGuiCore.ps1      # UI-independent GUI logic (language tables, debloat items, draft config, migration helpers)
 │   ├── WinEaseFileSystem.ps1   # Directory safety checks, ownership/ACL, robust deletion, capacity
 │   ├── WinEaseWim.ps1          # Native WIM export, fingerprinting and repair
@@ -523,6 +524,7 @@ WinEase/
 │   ├── schema.psd1            # Single source of truth for every tweak/component setting, CLI switch pair and debloat engine
 │   ├── presets.psd1           # Built-in presets (extreme, balanced, fat32, handheld, vm, audio)
 │   ├── dependencies.psd1      # Dependency & feature-impact catalog (conflicts, impacts, unknowns)
+│   ├── registry/              # Offline registry writes of phase 10 as data (one table per area, see phases/10-registry.ps1)
 │   ├── WinEase.config.schema.json  # JSON Schema for profile validation
 │   ├── ui-strings/            # GUI strings (en.json, ja.json)
 │   └── user/                  # User-edited files (all optional)

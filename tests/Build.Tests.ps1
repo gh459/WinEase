@@ -245,7 +245,8 @@ Describe "WinEase builder - the diagnostic report survives a parallel build" {
 Describe "WinEase builder - upstream registry additions (sync 2026-10-22)" {
     BeforeAll {
         $script:RegistryPhasePath = Join-Path $script:RepoRoot "phases\10-registry.ps1"
-        $script:RegistryPhaseText = [System.IO.File]::ReadAllText($script:RegistryPhasePath)
+        # the plain writes live in config\registry, the rest in the phase
+        $script:RegistryPhaseText = [System.IO.File]::ReadAllText($script:RegistryPhasePath) + "`n" + (Get-WinEaseRegistryTableText)
         $script:UpstreamSchema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
     }
 
@@ -268,14 +269,14 @@ Describe "WinEase builder - upstream registry additions (sync 2026-10-22)" {
     }
 
     It "never asks for a Defender sample (SubmitSamplesConsent = 2)" {
-        $script:RegistryPhaseText | Should Not Match 'SubmitSamplesConsent" /t REG_DWORD /d 0\b'
-        $script:RegistryPhaseText | Should Match 'SubmitSamplesConsent" /t REG_DWORD /d 2\b'
+        $script:RegistryPhaseText | Should Not Match "Name = 'SubmitSamplesConsent'; Type = 'REG_DWORD'; Data = '0'"
+        $script:RegistryPhaseText | Should Match "Name = 'SubmitSamplesConsent'; Type = 'REG_DWORD'; Data = '2'"
     }
 
     It "disables the agent connectors with the value the upstream tools use" {
-        $script:RegistryPhaseText | Should Match 'DisableAgentConnectors" /t REG_DWORD /d 2\b'
-        $script:RegistryPhaseText | Should Match 'DisableAgentWorkspaces" /t REG_DWORD /d 2\b'
-        $script:RegistryPhaseText | Should Match 'DisableRemoteAgentConnectors" /t REG_DWORD /d 2\b'
+        $script:RegistryPhaseText | Should Match "Name = 'DisableAgentConnectors'; Type = 'REG_DWORD'; Data = '2'"
+        $script:RegistryPhaseText | Should Match "Name = 'DisableAgentWorkspaces'; Type = 'REG_DWORD'; Data = '2'"
+        $script:RegistryPhaseText | Should Match "Name = 'DisableRemoteAgentConnectors'; Type = 'REG_DWORD'; Data = '2'"
     }
 
     It "writes the accessibility, pointer and keyboard values as REG_SZ" {

@@ -18,19 +18,20 @@ $hivesToLoad = [ordered]@{
 }
 foreach ($hiveName in $hivesToLoad.Keys) {
     $hiveFile = $hivesToLoad[$hiveName]
-    $loadOutput = & reg.exe load "HKLM\$hiveName" "$hiveFile" 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to load offline registry hive HKLM\$hiveName from '$hiveFile' (Exit code: $LASTEXITCODE): $loadOutput"
-    }
+    Mount-WinEaseRegistryHive -Name $hiveName -Path $hiveFile
     $script:HivesLoaded = $true
 }
 
-# Detect and display target Windows build info
+# Detect and display target Windows build info. The build number also selects the MinBuild /
+# MaxBuild entries of the config\registry tables; it stays unset when it cannot be read.
+$script:WinEaseTargetBuild = $null
 try {
     $targetProductName = (reg.exe query "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion" /v ProductName 2>$null | Select-String -Pattern 'REG_SZ\s+(.+)$' | ForEach-Object { $_.Matches[0].Groups[1].Value.Trim() })
     $targetDisplayVer  = (reg.exe query "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion" /v DisplayVersion 2>$null | Select-String -Pattern 'REG_SZ\s+(.+)$' | ForEach-Object { $_.Matches[0].Groups[1].Value.Trim() })
     $targetBuildNum    = (reg.exe query "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion" /v CurrentBuildNumber 2>$null | Select-String -Pattern 'REG_SZ\s+(.+)$' | ForEach-Object { $_.Matches[0].Groups[1].Value.Trim() })
     $targetUBR         = (reg.exe query "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion" /v UBR 2>$null | Select-String -Pattern 'REG_DWORD\s+0x([0-9a-fA-F]+)' | ForEach-Object { [Convert]::ToInt32($_.Matches[0].Groups[1].Value, 16) })
+    $parsedTargetBuild = 0
+    if ([int]::TryParse([string]$targetBuildNum, [ref]$parsedTargetBuild) -and $parsedTargetBuild -gt 0) { $script:WinEaseTargetBuild = $parsedTargetBuild }
     if ($targetProductName) {
         Write-Host "Target Image OS: $targetProductName (Version: $targetDisplayVer, Build: $targetBuildNum.$targetUBR)" -ForegroundColor Green
     }
@@ -70,15 +71,7 @@ if (-not (Get-Command -Name Test-TweakEnabled -ErrorAction SilentlyContinue)) {
 # ============================================================================
 if (Test-TweakEnabled 'BypassHardwareRequirements' $true) {
     Write-Host "Applying Setup & Hardware requirement bypasses (LabConfig + MoSetup)..." -ForegroundColor Green
-    $labConfigKeys = @('BypassCPUCheck', 'BypassRAMCheck', 'BypassSecureBootCheck', 'BypassStorageCheck', 'BypassTPMCheck', 'BypassDiskCheck')
-    foreach ($key in $labConfigKeys) {
-        reg.exe add "HKLM\zSYSTEM\Setup\LabConfig" /v $key /t REG_DWORD /d 1 /f > $null 2>&1
-    }
-    reg.exe add "HKLM\zSYSTEM\Setup\MoSetup" /v "AllowUpgradesWithUnsupportedTPMOrCPU" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Control Panel\UnsupportedHardwareNotificationCache" /v "SV1" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Control Panel\UnsupportedHardwareNotificationCache" /v "SV2" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Control Panel\UnsupportedHardwareNotificationCache" /v "SV1" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Control Panel\UnsupportedHardwareNotificationCache" /v "SV2" /t REG_DWORD /d 0 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section setup -Tweak BypassHardwareRequirements
 }
 
 # ============================================================================
@@ -86,102 +79,46 @@ if (Test-TweakEnabled 'BypassHardwareRequirements' $true) {
 # ============================================================================
 if (Test-TweakEnabled 'BypassNRO' $true) {
     Write-Host "Enabling Local Account bypass on OOBE (BypassNRO)..." -ForegroundColor Green
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v "BypassNRO" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\ReserveManager" /v "ShippedWithReserves" /t REG_DWORD /d 0 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section setup -Tweak BypassNRO
 }
 
 if (Test-TweakEnabled 'PreventDeviceEncryption' $false) {
     Write-Host "Preventing automatic BitLocker device encryption..." -ForegroundColor Green
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\BitLocker" /v "PreventDeviceEncryption" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\EnhancedStorageDevices" /v "TCGSecurityActivationDisabled" /t REG_DWORD /d 1 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section setup -Tweak PreventDeviceEncryption
 }
 
 # Japanese 106/109 Keyboard Configuration
 if ($setJapaneseKeyboard -or (Test-TweakEnabled 'SetJapaneseKeyboard' $false)) {
     Write-Host "Configuring Japanese 106/109 keyboard layout..." -ForegroundColor Green
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\i8042prt\Parameters" /v "LayerDriver JPN" /t REG_SZ /d "kbd106.dll" /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\i8042prt\Parameters" /v "OverrideKeyboardIdentifier" /t REG_SZ /d "PCAT_106KEY" /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\i8042prt\Parameters" /v "OverrideKeyboardType" /t REG_DWORD /d 7 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\i8042prt\Parameters" /v "OverrideKeyboardSubtype" /t REG_DWORD /d 2 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section setup -Tweak SetJapaneseKeyboard -Unconditional
 }
 
 # Setup & Winlogon / Blank Password / Script Execution
 # The network use of a blank password is blocked in every configuration: an empty
 # password must never work over the network.
-reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Lsa" /v "LimitBlankPasswordUse" /t REG_DWORD /d 1 /f > $null 2>&1
+Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Lsa" -Name "LimitBlankPasswordUse" -Type REG_DWORD -Data '1'
 if (Test-TweakEnabled 'ConfigureWinlogon' $false) {
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v "AutoAdminLogon" /t REG_SZ /d "1" /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v "DefaultUserName" /t REG_SZ /d "$UserName" /f > $null 2>&1
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "AutoAdminLogon" -Type REG_SZ -Data "1"
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "DefaultUserName" -Type REG_SZ -Data "$UserName"
     $defPassVal = if ($null -ne $script:UserPassword -and $script:UserPassword -ne '') { $script:UserPassword } else { '""' }
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /f /v "DefaultPassword" /t REG_SZ /d "$defPassVal" /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v "ForceAutoLogon" /t REG_SZ /d "1" /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" /v "AllowDomainDelayLock" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v "FilterAdministratorToken" /t REG_DWORD /d 0 /f > $null 2>&1
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "DefaultPassword" -Type REG_SZ -Data "$defPassVal"
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "ForceAutoLogon" -Type REG_SZ -Data "1"
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" -Name "AllowDomainDelayLock" -Type REG_DWORD -Data '1'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "FilterAdministratorToken" -Type REG_DWORD -Data '0'
 } else {
     Write-Host "Blank-password auto-logon is disabled (ConfigureWinlogon is off)." -ForegroundColor Yellow
 }
 
 # PowerShell Script Execution Policy
-if (Test-TweakEnabled 'EnableScripts' $true) {
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell" /v "ExecutionPolicy" /t REG_SZ /d "RemoteSigned" /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\PowerShell" /v "EnableScripts" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\PowerShell" /v "ExecutionPolicy" /t REG_SZ /d "RemoteSigned" /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section setup -Tweak EnableScripts
 
 # ============================================================================
 # 3. Sponsored Apps, Suggestions & Cloud Content
 # ============================================================================
 if (Test-TweakEnabled 'DisableCloudContent' $true) {
     Write-Host "Disabling Sponsored Apps & Cloud Content..." -ForegroundColor Green
-    $cdmSettings = @(
-        'ContentDeliveryAllowed', 'FeatureManagementEnabled', 'OemPreInstalledAppsEnabled',
-        'PreInstalledAppsEnabled', 'PreInstalledAppsEverEnabled', 'SilentInstalledAppsEnabled',
-        'SoftLandingEnabled', 'SubscribedContentEnabled', 'SubscribedContent-310093Enabled',
-        'SubscribedContent-338387Enabled', 'SubscribedContent-338388Enabled', 'SubscribedContent-338389Enabled',
-        'SubscribedContent-338393Enabled', 'SubscribedContent-353694Enabled', 'SubscribedContent-353696Enabled',
-        'SubscribedContent-353698Enabled', 'SystemPaneSuggestionsEnabled', 'RotatingImageOverlayEnabled'
-    )
-    foreach ($setting in $cdmSettings) {
-        reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v $setting /t REG_DWORD /d 0 /f > $null 2>&1
-        reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v $setting /t REG_DWORD /d 0 /f > $null 2>&1
-    }
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent" /v "DisableWindowsConsumerFeatures" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent" /v "DisableConsumerAccountStateContent" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent" /v "DisableCloudOptimizedContent" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent" /v "DisableSoftLanding" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent" /v "DisableWindowsSpotlightFeatures" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent" /v "DisableAccountBasedInSettings" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\PushToInstall" /v "DisablePushToInstall" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\MRT" /v "DontOfferThroughWUAU" /t REG_DWORD /d 1 /f > $null 2>&1
-    # WinUtil 26.10.07 (WPFTweaksEdgeDebloat): Edge's "make Edge your default browser" campaign.
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "DefaultBrowserSettingsCampaignEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    # Win11Debloat 2026.08.24 (Disable_Edge_Ads_And_Suggestions, Disable_Windows_Suggestions):
-    # Edge recommendations, spotlight, feedback, Acrobat and wallet promotions, and the
-    # "back up your PC" reminder toast.
-    foreach ($edgePolicy in 'DefaultBrowserSettingEnabled', 'ShowRecommendationsEnabled', 'SpotlightExperiencesAndRecommendationsEnabled', 'UserFeedbackAllowed', 'ShowAcrobatSubscriptionButton', 'WalletDonationEnabled') {
-        reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v $edgePolicy /t REG_DWORD /d 0 /f > $null 2>&1
-    }
-    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
-        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.BackupReminder" /v "Enabled" /t REG_DWORD /d 0 /f > $null 2>&1
-        # Debloat-Win11 v2.3.8: the "finish setting up your device" (SCOOBE) page and the
-        # Microsoft account notifications of Start and Settings.
-        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement" /v "ScoobeSystemSettingEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "Start_AccountNotifications" /t REG_DWORD /d 0 /f > $null 2>&1
-        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\SystemSettings\AccountNotifications" /v "EnableAccountNotifications" /t REG_DWORD /d 0 /f > $null 2>&1
-    }
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent" /v "DisableWindowsSpotlightOnDesktop" /t REG_DWORD /d 1 /f > $null 2>&1
-    # Bloatynosy 1.01.103: lock screen ads and Spotlight, Edge shopping, startup boost and first run.
-    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
-        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "RotatingLockScreenOverlayEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "RotatingLockScreenEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    }
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "EdgeShoppingAssistantEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "StartupBoostEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "HideFirstRunExperience" /t REG_DWORD /d 1 /f > $null 2>&1
-    # ReviOS 26.10 (registry/updates/updates.yml): the Media Player must not pull
-    # its own updates in the background.
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\WindowsMediaPlayer" /v "DisableAutoUpdate" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\PolicyManager\current\device\Start" /v "ConfigureStartPins" /t REG_SZ /d "{\`"pinnedList\`": [{}]}" /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section cloud-content -Tweak DisableCloudContent
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\PolicyManager\current\device\Start" -Name "ConfigureStartPins" -Type REG_SZ -Data "{\`"pinnedList\`": [{}]}"
 }
 
 # ============================================================================
@@ -189,137 +126,26 @@ if (Test-TweakEnabled 'DisableCloudContent' $true) {
 # ============================================================================
 if (Test-TweakEnabled 'DisableTelemetryAndDiagnostics' $true) {
     Write-Host "Disabling Diagnostics & Telemetry..." -ForegroundColor Green
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" /v "Enabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" /v "Enabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Privacy" /v "TailoredExperiencesWithDiagnosticDataEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Privacy" /v "TailoredExperiencesWithDiagnosticDataEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy" /v "HasAccepted" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy" /v "HasAccepted" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Input\TIPC" /v "Enabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Input\TIPC" /v "Enabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\InputPersonalization" /v "RestrictImplicitInkCollection" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\InputPersonalization" /v "RestrictImplicitTextCollection" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\InputPersonalization" /v "RestrictImplicitInkCollection" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\InputPersonalization" /v "RestrictImplicitTextCollection" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" /v "AllowTelemetry" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" /v "MaxTelemetryAllowed" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\SQMClient\Windows" /v "CEIPEnable" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Device Metadata" /v "PreventDeviceMetadataFromNetwork" /t REG_DWORD /d 1 /f > $null 2>&1
-    # WinUtil 26.10.07 (WPFTweaksTelemetry): contact harvesting, the inking/typing privacy
-    # consent, app launch tracking and the PowerShell 7 telemetry opt-out.
-    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
-        reg.exe add "HKLM\$userHive\Software\Microsoft\InputPersonalization\TrainedDataStore" /v "HarvestContacts" /t REG_DWORD /d 0 /f > $null 2>&1
-        reg.exe add "HKLM\$userHive\Software\Microsoft\Personalization\Settings" /v "AcceptedPrivacyPolicy" /t REG_DWORD /d 0 /f > $null 2>&1
-        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "Start_TrackProgs" /t REG_DWORD /d 0 /f > $null 2>&1
-    }
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Environment" /v "POWERSHELL_TELEMETRY_OPTOUT" /t REG_SZ /d "1" /f > $null 2>&1
-    # Debloat-Win11 v2.3.8 (Edge.ps1): Edge diagnostic data and personalization reporting.
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "DiagnosticData" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "PersonalizationReportingEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    # Bloatynosy 1.01.103: tailored experiences (user policy), online speech recognition and
-    # Narrator's online services.
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\InputPersonalization" /v "AllowInputPersonalization" /t REG_DWORD /d 0 /f > $null 2>&1
-    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
-        reg.exe add "HKLM\$userHive\Software\Policies\Microsoft\Windows\CloudContent" /v "DisableTailoredExperiencesWithDiagnosticData" /t REG_DWORD /d 1 /f > $null 2>&1
-        reg.exe add "HKLM\$userHive\Software\Microsoft\Narrator\NoRoam" /v "OnlineServicesEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    }
-    # Revision Tool 2.14.1: the Sleep Study power diagnostics recorder.
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Power" /v "SleepStudyDisabled" /t REG_DWORD /d 1 /f > $null 2>&1
-    # hellzerg/optimizer (master, after 16.7): Edge's 3P service telemetry.
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "Edge3PSerpTelemetryEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableTelemetryAndDiagnostics
 }
 
 # Windows Error Reporting
-if (Test-TweakEnabled 'DisableErrorReporting' $true) {
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting" /v "Disabled" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting" /v "DontSendAdditionalData" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableErrorReporting
 
 # User Activity History & Sync
-if (Test-TweakEnabled 'DisableActivityHistory' $true) {
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" /v "UploadUserActivities" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" /v "PublishUserActivities" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Backup" /v "DisableCloudBackup" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\SettingSync" /v "DisableBackupRestore" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\SettingSync" /v "DisableSettingSync" /t REG_DWORD /d 2 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\SettingSync" /v "DisableSettingSyncUserOverride" /t REG_DWORD /d 1 /f > $null 2>&1
-    # Debloat-Win11 v2.3.8: the Windows Backup UI and its monitoring.
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsBackup" /v "DisableBackupUI" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\WindowsBackup" /v "DisableMonitoring" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableActivityHistory
 
 # ============================================================================
 # 5. Windows AI, Recall, Click-To-Do & Copilot
 # ============================================================================
 if (Test-TweakEnabled 'DisableWindowsAI' $true) {
     Write-Host "Disabling Windows AI, Recall, and Click-To-Do policies..." -ForegroundColor Green
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "DisableAIDataAnalysis" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\WindowsAI" /v "DisableAIDataAnalysis" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\WindowsAI" /v "DisableAIDataAnalysis" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "AllowRecallEnablement" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "AllowRecallToBeEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "TurnOffRecall" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\WindowsAI" /v "TurnOffRecall" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\WindowsAI" /v "TurnOffRecall" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "TurnOffSavingSnapshots" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\WindowsAI" /v "TurnOffSavingSnapshots" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\WindowsAI" /v "TurnOffSavingSnapshots" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "DisableClickToDo" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "DisableSettingsAgent" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "DisableAgentConnectors" /t REG_DWORD /d 2 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "DisableAgentWorkspaces" /t REG_DWORD /d 2 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "DisableRemoteAgentConnectors" /t REG_DWORD /d 2 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "AllowCopilotRuntime" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Notepad" /v "EnableAIFeatures" /t REG_DWORD /d 0 /f > $null 2>&1
-    # WinUtil 26.10.07 (WPFTweaksWindowsAI): the machine policy for Notepad's AI features
-    # and the "AI components" page of the Settings app.
-    reg.exe add "HKLM\zSOFTWARE\Policies\WindowsNotepad" /v "DisableAIFeatures" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "SettingsPageVisibility" /t REG_SZ /d "hide:aicomponents" /f > $null 2>&1
-    # Debloat-Win11 v2.3.8 (WindowsAiPolicies.psd1, SystemTweaks_Privacy): Recall export and
-    # data providers, Paint's image generation, and the AI actions of the clipboard.
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "AllowRecallExport" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\WindowsAI" /v "DisableRecallDataProviders" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\WindowsAI" /v "DisableRecallDataProviders" /t REG_DWORD /d 1 /f > $null 2>&1
-    foreach ($paintPolicy in 'DisableCocreator', 'DisableGenerativeFill', 'DisableImageCreator') {
-        reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint" /v $paintPolicy /t REG_DWORD /d 1 /f > $null 2>&1
-    }
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" /v "EnableSmartClipboard" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Paint" /v "EnableCocreator" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "RecallPin" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "RecallPin" /t REG_DWORD /d 0 /f > $null 2>&1
-    # ReviOS 26.10 (meetrevision/packages, ai-removal-amd64.yaml): force-deny the
-    # "Let Windows apps make use of text and image generation" capabilities.
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy" /v "LetAppsAccessSystemAIModels" /t REG_DWORD /d 2 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy" /v "LetAppsAccessGenerativeAI" /t REG_DWORD /d 2 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section ai -Tweak DisableWindowsAI
 }
 
 if (Test-TweakEnabled 'DisableCopilot' $true) {
     Write-Host "Disabling Copilot, DevHome, and Teams auto-install..." -ForegroundColor Green
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsCopilot" /v "TurnOffWindowsCopilot" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\WindowsCopilot" /v "TurnOffWindowsCopilot" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\WindowsCopilot" /v "TurnOffWindowsCopilot" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "ShowCopilotButton" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "ShowCopilotButton" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "CopilotPWAPin" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "CopilotPWAPin" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "HubsSidebarEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "CopilotPageContext" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "ShowCopilotButton" /t REG_DWORD /d 0 /f > $null 2>&1
-    # Debloat-Win11 v2.3.8: Copilot's page context in Edge and the policy that removes the
-    # Microsoft Copilot app.
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "CopilotCDPPageContext" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsAI" /v "RemoveMicrosoftCopilotApp" /t REG_DWORD /d 1 /f > $null 2>&1
-    # Bloatynosy 1.01.103 (WinRules.ini, "Disable Edge AI Features").
-    foreach ($edgePolicy in 'EdgeEntraCopilotPageContext', 'Microsoft365CopilotChatIconEnabled', 'EdgeHistoryAISearchEnabled', 'ComposeInlineEnabled', 'NewTabPageBingChatEnabled') {
-        reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v $edgePolicy /t REG_DWORD /d 0 /f > $null 2>&1
-    }
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "GenAILocalFoundationalModelSettings" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Teams" /v "DisableInstallation" /t REG_DWORD /d 1 /f > $null 2>&1
-    # Debloat-Win11 main (Modules/PolicyCatalog.psd1): the per-user flag that
-    # hides the Copilot entry in the shell.
-    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
-        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\Shell\Copilot" /v "IsCopilotAvailable" /t REG_DWORD /d 0 /f > $null 2>&1
-    }
+    Invoke-WinEaseRegistryTable -Section ai -Tweak DisableCopilot
 }
 
 # ============================================================================
@@ -327,22 +153,9 @@ if (Test-TweakEnabled 'DisableCopilot' $true) {
 # ============================================================================
 if (Test-TweakEnabled 'DisableCrossDevice' $true) {
     Write-Host "Disabling Cross-Device Experience / Phone Link & Resume..." -ForegroundColor Green
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CrossDevice" /v "AllowCrossDeviceExperience" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CrossDevice" /v "AllowCrossDeviceResume" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CrossDevice" /v "DisableResume" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\CrossDevice" /v "DisableCrossDeviceResume" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" /v "EnableCdp" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" /v "EnableMmx" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" /v "AllowCrossDeviceClipboard" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\CrossDeviceResume\Configuration" /v "IsResumeAllowed" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\CrossDeviceResume\Configuration" /v "IsResumeAllowed" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe delete "HKLM\zSOFTWARE\Classes\Directory\Background\shellex\ContextMenuHandlers\SendToPhone" /f > $null 2>&1
-    reg.exe delete "HKLM\zSOFTWARE\Classes\DesktopBackground\shellex\ContextMenuHandlers\SendToPhone" /f > $null 2>&1
-    # ReviOS 26.10 (registry/explorer/win-settings.yml): the shell host of the
-    # Cross Device Resume app is redirected to ShellHost.exe, so the resume host
-    # can never start. Upstream replaced the FeatureManagement override and the
-    # IFEO redirect with this one because it is the reliable variant.
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Shell\ShellUIHosts\CrossDeviceResumeHost" /v "ProcessPath" /t REG_SZ /d "%SystemRoot%\system32\ShellHost.exe" /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section cross-device -Tweak DisableCrossDevice
+    Invoke-WinEaseReg -Action Delete -Key "HKLM\zSOFTWARE\Classes\Directory\Background\shellex\ContextMenuHandlers\SendToPhone"
+    Invoke-WinEaseReg -Action Delete -Key "HKLM\zSOFTWARE\Classes\DesktopBackground\shellex\ContextMenuHandlers\SendToPhone"
 }
 
 # ============================================================================
@@ -350,156 +163,62 @@ if (Test-TweakEnabled 'DisableCrossDevice' $true) {
 # ============================================================================
 if (Test-TweakEnabled 'DisableWebSearch' $true) {
     Write-Host "Disabling Bing search & web suggestions in Start menu..." -ForegroundColor Green
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search" /v "DisableWebSearch" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search" /v "ConnectedSearchUseWeb" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search" /v "EnableDynamicContentInWSB" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search" /v "AllowCloudSearch" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search" /v "AllowSearchToUseLocation" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search" /v "AllowCortana" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Explorer" /v "DisableSearchBoxSuggestions" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Search" /v "BingSearchEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Search" /v "BingSearchEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\Explorer" /v "DisableSearchBoxSuggestions" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\Explorer" /v "DisableSearchBoxSuggestions" /t REG_DWORD /d 1 /f > $null 2>&1
-    # Win11Debloat 2026.08.24 (Disable_Search_Highlights, Disable_Search_History).
-    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
-        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\SearchSettings" /v "IsDynamicSearchBoxEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\SearchSettings" /v "IsDeviceSearchHistoryEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-        # ReviOS 26.10 / main (registry/explorer/search.yml): the web and the
-        # Microsoft Store results that the Search box offers (26H2).
-        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\SearchSettings" /v "IsWebSuggestionsEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\SearchSettings" /v "IsStoreSuggestionsEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    }
-    # ReviOS 26.10 (registry/explorer/search.yml): the activatable class of the
-    # Store search task is disabled outright (25H2 and newer).
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\WinStore.Tasks.WindowsSearchTask" /v "ActivationType" /t REG_DWORD /d 4294967295 /f > $null 2>&1
-    # The empty string has to be passed as the literal '""': an empty argument is
-    # dropped by the PowerShell native call, so reg.exe would take the next switch
-    # ('/f') as the value instead.
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\WinStore.Tasks.WindowsSearchTask" /v "Server" /t REG_SZ /d '""' /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section start-search -Tweak DisableWebSearch
 }
 
-if (Test-TweakEnabled 'HideSearchBox' $true) {
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Search" /v "SearchboxTaskbarMode" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Search" /v "SearchboxTaskbarMode" /t REG_DWORD /d 0 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section start-search -Tweak HideSearchBox
 
 if (Test-TweakEnabled 'DisableWidgets' $true) {
     Write-Host "Disabling Windows 11 Widgets..." -ForegroundColor Green
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Dsh" /v "AllowNewsAndInterests" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Widgets" /v "AllowWidgets" /t REG_DWORD /d 0 /f > $null 2>&1
-    # Bloatynosy 1.01.103: the "News and interests" feeds policy.
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Feeds" /v "EnableFeeds" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "TaskbarDa" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "TaskbarDa" /t REG_DWORD /d 0 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section start-search -Tweak DisableWidgets
 }
 
-if (Test-TweakEnabled 'HideRecommendedSection' $true) {
-    # The Explorer policy alone is only honoured on Education/Enterprise editions.
-    # The PolicyManager bridge is the documented workaround that makes the same
-    # policy remove the section on Pro as well (WinUtil / elevenforum).
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Explorer" /v "HideRecommendedSection" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\PolicyManager\current\device\Start" /v "HideRecommendedSection" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\PolicyManager\current\device\Education" /v "IsEducationEnvironment" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Policies\Microsoft\Windows\Explorer" /v "HideRecommendedSection" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Policies\Microsoft\Windows\Explorer" /v "HideRecommendedSection" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "Start_IrisRecommendations" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "Start_IrisRecommendations" /t REG_DWORD /d 0 /f > $null 2>&1
-    # Sophia Script 8.0.0 (RecentlyAddedStartApps, MostUsedStartApps, StartRecommendedSection):
-    # the recent / most used lists of the new Start menu and recent documents tracking.
-    foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
-        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\Start" /v "ShowRecentList" /t REG_DWORD /d 0 /f > $null 2>&1
-        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\Start" /v "ShowFrequentList" /t REG_DWORD /d 0 /f > $null 2>&1
-        reg.exe add "HKLM\$userHive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "Start_TrackDocs" /t REG_DWORD /d 0 /f > $null 2>&1
-    }
-}
+Invoke-WinEaseRegistryTable -Section start-search -Tweak HideRecommendedSection
 
 # ============================================================================
 # 8. Security & Stability Controls
 # ============================================================================
 if (Test-TweakEnabled 'DisableSmartScreen' $false) {
     Write-Host "Disabling SmartScreen policies..." -ForegroundColor Yellow
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" /v "EnableSmartScreen" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" /v "SmartScreenEnabled" /t REG_SZ /d "Off" /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "SmartScreenEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Edge" /v "SmartScreenPuaEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section security -Tweak DisableSmartScreen
 }
 
 if (Test-TweakEnabled 'DisableUAC' $false) {
     Write-Host "Disabling UAC consent prompts..." -ForegroundColor Yellow
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v "ConsentPromptBehaviorAdmin" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v "PromptOnSecureDesktop" /t REG_DWORD /d 0 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section security -Tweak DisableUAC
 }
 
 if (Test-TweakEnabled 'DisableVBS' $false) {
     Write-Host "Disabling Virtualization-Based Security (VBS / HVCI)..." -ForegroundColor Yellow
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\DeviceGuard" /v "EnableVirtualizationBasedSecurity" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\DeviceGuard" /v "RequirePlatformSecurityFeatures" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\DeviceGuard" /v "Locked" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" /v "Enabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" /v "Locked" /t REG_DWORD /d 0 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section security -Tweak DisableVBS
 }
 
 if (Test-TweakEnabled 'DisableWPBT' $false) {
     Write-Host "Blocking UEFI WPBT execution (OEM bloatware persistence prevention)..." -ForegroundColor Green
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager" /v "DisableWpbtExecution" /t REG_DWORD /d 1 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section security -Tweak DisableWPBT
 }
 
 if (Test-TweakEnabled 'HardenSystemSecurity' $false) {
     # Harden-Windows-Security (HotCakeX) HardenSystemSecurity-v1.0.97.0: the subset of its
     # categories that is a plain registry value and can be written into the offline hives.
     Write-Host "Applying offline security hardening (LSA, NTLM, anonymous access, AutoRun, logging)..." -ForegroundColor Green
-    # LSA protection (2 = enabled without the UEFI lock, so it can still be turned off)
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Lsa" /v "RunAsPPL" /t REG_DWORD /d 2 /f > $null 2>&1
-    # No clear-text credentials in LSASS memory
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\SecurityProviders\WDigest" /v "UseLogonCredential" /t REG_DWORD /d 0 /f > $null 2>&1
-    # NTLMv2 only, refuse LM and NTLM
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Lsa" /v "LmCompatibilityLevel" /t REG_DWORD /d 5 /f > $null 2>&1
-    # No anonymous enumeration of SAM accounts and shares
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Lsa" /v "RestrictAnonymous" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Lsa" /v "RestrictAnonymousSAM" /t REG_DWORD /d 1 /f > $null 2>&1
-    # Remote Assistance off
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Remote Assistance" /v "fAllowToGetHelp" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" /v "fAllowToGetHelp" /t REG_DWORD /d 0 /f > $null 2>&1
-    # AutoRun / AutoPlay off for every drive type
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "NoDriveTypeAutoRun" /t REG_DWORD /d 255 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "NoAutorun" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Explorer" /v "NoAutoplayfornonVolume" /t REG_DWORD /d 1 /f > $null 2>&1
-    # PowerShell script block logging (event 4104)
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging" /v "EnableScriptBlockLogging" /t REG_DWORD /d 1 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section security -Tweak HardenSystemSecurity
 }
 
-if (Test-TweakEnabled 'DisableBSODEmoticon' $false) {
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\CrashControl" /v "DisplayParameters" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\CrashControl" /v "DisableEmoticon" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section security -Tweak DisableBSODEmoticon
 
-if (Test-TweakEnabled 'DisableFTH' $false) {
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\FTH" /v "Enabled" /t REG_DWORD /d 0 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section security -Tweak DisableFTH
 
-if (Test-TweakEnabled 'DisablePCA' $false) {
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppCompat" /v "DisablePCA" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppCompat" /v "DisableEngine" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppCompat" /v "DisableInventory" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppCompat" /v "AITEnable" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppCompat" /v "DisableUAR" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section security -Tweak DisablePCA
 
-if (Test-TweakEnabled 'DisableDeliveryOptimization' $true) {
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" /v "DODownloadMode" /t REG_DWORD /d 0 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section security -Tweak DisableDeliveryOptimization
 
 # ============================================================================
 # 9. Performance, Power & Latency Optimizations
 # ============================================================================
-if (Test-TweakEnabled 'DisablePowerThrottling' $true) {
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Power\PowerThrottling" /v "PowerThrottlingOff" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section performance -Tweak DisablePowerThrottling
 
-if (Test-TweakEnabled 'DisableIdleMaintenance' $false) {
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance" /v "MaintenanceDisabled" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section performance -Tweak DisableIdleMaintenance
 
 # AtlasOS & ReviOS low-latency kernel tuning.
 # The GUI exposes "AtlasOS & ReviOS Low-Latency Kernel Tuning" as a component
@@ -510,72 +229,44 @@ if (Test-TweakEnabled 'DisableIdleMaintenance' $false) {
 $atlasReviOSEnabled = [bool]$atlasReviOSMode
 
 if (Test-TweakEnabled 'ThreadDpcEnable' $false) {
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Kernel" /v "ThreadDpcEnable" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\PriorityControl" /v "Win32PrioritySeparation" /t REG_DWORD /d 38 /f > $null 2>&1
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Kernel" -Name "ThreadDpcEnable" -Type REG_DWORD -Data '1'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\PriorityControl" -Name "Win32PrioritySeparation" -Type REG_DWORD -Data '38'
 } elseif ($atlasReviOSEnabled) {
     # Atlas/ReviOS baseline: foreground quantum scheduling without the DPC tweak.
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\PriorityControl" /v "Win32PrioritySeparation" /t REG_DWORD /d 38 /f > $null 2>&1
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\PriorityControl" -Name "Win32PrioritySeparation" -Type REG_DWORD -Data '38'
 }
 
-if (Test-TweakEnabled 'NtfsDisable8dot3' $true) {
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\FileSystem" /v "NtfsDisable8dot3NameCreation" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\FileSystem" /v "NtfsDisableLastAccessUpdate" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section performance -Tweak NtfsDisable8dot3
 
-if (Test-TweakEnabled 'EnableLongPaths' $true) {
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\FileSystem" /v "LongPathsEnabled" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section performance -Tweak EnableLongPaths
 
-if (Test-TweakEnabled 'NetworkTuning' $false) {
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\Tcpip\Parameters" /v "TcpTimedWaitDelay" /t REG_DWORD /d 30 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\Tcpip\Parameters" /v "MaxUserPort" /t REG_DWORD /d 65534 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\Tcpip\Parameters" /v "DefaultTTL" /t REG_DWORD /d 64 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\Tcpip\Parameters" /v "EnableICMPRedirect" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows NT\DNSClient" /v "EnableMulticast" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows NT\DNSClient" /v "DisableSmartNameResolution" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section performance -Tweak NetworkTuning
 
 if ($keepAudioTweaks -or $dawMode -or (Test-TweakEnabled 'LowLatencyAudioMMCSS' $false)) {
     Write-Host "  [Audio DAW] Configuring low-latency Pro Audio MMCSS task profile..." -ForegroundColor Green
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio" /v "Priority" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio" /v "Scheduling Category" /t REG_SZ /d "High" /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio" /v "SFIO Priority" /t REG_SZ /d "High" /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio" /v "Background Only" /t REG_SZ /d "False" /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio" /v "Clock Rate" /t REG_DWORD /d 10000 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio" /v "GPU Priority" /t REG_DWORD /d 8 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section performance -Tweak LowLatencyAudioMMCSS -Unconditional
 }
 
 if ($mmcssGaming -or (Test-TweakEnabled 'MMCSSGaming' $false) -or $atlasReviOSEnabled) {
     Write-Host "  [Gaming] Configuring Games MMCSS task profile..." -ForegroundColor Green
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" /v "Priority" /t REG_DWORD /d 6 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" /v "Scheduling Category" /t REG_SZ /d "High" /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" /v "SFIO Priority" /t REG_SZ /d "High" /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" /v "GPU Priority" /t REG_DWORD /d 8 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" /v "Affinity" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" /v "Background Only" /t REG_SZ /d "False" /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" /v "Clock Rate" /t REG_DWORD /d 10000 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section performance -Tweak MMCSSGaming -Unconditional
 }
 
 if ($radicalRAM -or (Test-TweakEnabled 'SvcHostConsolidation' $false)) {
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control" /v "SvcHostSplitThresholdInKB" /t REG_DWORD /d 67108864 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management" /v "DisablePageCombining" /t REG_DWORD /d 0 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section performance -Tweak SvcHostConsolidation -Unconditional
 }
 
 if ($noKernelPaging -or (Test-TweakEnabled 'NoKernelPaging' $false)) {
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management" /f /v "DisablePagingExecutive" /t REG_DWORD /d 1 > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section performance -Tweak NoKernelPaging -Unconditional
 }
 
 if ($disableCPUMitigations -or (Test-TweakEnabled 'DisableCPUMitigations' $false)) {
     Write-Host "  [SECURITY WARNING] Disabling CPU speculative execution mitigations (Spectre/Meltdown)..." -ForegroundColor Yellow
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management" /v "FeatureSettingsOverride" /t REG_DWORD /d 3 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management" /v "FeatureSettingsOverrideMask" /t REG_DWORD /d 3 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section performance -Tweak DisableCPUMitigations -Unconditional
 }
 
 if ($disableFSE -or (Test-TweakEnabled 'DisableFSE' $false)) {
-    reg.exe add "HKLM\zNTUSER\System\GameConfigStore" /v "GameDVR_FSEBehaviorMode" /t REG_DWORD /d 2 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\System\GameConfigStore" /v "GameDVR_HonorUserFSEBehaviorMode" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\System\GameConfigStore" /v "GameDVR_FSEBehaviorMode" /t REG_DWORD /d 2 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\System\GameConfigStore" /v "GameDVR_HonorUserFSEBehaviorMode" /t REG_DWORD /d 1 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section performance -Tweak DisableFSE -Unconditional
 }
 
 # NVIDIA low-latency: PowerMizer performance mode + per-CPU core DPC registry tuning.
@@ -585,18 +276,18 @@ if ($disableFSE -or (Test-TweakEnabled 'DisableFSE' $false)) {
 if ($nvidiaLowLatency -or (Test-TweakEnabled 'NvidiaLowLatency' $false)) {
     Write-Host "  [NVIDIA] Applying PowerMizer performance mode and per-CPU core DPC policy..." -ForegroundColor Green
     # PowerMizer: 0 = max performance (newer drivers), 1 = adaptive
-    reg.exe add "HKLM\zSYSTEM\CurrentControlSet\Control\Video\NVIDIA\PowerMizer" /v "PowerMizerPerf" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\CurrentControlSet\Control\Video\NVIDIA\PowerMizer" /v "PowerMizerAsync" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\CurrentControlSet\Control\Video\NVIDIA\PowerMizer" /v "PowerMizerClock" /t REG_DWORD /d 0 /f > $null 2>&1
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\CurrentControlSet\Control\Video\NVIDIA\PowerMizer" -Name "PowerMizerPerf" -Type REG_DWORD -Data '1'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\CurrentControlSet\Control\Video\NVIDIA\PowerMizer" -Name "PowerMizerAsync" -Type REG_DWORD -Data '0'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\CurrentControlSet\Control\Video\NVIDIA\PowerMizer" -Name "PowerMizerClock" -Type REG_DWORD -Data '0'
     # Per-processor DPC policy: 1 = the processor is a DPC processor (defers non-DPC work).
-    reg.exe add "HKLM\zSYSTEM\CurrentControlSet\Control\Session Manager\kernel" /v "DpcProfile" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\CurrentControlSet\Control\Session Manager\kernel\Processor" /v "DpcProfile" /t REG_DWORD /d 1 /f > $null 2>&1
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "DpcProfile" -Type REG_DWORD -Data '1'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\CurrentControlSet\Control\Session Manager\kernel\Processor" -Name "DpcProfile" -Type REG_DWORD -Data '1'
 }
 
 # HAGS & MSI
 $gpuLatencyEnabled = [bool]$script:activeTweakGroups['GPULatency'] -or (Test-TweakEnabled 'EnableHAGS' $true)
 if ($gpuLatencyEnabled) {
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\GraphicsDrivers" /v "HwSchMode" /t REG_DWORD /d 2 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section performance -Tweak EnableHAGS -Unconditional
 }
 
 # ============================================================================
@@ -604,37 +295,21 @@ if ($gpuLatencyEnabled) {
 # ============================================================================
 if (Test-TweakEnabled 'EnableClassicContextMenu' $true) {
     Write-Host "Enabling Windows 10 Classic Context Menu..." -ForegroundColor Green
-    reg.exe add "HKLM\zDEFAULT\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32" /f /ve /t REG_SZ /d '""' > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32" /f /ve /t REG_SZ /d '""' > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section ui -Tweak EnableClassicContextMenu
 }
 
 if (Test-TweakEnabled 'EnableDarkTheme' $true) {
     Write-Host "Enabling Dark Theme by default..." -ForegroundColor Green
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v "AppsUseLightTheme" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v "SystemUsesLightTheme" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v "AppsUseLightTheme" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v "SystemUsesLightTheme" /t REG_DWORD /d 0 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section ui -Tweak EnableDarkTheme
 }
 
-if (Test-TweakEnabled 'ShowFileExtensions' $true) {
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "HideFileExt" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "HideFileExt" /t REG_DWORD /d 0 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak ShowFileExtensions
 
-if (Test-TweakEnabled 'ShowHiddenFiles' $false) {
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "Hidden" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "Hidden" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak ShowHiddenFiles
 
-if (Test-TweakEnabled 'LaunchToThisPC' $true) {
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "LaunchTo" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "LaunchTo" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak LaunchToThisPC
 
-if (Test-TweakEnabled 'TaskbarEndTask' $true) {
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings" /v "TaskbarEndTask" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings" /v "TaskbarEndTask" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak TaskbarEndTask
 
 # The UI preferences seen in WinUtil / Win11Debloat / Bloatynosy / Debloat-Win11
 # (upstream sync 2026-10) live in config\ui-preferences.psd1. All of them are off
@@ -695,60 +370,40 @@ foreach ($v in $uiPreferenceTweaks) {
         continue
     }
     foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
-        reg.exe add "HKLM\$userHive\$($v.Path)" /v $v.Name /t $v.Type /d $v.Data /f > $null 2>&1
+        Invoke-WinEaseReg -Action Add -Key "HKLM\$userHive\$($v.Path)" -Name $v.Name -Type $v.Type -Data $v.Data
     }
 }
-if (Test-TweakEnabled 'DisableLogonBlur' $false) {
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" /v "DisableAcrylicBackgroundOnLogon" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak DisableLogonBlur
 
-if (Test-TweakEnabled 'TaskbarAlignLeft' $true) {
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "TaskbarAl" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "TaskbarAl" /t REG_DWORD /d 0 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak TaskbarAlignLeft
 
-if (Test-TweakEnabled 'HideMeetNow' $true) {
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "HideSCAMeetNow" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "HideSCAMeetNow" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak HideMeetNow
 
-if (Test-TweakEnabled 'HideSyncNotifications' $true) {
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "ShowSyncProviderNotifications" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "ShowSyncProviderNotifications" /t REG_DWORD /d 0 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak HideSyncNotifications
 
-if (Test-TweakEnabled 'DisableStartupSound' $true) {
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\BootAnimation" /v "DisableStartupSound" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak DisableStartupSound
 
-if (Test-TweakEnabled 'DisableLockScreen' $false) {
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Personalization" /v "NoLockScreen" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak DisableLockScreen
 
-if (Test-TweakEnabled 'DisableSleepOption' $false) {
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FlyoutMenuSettings" /v "ShowSleepOption" /t REG_DWORD /d 0 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak DisableSleepOption
 
-if (Test-TweakEnabled 'MenuShowDelayZero' $true) {
-    reg.exe add "HKLM\zNTUSER\Control Panel\Desktop" /v "MenuShowDelay" /t REG_SZ /d "0" /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Control Panel\Desktop" /v "MenuShowDelay" /t REG_SZ /d "0" /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section ui -Tweak MenuShowDelayZero
 
 if (Test-TweakEnabled 'TakeOwnershipContextMenu' $true) {
-    reg.exe add "HKLM\zSOFTWARE\Classes\*\shell\runas" /f /ve /t REG_SZ /d "Take Ownership" > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Classes\*\shell\runas" /f /v "HasLUAShield" /t REG_SZ /d '""' > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Classes\*\shell\runas" /f /v "NoWorkingDirectory" /t REG_SZ /d '""' > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Classes\*\shell\runas\command" /f /ve /t REG_SZ /d 'powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f $p; icacls.exe $p /grant administrators:F }" "%1"' > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Classes\Directory\shell\runas" /f /ve /t REG_SZ /d "Take Ownership" > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Classes\Directory\shell\runas" /f /v "HasLUAShield" /t REG_SZ /d '""' > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Classes\Directory\shell\runas" /f /v "NoWorkingDirectory" /t REG_SZ /d '""' > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Classes\Directory\shell\runas\command" /f /ve /t REG_SZ /d 'powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f $p /r /d y; icacls.exe $p /grant administrators:F /t }" "%1"' > $null 2>&1
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\*\shell\runas" -DefaultValue -Type REG_SZ -Data "Take Ownership"
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\*\shell\runas" -Name "HasLUAShield" -Type REG_SZ -Data '""'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\*\shell\runas" -Name "NoWorkingDirectory" -Type REG_SZ -Data '""'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\*\shell\runas\command" -DefaultValue -Type REG_SZ -Data 'powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f $p; icacls.exe $p /grant administrators:F }" "%1"'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\shell\runas" -DefaultValue -Type REG_SZ -Data "Take Ownership"
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\shell\runas" -Name "HasLUAShield" -Type REG_SZ -Data '""'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\shell\runas" -Name "NoWorkingDirectory" -Type REG_SZ -Data '""'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\shell\runas\command" -DefaultValue -Type REG_SZ -Data 'powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f $p /r /d y; icacls.exe $p /grant administrators:F /t }" "%1"'
 }
 
 if (Test-TweakEnabled 'CmdAsAdminContextMenu' $true) {
-    reg.exe add "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas" /f /ve /t REG_SZ /d "Open Command Prompt as Administrator" > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas" /f /v "HasLUAShield" /t REG_SZ /d '""' > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas\command" /f /ve /t REG_SZ /d 'PowerShell -windowstyle hidden -Command \"Start-Process cmd.exe -ArgumentList ''/s,/k,pushd,\"%V\"'' -Verb RunAs\"' > $null 2>&1
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas" -DefaultValue -Type REG_SZ -Data "Open Command Prompt as Administrator"
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas" -Name "HasLUAShield" -Type REG_SZ -Data '""'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas\command" -DefaultValue -Type REG_SZ -Data 'PowerShell -windowstyle hidden -Command \"Start-Process cmd.exe -ArgumentList ''/s,/k,pushd,\"%V\"'' -Verb RunAs\"'
 }
 
 if (Test-TweakEnabled 'PhotoViewerAssociations' $true) {
@@ -770,15 +425,15 @@ if (Test-TweakEnabled 'PhotoViewerAssociations' $true) {
     # rejects a UserChoice key unless it contains the proprietary hash, so writing one
     # offline never worked. Without the cache the per-user class default is used.
     $photoViewerCommand = '"%SystemRoot%\System32\rundll32.exe" "%ProgramFiles%\Windows Photo Viewer\PhotoViewer.dll", ImageView_Fullscreen %1'
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities" /v "ApplicationName" /t REG_SZ /d "Windows Photo Viewer" /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities" /v "ApplicationDescription" /t REG_SZ /d "View pictures with Windows Photo Viewer" /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities" /v "ApplicationIcon" /t REG_SZ /d "%SystemRoot%\System32\imageres.dll,-70" /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\RegisteredApplications" /v "Windows Photo Viewer" /t REG_SZ /d "SOFTWARE\Microsoft\Windows Photo Viewer\Capabilities" /f > $null 2>&1
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities" -Name "ApplicationName" -Type REG_SZ -Data "Windows Photo Viewer"
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities" -Name "ApplicationDescription" -Type REG_SZ -Data "View pictures with Windows Photo Viewer"
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities" -Name "ApplicationIcon" -Type REG_SZ -Data "%SystemRoot%\System32\imageres.dll,-70"
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\RegisteredApplications" -Name "Windows Photo Viewer" -Type REG_SZ -Data "SOFTWARE\Microsoft\Windows Photo Viewer\Capabilities"
     $registeredPhotoProgIds = @($photoViewerAssocs | ForEach-Object { $_.ProgId } | Sort-Object -Unique)
     foreach ($progId in $registeredPhotoProgIds) {
         $progKey = "HKLM\zSOFTWARE\Classes\$progId"
-        reg.exe add $progKey /ve /t REG_SZ /d "Windows Photo Viewer" /f > $null 2>&1
-        reg.exe add "$progKey\DefaultIcon" /ve /t REG_SZ /d "%SystemRoot%\System32\imageres.dll,-70" /f > $null 2>&1
+        Invoke-WinEaseReg -Action Add -Key $progKey -DefaultValue -Type REG_SZ -Data "Windows Photo Viewer"
+        Invoke-WinEaseReg -Action Add -Key "$progKey\DefaultIcon" -DefaultValue -Type REG_SZ -Data "%SystemRoot%\System32\imageres.dll,-70"
         # Do not pass the command through reg.exe: its embedded quotes make reg.exe
         # interpret the value as extra arguments, so the open\command key was never
         # created. The registry provider writes the string verbatim.
@@ -802,15 +457,15 @@ if (Test-TweakEnabled 'PhotoViewerAssociations' $true) {
         }
     }
     foreach ($pa in $photoViewerAssocs) {
-        reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities\FileAssociations" /f /v $pa.Ext /t REG_SZ /d $pa.ProgId > $null 2>&1
+        Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities\FileAssociations" -Name $pa.Ext -Type REG_SZ -Data $pa.ProgId
         # Expose the ProgID in "Open with" for all users.
-        reg.exe add "HKLM\zSOFTWARE\Classes\$($pa.Ext)\OpenWithProgids" /v $pa.ProgId /t REG_NONE /f > $null 2>&1
+        Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\$($pa.Ext)\OpenWithProgids" -Name $pa.ProgId -Type REG_NONE
         foreach ($uiHive in @('zNTUSER', 'zDEFAULT')) {
             # A stale UserChoice wins over everything below it, and it cannot be forged
             # offline (the hash depends on the user SID and the current time).
-            reg.exe delete "HKLM\$uiHive\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\$($pa.Ext)\UserChoice" /f > $null 2>&1
-            reg.exe add "HKLM\$uiHive\Software\Classes\$($pa.Ext)" /ve /t REG_SZ /d $pa.ProgId /f > $null 2>&1
-            reg.exe add "HKLM\$uiHive\Software\Classes\$($pa.Ext)\OpenWithProgids" /v $pa.ProgId /t REG_NONE /f > $null 2>&1
+            Invoke-WinEaseReg -Action Delete -Key "HKLM\$uiHive\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\$($pa.Ext)\UserChoice"
+            Invoke-WinEaseReg -Action Add -Key "HKLM\$uiHive\Software\Classes\$($pa.Ext)" -DefaultValue -Type REG_SZ -Data $pa.ProgId
+            Invoke-WinEaseReg -Action Add -Key "HKLM\$uiHive\Software\Classes\$($pa.Ext)\OpenWithProgids" -Name $pa.ProgId -Type REG_NONE
         }
     }
 }
@@ -818,10 +473,7 @@ if (Test-TweakEnabled 'PhotoViewerAssociations' $true) {
 # Japanese IME Privacy
 if (Test-TweakEnabled 'DisableIMETelemetry' $true) {
     Write-Host "Configuring Japanese IME privacy opt-out..." -ForegroundColor Green
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\IME\15.0\IMEJP\MSIME" /v "CloudCandidate" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\IME\15.0\IMEJP\MSIME" /v "SendFeedback" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\IME\15.0\IMEJP\MSIME" /v "CloudCandidate" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\IME\15.0\IMEJP\MSIME" /v "SendFeedback" /t REG_DWORD /d 0 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableIMETelemetry
 }
 
 # ============================================================================
@@ -905,15 +557,12 @@ if ($disableWU -or (Test-TweakEnabled 'DisableWindowsUpdate' $false)) {
 
 if ([bool]$script:activeTweakGroups['ServiceTrim']) {
     foreach ($svc in $serviceConfigs.GetEnumerator()) {
-        reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\$($svc.Key)" /f /v "Start" /t REG_DWORD /d $($svc.Value) > $null 2>&1
+        Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Services\$($svc.Key)" -Name "Start" -Type REG_DWORD -Data $($svc.Value)
     }
 }
 
 # Revision Tool 2.14.1 (Superfetch): ReadyBoost caches go together with SysMain.
-if (Test-TweakEnabled 'DisableSuperfetch' $true) {
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\EMDMgmt" /v "GroupPolicyDisallowCaches" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\EMDMgmt" /v "AllowNewCachesByDefault" /t REG_DWORD /d 0 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section performance -Tweak DisableSuperfetch
 
 # The services of the components the Advanced Debloat tab removes. These used to be
 # printed in phase 09 and nothing else happened: the services stayed enabled, so the
@@ -921,12 +570,11 @@ if (Test-TweakEnabled 'DisableSuperfetch' $true) {
 # user asked for this component explicitly - they do not depend on the ServiceTrim group.
 function Set-WinEaseServiceStartIfPresent {
     param([Parameter(Mandatory = $true)][string]$Name, [Parameter(Mandatory = $true)][int]$Start)
-    & reg.exe query "HKLM\zSYSTEM\ControlSet001\Services\$Name" > $null 2>&1
-    if ($LASTEXITCODE -ne 0) {
+    if (-not (Invoke-WinEaseReg -Action Query -Key "HKLM\zSYSTEM\ControlSet001\Services\$Name" -PassThru)) {
         Write-Verbose "Service $Name is not in the image - nothing to set."
         return $false
     }
-    & reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\$Name" /f /v "Start" /t REG_DWORD /d $Start > $null 2>&1
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Services\$Name" -Name "Start" -Type REG_DWORD -Data $Start
     return $true
 }
 
@@ -1008,10 +656,8 @@ if ($script:WinEaseRemovedAppxPackages -and $script:WinEaseRemovedAppxPackages.C
             $inboxKeys += "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\InboxApp\$($removedPkg.ShortName)_$($removedPkg.PublisherId)"
         }
         foreach ($inboxKey in $inboxKeys) {
-            $null = & reg.exe query $inboxKey 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                reg.exe delete $inboxKey /f > $null 2>&1
-                if ($LASTEXITCODE -eq 0) { $inboxRemoved++ }
+            if (Invoke-WinEaseReg -Action Query -Key $inboxKey -PassThru) {
+                if (Invoke-WinEaseReg -Action Delete -Key $inboxKey -PassThru) { $inboxRemoved++ }
             }
         }
     }
@@ -1054,13 +700,13 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
     # "Early-Launch" group membership and the ELAM support flag takes the driver out of
     # the early-launch path entirely.
     foreach ($drv in @('WdBoot', 'WdFilter', 'WdNisDrv')) {
-        reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\$drv" /v "Start" /t REG_DWORD /d 4 /f > $null 2>&1
+        Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Services\$drv" -Name "Start" -Type REG_DWORD -Data '4'
     }
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\WdBoot" /v "SupportElamHive" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe delete "HKLM\zSYSTEM\ControlSet001\Services\WdBoot" /v "Group" /f > $null 2>&1
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Services\WdBoot" -Name "SupportElamHive" -Type REG_DWORD -Data '0'
+    Invoke-WinEaseReg -Action Delete -Key "HKLM\zSYSTEM\ControlSet001\Services\WdBoot" -Name "Group"
     # WdFilter is an FSFilter anti-virus minifilter; drop it from the filter group as well
     # so no file-system filter instance is bound when the stack starts.
-    reg.exe delete "HKLM\zSYSTEM\ControlSet001\Services\WdFilter" /v "Group" /f > $null 2>&1
+    Invoke-WinEaseReg -Action Delete -Key "HKLM\zSYSTEM\ControlSet001\Services\WdFilter" -Name "Group"
 
     # --- Service key removal ------------------------------------------------------------
     # The service keys are deleted (not just disabled) so that a later CBS servicing pass
@@ -1071,12 +717,11 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
     $defServices = @('WinDefend', 'MDCoreSvc', 'WdNisSvc', 'Sense', 'SecurityHealthService', 'wscsvc', 'webthreatdefsvc', 'webthreatdefusersvc', 'SgrmBroker', 'SgrmAgent')
     $failedDefSvc = [System.Collections.Generic.List[string]]::new()
     foreach ($svc in $defServices) {
-        reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\$svc" /v "Start" /t REG_DWORD /d 4 /f > $null 2>&1
-        reg.exe delete "HKLM\zSYSTEM\ControlSet001\Services\$svc\TriggerInfo" /f > $null 2>&1
-        reg.exe delete "HKLM\zSYSTEM\ControlSet001\Services\$svc" /f > $null 2>&1
+        Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Services\$svc" -Name "Start" -Type REG_DWORD -Data '4'
+        Invoke-WinEaseReg -Action Delete -Key "HKLM\zSYSTEM\ControlSet001\Services\$svc\TriggerInfo"
+        Invoke-WinEaseReg -Action Delete -Key "HKLM\zSYSTEM\ControlSet001\Services\$svc"
         # Verify the key is really gone instead of trusting the exit code of a silenced call.
-        $null = & reg.exe query "HKLM\zSYSTEM\ControlSet001\Services\$svc" 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        if (Invoke-WinEaseReg -Action Query -Key "HKLM\zSYSTEM\ControlSet001\Services\$svc" -PassThru) {
             $failedDefSvc.Add($svc)
         }
     }
@@ -1088,25 +733,10 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
     }
 
     # --- Policies ------------------------------------------------------------------------
-    # Tamper Protection must be off before the engine can be stopped or removed.
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows Defender\Features" /v "TamperProtection" /t REG_DWORD /d 0 /f > $null 2>&1
-    # DisableAntiSpyware no longer disables the engine on Windows 11 24H2+ (Microsoft removed
-    # the behaviour), so it is kept only for legacy builds and the working policies below are
-    # the actual mechanism.
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender" /v "DisableAntiSpyware" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender" /v "DisableAntiVirus" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v "DisableBehaviorMonitoring" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v "DisableOnAccessProtection" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v "DisableScanOnRealtimeEnable" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\MpEngine" /v "MpEngineEnableFileNameFiltering" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet" /v "SubmitSamplesConsent" /t REG_DWORD /d 2 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet" /v "SpynetReporting" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet" /v "SpynetProtection" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Signature Updates" /v "SignatureUpdateInterval" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender" /v "PUAProtection" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe delete "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v "SecurityHealth" /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.SecHealthUI_8wekyb3d8bbwe" /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.Windows.SecHealthUI_cw5n1h2txyewy" /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section defender -Tweak RemoveDefender -Unconditional
+    Invoke-WinEaseReg -Action Delete -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "SecurityHealth"
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.SecHealthUI_8wekyb3d8bbwe"
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.Windows.SecHealthUI_cw5n1h2txyewy"
 
     # --- Windows Security UI: remove the package, not only its service -----------------
     # Remove-AppxProvisionedPackage refuses to remove Microsoft.SecHealthUI ("protected by
@@ -1151,7 +781,7 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
     )
     foreach ($ifeoName in $defIfeoNames) {
         $ifeoKey = "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$ifeoName"
-        reg.exe add $ifeoKey /v "Debugger" /t REG_SZ /d "%SystemRoot%\System32\systray.exe" /f > $null 2>&1
+        Invoke-WinEaseReg -Action Add -Key $ifeoKey -Name "Debugger" -Type REG_SZ -Data "%SystemRoot%\System32\systray.exe"
     }
     # The Defender and Security Center scheduled tasks are re-created from the task store.
     foreach ($taskFolder in @(
@@ -1168,139 +798,60 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
     # (disabled, not deleted: they are boot-start filters), the Defender ETW autologgers,
     # the Defender maintenance entries of the Ubpm scheduler, and the Settings page.
     foreach ($drv in @('MsSecCore', 'MsSecFlt', 'MsSecWfp')) {
-        $null = & reg.exe query "HKLM\zSYSTEM\ControlSet001\Services\$drv" 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            reg.exe add "HKLM\zSYSTEM\ControlSet001\Services\$drv" /v "Start" /t REG_DWORD /d 4 /f > $null 2>&1
+        if (Invoke-WinEaseReg -Action Query -Key "HKLM\zSYSTEM\ControlSet001\Services\$drv" -PassThru) {
+            Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Services\$drv" -Name "Start" -Type REG_DWORD -Data '4'
         }
     }
-    reg.exe delete "HKLM\zSYSTEM\ControlSet001\Control\WMI\Autologger\DefenderApiLogger" /f > $null 2>&1
-    reg.exe delete "HKLM\zSYSTEM\ControlSet001\Control\WMI\Autologger\DefenderAuditLogger" /f > $null 2>&1
-    reg.exe delete "HKLM\zSYSTEM\ControlSet001\Control\Ubpm" /v "CriticalMaintenance_DefenderCleanup" /f > $null 2>&1
-    reg.exe delete "HKLM\zSYSTEM\ControlSet001\Control\Ubpm" /v "CriticalMaintenance_DefenderVerification" /f > $null 2>&1
+    Invoke-WinEaseReg -Action Delete -Key "HKLM\zSYSTEM\ControlSet001\Control\WMI\Autologger\DefenderApiLogger"
+    Invoke-WinEaseReg -Action Delete -Key "HKLM\zSYSTEM\ControlSet001\Control\WMI\Autologger\DefenderAuditLogger"
+    Invoke-WinEaseReg -Action Delete -Key "HKLM\zSYSTEM\ControlSet001\Control\Ubpm" -Name "CriticalMaintenance_DefenderCleanup"
+    Invoke-WinEaseReg -Action Delete -Key "HKLM\zSYSTEM\ControlSet001\Control\Ubpm" -Name "CriticalMaintenance_DefenderVerification"
     # SettingsPageVisibility is a single value: keep the AI page hidden as well when
     # DisableWindowsAI wrote it above.
     $hiddenPages = @('windowsdefender')
     if (Test-TweakEnabled 'DisableWindowsAI' $true) { $hiddenPages = @('aicomponents') + $hiddenPages }
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "SettingsPageVisibility" /t REG_SZ /d ("hide:" + ($hiddenPages -join ';')) /f > $null 2>&1
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name "SettingsPageVisibility" -Type REG_SZ -Data ("hide:" + ($hiddenPages -join ';'))
 }
 
 # ============================================================================
 # GUI tweak toggles (keys match $script:AllTweakDefs in WinEasebuilder.ps1)
 # ============================================================================
-if (Test-TweakEnabled 'BypassNetworkRequirement' $true) {
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v "BypassNRO" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\Setup\LabConfig" /v "BypassNRO" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section setup -Tweak BypassNetworkRequirement
 
-if (Test-TweakEnabled 'DisableAdvertisingId' $true) {
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" /v "Enabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" /v "Enabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo" /v "DisabledByGroupPolicy" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableAdvertisingId
 
-if (Test-TweakEnabled 'DisableAppPrivacy' $true) {
-    foreach ($appPriv in @('LetAppsAccessLocation', 'LetAppsAccessMicrophone', 'LetAppsAccessContacts', 'LetAppsAccessCalendar', 'LetAppsAccessCallHistory', 'LetAppsAccessMessaging', 'LetAppsAccessAccountInfo')) {
-        reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy" /v $appPriv /t REG_DWORD /d 2 /f > $null 2>&1
-    }
-}
+Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableAppPrivacy
 
-if (Test-TweakEnabled 'DisableDefenderSecurityCenter' $true) {
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications" /v "DisableEnhancedNotifications" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender Security Center\Systray" /v "HideSystray" /t REG_DWORD /d 1 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableDefenderSecurityCenter
 
-if (Test-TweakEnabled 'DisableCortana' $true) {
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search" /v "AllowCortana" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search" /v "AllowCortanaAboveLock" /t REG_DWORD /d 0 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableCortana
 
-if (Test-TweakEnabled 'DisableTimeline' $true) {
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" /v "EnableActivityFeed" /t REG_DWORD /d 0 /f > $null 2>&1
-}
+Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableTimeline
 
 if (Test-TweakEnabled 'DisableDiagnosticData' $true) {
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" /v "DoNotShowFeedbackNotifications" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" /v "LimitDiagnosticLogCollection" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" /v "LimitDumpCollection" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection" /v "DisableDiagnosticDataViewer" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Siuf\Rules" /v "NumberOfSIUFInPeriod" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Siuf\Rules" /v "NumberOfSIUFInPeriod" /t REG_DWORD /d 0 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableDiagnosticData
     # WinUtil main (config/tweaks.json, WPFTweaksTelemetry): the sampling period
     # of the telemetry client is removed, not only its counter.
     foreach ($userHive in 'zNTUSER', 'zDEFAULT') {
-        reg.exe delete "HKLM\$userHive\Software\Microsoft\Siuf\Rules" /v "PeriodInNanoSeconds" /f > $null 2>&1
-    }
-    # ReviOS 26.10 (registry/security/security.yml): never send a sample to
-    # Microsoft. The old WinEase value 0 means "always prompt", which is the
-    # opposite of a debloat image.
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows Defender\Spynet" /v "SubmitSamplesConsent" /t REG_DWORD /d 2 /f > $null 2>&1
-    # ReviOS 26.10 (registry/updates/updates.yml): the Malicious Software
-    # Removal Tool must not report infections.
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\MRT" /v "DontReportInfectionInformation" /t REG_DWORD /d 1 /f > $null 2>&1
-}
-
-if (Test-TweakEnabled 'TuneMemoryAndPaging' $true) {
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management" /v "ClearPageFileAtShutdown" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management" /v "LargeSystemCache" /t REG_DWORD /d 0 /f > $null 2>&1
-}
-
-if (Test-TweakEnabled 'GamingNetworkTweaks' $true) {
-    # Per-adapter TcpAckFrequency needs interface GUIDs that only exist online; these are the offline-safe parts
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" /v "NetworkThrottlingIndex" /t REG_DWORD /d 0xffffffff /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\MSMQ\Parameters" /v "TCPNoDelay" /t REG_DWORD /d 1 /f > $null 2>&1
-}
-
-if (Test-TweakEnabled 'DisableBackgroundApps' $true) {
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\AppPrivacy" /v "LetAppsRunInBackground" /t REG_DWORD /d 2 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications" /v "GlobalUserDisabled" /t REG_DWORD /d 1 /f > $null 2>&1
-}
-
-if (Test-TweakEnabled 'DisableGameDVR' $true) {
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\GameDVR" /v "AllowGameDVR" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\System\GameConfigStore" /v "GameDVR_Enabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\System\GameConfigStore" /v "GameDVR_Enabled" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\GameDVR" /v "AppCaptureEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-}
-
-if (Test-TweakEnabled 'DisableFastStartup' $false) {
-    reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Power" /v "HiberbootEnabled" /t REG_DWORD /d 0 /f > $null 2>&1
-}
-
-if (Test-TweakEnabled 'TransparentShortcutOverlay' $false) {
-    # Resource -50 in shell32.dll is the transparent icon; the previous value
-    # pointed at a visible icon, so it replaced the arrow with a glyph instead
-    # of removing it.
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Icons" /v "29" /t REG_EXPAND_SZ /d "%SystemRoot%\System32\shell32.dll,-50" /f > $null 2>&1
-}
-
-if (Test-TweakEnabled 'OptimizeVisualEffects' $true) {
-    # "Adjust for best performance" is more than VisualFXSetting=2: Windows reads the
-    # per-user UserPreferencesMask and the individual animation values. The old block
-    # wrote only three values, so window/menu/taskbar animations stayed enabled.
-    foreach ($uiHive in @('zNTUSER', 'zDEFAULT')) {
-        reg.exe add "HKLM\$uiHive\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v "VisualFXSetting" /t REG_DWORD /d 2 /f > $null 2>&1
-        reg.exe add "HKLM\$uiHive\Control Panel\Desktop\WindowMetrics" /v "MinAnimate" /t REG_SZ /d "0" /f > $null 2>&1
-        reg.exe add "HKLM\$uiHive\Control Panel\Desktop" /v "DragFullWindows" /t REG_SZ /d "0" /f > $null 2>&1
-        reg.exe add "HKLM\$uiHive\Control Panel\Desktop" /v "UserPreferencesMask" /t REG_BINARY /d "9012038010000000" /f > $null 2>&1
-        reg.exe add "HKLM\$uiHive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "TaskbarAnimations" /t REG_DWORD /d 0 /f > $null 2>&1
-        reg.exe add "HKLM\$uiHive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "ListviewAlphaSelect" /t REG_DWORD /d 0 /f > $null 2>&1
-        reg.exe add "HKLM\$uiHive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "ListviewShadow" /t REG_DWORD /d 0 /f > $null 2>&1
-        reg.exe add "HKLM\$uiHive\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v "EnableTransparency" /t REG_DWORD /d 0 /f > $null 2>&1
-        # The accessibility animation switch is the setting the shell honours even when
-        # a theme or an app re-enables the explorer animations.
-        reg.exe add "HKLM\$uiHive\Control Panel\Accessibility\Animation" /v "Flags" /t REG_SZ /d "0" /f > $null 2>&1
+        Invoke-WinEaseReg -Action Delete -Key "HKLM\$userHive\Software\Microsoft\Siuf\Rules" -Name "PeriodInNanoSeconds"
     }
 }
 
-if (Test-TweakEnabled 'CleanContextMenus' $true) {
-    # Share, Give access to, Cast to Device
-    foreach ($shellExt in @('{e2bf9676-5f8f-435c-97eb-11607a5bedf7}', '{f81e9010-6ea4-11ce-a7ff-00aa003ca9f6}', '{7AD84985-87B4-4a16-BE58-8B72A5B390F7}')) {
-        # The empty string has to be passed as the literal '""': an empty argument is
-        # dropped by the PowerShell native call, so reg.exe would take the next switch
-        # ('/f') as the value and the extension would not be blocked at all.
-        reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked" /v $shellExt /t REG_SZ /d '""' /f > $null 2>&1
-    }
-}
+Invoke-WinEaseRegistryTable -Section performance -Tweak TuneMemoryAndPaging
+
+Invoke-WinEaseRegistryTable -Section performance -Tweak GamingNetworkTweaks
+
+Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableBackgroundApps
+
+Invoke-WinEaseRegistryTable -Section performance -Tweak DisableGameDVR
+
+Invoke-WinEaseRegistryTable -Section performance -Tweak DisableFastStartup
+
+Invoke-WinEaseRegistryTable -Section ui -Tweak TransparentShortcutOverlay
+
+Invoke-WinEaseRegistryTable -Section performance -Tweak OptimizeVisualEffects
+
+Invoke-WinEaseRegistryTable -Section ui -Tweak CleanContextMenus
 
 # ReviOS 26.10 / main (registry/explorer/search.yml) and Revision Tool 2.14.x
 # (src/lib/core/services/win_registry_service.dart): the two shell features that
@@ -1317,39 +868,30 @@ if (Test-TweakEnabled 'DisableSearchWebView2' $true) {
     foreach ($feature in $searchWebView2Features) {
         $overrideId = ConvertTo-WinEaseFeatureIdOverride -FeatureId $feature.Id
         # Policy location: the variant the ReviOS playbook writes.
-        reg.exe add "HKLM\zSYSTEM\ControlSet001\Policies\Microsoft\FeatureManagement\Overrides" /v "$overrideId" /t REG_DWORD /d 0 /f > $null 2>&1
+        Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Policies\Microsoft\FeatureManagement\Overrides" -Name "$overrideId" -Type REG_DWORD -Data '0'
         # Primary location: the variant the Revision Tool writes.
         $overrideKey = "HKLM\zSYSTEM\ControlSet001\Control\FeatureManagement\Overrides\8\$overrideId"
-        reg.exe add $overrideKey /v "EnabledState" /t REG_DWORD /d 1 /f > $null 2>&1
-        reg.exe add $overrideKey /v "EnabledStateOptions" /t REG_DWORD /d 0 /f > $null 2>&1
-        reg.exe add $overrideKey /v "Variant" /t REG_DWORD /d 0 /f > $null 2>&1
-        reg.exe add $overrideKey /v "VariantPayload" /t REG_DWORD /d 0 /f > $null 2>&1
-        reg.exe add $overrideKey /v "VariantPayloadKind" /t REG_DWORD /d 0 /f > $null 2>&1
+        Invoke-WinEaseReg -Action Add -Key $overrideKey -Name "EnabledState" -Type REG_DWORD -Data '1'
+        Invoke-WinEaseReg -Action Add -Key $overrideKey -Name "EnabledStateOptions" -Type REG_DWORD -Data '0'
+        Invoke-WinEaseReg -Action Add -Key $overrideKey -Name "Variant" -Type REG_DWORD -Data '0'
+        Invoke-WinEaseReg -Action Add -Key $overrideKey -Name "VariantPayload" -Type REG_DWORD -Data '0'
+        Invoke-WinEaseReg -Action Add -Key $overrideKey -Name "VariantPayloadKind" -Type REG_DWORD -Data '0'
     }
 }
 
 # Personalization unlock & watermark suppression
 if ($bypassActivationRestrictions -or (Test-TweakEnabled 'BypassActivationRestrictions' $false)) {
     Write-Host "Applying Windows personalization unlock policies..." -ForegroundColor Green
-    reg.exe add "HKLM\zDEFAULT\Control Panel\Desktop" /v "PaintDesktopVersion" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Control Panel\Desktop" /v "PaintDesktopVersion" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows" /v "DisplayNotGenuine" /t REG_DWORD /d 0 /f > $null 2>&1
+    Invoke-WinEaseRegistryTable -Section security -Tweak BypassActivationRestrictions -Unconditional
     # Do not force NoLockScreen=0 here: the personalization unlock used to overwrite the
     # DisableLockScreen option. The value follows the user's lock-screen choice.
     $noLockScreenValue = if (Test-TweakEnabled 'DisableLockScreen' $false) { 1 } else { 0 }
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Personalization" /v "NoLockScreen" /t REG_DWORD /d $noLockScreenValue /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Policies\ActiveDesktop" /v "NoChangingWallPaper" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Policies\ActiveDesktop" /v "NoChangingWallPaper" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "NoThemesTab" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "NoThemesTab" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "NoThemesTab" /t REG_DWORD /d 0 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform" /v "NoGenTicket" /t REG_DWORD /d 1 /f > $null 2>&1
-    reg.exe add "HKLM\zSOFTWARE\Policies\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform" /v "NotificationDisabled" /t REG_DWORD /d 1 /f > $null 2>&1
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\Personalization" -Name "NoLockScreen" -Type REG_DWORD -Data $noLockScreenValue
 }
 
 # OEM Information Branding
-reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation" /v "Manufacturer" /t REG_SZ /d "WinEase Project" /f > $null 2>&1
-reg.exe add "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation" /v "SupportURL" /t REG_SZ /d "https://github.com/gh459/WinEase" /f > $null 2>&1
+Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation" -Name "Manufacturer" -Type REG_SZ -Data "WinEase Project"
+Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation" -Name "SupportURL" -Type REG_SZ -Data "https://github.com/gh459/WinEase"
 
 Write-Host "Registry tweaks applied successfully." -ForegroundColor Green
 

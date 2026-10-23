@@ -586,9 +586,9 @@ $script:PreservedMountDirs = [System.Collections.Generic.HashSet[string]]::new(
 $script:MountAllocationRoot = $null
 $script:MountDirectoryPrefix = $null
 
-# Low-level DISM mount / offline hive, WIM, telemetry and GUI-session helpers (function definitions only).
+# Low-level DISM mount / offline hive, offline registry access (reg.exe wrapper, config\registry tables), WIM, telemetry and GUI-session helpers (function definitions only).
 # WinEaseFileSystem.ps1 is loaded by WinEasehelpers.ps1 with the other split helper modules.
-foreach ($WinEaseLibFile in @('WinEaseMount.ps1', 'WinEaseWim.ps1', 'WinEaseTelemetry.ps1', 'WinEaseGuiSession.ps1')) {
+foreach ($WinEaseLibFile in @('WinEaseMount.ps1', 'WinEaseRegistry.ps1', 'WinEaseWim.ps1', 'WinEaseTelemetry.ps1', 'WinEaseGuiSession.ps1')) {
     . (Join-Path -Path (Join-Path -Path $scriptDirEarly -ChildPath "lib") -ChildPath $WinEaseLibFile)
 }
 

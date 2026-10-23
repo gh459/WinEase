@@ -6,6 +6,7 @@ WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 ## Unreleased (local fork, 2026-10-23) - the migration tool runs from the ISO and custom scripts have a GUI
 
 ### Changed
+- **Phase 10 registry writes are data.** Every `reg.exe` add/delete/query of `phases/10-registry.ps1` now goes through `Invoke-WinEaseReg` (`lib/WinEaseRegistry.ps1`), and the plain writes moved to `config/registry/<section>.psd1` (`Invoke-WinEaseRegistryTable`). Entries can be limited to a Windows build range with `MinBuild`/`MaxBuild`. Branches, loops with computed values, service trims, the Defender removal logic and the query-based checks stay in the phase. The final registry state per preset is unchanged (Pester snapshots in `tests/fixtures/registry`).
 - **GUI logic that does not need a window moved to `lib\WinEaseGuiCore.ps1`.** Language and UI strings,
   the Advanced Debloat engine and item lists, source candidates, preset diff text, the draft config and the
   migration helpers now live there; `gui\WinEaseGui.ps1` dot-sources it, the WinUI 3 host loads only the core,

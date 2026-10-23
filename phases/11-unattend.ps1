@@ -965,6 +965,7 @@ if ($includeMigrationAssistant -eq $true) {
             'lib\WinEaseConfig.ps1',
             'lib\WinEaseBenchmarks.ps1',
             'lib\WinEaseDependencies.ps1',
+            'lib\WinEaseRegistry.ps1',
             'lib\WinEaseGuiCore.ps1',
             'gui\WinEaseGui.ps1'
         )

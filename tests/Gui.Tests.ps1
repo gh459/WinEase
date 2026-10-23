@@ -174,6 +174,8 @@ $phaseText += "`n" + [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "
 # config\schema.psd1 is the master schema: the lookup tables of the options live there
 $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\schema.psd1"))
     $helpersText = Get-WinEaseHelperSourceText
+    # the plain registry writes of phase 10 are data (config\registry\*.psd1): a Tweak = 'Key' entry reads the key
+    $registryTableText = Get-WinEaseRegistryTableText
     $scriptText = (Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "scripts") -Filter "*.ps1" -ErrorAction SilentlyContinue |
         ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"
 
@@ -200,6 +202,7 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
             # appears as a table key counts as consumed as well.
             if ($phaseText -match "['`"]$([regex]::Escape($k))['`"]\s*=") { continue }
             if ($uiPrefText -match "Tweak\s*=\s*['`"]$([regex]::Escape($k))['`"]") { continue }
+            if ($registryTableText -match "Tweak\s*=\s*['`"]$([regex]::Escape($k))['`"]") { continue }
             # the lookup tables of the options live in the master schema
             if ($schemaText -match "['`"]$([regex]::Escape($k))['`"]\s*=") { continue }
             if ($varMap.Contains($k)) {
@@ -1997,7 +2000,8 @@ Describe "Show-WinEaseGuiSessionWindow session launcher and error handling" {
 Describe "WinEase UI options that have to take effect" {
     BeforeAll {
         $script:UiPrefs = @((Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot 'config\ui-preferences.psd1')).UiPreferences)
-        $script:UiPhase = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\10-registry.ps1'))
+        # the plain writes live in config\registry, the rest in the phase
+        $script:UiPhase = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\10-registry.ps1')) + "`n" + (Get-WinEaseRegistryTableText)
     }
 
     It "disables the accessibility shortcuts without removing the features" {
@@ -2033,7 +2037,7 @@ Describe "WinEase UI options that have to take effect" {
         foreach ($needle in 'MinAnimate', 'UserPreferencesMask', 'TaskbarAnimations', 'ListviewAlphaSelect', 'Control Panel\Accessibility\Animation') {
             $script:UiPhase.Contains($needle) | Should Be $true
         }
-        $script:UiPhase | Should Match 'Test-TweakEnabled ''OptimizeVisualEffects'' \$true'
+        $script:UiPhase | Should Match 'Tweak = ''OptimizeVisualEffects''; Default = \$true'
     }
 
     It "registers the GIF with its own Photo Viewer ProgID" {
