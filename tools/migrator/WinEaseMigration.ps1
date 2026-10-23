@@ -1243,7 +1243,7 @@ function ConvertTo-WinEaseMigrationHtml {
     [void]$sb.AppendLine("<div class=`"sub`">Generated: $(ConvertTo-WinEaseHtmlText $ReportData.Generated)</div>")
 
     [void]$sb.AppendLine('<div class="section-card"><h2>Succeeded</h2>')
-    [void]$sb.AppendLine("<p><span class=`"ok`">$(ConvertTo-WinEaseHtmlText $ReportData.Success.Files) file(s)</span>, $(ConvertTo-WinEaseHtmlText $ReportData.Success.TotalSize) total. SHA-256 recorded for <span class=`"ok`">$($ReportData.Success.Sha256Verified)</span> file(s); not recorded for <span class=`"warn`">$($ReportData.Success.Sha256Missing)</span>.</p>")
+    [void]$sb.AppendLine("<p><span class=`"ok`">$(ConvertTo-WinEaseHtmlText $ReportData.Success.Files) file(s)</span>, $(ConvertTo-WinEaseHtmlText $ReportData.Success.TotalSize) total. SHA-256 recorded for <span class=`"ok`">$(ConvertTo-WinEaseHtmlText $ReportData.Success.Sha256Verified)</span> file(s); not recorded for <span class=`"warn`">$(ConvertTo-WinEaseHtmlText $ReportData.Success.Sha256Missing)</span>.</p>")
     $succeeded = @($ReportData.Success.Items)
     if ($succeeded.Count -gt 0) {
         [void]$sb.AppendLine('<table><tr><th>Area</th><th>Item</th><th>Detail</th></tr>')

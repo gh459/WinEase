@@ -903,6 +903,7 @@ Describe "WinEase helpers - BuildContext lifecycle" {
 Describe "Export-WinEaseHtmlReport HTML escaping" {
     BeforeAll {
         . (Join-Path $script:RepoRoot "lib\WinEaseReport.ps1")
+        . (Join-Path $script:RepoRoot "tools\migrator\WinEaseMigration.ps1")
     }
 
     It "properly escapes HTML tags and prevents XSS injection" {
@@ -923,6 +924,28 @@ Describe "Export-WinEaseHtmlReport HTML escaping" {
                 Remove-Item -LiteralPath $outPath -Force -ErrorAction SilentlyContinue
             }
         }
+    }
+
+    It "ConvertTo-WinEaseMigrationHtml encodes Sha256Verified and Sha256Missing fields" {
+        $data = [ordered]@{
+            Generated = "2026-10-23"
+            Success   = [ordered]@{
+                Files          = 1
+                TotalSize      = "1 MB"
+                Sha256Verified = '<script>evil</script>'
+                Sha256Missing  = '<img src=x onerror=alert(1)>'
+                Items          = @()
+            }
+            Skipped   = @()
+            Failed    = @()
+            Manual    = @()
+            Tasks     = @()
+        }
+        $html = ConvertTo-WinEaseMigrationHtml -ReportData $data
+        $html | Should Not Match '<script>evil</script>'
+        $html | Should Match '&lt;script&gt;evil&lt;/script&gt;'
+        $html | Should Not Match '<img src=x'
+        $html | Should Match '&lt;img src=x'
     }
 }
 
