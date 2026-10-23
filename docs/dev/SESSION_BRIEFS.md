@@ -39,7 +39,7 @@ WinEase: Windows 11 のインストールメディアから軽量化した ISO �
   スクリプトスコープの変数を共有している。新しいファイルも必ず同じスコープにドットソースすること
   (モジュール化してスコープを変えない)。
 - config/tweaks.psd1 … すべてのスイッチ/コンポーネント設定の唯一の定義元。設定一覧を別の場所に手書きしない。
-- gui/WinEaseGui.ps1 … WinForms の GUI。lib/ … 下処理・レポート・再開・拡張・移行。
+- gui/WinEaseGui.ps1 … ビルダーの WinForms GUI（凍結: 新しい機能は WinUI のみ。フォールバックとして残す。Migrator の WinForms は継続）。WinUI は gui/winui/、.NET のビルドは tools/build-binaries.ps1 と src/WinEase.sln。lib/ … 下処理・レポート・再開・拡張・移行。
 
 # 守ること(テストで強制されている)
 1. WinEasebuilder.ps1 の AST 上で $script:AllTweakDefs / $script:TweakKeyAliases /

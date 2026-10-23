@@ -121,6 +121,49 @@ jobs:
           .\WinEasebuilder.ps1 -DryRun -NonInteractive -Profile $env:WINEASE_PROFILE
           if ($LASTEXITCODE -ne 0) { throw "Dry-run ($env:WINEASE_PROFILE) failed with exit code $LASTEXITCODE" }
 
+  binaries:
+    name: .NET binaries (${{ matrix.arch }})
+    # Builds the .NET parts (WinUI 3 window today; launcher and plugins are added to
+    # tools/build-binaries.ps1). arm64 is cross-built on the x64 runner. Only jobs that consume
+    # the plugin DLLs should say "needs: binaries"; self-test, Pester and dry-run stay independent
+    # so a .NET failure never hides a PowerShell result.
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build binaries
+        shell: pwsh
+        env:
+          WINEASE_ARCH: ${{ matrix.arch }}
+        run: ./tools/build-binaries.ps1 -Architecture $env:WINEASE_ARCH
+
+      - name: dotnet test
+        # ARM64 binaries cannot run on the x64 runner; the arm64 leg only has to compile.
+        if: matrix.arch == 'x64'
+        shell: pwsh
+        run: dotnet test src/WinEase.sln -c Release -p:Platform=x64 --nologo
+        # (tests are added together with the plugin host; an empty solution passes)
+
+      - name: Upload WinUI build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: binaries-${{ matrix.arch }}
+          path: gui/winui/bin
+          if-no-files-found: error
+          retention-days: 14
+
   rust:
     name: Rust engine (cargo build + test)
     # tools/winease-physical-debloat is Windows-only (windows crate). Before this job nothing
