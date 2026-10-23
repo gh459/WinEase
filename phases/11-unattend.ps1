@@ -994,6 +994,12 @@ if ($includeMigrationAssistant -eq $true) {
                 }
             }
         } else {
+            # WinEasehelpers.ps1 throws at start when one of its lib modules is missing, so a partial
+            # helper set would leave a Migration Assistant that cannot start: fail the bundling instead.
+            $migrationMissingHelpers = @($migrationFiles | Where-Object { ($_ -eq 'WinEasehelpers.ps1' -or $_ -like 'lib\*') -and -not (Test-Path -LiteralPath (Join-Path -Path $scriptDir -ChildPath $_)) })
+            if ($migrationMissingHelpers.Count -gt 0) {
+                throw "Migration Assistant helper files are missing: $($migrationMissingHelpers -join ', ')"
+            }
             New-Item -ItemType Directory -Path $migrationDestDir -Force | Out-Null
             New-Item -ItemType Directory -Path $migrationDesktopDir -Force | Out-Null
             foreach ($mf in $migrationFiles) {
