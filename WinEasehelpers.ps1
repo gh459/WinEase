@@ -1923,7 +1923,7 @@ function Test-WinEaseDependencies {
         $Config = $normalizedConfig
     }
     if (-not $script:WinEaseDependencyCatalog) {
-        try { Import-WinEaseDependencyCatalog | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        try { $null = Import-WinEaseDependencyCatalog } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
     $cat = $script:WinEaseDependencyCatalog
     $conflicts = [System.Collections.Generic.List[object]]::new()
