@@ -2076,7 +2076,7 @@ try {
 # M2: Custom scripts (PreBuild stage)
 if (Get-Command -Name Invoke-WinEaseCustomScriptsStage -ErrorAction SilentlyContinue) {
     try {
-        Invoke-WinEaseCustomScriptsStage -Stage 'PreBuild' -Context @{ Config = $resolvedConfig; ScriptRoot = $scriptDir } -DryRun:$isDryRunMode | Out-Null
+        $null = Invoke-WinEaseCustomScriptsStage -Stage 'PreBuild' -Context @{ Config = $resolvedConfig; ScriptRoot = $scriptDir } -DryRun:$isDryRunMode
     } catch { Write-Warning "PreBuild custom scripts failed: $($_.Exception.Message)" }
 }
 
