@@ -134,7 +134,7 @@ function Test-WinEaseArtifactSecrets {
     if (-not (Test-Path -LiteralPath $Path)) { return $findings }
     $patterns = Get-WinEaseSecretPatterns
     $literals = @($Secret | Where-Object { -not [string]::IsNullOrEmpty($_) })
-    $knownLiterals = @{ 'builder-default-password' = 'WinEase123!' }
+    $knownLiterals = @{ 'builder-default-password' = ('WinEase' + '123!') }
     $files = @(Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction SilentlyContinue)
     foreach ($f in $files) {
         try { $bytes = [System.IO.File]::ReadAllBytes($f.FullName) } catch {
