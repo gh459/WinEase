@@ -7,6 +7,8 @@ name: AI code review (advisory)
 #   - It is advisory: it is not a required check, and its result is recorded separately
 #     from "WinEase CI" and "PSScriptAnalyzer". A failed or skipped AI review never hides
 #     or replaces a failing test, and a passing one never replaces a human review.
+#   - Only pull requests of the owner, members and collaborators (author_association) or of the
+#     Claude agent app (claude[bot]) are reviewed; a same-repository branch already needs write access.
 #   - Pull requests from forks are skipped: GitHub withholds secrets from them, and this
 #     workflow deliberately does not use pull_request_target.
 #   - Without the ANTHROPIC_API_KEY secret the job ends with a notice instead of failing.
@@ -26,7 +28,9 @@ jobs:
     name: AI review (advisory, read-only)
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.actor != 'dependabot[bot]'
+      github.actor != 'dependabot[bot]' &&
+      (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) ||
+        github.event.pull_request.user.login == 'claude[bot]')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

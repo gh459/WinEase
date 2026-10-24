@@ -122,8 +122,10 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    needs: package
-    if: github.ref_type == 'tag'   # a manual run is a dry run
+    # package already needs the three checks; they are listed again so that the gate is explicit
+    # and survives a later change of the "package" job.
+    needs: [ci, lint, audit, package]
+    if: github.ref_type == 'tag'  # a manual run is a dry run
     runs-on: ubuntu-latest
     permissions:
       contents: write       # create the release and upload its assets
