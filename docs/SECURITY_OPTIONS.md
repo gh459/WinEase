@@ -62,17 +62,37 @@ reached through the GUI ("Services & Apps" tab), the command line, a preset
 ### ConfigureWinlogon (GUI: "Configure Winlogon auto-logon" / Security tab)
 
 * **Default:** off
-* **What the build does when on:** the local account is created with an empty
-  password, `AutoAdminLogon` is armed in the image, the OOBE -> first session
-  transition is repaired automatically and the auto-logon is torn down again after
-  the first sign-in.
+* **The password:** there is no fixed default password. `-UserPassword` defaults to
+  an empty string, so the local account has an empty password unless you pass one
+  (`-UserPassword`, or the GUI field). The value is not saved in profiles. An older
+  profile that still contains `UserPassword` is loaded (compatibility) with a warning
+  that recommends removing it.
+* **What the build does when on:** the local account is created with the configured
+  password (empty by default), `AutoAdminLogon` is armed in the image (the password is
+  written to the Winlogon `DefaultPassword` value, empty by default), the OOBE ->
+  first session transition is repaired automatically and the auto-logon is torn down
+  again after the first sign-in: the first logon sets `AutoAdminLogon` and
+  `ForceAutoLogon` to 0, removes `DefaultPassword`, reads the values back and logs the
+  result (never the value) to `C:\ProgramData\WinEase\Logs\firstlogon-child.log`. It
+  also deletes the copies of the answer file that Setup keeps
+  (`C:\Windows\Panther\unattend.xml`, `Panther\unattend`, `Panther\UnattendGC`,
+  `C:\Windows\System32\Sysprep\unattend.xml`, and the `autounattend.xml` name the build
+  writes into those folders) and the OOBE helper script, which holds
+  the password as Base64. A file that cannot be deleted is logged as a warning.
+* **Not verified:** how Windows Setup treats an empty account password together with
+  an `AutoLogon` section, and that the cleanup can delete the Panther copies while
+  Setup is still finishing, was not tested on a real image or VM. Check
+  `firstlogon-child.log` (`[AutoLogon-Cleanup]` lines) after a test install.
 * **What the build does when off:** the `AutoLogon` section is removed from
   `autounattend.xml`, so the setup does not log in automatically any more, the
   auto-logon helpers are not deployed and the `AutoAdminLogon` values are not
   written into the image. The network use of a blank password stays blocked in both
   cases (`LimitBlankPasswordUse = 1`).
-* **Impact when on:** the account has no password during the setup, and the image
-  contains the auto-logon keys until the first sign-in removes them.
+* **Impact when on:** the account has the configured password (none by default)
+  during the setup, and the image, its Setup answer-file copies and the OOBE helper
+  contain the password in clear text or Base64 until the first sign-in removes them.
+  An ISO built with a non-empty password therefore contains that password: do not
+  share it (see `SECURITY.md`).
 * **Residual risk when off:** the local account still has an empty password, so a
   user at the console can sign in without one. Set a password after the first
   sign-in (`net user <name> <password>`). The empty password was not removed from

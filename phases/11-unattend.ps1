@@ -82,11 +82,6 @@ if (Test-Path -LiteralPath $unattendSource) {
     $xmlContent = $xmlContent -replace '<Username>User</Username>', "<Username>$UserName</Username>"
     $xmlContent = $xmlContent -replace '<Name>User</Name>', "<Name>$UserName</Name>"
     $xmlContent = $xmlContent -replace '<DisplayName>User</DisplayName>', "<DisplayName>$UserName</DisplayName>"
-    if ($targetUserPass) {
-        $xmlContent = $xmlContent -replace 'net\.exe user User "" /active:yes /passwordreq:no', "net.exe user `"$UserName`" `"$targetUserPass`" /active:yes /passwordreq:yes"
-    } else {
-        $xmlContent = $xmlContent -replace 'net\.exe user User "" /active:yes /passwordreq:no', "net.exe user `"$UserName`" `"`" /active:yes /passwordreq:no"
-    }
     $xmlContent = $xmlContent -replace 'net\.exe user User ', "net.exe user `"$UserName`" "
     $xmlContent = $xmlContent -replace 'Set-LocalUser -Name "User"', "Set-LocalUser -Name `"$UserName`""
     $xmlContent = $xmlContent -replace "-Name 'DefaultUserName' -Type 'String' -Force -Value 'User'", "-Name 'DefaultUserName' -Type 'String' -Force -Value '$UserName'"
@@ -182,12 +177,7 @@ if (Test-Path -LiteralPath $unattendSource) {
             }
         }
 
-        if ($targetUserPass) {
-            $passValueNodes = $xmlDoc.SelectNodes("//*[local-name()='UserAccounts']//*[local-name()='Password']/*[local-name()='Value'] | //*[local-name()='AutoLogon']/*[local-name()='Password']/*[local-name()='Value']")
-            foreach ($pvNode in $passValueNodes) {
-                $pvNode.InnerText = $targetUserPass
-            }
-        }
+        [void](Set-WinEaseUnattendPassword -Document $xmlDoc -Password $targetUserPass)
 
         # Parameterize ComputerName in specialize pass via DOM (robust against template variations)
         if ($ComputerName) {
@@ -343,8 +333,8 @@ if (Test-Path -LiteralPath $unattendSource) {
     }
 
     # Inject the configured account name and password into the OOBE transition repair helper
-    $helperScripts['WinEase-oobe-autologon-repair.ps1'] = $helperScripts['WinEase-oobe-autologon-repair.ps1'].Replace('__WINEASE_USERNAME__', $UserName)
-    $helperScripts['WinEase-oobe-autologon-repair.ps1'] = $helperScripts['WinEase-oobe-autologon-repair.ps1'].Replace('__WINEASE_USERPASSWORD__', $targetUserPass)
+    # (the password goes in as Base64 data, never as PowerShell source: lib\WinEaseSecrets.ps1)
+    $helperScripts['WinEase-oobe-autologon-repair.ps1'] = Expand-WinEaseOobeRepairScript -Template $helperScripts['WinEase-oobe-autologon-repair.ps1'] -UserName $UserName -Password $targetUserPass
 
     # The blank-password auto-logon is only armed when the user asked for it
     # (ConfigureWinlogon). Without that option the OOBE -> first session transition

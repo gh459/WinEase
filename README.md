@@ -1,16 +1,16 @@
 # **WinEase 🔬**
 
-A PowerShell script to build a heavily trimmed-down, lightning-fast Windows 11 image.
+A PowerShell script to build a heavily trimmed-down, minimal Windows 11 image.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Architecture: x64 | ARM64](https://img.shields.io/badge/Architecture-x64%20%7C%20ARM64-blue.svg)](#)
-[![OS: Windows 11 23H2 / 24H2 / LTSC / Canary](https://img.shields.io/badge/Windows%2011-23H2%20%7C%2024H2%20%7C%20LTSC%20%7C%20Canary-brightgreen.svg)](#)
+[![Architecture: x64 | ARM64 (untested)](https://img.shields.io/badge/Architecture-x64%20%7C%20ARM64%20(untested)-blue.svg)](#supported-and-verified)
+[![OS: Windows 11 targets, see Supported and verified](https://img.shields.io/badge/Windows%2011-targets%3A%2023H2%20%7C%2024H2%20%7C%20LTSC%20%7C%20Canary%20(not%20CI--tested)-brightgreen.svg)](#supported-and-verified)
 
 ---
 
 ## **Introduction**
 
-Introducing **WinEase builder**, a powerful PowerShell script that creates an ultra-minimal Windows 11 image!
+Introducing **WinEase builder**, a powerful PowerShell script that creates a minimal Windows 11 image!
 
 The goal of WinEase is to automate the creation of a streamlined Windows 11 image. The script uses native DISM capabilities and official deployment tools (`oscdimg.exe`) to create a bootable ISO with no third-party binary dependencies. An included unattended answer file bypasses Microsoft Account requirements during setup, enables automatic local administrator logon, enables CompactOS compression, and configures a clean, bloatware-free desktop.
 
@@ -21,9 +21,10 @@ The goal of WinEase is to automate the creation of a streamlined Windows 11 imag
 - **⚡ Zero-Click Setup Automation (100% Shift+F10 Free)**:
   - Completely eliminates the manual `Shift + F10` prompt and "Windows could not complete the installation" dialog by orchestrating `ChildCompletion\setup.exe = 3`, `SetupType = 0`, `SystemSetupInProgress = 0`, and `OOBEInProgress = 0` across `windowsPE`, `specialize`, `SetupComplete.cmd`, offline `zSYSTEM`, and `FirstLogon.ps1`. Setup transitions directly to the lightweight desktop with zero user clicks.
 - **🎮 Low-Latency & Next-Gen Gaming Engine (AtlasOS / ReviOS Aligned)**:
-  - **Hardware-Accelerated GPU Scheduling (HAGS)** enabled by default (`HwSchMode = 2`).
-  - **Message Signaled Interrupts (MSI)** automatically enabled across all PCI devices to eliminate interrupt sharing latency.
-  - **CPU Core Scheduling & Unparking**: Neutralizes micro-stutter on hybrid Intel P/E-core and AMD 3D V-Cache architectures by disabling core parking and tuning Energy Performance Preference (`EPP = 0`).
+  - *Performance wording in this README describes the intent of a setting. This project does not measure latency, stutter or frame time, and no published results exist yet; effects depend on hardware, Windows build and drivers. See [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).*
+  - **Hardware-Accelerated GPU Scheduling (HAGS)** can be enabled (`HwSchMode = 2`); it only has an effect with a supported GPU and driver.
+  - **Message Signaled Interrupts (MSI)** are enabled across PCI devices; this is intended to reduce interrupt sharing. The effect depends on the hardware and drivers and is not measured by this project.
+  - **CPU Core Scheduling & Unparking**: disables core parking and tunes Energy Performance Preference (`EPP = 0`); intended to reduce scheduling-related stutter on hybrid Intel P/E-core and AMD 3D V-Cache CPUs. Not measured by this project; the effect depends on the CPU, Windows build and drivers.
   - **Windows Update Driver Protection**: Excludes generic GPU/chipset drivers from Windows Update (`ExcludeWUDriversInQualityUpdate = 1`), preventing vendor driver rollbacks.
 - **🚫 Modern AI, Recall & 24H2/26H2 Canary Bloatware Offline Block**:
   - Offline policy blocks for DirectML, Windows AI, Windows Copilot, and Recall snapshotting (`TurnOffRecall = 1`, `DisableAIDataAnalysis = 1`).
@@ -58,7 +59,7 @@ The goal of WinEase is to automate the creation of a streamlined Windows 11 imag
   - **NTFS Volume Safety Verification**: Automatically verifies the workspace drive format (`Test-IsNtfsVolume`), preventing DISM reparse point failures (`0xc142011f`) when users run the script from exFAT drives (e.g. Ventoy USB drives).
   - **Real-Time DISM Progress Visibility**: Removed stdout suppression from DISM component cleanup and exports, exposing live progress percentages.
   - **Automated Windows Defender Exclusion**: Automatically adds temporary Defender exclusions for build workspaces during execution to prevent real-time file scanning slowdowns on 100,000+ image files.
-- **📦 Radical ISO Size Reduction (~3.2 GB – 3.8 GB, Perplexity-Verified Safe)**:
+- **📦 Radical ISO Size Reduction (size depends on source ISO and options; no fixed figure is guaranteed)**:
   - **Decoupled Japanese IME & Foreign Language Stripping**: Purges heavy foreign Asian IMEs (Korean `ko-KR`, Chinese `zh-CN`/`zh-TW`), foreign speech models (`zh-*`, `ko-*`, `de-*`, `fr-*`, `es-*`, `it-*`, `pt-*`, `ru-*`), and foreign Handwriting/OCR packages, saving over 800 MB – 1.2 GB in the installation image while strictly safeguarding Japanese IME (`*IME-ja-jp*`), Japanese fonts (`meiryo*`, `yugoth*`, `msgoth*`, `msmin*`, `yumin*`), and Text Services Framework (`ctfmon.exe`).
   - **Foreign Supplemental Fonts Trimmed**: Safely purges non-Latin/non-Japanese font collections (Chinese Hans/Hant, Korean Kore, Devanagari, Thai, Ethiopic, Syriac, Cherokee, etc.), saving ~200 MB.
   - **Obsolete FOD Packages Removed**: Purges deprecated and unused optional features including `WMIC` (deprecated in 24H2), `Printing-WFS` (Fax & Scan), `WirelessDisplay` (Miracast Connect), `SNMP`, `Telnet`, `SimpleTCP`, and `RDC`.
@@ -75,7 +76,7 @@ The goal of WinEase is to automate the creation of a streamlined Windows 11 imag
     - **Reboot Loop Trap Removed (`ErrorHandler.cmd`)**: Completely eliminated `ErrorHandler.cmd` and `ChildCompletion` registry overrides from the unattended answer file, preventing reboot loops and allowing Windows Setup to proceed naturally without interference.
     - **Core Accessibility Binaries Retained**: Preserves essential accessibility binaries (`osk.exe`, `Narrator.exe`, `magnify.exe`) in `System32` to prevent handle exceptions during OOBE Ease of Access subsystem initialization.
     - **Safe FontCache Lifecycle**: Defers `FontCache` and `FontCache3.0.0.0` disabling to `FirstLogon.ps1` (after desktop logon) so localized DirectWrite font rendering succeeds 100% during setup.
-    - **Strict Empty Passwords & Permanent AutoAdminLogon**: Normalized all `<Password><Value></Value>` tags to strictly empty single-line elements across all architectures, eliminating whitespace and newline parsing issues where Windows Setup hashed carriage returns as actual password characters. Configures persistent registry `AutoAdminLogon = 1` with `ForceAutoLogon = 1`, and eliminates password prompts on wake/idle.
+    - **Strict Empty Passwords & Permanent AutoAdminLogon**: Normalized all `<Password><Value></Value>` tags to strictly empty single-line elements across all architectures, eliminating whitespace and newline parsing issues where Windows Setup hashed carriage returns as actual password characters. The default account password is empty (there is no fixed default password; pass `-UserPassword` to set one). The auto-logon (`AutoAdminLogon = 1`, `ForceAutoLogon = 1`) is armed only when `ConfigureWinlogon` is on, and the first logon tears it down again, removes `DefaultPassword` and deletes the Setup copies of the answer file (see [`SECURITY.md`](SECURITY.md)). The behaviour of Windows Setup with an empty password and AutoLogon is not verified on a real ISO/VM.
   - **🖱️ Mouse Cursor & Pointer Display Guarantee**: Preserves essential Windows cursor bitmaps in `C:\Windows\Cursors` (~5 MB), ensuring the mouse pointer (`aero_arrow.cur`) is always rendered and fully functional throughout setup and on the installed desktop.
   - **Account Collision Resolved**: Centralized local account creation cleanly into `oobeSystem` `<LocalAccount wcm:action="add">`, eliminating `ERROR_USER_EXISTS` (0x80070524) collisions with `Specialize.ps1`.
   - **Setup Pre-Finalize SafeOS Crash Fixed**: Solved the `0x80070002` / `0x8007000B` error where Windows Setup crashes at ~100% when attempting to stage missing or corrupt `winre.wim`. `winre.wim` is preserved at build time and removed cleanly via online `reagentc /disable` during `FirstLogon.ps1`.
@@ -104,12 +105,12 @@ The goal of WinEase is to automate the creation of a streamlined Windows 11 imag
     - *System & Services*: `ServicesPipeTimeout` optimization, network file sharing responsiveness.
     - *Visual Effects*: Disable Mica/Acrylic transparency while keeping font smoothing enabled.
 - **🚀 AtlasOS & ReviOS Radical Debloat & Latency Engine**:
-  - **Low-Latency System Timer & BCD Tuning**: Configures high-resolution synthetic timers (`useplatformclock false`, `disabledynamictick yes`, `tscsyncpolicy Enhanced`, `bootux disabled`, `quietboot on`), completely eliminating dynamic tick jitter and micro-stuttering in latency-sensitive applications and games.
-  - **Gaming Responsiveness & Quantum Scheduling**: Injects `Win32PrioritySeparation = 0x26` (38 decimal: short, variable quanta favoring foreground tasks), tunes MMCSS `SystemResponsiveness = 0` (0% multimedia throttling), sets gaming thread priority to 6, and sets GPU scheduling priority to 8.
-  - **Ultra-Low Latency Network Stack**: Disables Nagle's algorithm (`TcpAckFrequency = 1`, `TCPNoDelay = 1`) across all active and virtual network adapters for immediate packet dispatch, lowers `TcpTimedWaitDelay = 30`, sets `MaxUserPort = 65534`, and eliminates Windows QoS 20% bandwidth reservation (`NonBestEffortLimit = 0`).
-  - **Complete Hibernation Purge**: Executes `powercfg.exe /hibernate off` on first logon to eradicate `hiberfil.sys`, instantly recovering **4 GB – 16+ GB of SSD storage** and eliminating fast-startup shutdown disk thrashing.
-  - **Ultimate Performance Power Scheme**: Automatically provisions and activates the hidden Windows Ultimate Performance power scheme (`e9a42b02-d5df-448d-aa00-03f14749eb61`), preventing aggressive core sleeping and frequency drops.
-  - **NTFS File System Overhead Reduction**: Disables legacy 8.3 short filename generation (`NtfsDisable8dot3NameCreation = 1`) and disables NTFS last-access timestamp tracking (`NtfsDisableLastAccessUpdate = 1`), drastically cutting file I/O operations and disk overhead.
+  - **Low-Latency System Timer & BCD Tuning**: Configures high-resolution synthetic timers (`useplatformclock false`, `disabledynamictick yes`, `tscsyncpolicy Enhanced`, `bootux disabled`, `quietboot on`), intended to reduce timer jitter and micro-stutter in latency-sensitive applications and games. Effect depends on hardware, Windows build and drivers; not measured by this project.
+  - **Gaming Responsiveness & Quantum Scheduling**: Injects `Win32PrioritySeparation = 0x26` (38 decimal: short, variable quanta favoring foreground tasks), tunes MMCSS `SystemResponsiveness = 0` (0% multimedia throttling), sets gaming thread priority to 6, and sets GPU scheduling priority to 8. These values favor foreground and multimedia work and are intended to improve responsiveness; the effect is not measured by this project and depends on the workload.
+  - **Low-Latency Network Tuning**: Disables Nagle's algorithm (`TcpAckFrequency = 1`, `TCPNoDelay = 1`) across all active and virtual network adapters intended to send small packets without delay, lowers `TcpTimedWaitDelay = 30`, sets `MaxUserPort = 65534`, and sets the QoS non-best-effort reservation limit to 0 (`NonBestEffortLimit = 0`). Network effects vary by network and application and are not measured by this project; Nagle tuning can reduce throughput for some workloads.
+  - **Hibernation Disabled**: Executes `powercfg.exe /hibernate off` on first logon to remove `hiberfil.sys`; the freed space is roughly the size of that file, which depends on installed RAM and hibernation mode. Hibernate and Fast Startup are no longer available.
+  - **Ultimate Performance Power Scheme**: Automatically provisions and activates the hidden Windows Ultimate Performance power scheme (`e9a42b02-d5df-448d-aa00-03f14749eb61`), intended to reduce core sleeping and frequency scaling. This raises power use and heat (a trade-off on laptops and handhelds); the effect on performance is not measured by this project.
+  - **NTFS File System Overhead Reduction**: Disables legacy 8.3 short filename generation (`NtfsDisable8dot3NameCreation = 1`) and disables NTFS last-access timestamp tracking (`NtfsDisableLastAccessUpdate = 1`), intended to reduce some file system metadata work. The effect depends on the workload and storage and is not measured by this project; software that relies on 8.3 names or last-access times may be affected.
   - **Kernel Paging & Crash Dump Overhead Elimination**: Locks the core NT kernel executive in physical RAM (`DisablePagingExecutive = 1`), disables zeroing pagefile at shutdown for faster reboots, disables memory crash dump generation (`CrashDumpEnabled = 0`), and suppresses crash logging events.
   - **Deep Service & Diagnostics Stripping**: Disables 13+ unnecessary telemetry, parental, and legacy background services offline (`WpcMonSvc`, `WMPNetworkSvc`, `PhoneSvc`, `WbioSrvc`, `SharedAccess`, `RemoteRegistry`, `RetailDemo`, `shpamsvc`, etc.) and purges diagnostic scheduled tasks offline.
   - **🛠️ Post-Install Desktop Maintenance Tools**: Automatically deploys a dedicated management toolkit folder directly to `C:\Users\Public\Desktop\Atlas-ReviOS Tools` containing 6 one-click `.bat` scripts:
@@ -119,19 +120,19 @@ The goal of WinEase is to automate the creation of a streamlined Windows 11 imag
     4. `4. Toggle Bluetooth.bat`: Enable or disable Bluetooth support services (`bthserv`, `BTAGService`).
     5. `5. Toggle Print Spooler.bat`: Enable or disable the print spooler service (`Spooler`).
     6. `6. Free Memory & Clear Temp.bat`: Instant purge of temporary files, crash dumps, and Win32 working sets.
-- **⚡ Radical RAM Optimization (Idle Memory Baseline ~600 MB – 800 MB, Theoretical Architectural Limit)**:
-  - **SvcHost Grouping**: Sets `SvcHostSplitThresholdInKB` to 64 GB, consolidating 70–90 separate `svchost.exe` instances into 12–15 shared processes, instantly freeing 500 MB – 800 MB of RAM.
-  - **Strict Kernel Paging (`DisablePagingExecutive = 0`)**: Fully eliminates kernel driver physical memory locking, allowing Windows to dynamically page inactive kernel code to disk and reclaiming 80 MB – 150 MB of physical RAM.
+- **⚡ Radical RAM Optimization (Idle Memory Use Is Intended To Drop; Not Measured Here)**:
+  - **SvcHost Grouping**: Sets `SvcHostSplitThresholdInKB` to 64 GB, consolidating 70–90 separate `svchost.exe` instances into 12–15 shared processes, intended to reduce RAM use; the saving depends on hardware and installed services and has not been measured by this project.
+  - **Strict Kernel Paging (`DisablePagingExecutive = 0`)**: Removes kernel driver physical memory locking, allowing Windows to dynamically page inactive kernel code to disk which is intended to free some physical RAM (amount not measured by this project).
   - **Dynamic Kernel Memory Management**: Preserves NT Kernel dynamic pool allocation to prevent `STATUS_INSUFFICIENT_RESOURCES` driver allocation deadlocks during setup, while aggressively paging idle structures.
   - **Application Pre-Launch & Prefetch Disabling**: Neutralizes `Disable-MMAgent -ApplicationPreLaunch`, `Disable-MMAgent -ApplicationLaunchPrefetching`, and `Disable-MMAgent -OperationAPI`, preventing Windows from pre-allocating hundreds of megabytes into RAM before apps are even launched.
   - **Kernel Memory Manager & Page Combining**: Enables NT Kernel `PageCombining` (copy-on-write duplicate memory page coalescing) and prioritizes application working sets over file system cache (`LargeSystemCache = 0`, `DisablePageCombining = 0`).
-  - **DWM & Visual Effects Lightweighting (Best Performance)**: Disables window transparency, acrylic blur, window dragging animations, and transition effects (`MinAnimate = 0`, `VisualFXSetting = 2`, `DragFullWindows = 0`, `UserPreferencesMask = 90 12 01 80 10 00 00 00`) while preserving ClearType font smoothing, minimizing `dwm.exe` direct composition buffers.
-  - **Microsoft Edge & WebView2 Zero-RAM Background Block**: Completely blocks Edge and WebView2 runtime background processes and startup boosting (`BackgroundModeEnabled = 0`, `StartupBoostEnabled = 0`, `PreloadEdgeDefaultEngine = 0`), eliminating 150 MB – 300 MB of hidden webview consumption.
+  - **DWM & Visual Effects Lightweighting ("Best Performance" visual-effects setting)**: Disables window transparency, acrylic blur, window dragging animations, and transition effects (`MinAnimate = 0`, `VisualFXSetting = 2`, `DragFullWindows = 0`, `UserPreferencesMask = 90 12 01 80 10 00 00 00`) while preserving ClearType font smoothing, intended to reduce `dwm.exe` resource use. Not measured by this project.
+  - **Microsoft Edge & WebView2 Background Block**: Blocks Edge and WebView2 runtime background processes and startup boosting (`BackgroundModeEnabled = 0`, `StartupBoostEnabled = 0`, `PreloadEdgeDefaultEngine = 0`), intended to reduce background webview memory use (not measured by this project).
   - **Extreme Service Pruning & Demand-Start**: Disables diagnostic/telemetry daemons while safely setting per-user templates and DirectWrite services to Demand-Start (`FontCache`, `WpnService`, `UserDataSvc`, etc. at `Start = 3`), guaranteeing zero idle RAM overhead and 100% logon stability.
   - **Scheduled Task Trimming**: Disables heavy maintenance tasks (`ProcessMemoryDiagnosticEvents`, `RunFullMemoryDiagnostic`, `WinSAT`, `DiskFootprint\Diagnostics`, `ScheduledDefrag`, `Maps`, `Speech`) that wake up and consume RAM in the background.
   - **Guaranteed Stability (Zero Dangerous Hacks)**: Strictly rejects harmful placebo tweaks (Pagefile is kept system-managed; NDU network monitoring driver is preserved; `LargeSystemCache` is not forced to server mode).
   - **Desktop Maintenance Suite**: Deploys an on-demand maintenance suite on the desktop (`Atlas-ReviOS Tools`) including working set memory trimming, telemetry toggles, and junk cleaners without interfering with logon initialization.
-- **📉 Radical Background & Windows Process Reduction (Perplexity-Verified Safe)**:
+- **📉 Radical Background & Windows Process Reduction**:
   - **Japanese IME (`ctfmon.exe`) Fully Preserved**: Unlike unsafe debloat scripts that disable the Text Services Framework and render Japanese typing broken, `ctfmon.exe` and input frameworks are strictly safeguarded.
   - **No Dangerous Executable Deletions**: Strictly avoids removing or killing `RuntimeBroker.exe`, `SearchHost.exe`, or core DCOM/RPC infrastructure, preserving Start Menu, Settings, and WinRT app stability.
   - **OneDrive Background Engine Suppressed**: Disables `OneDrive.exe` background file sync engine and autostart (`DisableFileSyncNGSC = 1`).
@@ -151,7 +152,7 @@ The goal of WinEase is to automate the creation of a streamlined Windows 11 imag
   - Removed dummy product key to eliminate "Invalid Product Key" stops during setup.
   - **Self-Healing**: If `autounattend.xml` is missing locally, it will automatically download it from GitHub.
 - **🗜️ Ultra-Compact Footprint via CompactOS (Issue #22)**:
-  - Automatically enables `compact.exe /CompactOS:always` on first logon, achieving installed disk space of **2.5 GB – 3.0 GB**.
+  - Automatically enables `compact.exe /CompactOS:always` on first logon, intended to reduce installed disk space; the resulting size depends on the source image and options and is not guaranteed.
 - **🎨 Shell & Icon Refresh (Issue #19)**:
   - Automatically invokes `ie4uinit.exe -show` on first logon to rebuild icon caches, preventing blank icons on Start Menu and Settings.
 - **📱 ARM64 & Apple Silicon Support (Issues #2, #8, #20)**:
@@ -178,7 +179,31 @@ The resulting minimal OS is **not serviceable via cumulative updates** when WinS
 > exact steps to restore the protection. The defaults of those options are
 > conservative: **Defender, Windows Update and the blank-password auto-logon are
 > off unless you ask for them** (the `extreme` preset still asks for them
-> explicitly).
+> explicitly). The account password is **empty by default** (no fixed default
+> password) and is never saved in a profile. Before you share or upload a built
+> ISO, go through the checklist in [`SECURITY.md`](SECURITY.md).
+
+---
+
+## **Supported and verified**
+
+"Supported" and "verified" are different things here.
+
+| Area | Supported by design | Verified |
+|---|---|---|
+| Windows 11 x64 (23H2, 24H2, LTSC, Canary ISOs) | The builder is written to handle these sources | CI never builds a real image. It runs `-TestSelf`, Pester and `-DryRun` builds (extreme, balanced, none, vm); a dry run does not mount or modify a Windows ISO. No real-ISO or VM install test has been run by CI. The maintainer notes below record one manual GUI-driven build on 2026-10-19 that produced an ISO; that is a single run, not a test matrix |
+| Windows 11 ARM64 | Architecture detection, UEFI-only boot data, an `arm64` release ZIP | **Untested.** The ARM64 ZIP is cross-built in CI only; nothing has been run on ARM64 hardware or a VM |
+| Performance claims (latency, stutter, frame time, RAM, boot time) | Settings are chosen with a performance intent | **Not measured.** No published results exist yet. See [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md) |
+| Installed system behavior (setup completes, drivers, apps) | Intended behavior is described in this README | Not verified by CI; verify in a virtual machine first |
+
+Read these before building:
+
+- [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md) - what the bundled measurement tools do and do not measure, and how to report results.
+- [`docs/PRESETS.md`](docs/PRESETS.md) - what each preset changes and its trade-offs.
+- [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) - known issues, irreversible changes and recovery methods.
+- [`docs/SECURITY_OPTIONS.md`](docs/SECURITY_OPTIONS.md) - options that disable Windows protections.
+
+The Pester suite checks the repo file paths written in backticks in this README (`tests/Quality.Tests.ps1`), so a renamed or removed file referenced here fails the tests.
 
 ---
 
@@ -382,7 +407,7 @@ When finished, your bootable ISO will be generated in the script directory as `W
 
 ## 🛠️ Installation & Setup Guide (Zero-Click Automated Installation)
 
-WinEase creates an ultra-minimal, high-performance Windows 11 installation by stripping redundant cloud bloatware, telemetry, and Microsoft Account requirements.
+WinEase creates a minimal Windows 11 installation (performance effects are intended, not measured; see `docs/BENCHMARKING.md`) by stripping redundant cloud bloatware, telemetry, and Microsoft Account requirements.
 
 ### ⚡ Zero-Click Fully Automated Installation (Default: Fully Automated, No Shift+F10 Required)
 In this version, setup completion flags (`ChildCompletion\setup.exe = 3`, `SetupType = 0`, `SystemSetupInProgress = 0`, `OOBEInProgress = 0`, etc.) are pre-configured across the `specialize` pass of `autounattend.xml`, offline registry hives, and `SetupComplete.cmd` / `FirstLogon.ps1`.
@@ -488,7 +513,6 @@ This working copy carries the following changes on top of the upstream fork:
 | `workflow-audit.yml` | changes under `.github/` | actionlint + zizmor security audit of the workflows |
 | `release.yml` | `v*` tag (or a manual dry run) | runs all of the above on the tagged commit, verifies the tag did not move, builds the source ZIP and the full packages (`win-x64`, `win-arm64`; `tools/package-release.ps1`), checks them with `verify-release-zip.py` and publishes them with `.sha256` files and build provenance attestations. A manual run builds and checks everything but publishes nothing |
 | `claude-issue-agent.yml` | issue assigned / `@claude` from a collaborator | implements the request on a branch and opens a **draft** PR |
-| `claude-pr-review.yml` | PR from a branch of this repository | **read-only, advisory** AI review comments; never approves or merges |
 
 Verify a downloaded release (for each ZIP you use): `sha256sum -c WinEase-<tag>-win-x64.zip.sha256`
 (or compare `Get-FileHash -Algorithm SHA256` with the file) and
@@ -565,6 +589,9 @@ WinEase/
 │   ├── EXTENSIBILITY_GUIDE.md    # Extensibility guide (English): quick start + reference
 │   ├── EXTENSIBILITY_GUIDE.ja.md # Same guide in Japanese
 │   ├── SECURITY_OPTIONS.md    # Security-relevant options, their cost and how to revert
+│   ├── BENCHMARKING.md        # What the benchmark tools measure, reporting fields, results template
+│   ├── PRESETS.md             # What each preset changes and its trade-offs
+│   ├── KNOWN_ISSUES.md        # Known issues, irreversible changes, recovery methods
 │   └── dev/SESSION_BRIEFS.md  # Work briefs for the S1-S12 fixes and R1-R10 restructuring
 ├── tests/
 │   ├── _TestCommon.ps1       # Shared paths and English UI default (not a test)

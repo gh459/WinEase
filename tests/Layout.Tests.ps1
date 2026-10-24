@@ -148,7 +148,9 @@ Describe "R3 - setup and tool scripts are files, not here-strings" {
     It "the username placeholder stays in the autologon repair helper and is still substituted" {
         $helper = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'scripts\setup\WinEase-oobe-autologon-repair.ps1'))
         $helper.Contains('__WINEASE_USERNAME__') | Should Be $true
-        $script:R3PhaseText.Contains(".Replace('__WINEASE_USERNAME__', `$UserName)") | Should Be $true
+        # substituted by Expand-WinEaseOobeRepairScript (lib\WinEaseSecrets.ps1), called from the phase
+        $script:R3PhaseText.Contains('Expand-WinEaseOobeRepairScript') | Should Be $true
+        [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseSecrets.ps1')).Contains(".Replace('__WINEASE_USERNAME__', `$safeUser)") | Should Be $true
     }
     It "every .ps1 under scripts/setup and scripts/tools parses" {
         foreach ($f in Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot 'scripts') -Recurse -Filter *.ps1 | Where-Object { $_.FullName -match '[\\/]scripts[\\/](setup|tools)[\\/]' }) {

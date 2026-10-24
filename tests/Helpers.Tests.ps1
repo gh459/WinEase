@@ -9,15 +9,25 @@ param()
 . (Join-Path -Path $PSScriptRoot -ChildPath '_TestCommon.ps1')
 
 
-Describe "WinEase builder - path safety guards (mock)" {
+# The helpers must be loaded before the first Describe: these tests call the real functions.
+# Deeper coverage (junctions, mounts, robocopy) is in FileSystemSafety.Tests.ps1.
+if (-not (Get-Command -Name Remove-WinEaseTreeRobust -ErrorAction SilentlyContinue)) {
+    . (Join-Path -Path $script:RepoRoot -ChildPath "WinEasehelpers.ps1")
+}
+
+Describe "WinEase builder - path safety guards" {
     It "rejects drive roots" {
-        $norm = 'C:'
-        ($norm.Length -le 3) | Should Be $true
+        foreach ($p in @('C:\', 'c:\', 'C:/', 'D:\')) {
+            Test-IsSafePathToDelete -Path $p | Should Be $false
+        }
+        { Assert-WinEaseDirectorySafety -Path 'C:\' -Operation 'Reset' } | Should Throw 'root or drive'
     }
     It "rejects host system directories" {
         $hostWin = [System.Environment]::GetFolderPath('Windows')
         $target = Join-Path -Path $hostWin -ChildPath "System32"
-        $target.StartsWith($hostWin + '\', [System.StringComparison]::OrdinalIgnoreCase) | Should Be $true
+        Test-IsSafePathToDelete -Path $hostWin | Should Be $false
+        Test-IsSafePathToDelete -Path $target | Should Be $false
+        { Assert-WinEaseDirectorySafety -Path $target -Operation 'Reset' } | Should Throw 'protected host'
     }
 }
 

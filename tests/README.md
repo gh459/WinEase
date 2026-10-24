@@ -12,11 +12,14 @@ The suite targets **Pester 3.4** on **Windows PowerShell 5.1**, the same version
 | `Build.Tests.ps1` | Builder AST, unattend, IME filter, DryRun, diagnostics, registry additions, tweak helper. |
 | `Config.Tests.ps1` | Schema, presets, dependency catalog, user extensions, UI preference table. |
 | `Helpers.Tests.ps1` | Path safety, ACLs, DISM, registry hives, telemetry, logging, shared helpers. |
+| `FileSystemSafety.Tests.ps1` | Filesystem and mount safety: reparse points, path-delete guard, DISM mount guards, robocopy reset (DISM and robocopy mocked; temp dirs only). |
 | `Debloat.Tests.ps1` | Defender, AppX, security options, physical/advanced debloat. |
 | `Migration.Tests.ps1` | Migration engine, Migrator, restore validation, removal/migration wiring. |
 | `Gui.Tests.ps1` | WinForms/WinUI wiring, GUI smoke test, display language, UI options. |
+| `GuiParity.Tests.ps1` | WinUI 3 / WinForms / command line parity: schema toggles and en/ja labels, equal results and builder state, save/load, language switch, Dry Run, physical-debloat consent, input validation, XAML handler wiring. Manual-only checks: `docs/GUI_MANUAL_CHECKLIST.md`. |
 | `Quality.Tests.ps1` | PSScriptAnalyzer and documentation path checks. |
 | `Registry.Tests.ps1` | Phase 10 registry snapshots per preset (`fixtures/registry`), `Invoke-WinEaseReg`, the `config/registry` tables. `_RegistryHarness.ps1` is its shared setup. |
+| `Autologon.Tests.ps1` | Empty default password, ConfigureWinlogon on/off (unattend XML, helper scripts, phase 10 plan) and the first-logon cleanup script. |
 | `Plugins.Tests.ps1` | Plugin host (`lib/WinEasePlugins.ps1`): SHA256 allow list, hooks, OnError, DryRun, contributions. Compiles test DLLs on the fly against `src/WinEase.Plugins.Abstractions`. |
 | `WinEase.Regression.Tests.ps1` | Child-process builder regressions; self-contained. |
 
