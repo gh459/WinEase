@@ -37,6 +37,17 @@ public sealed partial class MainWindow : Window
     private string _source = "", _workDir = "", _index = "", _drivers = "", _userName = "User", _computerName = "*";
     private int _presetIndex;
     private string? _basePresetKey;
+    // Preset state. The rules (what counts as "modified") live in Get-WinEaseGuiPresetState (lib\WinEaseGuiCore.ps1);
+    // the window only asks for them through the "presetState" request and shows the answer.
+    private bool _presetModified;        // last answer; true when unknown (conservative: the result then reports Custom)
+    private int _presetDiffCount;        // number of differing settings in the last answer, -1 unknown
+    private bool _forcedCustom;          // the user picked the "Custom" entry
+    private bool _applyingPreset;        // guard: programmatic changes while a preset is applied must not recompute / recurse
+    private int _presetStateSeq;         // only the newest answer counts
+    private ComboBox? _presetCombo;
+    private TextBlock? _presetStatusText;
+    private Button? _revertButton;
+    private DispatcherTimer? _presetStateTimer;
     private string _payload = "WIM";
     private bool _useVhdx;
     private readonly Dictionary<string, bool> _tweaks = new(StringComparer.OrdinalIgnoreCase);
@@ -77,6 +88,7 @@ public sealed partial class MainWindow : Window
         AppWindow.Closing += AppWindow_Closing;
 
         ApplyLanguage();
+        _ = RefreshPresetStateAsync();
     }
 
     // =======================================================================================================
@@ -451,14 +463,41 @@ public sealed partial class MainWindow : Window
         var preset = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
         AutomationProperties.SetName(preset, _s.Get("Media.Group.Preset").Trim());
         foreach (string k in PresetLabelKeys) preset.Items.Add(_s.Get(k));
+        _applyingPreset = true;
         preset.SelectedIndex = _presetIndex;
+        _applyingPreset = false;
         preset.SelectionChanged += (_, _) =>
         {
-            if (preset.SelectedIndex < 0 || preset.SelectedIndex == _presetIndex) return;
+            if (_applyingPreset || preset.SelectedIndex < 0 || preset.SelectedIndex == _presetIndex) return;
             _presetIndex = preset.SelectedIndex;
-            if (_presetIndex < _init.Presets.Count) ApplyPreset(_init.Presets[_presetIndex]);
+            if (_presetIndex < _init.Presets.Count)
+            {
+                _forcedCustom = false;
+                ApplyPreset(_init.Presets[_presetIndex]);
+            }
+            else
+            {
+                // "Custom": nothing is applied, the current values stay as they are
+                _forcedCustom = true;
+                UpdatePresetStatus();
+            }
         };
-        PageHost.Children.Add(Card(preset));
+        _presetCombo = preset;
+
+        // State line ("<Base> + modified" / "Custom") and the separate "Revert to preset" action
+        _presetStatusText = new TextBlock { TextWrapping = TextWrapping.Wrap, Opacity = 0.8 };
+        AutomationProperties.SetLiveSetting(_presetStatusText, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+        _revertButton = Btn(_s.Get("Button.RevertPreset"), (_, _) => RevertToPreset());
+        ToolTipService.SetToolTip(_revertButton, _s.Get("Button.RevertPreset.Tooltip"));
+        AutomationProperties.SetHelpText(_revertButton, _s.Get("Button.RevertPreset.Tooltip"));
+        var presetBox = new StackPanel { Spacing = 8 };
+        presetBox.Children.Add(preset);
+        var stateRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        stateRow.Children.Add(_revertButton);
+        stateRow.Children.Add(new Border { VerticalAlignment = VerticalAlignment.Center, Child = _presetStatusText });
+        presetBox.Children.Add(stateRow);
+        PageHost.Children.Add(Card(presetBox));
+        UpdatePresetStatus();
 
         // Payload format
         PageHost.Children.Add(Section(_s.Get("Media.Group.Payload")));
@@ -468,7 +507,7 @@ public sealed partial class MainWindow : Window
         {
             var rb = new RadioButton { Content = _s.Get(key), GroupName = "payload", Tag = fmt, IsChecked = _payload == fmt };
             AutomationProperties.SetName(rb, _s.Get(key));
-            rb.Checked += (s, _) => { _payload = (string)((RadioButton)s).Tag; UpdateEstimate(); };
+            rb.Checked += (s, _) => { _payload = (string)((RadioButton)s).Tag; UpdateEstimate(); OnSettingChanged(); };
             radios.Children.Add(rb);
             _payloadRadios.Add(rb);
         }
@@ -482,14 +521,151 @@ public sealed partial class MainWindow : Window
     }
 
     // Built-in preset -> every switch (Set-WinEaseGuiPreset)
-    private void ApplyPreset(PresetDef p)
+    // Switching presets sets components, tweaks and the payload format. It does NOT touch the Advanced Debloat
+    // selection or its engines: built-in presets define none, so those choices survive a switch exactly as they
+    // were (docs\GUI_PRESET_STATE.md). Components a preset does not name keep their value. "Revert to preset"
+    // is the action that also puts the Advanced Debloat selection back to what the preset defines.
+    private void ApplyPreset(PresetDef p, bool includeDebloat = false)
     {
-        foreach (var kv in p.Components) if (_components.ContainsKey(kv.Key)) _components[kv.Key] = kv.Value;
-        foreach (var t in _init.Tweaks) _tweaks[t.Key] = p.Tweaks.TryGetValue(t.Key, out bool v) ? v : t.Default;
-        _payload = p.PayloadFormat is "ESD" or "SWM" ? p.PayloadFormat : "WIM";
-        foreach (var rb in _payloadRadios) rb.IsChecked = (string)rb.Tag == _payload;
-        _basePresetKey = p.Key;
+        _applyingPreset = true;
+        try
+        {
+            foreach (var kv in p.Components) if (_components.ContainsKey(kv.Key)) _components[kv.Key] = kv.Value;
+            foreach (var t in _init.Tweaks) _tweaks[t.Key] = p.Tweaks.TryGetValue(t.Key, out bool v) ? v : t.Default;
+            _payload = p.PayloadFormat is "ESD" or "SWM" ? p.PayloadFormat : "WIM";
+            foreach (var rb in _payloadRadios) rb.IsChecked = (string)rb.Tag == _payload;
+            if (includeDebloat)
+            {
+                _debloatStd.Clear();
+                foreach (string s in p.DebloatStandard) _debloatStd.Add(s);
+                _debloatExp.Clear();
+                foreach (string s in p.DebloatExperimental) _debloatExp.Add(s);
+                _debloatEngines.Clear();
+                foreach (var kv in p.DebloatEngines) _debloatEngines[kv.Key] = kv.Value;
+            }
+            _basePresetKey = p.Key;
+        }
+        finally
+        {
+            _applyingPreset = false;
+        }
         UpdateEstimate();
+        _ = RefreshPresetStateAsync();
+    }
+
+    // "Revert to preset": every preset-controlled value, including the Advanced Debloat selection, back to the base preset
+    private void RevertToPreset()
+    {
+        int idx = _basePresetKey == null ? -1 : _init.Presets.FindIndex(p => p.Key == _basePresetKey);
+        if (idx < 0) return;
+        _forcedCustom = false;
+        _presetIndex = idx;
+        if (_presetCombo != null)
+        {
+            _applyingPreset = true;
+            _presetCombo.SelectedIndex = idx;
+            _applyingPreset = false;
+        }
+        ApplyPreset(_init.Presets[idx], includeDebloat: true);
+    }
+
+    // Any control change: ask the shared rules again (debounced, so "Select all" is one request)
+    private void OnSettingChanged()
+    {
+        if (_applyingPreset) return;
+        _presetStateTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+        _presetStateTimer.Tick -= PresetStateTimer_Tick;
+        _presetStateTimer.Tick += PresetStateTimer_Tick;
+        _presetStateTimer.Stop();
+        _presetStateTimer.Start();
+    }
+
+    private void PresetStateTimer_Tick(object? sender, object e)
+    {
+        _presetStateTimer?.Stop();
+        _ = RefreshPresetStateAsync();
+    }
+
+    // What Get-WinEaseGuiPresetState compares: the preset-controlled parts of the window
+    private JsonObject PresetStateConfig()
+    {
+        var components = new JsonObject();
+        foreach (var kv in _components) components[kv.Key] = kv.Value;
+        var tweaks = new JsonObject();
+        foreach (var t in _init.Tweaks) tweaks[t.Key] = _tweaks.GetValueOrDefault(t.Key, t.Default);
+        return new JsonObject
+        {
+            ["Components"] = components,
+            ["TweakSettings"] = tweaks,
+            ["PayloadFormat"] = _payload,
+            ["AdvancedDebloatStandard"] = ToArray(_init.DebloatStandard.Where(_debloatStd.Contains)),
+            ["AdvancedDebloatExperimental"] = ToArray(_init.DebloatExperimental.Where(_debloatExp.Contains).Distinct()),
+            ["DebloatEngineSelection"] = DebloatEngineSelectionObject(),
+        };
+    }
+
+    private async Task RefreshPresetStateAsync()
+    {
+        int seq = ++_presetStateSeq;
+        if (_basePresetKey == null)
+        {
+            _presetModified = true;
+            _presetDiffCount = 0;
+            UpdatePresetStatus();
+            return;
+        }
+        bool modified = true;
+        int count = -1;
+        try
+        {
+            var reply = await _bridge.RequestAsync("presetState", _s.Language, new JsonObject
+            {
+                ["BasePresetKey"] = _basePresetKey,
+                ["Config"] = PresetStateConfig(),
+            });
+            if (InitData.Bool(reply["ok"]) && reply["Data"] is JsonObject data)
+            {
+                modified = InitData.Bool(data["IsModified"]);
+                count = InitData.Arr(data["DifferingKeys"]).Count();
+            }
+        }
+        catch (Exception)
+        {
+            // Unknown state: report Custom rather than a preset the values may no longer match
+        }
+        if (seq != _presetStateSeq) return;
+        _presetModified = modified;
+        _presetDiffCount = count;
+        UpdatePresetStatus();
+    }
+
+    // The label of a preset without its parenthesised description
+    private string PresetShortLabel(int index)
+    {
+        string label = _s.Get(PresetLabelKeys[index]);
+        int p = label.IndexOf(" (", StringComparison.Ordinal);
+        return p > 0 ? label.Substring(0, p) : label;
+    }
+
+    private bool IsCustomResult => _basePresetKey == null || _forcedCustom || _presetModified;
+
+    private void UpdatePresetStatus()
+    {
+        if (_presetStatusText == null) return;
+        int baseIdx = _basePresetKey == null ? -1 : _init.Presets.FindIndex(p => p.Key == _basePresetKey);
+        if (baseIdx < 0 || _forcedCustom)
+        {
+            _presetStatusText.Text = _s.Get("Media.Preset.State.Custom");
+        }
+        else if (_presetModified)
+        {
+            _presetStatusText.Text = _s.Format("Media.Preset.State.Modified", PresetShortLabel(baseIdx), _presetDiffCount >= 0 ? _presetDiffCount.ToString() : "?");
+        }
+        else
+        {
+            _presetStatusText.Text = _s.Format("Media.Preset.State.Preset", PresetShortLabel(baseIdx));
+        }
+        if (_revertButton != null) _revertButton.IsEnabled = baseIdx >= 0;
     }
 
     // =======================================================================================================
@@ -531,7 +707,7 @@ public sealed partial class MainWindow : Window
         foreach (var t in list)
         {
             string key = t.Key;
-            var toggle = Toggle(_tweaks.GetValueOrDefault(key, t.Default), v => _tweaks[key] = v);
+            var toggle = Toggle(_tweaks.GetValueOrDefault(key, t.Default), v => { _tweaks[key] = v; OnSettingChanged(); });
             toggles.Add((key, toggle));
             string header = showCategory ? $"{key}  [{t.Category}]" : key;
             var card = SettingCard(header, TweakDescription(t), toggle);
@@ -555,7 +731,7 @@ public sealed partial class MainWindow : Window
         foreach (var c in defs)
         {
             string key = c.Key;
-            var toggle = Toggle(_components.GetValueOrDefault(key, c.Default), v => { _components[key] = v; UpdateEstimate(); });
+            var toggle = Toggle(_components.GetValueOrDefault(key, c.Default), v => { _components[key] = v; UpdateEstimate(); OnSettingChanged(); });
             toggles.Add(toggle);
             var card = SettingCard(ComponentText(c), $"{key} - {ComponentDescription(c)}", toggle);
             ToolTipService.SetToolTip(card, ComponentDescription(c));
@@ -637,8 +813,8 @@ public sealed partial class MainWindow : Window
             var cb = new CheckBox { Content = translatedItem, IsChecked = selected.Contains(item), MinWidth = 380 };
             AutomationProperties.SetName(cb, translatedItem);
             AutomationProperties.SetHelpText(cb, item);
-            cb.Checked += (_, _) => { selected.Add(value); UpdateDebloatEngineState(value); };
-            cb.Unchecked += (_, _) => { selected.Remove(value); UpdateDebloatEngineState(value); };
+            cb.Checked += (_, _) => { selected.Add(value); UpdateDebloatEngineState(value); OnSettingChanged(); };
+            cb.Unchecked += (_, _) => { selected.Remove(value); UpdateDebloatEngineState(value); OnSettingChanged(); };
             boxes.Add(cb);
             row.Children.Add(cb);
 
@@ -674,7 +850,9 @@ public sealed partial class MainWindow : Window
     private void SetDebloatEngine(string item, string engine, ComboBox combo)
     {
         if (!DebloatEnginesFor(item).Contains(engine)) return;
+        bool changed = !_debloatEngines.TryGetValue(item, out string? before) || before != engine;
         _debloatEngines[item] = engine;
+        if (changed) OnSettingChanged();
         if (combo.SelectedItem is string current && current != engine) combo.SelectedItem = engine;
     }
 
@@ -704,13 +882,13 @@ public sealed partial class MainWindow : Window
         if (assist != null)
         {
             PageHost.Children.Add(Section(_s.Get("Mig.Group.Assistant")));
-            var toggle = Toggle(_components.GetValueOrDefault(assist.Key, assist.Default), v => _components[assist.Key] = v);
+            var toggle = Toggle(_components.GetValueOrDefault(assist.Key, assist.Default), v => { _components[assist.Key] = v; OnSettingChanged(); });
             PageHost.Children.Add(SettingCard(ComponentText(assist), ComponentDescription(assist), toggle, "\uE8F1"));
 
             var backupDef = _init.Components.FirstOrDefault(c => c.Key == "IncludeMigrationBackup");
             if (backupDef != null)
             {
-                backupToggle = Toggle(_components.GetValueOrDefault(backupDef.Key, backupDef.Default), v => _components[backupDef.Key] = v);
+                backupToggle = Toggle(_components.GetValueOrDefault(backupDef.Key, backupDef.Default), v => { _components[backupDef.Key] = v; OnSettingChanged(); });
                 backupToggle.IsEnabled = toggle.IsOn;
                 PageHost.Children.Add(SettingCard(ComponentText(backupDef), ComponentDescription(backupDef), backupToggle, "\uE8F1"));
                 toggle.Toggled += (_, _) => { if (backupToggle != null) backupToggle.IsEnabled = toggle.IsOn; };
@@ -1167,7 +1345,8 @@ public sealed partial class MainWindow : Window
             ["InjectDrivers"] = _drivers.Trim(),
             ["UserName"] = _userName.Trim(),
             ["ComputerName"] = _computerName.Trim().Length == 0 ? "*" : _computerName.Trim(),
-            ["PresetKey"] = _presetIndex < _init.Presets.Count ? _init.Presets[_presetIndex].Key : null,
+            // Hand-edited (or Custom) -> "Custom"; BasePresetKey keeps the preset the values started from
+            ["PresetKey"] = !IsCustomResult && _presetIndex < _init.Presets.Count ? _init.Presets[_presetIndex].Key : "Custom",
             ["BasePresetKey"] = _basePresetKey,
             ["DryRun"] = DryRunCheck.IsChecked == true,
             ["UseVHDX"] = _useVhdx,
@@ -1243,6 +1422,9 @@ public sealed partial class MainWindow : Window
             }
         }
 
+        // The consent gate may have cleared the Advanced Debloat selection: the state must match what is sent
+        _presetStateTimer?.Stop();
+        await RefreshPresetStateAsync();
         await SendResultAndCloseAsync(ResultObject(consent));
     }
 
