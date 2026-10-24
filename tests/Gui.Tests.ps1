@@ -2100,3 +2100,31 @@ Describe "GUI core (lib\WinEaseGuiCore.ps1)" {
         [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot '.github\scripts\verify-release-zip.py')) | Should Match 'lib/WinEaseGuiCore\.ps1'
     }
 }
+
+Describe "Send-WinEaseGuiProgress in gui\WinEaseWinUiHost.ps1" {
+    BeforeAll {
+        . (Join-Path -Path $script:RepoRoot -ChildPath 'gui\WinEaseWinUiHost.ps1')
+    }
+    AfterEach { $script:WinEaseGuiProgressChannel = $null }
+
+    It "is a no-op without an open window" {
+        $script:WinEaseGuiProgressChannel = $null
+        { Send-WinEaseGuiProgress -Event phase -Data @{ Phase = 1; Total = 18; Name = 'x' } } | Should Not Throw
+    }
+    It "writes one JSON line per notice" {
+        $sw = New-Object System.IO.StringWriter
+        $script:WinEaseGuiProgressChannel = @{ Writer = $sw }
+        Send-WinEaseGuiProgress -Event phase -Data @{ Phase = 2; Total = 18; Name = 'Mount' }
+        $o = $sw.ToString().Trim() | ConvertFrom-Json
+        $o.op | Should Be 'progress'
+        $o.event | Should Be 'phase'
+        $o.Phase | Should Be 2
+    }
+    It "drops the channel when the window is gone" {
+        $sw = New-Object System.IO.StringWriter
+        $sw.Dispose()
+        $script:WinEaseGuiProgressChannel = @{ Writer = [pscustomobject]@{} | Add-Member -MemberType ScriptMethod -Name WriteLine -Value { throw 'closed' } -PassThru }
+        { Send-WinEaseGuiProgress -Event log -Data @{ Text = 'a' } } | Should Not Throw
+        $script:WinEaseGuiProgressChannel | Should BeNullOrEmpty
+    }
+}

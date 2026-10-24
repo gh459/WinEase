@@ -813,6 +813,17 @@ function Enter-Phase {
     $script:PhaseStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $phaseTitle = "WinEase [$PhaseNumber/$($script:TotalPhases)] $PhaseName"
     try { $host.UI.RawUI.WindowTitle = $phaseTitle } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    if (Get-Command -Name Send-WinEaseGuiProgress -ErrorAction SilentlyContinue) {
+        $progress = @{ Phase = $PhaseNumber; Total = $script:TotalPhases; Name = $PhaseName }
+        if (-not $script:ProgressEstimateSent) {
+            try {
+                $est = Get-WinEaseLastRunTotalSeconds -TimingsPath (Join-Path -Path $logDir -ChildPath 'last_phase_timings.json')
+                if ($est -gt 0) { $progress.EstimatedSeconds = $est }
+            } catch { Write-Verbose "No previous phase timings: $($_.Exception.Message)" }
+            $script:ProgressEstimateSent = $true
+        }
+        Send-WinEaseGuiProgress -Event phase -Data $progress
+    }
     Write-Host ""
     Write-Host "=========================================================" -ForegroundColor Cyan
     Write-Host " [$PhaseNumber/$($script:TotalPhases)] $PhaseName" -ForegroundColor Cyan
@@ -2578,6 +2589,9 @@ try {
         } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
 
+    if (Get-Command -Name Close-WinEaseGuiProgress -ErrorAction SilentlyContinue) {
+        Close-WinEaseGuiProgress -Success ([bool]$script:BuildSucceeded) -Message $(if ($script:BuildSucceeded) { 'WinEase.iso is ready.' } else { "$script:DiagDir" })
+    }
     if ($script:BuildSucceeded) {
         Write-Host "Done! WinEase.iso is ready." -ForegroundColor Green
     } else {

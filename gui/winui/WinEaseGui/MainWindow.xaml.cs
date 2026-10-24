@@ -1261,7 +1261,91 @@ public sealed partial class MainWindow : Window
         if (_resultSent) return;
         _resultSent = true;
         await _bridge.SendResultAsync(_s.Language, result);
+        // A real build keeps the window open and shows its progress; cancel and dry run close as before
+        if (_bridge.IsConnected && InitData.Bool(result["Success"]) && !InitData.Bool(result["DryRun"]))
+        {
+            await ShowProgressViewAsync();
+            return;
+        }
         Close();
+    }
+
+    // =======================================================================================================
+    // Build progress (progress lines from the builder after the result was sent)
+    // =======================================================================================================
+    private async Task ShowProgressViewAsync()
+    {
+        var title = new TextBlock { Text = _s.Get("Progress.Title"), Style = (Style)Application.Current.Resources["TitleTextBlockStyle"] };
+        var phaseText = new TextBlock { Text = _s.Get("Progress.Starting"), Style = (Style)Application.Current.Resources["BodyStrongTextBlockStyle"], TextWrapping = TextWrapping.Wrap };
+        var bar = new ProgressBar { Minimum = 0, Maximum = 100, Value = 0, IsIndeterminate = true };
+        var timeText = new TextBlock { Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"] };
+        var hint = new TextBlock { Text = _s.Get("Progress.Hint"), TextWrapping = TextWrapping.Wrap, Opacity = 0.7 };
+        var closeButton = new Button { Content = _s.Get("Progress.Close"), IsEnabled = false, HorizontalAlignment = HorizontalAlignment.Right };
+        closeButton.Click += (_, _) => Close();
+
+        var panel = new StackPanel { Spacing = 12, Padding = new Thickness(32, 64, 32, 32), MaxWidth = 900, VerticalAlignment = VerticalAlignment.Center };
+        panel.Children.Add(title);
+        panel.Children.Add(phaseText);
+        panel.Children.Add(bar);
+        panel.Children.Add(timeText);
+        panel.Children.Add(hint);
+        panel.Children.Add(closeButton);
+        Content = new Grid { Children = { panel } };
+
+        var started = DateTime.UtcNow;
+        double estimate = 0;
+        int phase = 0, total = 0;
+        bool finished = false;
+        void UpdateTime()
+        {
+            var elapsed = DateTime.UtcNow - started;
+            string text = _s.Format("Progress.Elapsed", $"{(int)elapsed.TotalMinutes}:{elapsed.Seconds:D2}");
+            if (estimate > 0 && !finished)
+            {
+                double remain = Math.Max(0, estimate - elapsed.TotalSeconds);
+                text += "  " + _s.Format("Progress.Remaining", Math.Max(1, (int)Math.Ceiling(remain / 60)));
+            }
+            timeText.Text = text;
+        }
+        var timer = new Microsoft.UI.Xaml.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        timer.Tick += (_, _) => UpdateTime();
+        timer.Start();
+        UpdateTime();
+
+        await _bridge.ListenProgressAsync(m =>
+        {
+            switch ((string?)m["event"])
+            {
+                case "phase":
+                    phase = (int?)m["Phase"] ?? phase;
+                    total = (int?)m["Total"] ?? total;
+                    if (m["EstimatedSeconds"] != null) estimate = (double)m["EstimatedSeconds"]!;
+                    if (total > 0)
+                    {
+                        bar.IsIndeterminate = false;
+                        bar.Value = Math.Max(0, phase - 1) * 100.0 / total;
+                    }
+                    phaseText.Text = $"[{phase}/{total}] {InitData.Str(m["Name"])}";
+                    break;
+                case "done":
+                    finished = true;
+                    bar.IsIndeterminate = false;
+                    bool ok = InitData.Bool(m["Success"]);
+                    bar.Value = ok ? 100 : bar.Value;
+                    phaseText.Text = ok ? _s.Get("Progress.Done") : _s.Format("Progress.Failed", InitData.Str(m["Message"]));
+                    break;
+            }
+            UpdateTime();
+        });
+
+        // The builder closed the pipe: finished (or ended abnormally)
+        timer.Stop();
+        if (!finished)
+        {
+            bar.IsIndeterminate = false;
+            phaseText.Text = _s.Get("Progress.Ended");
+        }
+        closeButton.IsEnabled = true;
     }
 
     private async void DependenciesButton_Click(object sender, RoutedEventArgs e)

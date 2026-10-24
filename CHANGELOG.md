@@ -6,6 +6,7 @@ WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 ## Unreleased (local fork, 2026-10-23) - the migration tool runs from the ISO and custom scripts have a GUI
 
 ### Added
+- **Build progress in the WinUI window.** After "Start build" the window stays open and shows the phase ([n/18] name), a progress bar, the elapsed time and an estimate of the remaining time (from the previous run's phase timings), then the result. The builder sends `progress` lines (`Send-WinEaseGuiProgress`) over the existing stdio pipe; closing the window never stops the build. Dry runs and cancel close the window as before. The WinForms window is unchanged.
 - **`WinEase.exe` launcher** (`src/WinEase.Launcher`, net48, no extra runtime on Windows 11) replaces `WinEase-GUI.bat` as the README entry point: finds the builder script, builds the WinUI window once when `dotnet` is present, restarts itself with UAC (a cancelled prompt shows a message, exit code 1223), runs `powershell.exe -NoProfile -ExecutionPolicy Bypass -File <builder> -GUI` with any extra arguments, and shows the exit code with a button to open `logs` on failure. The icon comes from `tools\New-WinEaseIcon.ps1`; version info comes from the tag. `WinEase-GUI.bat` stays as the fallback for source checkouts. The exe is unsigned.
 
 ### Changed

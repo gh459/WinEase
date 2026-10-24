@@ -453,5 +453,14 @@
   "Tweak.RemoveLanguageZhTW.Description": "繁体字中国語の言語パックを削除できる状態にする (OFF = 保護して残す)"
 ,
   "Component.RemoveAppxBloatware.Text": "プリインストール済み AppX の不要アプリを除去",
-  "Component.RemoveAppxBloatware.Description": "Zune・Clipchamp・Xbox・スポンサーアプリなどの初期搭載アプリを除去します。Notepad・Paint・Calculator などは「基本アプリを保持」で個別に除外できます。"
+  "Component.RemoveAppxBloatware.Description": "Zune・Clipchamp・Xbox・スポンサーアプリなどの初期搭載アプリを除去します。Notepad・Paint・Calculator などは「基本アプリを保持」で個別に除外できます。",
+  "Progress.Title": "WinEase をビルド中",
+  "Progress.Starting": "ビルドを開始しています...",
+  "Progress.Hint": "ビルドは WinEase ビルダーで実行されます。この画面を閉じてもコンソールでビルドは続行します。",
+  "Progress.Close": "閉じる",
+  "Progress.Elapsed": "経過時間: {0}",
+  "Progress.Remaining": "残り: 約 {0} 分",
+  "Progress.Done": "ビルドが完了しました。WinEase.iso を作成しました。",
+  "Progress.Failed": "ビルドに失敗しました。診断: {0}",
+  "Progress.Ended": "ビルダーが終了しました。"
 }

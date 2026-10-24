@@ -497,6 +497,11 @@ function Show-WinEaseWinUiGUI {
             if ($msg.op -eq 'result') {
                 $result = ConvertFrom-WinEaseWinUiResult -Result $msg.args
                 $writer.WriteLine((@{ id = $msg.id; ok = $true } | ConvertTo-Json -Compress))
+                # A real build keeps the window open to show its progress (Send-WinEaseGuiProgress)
+                if ($result.Success -and -not $result.DryRun) {
+                    $script:WinEaseGuiProgressChannel = @{ Proc = $proc; Writer = $writer }
+                    $keepOpen = $true
+                }
                 break
             }
             $reply = [ordered]@{ id = $msg.id; ok = $true }
@@ -510,9 +515,39 @@ function Show-WinEaseWinUiGUI {
             }
             $writer.WriteLine(($reply | ConvertTo-Json -Depth 12 -Compress))
         }
-        if (-not $proc.WaitForExit(15000)) { Write-Verbose 'WinEaseGui.exe did not exit in time' }
+        if (-not $keepOpen -and -not $proc.WaitForExit(15000)) { Write-Verbose 'WinEaseGui.exe did not exit in time' }
     } finally {
-        try { $writer.Dispose() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        if (-not $keepOpen) {
+            try { $writer.Dispose() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        }
     }
     return $result
+}
+
+# Builder -> window progress notice ({ op = 'progress'; event = phase|log|done; ... }).
+# A no-op without an open window; a closed window drops the channel and never stops the build.
+function Send-WinEaseGuiProgress {
+    param(
+        [Parameter(Mandatory)][ValidateSet('phase', 'log', 'done')][string]$Event,
+        [hashtable]$Data = @{}
+    )
+    $channel = $script:WinEaseGuiProgressChannel
+    if (-not $channel) { return }
+    try {
+        $msg = [ordered]@{ op = 'progress'; event = $Event }
+        foreach ($k in $Data.Keys) { $msg[$k] = $Data[$k] }
+        $channel.Writer.WriteLine(($msg | ConvertTo-Json -Depth 4 -Compress))
+    } catch {
+        Write-Verbose "GUI progress channel closed: $($_.Exception.Message)"
+        $script:WinEaseGuiProgressChannel = $null
+    }
+}
+
+function Close-WinEaseGuiProgress {
+    param([bool]$Success, [string]$Message = '')
+    if (-not $script:WinEaseGuiProgressChannel) { return }
+    Send-WinEaseGuiProgress -Event done -Data @{ Success = $Success; Message = $Message }
+    $channel = $script:WinEaseGuiProgressChannel
+    $script:WinEaseGuiProgressChannel = $null
+    try { $channel.Writer.Dispose() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
