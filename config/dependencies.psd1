@@ -1,4 +1,4 @@
-﻿# WinEase dependency catalog - single source of truth for deletion/optimization impact analysis.
+# WinEase dependency catalog - single source of truth for deletion/optimization impact analysis.
 #
 # Consumed by Test-WinEaseDependencies (lib\WinEaseDependencies.ps1). Each entry describes one
 # deletion/disabling toggle:
@@ -9,6 +9,9 @@
 #                    'Unknown' -> dependency cannot be determined (environment/legacy)
 #   Summary          short human-readable description
 #   AffectedFeatures list of features/apps that stop working
+#   Reversible       (optional) $true / $false when docs\SECURITY_OPTIONS.md documents whether the installed system can undo it;
+#                    absent = not documented (the build plan then says so, it never guesses)
+#   Recovery         (optional) the documented way back, shown next to Reversible
 #   ConflictsWith    list of other setting keys / AdvancedDebloat item strings that
 #                    contradict this one when both are enabled
 # Component-level rules (the design's "ComponentRules") are kept in Components - no separate section.
@@ -16,12 +19,12 @@
     Version = '1.0'
 
     Components = @{
-        'RemoveDefender' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Removes Windows Defender AV, Security Center UI and background scanning'; AffectedFeatures = @('Windows Security UI','Real-time protection','Smart App Control','Definition updates (KB2267602)'); ConflictsWith = @() }
+        'RemoveDefender' = @{ TriggerValue = $true; Status = 'Known'; Reversible = $false; Recovery = 'No supported in-place re-enable; repair install or reinstall of Windows (docs\SECURITY_OPTIONS.md)'; Summary = 'Removes Windows Defender AV, Security Center UI and background scanning'; AffectedFeatures = @('Windows Security UI','Real-time protection','Smart App Control','Definition updates (KB2267602)'); ConflictsWith = @() }
         'KeepAsianIME' = @{ TriggerValue = $false; Status = 'Known'; Summary = 'Removes Asian (Japanese/Korean/Chinese) MS-IME input methods'; AffectedFeatures = @('Japanese/Korean/Chinese MS-IME kanji conversion','Handwriting input','Voice input','TTS speech synthesis'); ConflictsWith = @() }
         'KeepExtraFonts' = @{ TriggerValue = $false; Status = 'Known'; Summary = 'Removes extra international and regional fonts'; AffectedFeatures = @('CJK/Thai/Arabic/Hindi font rendering (Japanese and Latin fonts are kept)'); ConflictsWith = @() }
         'RemoveDrivers' = @{ TriggerValue = $true; Status = 'Unknown'; Summary = 'Removes legacy storage and network drivers; safety depends on the target PC peripherals (printers, smart cards, serial/modem devices) and cannot be assured'; AffectedFeatures = @('Legacy printer/scanner/MFD/fax/modem/smart-card PnP auto-detection'); ConflictsWith = @() }
         'AllowPhysicalDebloat' = @{ TriggerValue = $true; Status = 'Unknown'; Summary = 'Physically deletes WinSxS/System32 files; impact on future updates is unknown'; AffectedFeatures = @('Future cumulative updates (LCU)','SFC / DISM repair'); ConflictsWith = @() }
-        'DisableWindowsUpdate' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Disables automatic Windows Update'; AffectedFeatures = @('Windows Update auto-patching','Microsoft Store app install/update (wuauserv)','FOD/language pack additions'); ConflictsWith = @() }
+        'DisableWindowsUpdate' = @{ TriggerValue = $true; Status = 'Known'; Reversible = $true; Recovery = 'Re-enable the wuauserv service and the update policy on the installed system (docs\SECURITY_OPTIONS.md)'; Summary = 'Disables automatic Windows Update'; AffectedFeatures = @('Windows Update auto-patching','Microsoft Store app install/update (wuauserv)','FOD/language pack additions'); ConflictsWith = @() }
         'KeepBluetooth' = @{ TriggerValue = $false; Status = 'Known'; Summary = 'Removes Bluetooth services and peripheral stack'; AffectedFeatures = @('Bluetooth audio (A2DP/HFP)','Bluetooth mouse/keyboard','Wireless controllers','Phone Link'); ConflictsWith = @('Remove Bluetooth stack (service + binary) [20-40MB]') }
         'WSLSupport' = @{ TriggerValue = $true; Status = 'Known'; Summary = 'Enables WSL2 / Virtual Machine Platform'; AffectedFeatures = @('WSL2, WSA, Hyper-V VMs, Windows Sandbox, Docker Desktop, Core Isolation (HVCI)'); ConflictsWith = @('NoHypervisor','Remove WSL / VM Platform [20-40MB]','Physical: Hyper-V / Virtualization stack [~200-400MB]') }
         'KeepRecoveryEnv' = @{ TriggerValue = $false; Status = 'Known'; Summary = 'Removes Windows Recovery Environment (WinRE)'; AffectedFeatures = @('WinRE','Reset this PC','Startup Repair','Troubleshooting screen'); ConflictsWith = @() }

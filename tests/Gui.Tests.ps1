@@ -1365,7 +1365,8 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
         $en = Read-UiTable 'en'
         $used = @(Get-UiKeyUsed $script:GuiPath) + @(Get-UiKeyUsed (Join-Path $script:RepoRoot "tools\migrator\WinEase-Migrator.ps1")) +
             @(Get-UiKeyUsed (Join-Path $script:RepoRoot "gui\WinEaseWinUiHost.ps1")) + @(Get-UiKeyUsedWinUi) +
-            @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseDependencies.ps1')), "'(Dep\.[A-Za-z.]+)'\s+=") | ForEach-Object { $_.Groups[1].Value })
+            @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseDependencies.ps1')), "'(Dep\.[A-Za-z.]+)'\s+=") | ForEach-Object { $_.Groups[1].Value }) +
+            @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseBuildPlan.ps1')), "'(Plan\.[A-Za-z.]+)'") | ForEach-Object { $_.Groups[1].Value })
         $used.Count | Should BeGreaterThan 100
         $missing = @($used | Where-Object { $_ -notmatch $script:LangOnlyPrefixes -and -not $en.ContainsKey($_) } | Select-Object -Unique)
         ($missing -join ',') | Should Be ''
@@ -2350,5 +2351,298 @@ Describe "B1 - preset vs custom state (Get-WinEaseGuiPresetState and the window 
             $null = Restore-WinEaseGuiBasePreset -Gui $gui
             (Get-WinEaseGuiPresetState -BasePresetKey 'fat32' -Current (Get-WinEaseGuiDraftConfig -Gui $gui)).IsModified | Should Be $false
         } finally { $gui.Form.Dispose() }
+    }
+}
+
+Describe "C1 - build plan (Get-WinEaseBuildPlan, the final confirmation and the builder check)" {
+    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+    $script:AllTweakDefs = [ordered]@{}
+    foreach ($td in $settingsDef.Tweaks) { $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description } }
+    $script:ComponentDefs = [ordered]@{}
+    foreach ($cd in $settingsDef.Components) { $script:ComponentDefs[$cd.Key] = $cd }
+    $script:WinEaseDebloatEngines = [ordered]@{}
+    foreach ($de in @($settingsDef.DebloatEngines)) { if ($de -and $de.Item) { $script:WinEaseDebloatEngines[[string]$de.Item] = $de } }
+    $presetFile = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\presets.psd1")
+    $script:BuiltInPresets = [ordered]@{}
+    foreach ($k in $presetFile.Presets.Keys) { $script:BuiltInPresets[[string]$k] = $presetFile.Presets[$k] }
+    function Get-WinEasePreset { param([string]$Name) if ($Name -and $script:BuiltInPresets.Contains($Name.Trim().ToLower())) { $script:BuiltInPresets[$Name.Trim().ToLower()] } else { $null } }
+    . (Join-Path -Path $script:RepoRoot -ChildPath "WinEasehelpers.ps1")
+    . $script:GuiCorePath
+    . (Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseBuildPlan.ps1")
+    $script:C1Plenty = { param($Path) $null = $Path; [int64](500GB) }
+    $script:C1NoDisk = { param($Path) $null = $Path; $null }
+    $script:C1Tiny = { param($Path) $null = $Path; [int64](1GB) }
+
+    # The flat result a window returns for a preset (components at the top level)
+    function New-C1Result {
+        param([string]$Preset = 'balanced', [bool]$DryRun = $false)
+        $v = Get-WinEaseGuiPresetValues -Name $Preset
+        $r = @{
+            Success = $true; SourceDrive = 'E:'; WorkDir = ''; Index = '1'; DryRun = $DryRun; UseVHDX = $false
+            PresetKey = $Preset; BasePresetKey = $Preset; PhysicalDebloatConsent = $false
+            ExportESDMode = ($v.PayloadFormat -eq 'ESD'); SplitWIMMode = ($v.PayloadFormat -eq 'SWM')
+            TweakSettings = [ordered]@{}; AdvancedDebloatStandard = @(); AdvancedDebloatExperimental = @(); DebloatEngineSelection = @{}
+        }
+        foreach ($k in $v.Components.Keys) { $r[$k] = $v.Components[$k] }
+        foreach ($k in $v.Tweaks.Keys) { $r.TweakSettings[$k] = $v.Tweaks[$k] }
+        return $r
+    }
+    function Get-C1Plan { param($Result, $Disk = $script:C1Plenty) Get-WinEaseBuildPlan -Result $Result -FreeSpaceProvider $Disk -OutputDir 'C:\WinEaseOut' }
+
+    It "an unmodified preset has no changes, a populated Unchanged list and a real-build mode" {
+        $plan = Get-C1Plan (New-C1Result 'balanced')
+        $plan.Mode | Should Be 'RealBuild'
+        $plan.IsDryRun | Should Be $false
+        $plan.PresetState | Should Be 'Preset'
+        @($plan.Changed).Count | Should Be 0
+        @($plan.Unchanged).Count | Should BeGreaterThan 20
+        $plan.PayloadFormat | Should Be 'WIM'
+        $plan.Source | Should Be 'E:'
+        $plan.Index | Should Be '1'
+    }
+
+    It "the plan follows the current selection: a changed tweak is listed, changing it back removes it (nothing is stale)" {
+        $r = New-C1Result 'balanced'
+        $tk = @($r.TweakSettings.Keys)[0]
+        $r.TweakSettings[$tk] = -not $r.TweakSettings[$tk]
+        $p1 = Get-C1Plan $r
+        $p1.PresetState | Should Be 'Modified'
+        @($p1.Changed | ForEach-Object { $_.Key }) -contains $tk | Should Be $true
+        @($p1.Unchanged) -contains $tk | Should Be $false
+        $r.TweakSettings[$tk] = -not $r.TweakSettings[$tk]
+        $p2 = Get-C1Plan $r
+        @($p2.Changed).Count | Should Be 0
+        @($p2.Unchanged) -contains $tk | Should Be $true
+        # payload format follows the window too
+        $r.ExportESDMode = $true
+        $p3 = Get-C1Plan $r
+        $p3.PayloadFormat | Should Be 'ESD'
+        @($p3.Changed | ForEach-Object { $_.Key }) -contains 'PayloadFormat' | Should Be $true
+    }
+
+    It "a DryRun is flagged as DRY RUN, needs no acknowledgement; the same critical plan as a real build does" {
+        $exp = $script:WinEaseDebloatExperimentalItems[0]
+        $r = New-C1Result 'balanced' $true
+        $r.AdvancedDebloatExperimental = @($exp); $r.PhysicalDebloatConsent = $true
+        $dry = Get-C1Plan $r
+        $dry.Mode | Should Be 'DryRun'
+        $dry.HasCritical | Should Be $true
+        $dry.RequiresAck | Should Be $false
+        $r.DryRun = $false
+        $real = Get-C1Plan $r
+        $real.Mode | Should Be 'RealBuild'
+        $real.RequiresAck | Should Be $true
+        @($real.Criticals | ForEach-Object { $_.Code }) -contains 'PhysicalDebloat' | Should Be $true
+        (Get-WinEaseBuildPlanView -Plan $dry).Text | Should Match 'DRY RUN'
+        (Get-WinEaseBuildPlanView -Plan $real).Text | Should Match 'REAL BUILD'
+        (Get-WinEaseBuildPlanView -Plan $real).RequiresAck | Should Be $true
+        (Get-WinEaseBuildPlanView -Plan $dry).RequiresAck | Should Be $false
+    }
+
+    It "Advanced Debloat without consent is Skipped (the build drops it) and absent from the effective settings" {
+        $r = New-C1Result 'balanced'
+        $item = $script:WinEaseDebloatStandardItems[0]
+        $r.AdvancedDebloatStandard = @($item)
+        $plan = Get-C1Plan $r
+        @($plan.Skipped | Where-Object { $_.Key -eq $item -and $_.ReasonKey -eq 'Plan.Skipped.NoConsent' }).Count | Should Be 1
+        @($plan.Effective.AdvancedDebloatStandard).Count | Should Be 0
+        $plan.Effective.AllowPhysicalDebloat | Should Be $false
+        $r.PhysicalDebloatConsent = $true
+        $with = Get-C1Plan $r
+        @($with.Skipped | Where-Object { $_.Key -eq $item }).Count | Should Be 0
+        @($with.Effective.AdvancedDebloatStandard) -contains $item | Should Be $true
+        $with.Effective.AllowPhysicalDebloat | Should Be $true
+    }
+
+    It "components a preset does not name are Skipped (kept, not compared)" {
+        $plan = Get-C1Plan (New-C1Result 'balanced')
+        $named = (Get-WinEaseGuiPresetValues -Name 'balanced').Components.Keys
+        foreach ($s in @($plan.Skipped | Where-Object { $_.ReasonKey -eq 'Plan.Skipped.NotInPreset' })) { @($named) -contains $s.Key | Should Be $false }
+    }
+
+    It "unknown impact or unresolvable items are Unverified, never Unchanged or OK" {
+        $r = New-C1Result 'balanced'
+        $r.RemoveDrivers = $true                                   # the catalog marks it Unknown
+        $r.TweakSettings['NoSuchTweakInSchema'] = $true            # not in the schema
+        $r.AdvancedDebloatStandard = @('Totally unregistered debloat item'); $r.PhysicalDebloatConsent = $true
+        $plan = Get-C1Plan $r
+        $unv = @($plan.Unverified | ForEach-Object { $_.Key })
+        $unv -contains 'RemoveDrivers' | Should Be $true
+        $unv -contains 'NoSuchTweakInSchema' | Should Be $true
+        $unv -contains 'Totally unregistered debloat item' | Should Be $true
+        foreach ($k in $unv) { @($plan.Unchanged) -contains $k | Should Be $false }
+        $plan.HasCritical | Should Be $true
+        $dd = @($plan.Dangerous | Where-Object { $_.Key -eq 'RemoveDrivers' })[0]
+        $dd.Kind | Should Be 'Unknown'
+        $dd.Reversibility | Should Be 'Undocumented'
+        # a base preset that does not exist cannot be compared: Unverified, not "no changes"
+        $r2 = New-C1Result 'balanced'; $r2.BasePresetKey = 'no-such-preset'
+        $p2 = Get-C1Plan $r2
+        $p2.PresetState | Should Be 'Custom'
+        @($p2.Unverified | Where-Object { $_.ReasonKey -eq 'Plan.Unverified.NoPreset' }).Count | Should Be 1
+        @($p2.Changed).Count | Should Be 0
+    }
+
+    It "dangerous items carry their impact and the documented reversibility; undocumented stays 'not documented'" {
+        $r = New-C1Result 'balanced'
+        $r.RemoveDefender = $true; $r.DisableWindowsUpdate = $true; $r.KeepAsianIME = $false
+        $plan = Get-C1Plan $r
+        $def = @($plan.Dangerous | Where-Object { $_.Key -eq 'RemoveDefender' })[0]
+        $def.Reversibility | Should Be 'Irreversible'
+        $def.Impact | Should Not BeNullOrEmpty
+        @($def.AffectedFeatures).Count | Should BeGreaterThan 0
+        (@($plan.Dangerous | Where-Object { $_.Key -eq 'DisableWindowsUpdate' })[0]).Reversibility | Should Be 'Reversible'
+        (@($plan.Dangerous | Where-Object { $_.Key -eq 'KeepAsianIME' })[0]).Reversibility | Should Be 'Undocumented'
+        @($plan.Criticals | ForEach-Object { $_.Code }) -contains 'Irreversible' | Should Be $true
+        $text = (Get-WinEaseBuildPlanView -Plan $plan).Text
+        $text | Should Match 'not documented'
+        $text | Should Match 'NOT reversible in place'
+    }
+
+    It "an unreadable free space is 'unknown' (Unverified, not OK); a known shortage is critical; needs on one volume add up" {
+        $unk = Get-C1Plan (New-C1Result 'balanced') $script:C1NoDisk
+        @($unk.Disk | Where-Object { $_.Status -ne 'Unknown' }).Count | Should Be 0
+        $unk.Disk[0].FreeGB | Should BeNullOrEmpty
+        @($unk.Unverified | Where-Object { $_.ReasonKey -eq 'Plan.Unverified.DiskUnknown' }).Count | Should BeGreaterThan 0
+        @($unk.Criticals | Where-Object { $_.Code -eq 'DiskInsufficient' }).Count | Should Be 0
+        (Get-WinEaseBuildPlanView -Plan $unk).Text | Should Match 'unknown \(not verified\)'
+        $low = Get-C1Plan (New-C1Result 'balanced') $script:C1Tiny
+        @($low.Criticals | Where-Object { $_.Code -eq 'DiskInsufficient' }).Count | Should BeGreaterThan 0
+        $low.RequiresAck | Should Be $true
+        $ok = Get-C1Plan (New-C1Result 'balanced')
+        @($ok.Criticals | Where-Object { $_.Code -eq 'DiskInsufficient' }).Count | Should Be 0
+        # work folder and output on the same drive: one entry with both requirements
+        $r = New-C1Result 'balanced'; $r.WorkDir = 'C:\Work'
+        $same = Get-WinEaseBuildPlan -Result $r -FreeSpaceProvider $script:C1Plenty -OutputDir 'C:\Out' -OutputIsoName 'my'
+        @($same.Disk).Count | Should Be 1
+        @($same.Disk[0].Roles).Count | Should Be 2
+        $same.Disk[0].RequiredGB | Should BeGreaterThan ((Get-WinEaseRecommendedFreeGB) + 1)
+        $same.OutputName | Should Be 'my.iso'
+    }
+
+    It "Get-WinEaseVolumeFreeBytes returns a number for the system drive and null for what it cannot read" {
+        (Get-WinEaseVolumeFreeBytes -Path $env:SystemDrive) | Should BeGreaterThan 0
+        (Get-WinEaseVolumeFreeBytes -Path '\\no-such-host\share\x') | Should BeNullOrEmpty
+        (Get-WinEaseVolumeFreeBytes -Path '') | Should BeNullOrEmpty
+    }
+
+    It "Get-WinEaseBuildSizeEstimateMB is the figure the windows show (5500 MB base, ESD x0.82)" {
+        (Get-WinEaseBuildSizeEstimateMB -Components @{}) | Should Be 5500
+        (Get-WinEaseBuildSizeEstimateMB -Components @{ KeepAsianIME = $true }) | Should Be 5900
+        (Get-WinEaseBuildSizeEstimateMB -Components @{} -PayloadFormat 'ESD') | Should Be ([math]::Round(5500 * 0.82))
+    }
+
+    It "the plan survives the JSON round trip of the WinUI bridge and the compare works on it" {
+        $plan = Get-C1Plan (New-C1Result 'balanced')
+        $back = $plan | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+        $cur = [ordered]@{ PayloadFormat = 'WIM'; UseVHDX = $false; DryRun = $false; TweakSettings = $plan.Effective.TweakSettings }
+        foreach ($k in $plan.Effective.Components.Keys) { $cur[$k] = $plan.Effective.Components[$k] }
+        (Compare-WinEaseBuildPlanToSettings -Plan $back -Resolved $cur).Match | Should Be $true
+    }
+
+    It "plan vs resolved settings: equal -> match; a differing setting is reported; critical ones are flagged; unknown keys are not compared" {
+        $plan = Get-C1Plan (New-C1Result 'balanced')
+        $res = [ordered]@{ PayloadFormat = 'WIM'; UseVHDX = $false; DryRun = $false; AdvancedDebloatStandard = @(); AdvancedDebloatExperimental = @(); TweakSettings = [ordered]@{}; SomethingElse = 1 }
+        foreach ($k in $plan.Effective.Components.Keys) { $res[$k] = $plan.Effective.Components[$k] }
+        foreach ($k in $plan.Effective.TweakSettings.Keys) { $res.TweakSettings[$k] = $plan.Effective.TweakSettings[$k] }
+        $c0 = Compare-WinEaseBuildPlanToSettings -Plan $plan -Resolved $res
+        $c0.Match | Should Be $true
+        @($c0.Mismatches).Count | Should Be 0
+        # a critical component (catalog Known) differs
+        $res.DisableWindowsUpdate = -not $plan.Effective.Components.DisableWindowsUpdate
+        $c1 = Compare-WinEaseBuildPlanToSettings -Plan $plan -Resolved $res
+        $c1.Match | Should Be $false
+        $c1.HasCritical | Should Be $true
+        $c1.Mismatches[0].Key | Should Be 'DisableWindowsUpdate'
+        $res.DisableWindowsUpdate = $plan.Effective.Components.DisableWindowsUpdate
+        # a tweak the catalog does not mark differs: reported, not critical
+        $tk = @($plan.Effective.TweakSettings.Keys | Where-Object { -not (Get-WinEaseBuildPlanCatalogEntry -Source $_) -or (Get-WinEaseBuildPlanCatalogEntry -Source $_).Status -eq 'Safe' })[0]
+        $res.TweakSettings[$tk] = -not $plan.Effective.TweakSettings[$tk]
+        $c2 = Compare-WinEaseBuildPlanToSettings -Plan $plan -Resolved $res
+        $c2.Match | Should Be $false
+        $c2.HasCritical | Should Be $false
+        $c2.Mismatches[0].Key | Should Be "Tweak:$tk"
+        $res.TweakSettings[$tk] = $plan.Effective.TweakSettings[$tk]
+        # build options and the debloat lists are critical
+        $res.PayloadFormat = 'ESD'
+        (Compare-WinEaseBuildPlanToSettings -Plan $plan -Resolved $res).HasCritical | Should Be $true
+        $res.PayloadFormat = 'WIM'
+        $res.AdvancedDebloatStandard = @('Remove help files [10-20MB]')
+        $c3 = Compare-WinEaseBuildPlanToSettings -Plan $plan -Resolved $res
+        $c3.HasCritical | Should Be $true
+        $c3.Mismatches[0].Key | Should Be 'AdvancedDebloatStandard'
+    }
+
+    It "Invoke-WinEaseBuildPlanCheck writes the plan summary, warns on a mismatch and throws on a critical one" {
+        $plan = Get-C1Plan (New-C1Result 'balanced')
+        $res = [ordered]@{ PayloadFormat = 'WIM'; UseVHDX = $false; DryRun = $false }
+        $dir = Join-Path $TestDrive 'logs'
+        $cmp = Invoke-WinEaseBuildPlanCheck -Plan $plan -Resolved $res -LogDirectory $dir -BaseName 'WinEase_test'
+        $cmp.Match | Should Be $true
+        (Test-Path (Join-Path $dir 'WinEase_test.plan.json')) | Should Be $true
+        (Get-Content (Join-Path $dir 'WinEase_test.plan.txt') -Raw) | Should Match 'REAL BUILD'
+        ((Get-Content (Join-Path $dir 'WinEase_test.plan.json') -Raw) | ConvertFrom-Json).Mode | Should Be 'RealBuild'
+        $res.PayloadFormat = 'ESD'
+        { Invoke-WinEaseBuildPlanCheck -Plan $plan -Resolved $res -LogDirectory $dir -BaseName 'WinEase_t2' -WarningAction SilentlyContinue } | Should Throw 'critical'
+        (Invoke-WinEaseBuildPlanCheck -Plan $null -Resolved $res) | Should BeNullOrEmpty
+    }
+
+    It "the localized view is complete in English and Japanese and has the mode banner, sections and acknowledgement text" {
+        $r = New-C1Result 'balanced'; $r.RemoveDefender = $true
+        $plan = Get-C1Plan $r
+        try {
+            foreach ($lang in 'en', 'ja') {
+                Set-WinEaseUiLanguage -Language $lang
+                $view = Get-WinEaseBuildPlanView -Plan $plan
+                $view.ModeText | Should Not Match '^Plan\.'
+                @($view.Sections).Count | Should BeGreaterThan 6
+                foreach ($sec in $view.Sections) { $sec.Heading | Should Not Match '^Plan\.'; foreach ($l in $sec.Lines) { $l | Should Not Match 'Plan\.[A-Z][a-z]+\.' } }
+                $view.AckText | Should Not Match '^Plan\.'
+                $view.RequiresAck | Should Be $true
+            }
+            Set-WinEaseUiLanguage -Language 'ja'
+            (Get-WinEaseBuildPlanView -Plan $plan).ModeText | Should Match ([string][char]0x5B9F)
+        } finally { Set-WinEaseUiLanguage -Language 'en' }
+    }
+
+    It "every string key the plan, the windows and the host use exists in en.json and ja.json" {
+        $dir = Join-Path $script:RepoRoot 'config\ui-strings'
+        $enb = New-Object System.Text.UTF8Encoding($false)
+        $en = [System.IO.File]::ReadAllText((Join-Path $dir 'en.json'), $enb) | ConvertFrom-Json
+        $ja = [System.IO.File]::ReadAllText((Join-Path $dir 'ja.json'), $enb) | ConvertFrom-Json
+        $sources = @('lib\WinEaseBuildPlan.ps1', 'gui\WinEaseGui.ps1', 'gui\winui\WinEaseGui\MainWindow.xaml.cs') | ForEach-Object { [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot $_)) }
+        $keys = @($sources | ForEach-Object { [regex]::Matches($_, "['""]((?:Plan\.[A-Za-z]+(?:\.[A-Za-z]+)*)|Msg\.Plan\.Failed\.Continue|Msg\.Dependency\.CheckFailed(?:\.Checkbox)?)['""]") } | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+        $keys.Count | Should BeGreaterThan 40
+        $missing = @($keys | Where-Object { -not $en.PSObject.Properties[$_] -or -not $ja.PSObject.Properties[$_] })
+        ($missing -join ', ') | Should Be ''
+        # the Plan.* tables match key for key
+        (@($en.PSObject.Properties.Name | Where-Object { $_ -like 'Plan.*' } | Sort-Object) -join ',') | Should Be (@($ja.PSObject.Properties.Name | Where-Object { $_ -like 'Plan.*' } | Sort-Object) -join ',')
+        # placeholders agree between the languages
+        foreach ($k in $keys) {
+            $pe = @([regex]::Matches([string]$en.$k, '\{\d+\}') | ForEach-Object { $_.Value } | Sort-Object -Unique) -join ','
+            $pj = @([regex]::Matches([string]$ja.$k, '\{\d+\}') | ForEach-Object { $_.Value } | Sort-Object -Unique) -join ','
+            "${k}:$pe" | Should Be "${k}:$pj"
+        }
+    }
+
+    It "wiring: both windows confirm the plan before returning, the host serves it, the builder checks it, the WinForms pre-check does not fail open" {
+        $gui = [System.IO.File]::ReadAllText($script:GuiPath)
+        $gui | Should Match 'Confirm-WinEaseGuiBuildPlan -Result \$g\.Result'
+        $gui | Should Match '\$g\.Result\.BuildPlan = \$confirmedPlan'
+        $gui | Should Not Match 'Dependency check skipped'
+        $gui | Should Match 'Msg\.Dependency\.CheckFailed\.Checkbox'
+        $cs = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'gui\winui\WinEaseGui\MainWindow.xaml.cs'))
+        $cs | Should Match 'RunAsync\("buildPlan"'
+        $cs | Should Match 'ShowBuildPlanDialogAsync\(view\)'
+        $cs | Should Match 'IsPrimaryButtonEnabled = !ackNeeded'
+        $cs | Should Match 'result\["BuildPlan"\]'
+        $host1 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'gui\WinEaseWinUiHost.ps1'))
+        $host1 | Should Match "'buildPlan'"
+        $host1 | Should Match 'Get-WinEaseBuildPlan -Result'
+        $host1 | Should Match '\$out\.BuildPlan = \$r\.BuildPlan'
+        $b = [System.IO.File]::ReadAllText($script:BuilderPath)
+        $b | Should Match "'WinEaseBuildPlan\.ps1'"
+        $b | Should Match 'Invoke-WinEaseBuildPlanCheck -Plan \$script:GuiBuildPlan'
+        [System.IO.File]::ReadAllText($script:GuiSessionPath) | Should Match '\$script:GuiBuildPlan = \$GuiResult\.BuildPlan'
     }
 }

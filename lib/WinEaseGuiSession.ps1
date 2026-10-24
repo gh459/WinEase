@@ -85,6 +85,9 @@ function Apply-WinEaseGuiResult {
     param(
         $GuiResult
     )
+    # The plan the window showed in its final confirmation (null when the window did not create one); the builder logs it
+    # and compares it with the resolved settings (Compare-WinEaseBuildPlanToSettings)
+    $script:GuiBuildPlan = $GuiResult.BuildPlan
     # The WinUI 3 window asks for the physical debloat consent itself
     if ($GuiResult.PhysicalDebloatConsent) { $script:allowPhysicalDebloat = $true }
 

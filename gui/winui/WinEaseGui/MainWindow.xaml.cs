@@ -1403,7 +1403,13 @@ public sealed partial class MainWindow : Window
 
         // Dependency / feature-impact pre-check
         var dep = await RunAsync("dependencies", new JsonObject { ["Config"] = DraftConfig() }, quiet: true);
-        if (dep != null && InitData.Bool(dep["ok"]) && InitData.Bool(dep["Data"]?["HasIssues"]))
+        if (dep == null || !InitData.Bool(dep["ok"]))
+        {
+            // Never fail open: an unchecked selection may hide a conflict or an unknown impact, so the user has to say so
+            string why = dep == null ? _s.Get("Plan.Value.Unknown") : InitData.Str(dep["Text"], _s.Get("Plan.Value.Unknown"));
+            if (!await ShowBuildPlanDialogAsync(CheckFailedView(why))) return;
+        }
+        else if (InitData.Bool(dep["Data"]?["HasIssues"]))
         {
             var depData = dep["Data"]!.AsObject();
             // Critical (conflict / Unknown) needs its own explicit acknowledgement, separate from the plain-impact confirm
@@ -1415,6 +1421,10 @@ public sealed partial class MainWindow : Window
         // Physical debloat consent (the builder's -AllowPhysicalDebloat gate)
         bool consent = false;
         int std = _debloatStd.Count, exp = _debloatExp.Count;
+        // Declining clears the selection; a cancelled final confirmation puts it back
+        var stdBefore = _debloatStd.ToList();
+        var expBefore = _debloatExp.ToList();
+        var enginesBefore = _debloatEngines.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
         if (std + exp > 0)
         {
             consent = await ConfirmAsync(_s.Get("Msg.PhysicalConsent.Title"), _s.Format("Msg.PhysicalConsent.Text", std, exp));
@@ -1429,7 +1439,105 @@ public sealed partial class MainWindow : Window
         // The consent gate may have cleared the Advanced Debloat selection: the state must match what is sent
         _presetStateTimer?.Stop();
         await RefreshPresetStateAsync();
-        await SendResultAndCloseAsync(ResultObject(consent));
+
+        // Final confirmation: the build plan of exactly the settings below, recomputed now by the builder (Get-WinEaseBuildPlan)
+        var result = ResultObject(consent);
+        var planReply = await RunAsync("buildPlan", new JsonObject { ["Config"] = result.DeepClone() }, quiet: true);
+        bool confirmed;
+        if (planReply != null && InitData.Bool(planReply["ok"]) && planReply["Data"]?["Plan"] is JsonObject plan && planReply["Data"]?["View"] is JsonObject view)
+        {
+            confirmed = await ShowBuildPlanDialogAsync(view);
+            if (confirmed) result["BuildPlan"] = plan.DeepClone();
+        }
+        else
+        {
+            // No plan: the user decides explicitly, the result is never sent silently without the summary
+            string why = planReply == null ? _s.Get("Plan.Value.Unknown") : InitData.Str(planReply["Text"], _s.Get("Plan.Value.Unknown"));
+            confirmed = await ConfirmAsync(_s.Get("Msg.Dependency.Title"), _s.Format("Msg.Plan.Failed.Continue", why));
+        }
+        if (!confirmed)
+        {
+            foreach (string i in stdBefore) _debloatStd.Add(i);
+            foreach (string i in expBefore) _debloatExp.Add(i);
+            foreach (var kv in enginesBefore) _debloatEngines[kv.Key] = kv.Value;
+            await RefreshPresetStateAsync();
+            return;
+        }
+        await SendResultAndCloseAsync(result);
+    }
+
+    // Reply of a failed dependency check, shaped like a plan view so the same dialog asks for the acknowledgement
+    private JsonObject CheckFailedView(string reason)
+    {
+        return new JsonObject
+        {
+            ["Title"] = _s.Get("Msg.Dependency.Title"),
+            ["ModeText"] = _s.Format("Msg.Dependency.CheckFailed", reason),
+            ["IsDryRun"] = false,
+            ["RequiresAck"] = true,
+            ["AckText"] = _s.Get("Msg.Dependency.CheckFailed.Checkbox"),
+            ["ConfirmText"] = _s.Get("Dep.Ack.Continue"),
+            ["Sections"] = new JsonArray(),
+        };
+    }
+
+    // Final confirmation (build plan). The mode banner (DRY RUN / REAL BUILD) and the acknowledgement checkbox stay
+    // visible; the sections scroll between them, text wraps and nothing is truncated. A critical plan keeps the
+    // confirm button disabled until the box is ticked. Returns true when the user confirmed.
+    private async Task<bool> ShowBuildPlanDialogAsync(JsonObject view)
+    {
+        bool dry = InitData.Bool(view["IsDryRun"]);
+        bool ackNeeded = InitData.Bool(view["RequiresAck"]);
+        static (string Glyph, string Brush) IconFor(string severity) => severity switch
+        {
+            "Critical" => ("", "SystemFillColorCriticalBrush"),
+            "Warning" => ("", "SystemFillColorCautionBrush"),
+            _ => ("", "AccentTextFillColorPrimaryBrush"),
+        };
+        var outer = new StackPanel { Spacing = 12 };
+        var banner = new Border
+        {
+            Padding = new Thickness(12, 8, 12, 8),
+            CornerRadius = new CornerRadius(4),
+            Background = Res(dry ? "SystemFillColorAttentionBackgroundBrush" : "SystemFillColorCautionBackgroundBrush"),
+            Child = new TextBlock { Text = InitData.Str(view["ModeText"]), FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.Bold, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true },
+        };
+        outer.Children.Add(banner);
+
+        var panel = new StackPanel { Spacing = 6 };
+        foreach (var sec in InitData.Arr(view["Sections"]))
+        {
+            var (g, b) = IconFor(InitData.Str(sec?["Severity"]));
+            var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 8, 0, 0) };
+            head.Children.Add(new FontIcon { Glyph = g, Foreground = Res(b), FontSize = 16 });
+            head.Children.Add(new TextBlock { Text = InitData.Str(sec?["Heading"]), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            panel.Children.Add(head);
+            foreach (string line in InitData.StrList(sec?["Lines"]))
+                panel.Children.Add(new TextBlock { Text = line, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, Margin = new Thickness(24, 0, 0, 0) });
+        }
+        double maxHeight = Math.Max(240, Content.XamlRoot.Size.Height - 380);
+        if (panel.Children.Count > 0)
+            outer.Children.Add(new ScrollViewer { Content = panel, MaxHeight = maxHeight, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalScrollMode = ScrollMode.Disabled });
+
+        var dlg = new ContentDialog
+        {
+            XamlRoot = Content.XamlRoot,
+            Title = InitData.Str(view["Title"]),
+            Content = outer,
+            PrimaryButtonText = InitData.Str(view["ConfirmText"], _s.Get("Button.OK")),
+            CloseButtonText = _s.Get("Button.Cancel"),
+            DefaultButton = ContentDialogButton.Close,
+            IsPrimaryButtonEnabled = !ackNeeded,
+        };
+        dlg.Resources["ContentDialogMaxWidth"] = 900.0;
+        if (ackNeeded)
+        {
+            var ack = new CheckBox { Content = InitData.Str(view["AckText"]), Margin = new Thickness(0, 4, 0, 0) };
+            ack.Checked += (_, _) => dlg.IsPrimaryButtonEnabled = true;
+            ack.Unchecked += (_, _) => dlg.IsPrimaryButtonEnabled = false;
+            outer.Children.Add(ack);
+        }
+        return await dlg.ShowAsync() == ContentDialogResult.Primary;
     }
 
     private async void CancelButton_Click(object sender, RoutedEventArgs e)
