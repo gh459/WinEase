@@ -591,7 +591,7 @@ $script:MountDirectoryPrefix = $null
 
 # Low-level DISM mount / offline hive, offline registry access (reg.exe wrapper, config\registry tables), WIM, telemetry and GUI-session helpers (function definitions only).
 # WinEaseFileSystem.ps1 is loaded by WinEasehelpers.ps1 with the other split helper modules.
-foreach ($WinEaseLibFile in @('WinEaseMount.ps1', 'WinEaseRegistry.ps1', 'WinEaseSecrets.ps1', 'WinEaseWim.ps1', 'WinEaseTelemetry.ps1', 'WinEaseGuiSession.ps1', 'WinEaseBuildPlan.ps1')) {
+foreach ($WinEaseLibFile in @('WinEaseMount.ps1', 'WinEaseRegistry.ps1', 'WinEaseSecrets.ps1', 'WinEaseWim.ps1', 'WinEaseTelemetry.ps1', 'WinEaseGuiSession.ps1', 'WinEaseBuildPlan.ps1', 'WinEaseInputValidation.ps1')) {
     . (Join-Path -Path (Join-Path -Path $scriptDirEarly -ChildPath "lib") -ChildPath $WinEaseLibFile)
 }
 
@@ -1987,6 +1987,19 @@ if ($SourceDrive) {
             throw "Specified SourceDrive is invalid: $SourceDrive (sources\install.wim or install.esd not found)"
         }
     }
+}
+
+# Input check (lib\WinEaseInputValidation.ps1, the same function both GUI windows run): source, workspace / output folders and
+# their collisions, drivers, names and the edition index, before any destructive step. A dry run / test mode skips the
+# write probe so it stays free of side effects.
+$inputIssues = @(Test-WinEaseBuildInputs -SourceDrive $SourceDrive -WorkDir $WorkDir -OutputDir $scriptDir -OutputIsoName $OutputIsoName `
+        -Index $Index -InjectDrivers $InjectDrivers -UserName $UserName -ComputerName $ComputerName `
+        -SkipWriteProbe:($isDryRunMode -or ($env:WINEASE_TEST_MODE -eq '1')))
+foreach ($inputIssue in @($inputIssues | Where-Object { $_.Severity -eq 'Warning' })) {
+    Write-Warning "$($inputIssue.Field): $(Get-WinEaseInputIssueText -Issue $inputIssue)"
+}
+if (Test-WinEaseInputHasError -Issues $inputIssues) {
+    throw "Input validation failed:`n$(Format-WinEaseInputIssues -Issues @($inputIssues | Where-Object { $_.Severity -eq 'Error' }))"
 }
 
 # Early check for WINEASE_TEST_MODE or -DryRun / -WhatIf

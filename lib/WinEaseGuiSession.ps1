@@ -85,6 +85,14 @@ function Apply-WinEaseGuiResult {
     param(
         $GuiResult
     )
+    # The GUI is not the trust boundary: the same input check the windows run (lib\WinEaseInputValidation.ps1) runs here
+    # before any builder variable changes. UserName / ComputerName go into autounattend.xml verbatim.
+    if (-not (Get-Command -Name Test-WinEaseGuiResultInputs -ErrorAction SilentlyContinue)) { throw 'Test-WinEaseGuiResultInputs is not loaded (lib\WinEaseInputValidation.ps1).' }
+    $inputIssues = @(Test-WinEaseGuiResultInputs -Result $GuiResult -OutputDir $script:scriptDir -SkipWriteProbe:([bool]$GuiResult.DryRun))
+    if (Test-WinEaseInputHasError -Issues $inputIssues) {
+        Write-Warning (Get-WinEaseInputText 'Val.Refused' -Format (Format-WinEaseInputIssues -Issues @($inputIssues | Where-Object { $_.Severity -eq 'Error' })))
+        return $false
+    }
     # The plan the window showed in its final confirmation (null when the window did not create one); the builder logs it
     # and compares it with the resolved settings (Compare-WinEaseBuildPlanToSettings)
     $script:GuiBuildPlan = $GuiResult.BuildPlan
@@ -147,13 +155,17 @@ function Apply-WinEaseGuiResult {
     # PresetKey 'custom' = the window was edited after the preset was chosen (Get-WinEaseGuiPresetState); the base preset stays in BasePresetKey
     $script:selectedProfile = if ("$($GuiResult.PresetKey)" -ieq 'custom') { if ($GuiResult.BasePresetKey) { "custom (based on $($GuiResult.BasePresetKey))" } else { "GUI Selection" } } elseif ($GuiResult.PresetKey) { $GuiResult.PresetKey } elseif ($GuiResult.BasePresetKey) { "custom (based on $($GuiResult.BasePresetKey))" } else { "GUI Selection" }
     Write-Host "Applied GUI Configuration successfully ($($script:selectedProfile))." -ForegroundColor Green
+    return $true
 }
 
 function Invoke-WinEaseGuiSession {
     $initialSettings = Get-WinEaseGuiInitialSettings
     $guiResult = Show-WinEaseGuiSessionWindow -InitialSettings $initialSettings
-    if (-not ($guiResult -and $guiResult.Success)) { return $false }
+    if (-not ($guiResult -and $guiResult.Success)) {
+        # A result the PowerShell side refused (ConvertFrom-WinEaseWinUiResult) says why
+        if ($guiResult -and $guiResult.Reason) { Write-Warning (Get-WinEaseInputText 'Val.Refused' -Format $guiResult.Reason) }
+        return $false
+    }
 
-    Apply-WinEaseGuiResult -GuiResult $guiResult
-    return $true
+    return [bool](Apply-WinEaseGuiResult -GuiResult $guiResult)
 }
