@@ -374,6 +374,54 @@ function Show-WinEaseGuiMessage {
 }
 
 
+# Text of a dependency review for the Dependencies dialog: Critical block (with its section heading and
+# kept-feature warning) first, then plain impact; every line carries a [X] / [?] / [i] glyph and a text label.
+function Format-WinEaseGuiDependencyText {
+    param([Parameter(Mandatory = $true)]$Review, [switch]$CriticalOnly)
+    $lines = New-Object System.Collections.Generic.List[string]
+    $fmt = {
+        param($items)
+        foreach ($i in $items) {
+            $lines.Add("$($i.Glyph) $($i.Label): $($i.Text)")
+            foreach ($af in @($i.AffectedFeatures | Where-Object { $_ })) { $lines.Add("      * $af") }
+        }
+    }
+    if (@($Review.Critical).Count -gt 0) {
+        $lines.Add((Get-WinEaseUiString 'Dep.Section.Critical'))
+        $kept = @($Review.KeptFeature).Count
+        if ($kept -gt 0) { $lines.Add((Get-WinEaseUiString 'Dep.Kept.Warning' -Format $kept)) }
+        & $fmt $Review.Critical
+    }
+    if (-not $CriticalOnly -and @($Review.Impact).Count -gt 0) {
+        if ($lines.Count -gt 0) { $lines.Add('') }
+        $lines.Add((Get-WinEaseUiString 'Dep.Section.Impact'))
+        & $fmt $Review.Impact
+    }
+    return ($lines -join "`r`n")
+}
+
+# Explicit acknowledgement for Critical dependency items: a dialog of its own where Continue stays
+# disabled until the checkbox is ticked (a plain Yes/No box would be too easy to click through).
+function Confirm-WinEaseGuiCriticalDependency {
+    param([Parameter(Mandatory = $true)]$Review)
+    $dlg = New-WinEaseForm -Text (Get-WinEaseUiString 'Dep.Ack.Title') -Width 640 -Height 420 -ClientSize -FixedDialog -NoMaximize -NoMinimize
+    try {
+        [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Dep.Ack.Intro') -X 12 -Y 10 -Width 616 -Height 40 -Parent $dlg)
+        [void](New-WinEaseTextBox -X 12 -Y 54 -Width 616 -Height 280 -Multiline -ReadOnly -ScrollBars Vertical -WordWrap $true `
+            -Text (Format-WinEaseGuiDependencyText -Review $Review -CriticalOnly) -Parent $dlg)
+        $chk = New-WinEaseCheckBox -Text (Get-WinEaseUiString 'Dep.Ack.Checkbox') -X 12 -Y 344 -Width 616 -Height 24 -Parent $dlg
+        $ok = New-WinEaseButton -Text (Get-WinEaseUiString 'Dep.Ack.Continue') -X 388 -Y 378 -Width 150 -Height 32 -Parent $dlg
+        $ok.Enabled = $false
+        $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $cancel = New-WinEaseButton -Text (Get-WinEaseUiString 'Button.Cancel') -X 546 -Y 378 -Width 82 -Height 32 -Parent $dlg
+        $cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $chk.Add_CheckedChanged({ $ok.Enabled = $chk.Checked }.GetNewClosure())
+        $dlg.AcceptButton = $null
+        $dlg.CancelButton = $cancel
+        return ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK)
+    } finally { $dlg.Dispose() }
+}
+
 function Confirm-WinEaseGuiAction {
     param([string]$Message, [string]$Title = (Get-WinEaseUiString 'Msg.Title.Confirm'))
     $ans = [System.Windows.Forms.MessageBox]::Show($Message, $Title,
@@ -1813,10 +1861,10 @@ function Initialize-WinEaseGuiContent {
         $g = $f.Tag
         try {
             $cfg = Get-WinEaseGuiDraftConfig -Gui $g
-            $res = Test-WinEaseDependencies -Config $cfg
-            $txt = Format-WinEaseDependencyReport -Result $res
+            $rev = Get-WinEaseDependencyReview -Config $cfg
+            $txt = Format-WinEaseGuiDependencyText -Review $rev
             if (-not $txt) { $txt = Get-WinEaseUiString 'Msg.Dependency.None' }
-            Show-WinEaseGuiMessage -Text $txt -Title (Get-WinEaseUiString 'Msg.Dependency.Title') -Kind Info
+            Show-WinEaseGuiMessage -Text $txt -Title (Get-WinEaseUiString 'Msg.Dependency.Title') -Kind $(if ($rev.HasCritical) { 'Warning' } else { 'Info' })
         } catch {
             Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.Dependency.Failed' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'Msg.Dependency.Title') -Kind Error
         }
@@ -1828,10 +1876,13 @@ function Initialize-WinEaseGuiContent {
         # Dependency / feature-impact pre-check before starting the build
         try {
             $depCfg = Get-WinEaseGuiDraftConfig -Gui $g
-            $depResult = Test-WinEaseDependencies -Config $depCfg
-            if ($depResult.HasIssues) {
-                $depText = Format-WinEaseDependencyReport -Result $depResult
-                $msg = Get-WinEaseUiString 'Msg.Dependency.Confirm' -Format $depText
+            $depReview = Get-WinEaseDependencyReview -Config $depCfg
+            # Critical (conflict / Unknown) needs its own explicit acknowledgement, separate from the plain-impact confirm
+            if ($depReview.HasCritical) {
+                if (-not (Confirm-WinEaseGuiCriticalDependency -Review $depReview)) { return }
+            }
+            if (@($depReview.Impact).Count -gt 0) {
+                $msg = Get-WinEaseUiString 'Msg.Dependency.Confirm' -Format $depReview.ImpactText
                 if (-not (Confirm-WinEaseGuiAction -Message $msg -Title (Get-WinEaseUiString 'Msg.Dependency.Title'))) { return }
             }
         } catch {

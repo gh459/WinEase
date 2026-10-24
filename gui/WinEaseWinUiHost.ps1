@@ -166,10 +166,24 @@ function Invoke-WinEaseWinUiRequest {
             return @{}
         }
         'dependencies' {
-            $res = Test-WinEaseDependencies -Config $a.Config
-            $txt = Format-WinEaseDependencyReport -Result $res
+            # Same library entry point as the WinForms window; recomputed from the config sent with this request
+            $rev = Get-WinEaseDependencyReview -Config $a.Config
+            $txt = $rev.Text
             if (-not $txt) { $txt = Get-WinEaseUiString 'Msg.Dependency.None' }
-            return @{ Title = (Get-WinEaseUiString 'Msg.Dependency.Title'); Text = "$txt"; Data = @{ HasIssues = [bool]$res.HasIssues } }
+            $row = { param($i) @{ Kind = "$($i.Kind)"; Severity = "$($i.Severity)"; Glyph = "$($i.Glyph)"; Label = "$($i.Label)"; Text = "$($i.Text)"; KeptFeature = [bool]$i.KeptFeature; AffectedFeatures = @($i.AffectedFeatures | Where-Object { $_ } | ForEach-Object { "$_" }) } }
+            $keptCount = @($rev.KeptFeature).Count
+            return @{
+                Title = (Get-WinEaseUiString 'Msg.Dependency.Title'); Text = "$txt"
+                Data = @{
+                    HasIssues    = [bool]$rev.HasIssues
+                    HasCritical  = [bool]$rev.HasCritical
+                    Critical     = @($rev.Critical | ForEach-Object { & $row $_ })
+                    Impact       = @($rev.Impact | ForEach-Object { & $row $_ })
+                    CriticalText = "$($rev.CriticalText)"
+                    ImpactText   = "$($rev.ImpactText)"
+                    KeptWarning  = $(if ($keptCount -gt 0) { Get-WinEaseUiString 'Dep.Kept.Warning' -Format $keptCount } else { '' })
+                }
+            }
         }
         'presetState' {
             # Is the window still the base preset? Rules: Get-WinEaseGuiPresetState (lib\WinEaseGuiCore.ps1)
