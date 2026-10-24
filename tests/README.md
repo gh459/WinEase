@@ -15,6 +15,7 @@ The suite targets **Pester 3.4** on **Windows PowerShell 5.1**, the same version
 | `Debloat.Tests.ps1` | Defender, AppX, security options, physical/advanced debloat. |
 | `Migration.Tests.ps1` | Migration engine, Migrator, restore validation, removal/migration wiring. |
 | `Gui.Tests.ps1` | WinForms/WinUI wiring, GUI smoke test, display language, UI options. |
+| `GuiParity.Tests.ps1` | WinUI 3 / WinForms / command line parity: schema toggles and en/ja labels, equal results and builder state, save/load, language switch, Dry Run, physical-debloat consent, input validation, XAML handler wiring. Manual-only checks: `docs/GUI_MANUAL_CHECKLIST.md`. |
 | `Quality.Tests.ps1` | PSScriptAnalyzer and documentation path checks. |
 | `Registry.Tests.ps1` | Phase 10 registry snapshots per preset (`fixtures/registry`), `Invoke-WinEaseReg`, the `config/registry` tables. `_RegistryHarness.ps1` is its shared setup. |
 | `Plugins.Tests.ps1` | Plugin host (`lib/WinEasePlugins.ps1`): SHA256 allow list, hooks, OnError, DryRun, contributions. Compiles test DLLs on the fly against `src/WinEase.Plugins.Abstractions`. |
