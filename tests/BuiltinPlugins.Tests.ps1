@@ -327,3 +327,32 @@ Describe "Built-in plugins - build wiring" {
         foreach ($name in 'Latency', 'PostInstallTools', 'UpstreamSync') { $py | Should Match "src/WinEase\.Plugins\.Builtin\.$name/WinEase\.Plugins\.Builtin\.$name\.csproj" }
     }
 }
+
+Describe "Release package (R10)" {
+    It "the release workflow builds both full packages and expects all six assets" {
+        $rel = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot '.github\workflows\release.yml'))
+        $rel | Should Match 'win-x64\.zip'
+        $rel | Should Match 'win-arm64\.zip'
+        $rel | Should Match 'build-release-assets\.sh'
+        $rel | Should Match '-eq 6'
+        $rel | Should Not Match '-eq 2\b'
+    }
+
+    It "the verifier and the packaging script allow the same paths" {
+        $py = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot '.github\scripts\verify-release-zip.py'))
+        $ps = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'tools\package-release.ps1'))
+        $py | Should Match '--binaries'
+        foreach ($path in 'WinEase.exe', 'gui/winui/bin/', 'plugins/builtin/', 'builtin.lock.psd1') { $py | Should Match ([regex]::Escape($path)) }
+        $ps | Should Match 'WinEase\.exe'
+        $ps | Should Match 'gui'
+        $ps | Should Match ([regex]::Escape('winui' + [char]92 + 'bin'))
+        $ps | Should Match 'builtin\.lock\.psd1'
+    }
+
+    It "the packaging script parses without errors" {
+        $path = Join-Path $script:RepoRoot 'tools\package-release.ps1'
+        $errors = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$errors)
+        @($errors).Count | Should Be 0
+    }
+}

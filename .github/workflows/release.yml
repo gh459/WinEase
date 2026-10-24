@@ -3,19 +3,27 @@ name: Release
 # Publishes a GitHub release for a v* tag. Nothing is published unless every check passed
 # on the exact commit the tag points to:
 #
-#   ci / lint / audit   the regular CI (self-test, Pester, dry-runs), PSScriptAnalyzer and the
-#                       workflow security audit, called as reusable workflows (read-only)
-#   package             checks that the tag still names the commit under test, builds the ZIP
-#                       from that commit, verifies it and writes its SHA-256 (read-only)
-#   publish             the only job with write access: re-checks the tag and the checksum,
-#                       records a build provenance attestation, creates the release and
-#                       verifies the uploaded assets against the checksum
+#   ci / lint / audit   the regular CI (self-test, Pester, dry-runs, the .NET binaries), PSScriptAnalyzer and
+#                       the workflow security audit, called as reusable workflows (read-only)
+#   package             checks that the tag still names the commit under test, builds the source ZIP and the
+#                       full packages (source + WinEase.exe, WinUI window and built-in plugins, x64 and
+#                       arm64) from that commit, verifies them against the commit and against the hashes of
+#                       the binaries job of the CI run, and writes their SHA-256 (read-only)
+#   publish             the only job with write access: re-checks the tag and the checksums, records a
+#                       build provenance attestation for every ZIP, creates the release and verifies the
+#                       uploaded assets against the verified files
 #
 # A failed check stops the run before "publish"; the failing job names the check.
+#
+# Dry run: start this workflow by hand (Actions > Release > Run workflow, or `gh workflow run release.yml`)
+# on any branch. It runs every check, builds and verifies all assets (named WinEase-dryrun-<run number>...)
+# and keeps them as the "release-package" artifact. The tag checks and the publish job are skipped, so
+# nothing is published.
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -48,8 +56,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    outputs:
-      asset: ${{ steps.build.outputs.asset }}
     steps:
       - name: Checkout the tagged commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -61,44 +67,49 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          IS_TAG: ${{ github.ref_type == 'tag' }}
         run: |
           head="$(git rev-parse HEAD)"
           echo "Checked out: $head"
           echo "Triggered by: $GITHUB_SHA ($TAG)"
           [ "$head" = "$GITHUB_SHA" ] || { echo "::error title=Commit mismatch::checked out $head, expected $GITHUB_SHA"; exit 1; }
-          tagged="$(.github/scripts/resolve-tag-commit.sh "$TAG")"
-          [ "$tagged" = "$GITHUB_SHA" ] || { echo "::error title=Tag moved::$TAG now points to $tagged, the checks ran on $GITHUB_SHA"; exit 1; }
+          if [ "$IS_TAG" = "true" ]; then
+            tagged="$(.github/scripts/resolve-tag-commit.sh "$TAG")"
+            [ "$tagged" = "$GITHUB_SHA" ] || { echo "::error title=Tag moved::$TAG now points to $tagged, the checks ran on $GITHUB_SHA"; exit 1; }
+          else
+            echo "Dry run on $TAG: there is no tag to check."
+          fi
           if [ -n "$(git status --porcelain)" ]; then
             echo "::error title=Dirty checkout::the working tree is not the plain commit"; exit 1
           fi
 
-      - name: Build the source ZIP
-        id: build
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          mkdir -p dist
-          asset="WinEase-${TAG}.zip"
-          git archive --format=zip --prefix=WinEase/ -o "dist/$asset" "$GITHUB_SHA"
-          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+      - name: Fetch the binaries of this CI run (x64)
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: binaries-x64
+          path: ${{ runner.temp }}/binaries/x64
 
-      - name: Verify the ZIP
-        env:
-          ASSET: ${{ steps.build.outputs.asset }}
-        run: python3 -I .github/scripts/verify-release-zip.py "dist/$ASSET" "$GITHUB_SHA" WinEase
+      - name: Fetch the binaries of this CI run (arm64)
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: binaries-arm64
+          path: ${{ runner.temp }}/binaries/arm64
 
-      - name: Write the SHA-256 checksum
+      - name: Build and verify the assets
+        # The source ZIP and the full packages for win-x64 and win-arm64: each one is checked by
+        # verify-release-zip.py and gets a .sha256 file (see .github/scripts/build-release-assets.sh)
         env:
-          ASSET: ${{ steps.build.outputs.asset }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('dryrun-{0}', github.run_number) }}
+          BINARIES: ${{ runner.temp }}/binaries
+        run: bash .github/scripts/build-release-assets.sh "$TAG" "$GITHUB_SHA" "$BINARIES" dist
+
+      - name: Summarize the assets
         working-directory: dist
         run: |
-          sha256sum "$ASSET" > "$ASSET.sha256"
-          sha256sum -c "$ASSET.sha256"
           {
-            echo "### Release package"
+            echo "### Release assets"
             echo "- Commit: \`$GITHUB_SHA\`"
-            echo "- Asset: \`$ASSET\`"
-            echo "- SHA-256: \`$(cut -d' ' -f1 "$ASSET.sha256")\`"
+            for f in *.zip; do echo "- \`$f\`: SHA-256 \`$(cut -d' ' -f1 "$f.sha256")\`"; done
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Keep the verified package
@@ -112,6 +123,7 @@ jobs:
   publish:
     name: Publish GitHub release
     needs: package
+    if: github.ref_type == 'tag'   # a manual run is a dry run
     runs-on: ubuntu-latest
     permissions:
       contents: write       # create the release and upload its assets
@@ -124,15 +136,18 @@ jobs:
           name: release-package
           path: dist
 
-      - name: Re-check the checksum and the tag
+      - name: Re-check the checksums and the tag
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-          ASSET: ${{ needs.package.outputs.asset }}
         run: |
-          (cd dist && sha256sum -c "$ASSET.sha256")
+          # the source ZIP, the win-x64 and win-arm64 packages, and one .sha256 file for each of them
+          for asset in "WinEase-$TAG.zip" "WinEase-$TAG-win-x64.zip" "WinEase-$TAG-win-arm64.zip"; do
+            [ -f "dist/$asset" ] || { echo "::error title=Missing asset::dist/$asset"; exit 1; }
+            (cd dist && sha256sum -c "$asset.sha256")
+          done
           ls -l dist
-          [ "$(find dist -type f | wc -l)" -eq 2 ] || { echo "::error title=Unexpected files::the package holds more than the ZIP and its checksum"; exit 1; }
+          [ "$(find dist -type f | wc -l)" -eq 6 ] || { echo "::error title=Unexpected files::the package holds more than the three ZIPs and their checksums"; exit 1; }
           ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG")"
           type="$(jq -r .object.type <<<"$ref")"; sha="$(jq -r .object.sha <<<"$ref")"
           if [ "$type" = "tag" ]; then sha="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq .object.sha)"; fi
@@ -141,15 +156,15 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/${{ needs.package.outputs.asset }}
+          subject-path: dist/*.zip
 
       - name: Create release
         # zizmor: ignore[superfluous-actions] the existing publishing action is kept (release notes, asset upload)
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: |
-            dist/${{ needs.package.outputs.asset }}
-            dist/${{ needs.package.outputs.asset }}.sha256
+            dist/*.zip
+            dist/*.sha256
           generate_release_notes: true
           fail_on_unmatched_files: true
 
@@ -157,10 +172,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-          ASSET: ${{ needs.package.outputs.asset }}
         run: |
           mkdir published
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir published --pattern "$ASSET" --pattern "$ASSET.sha256"
-          cmp dist/"$ASSET.sha256" published/"$ASSET.sha256"
-          (cd published && sha256sum -c "$ASSET.sha256")
-          echo "Published $ASSET matches the verified package."
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir published --pattern "WinEase-*.zip" --pattern "WinEase-*.zip.sha256"
+          [ "$(find published -type f | wc -l)" -eq 6 ] || { echo "::error title=Unexpected assets::the release does not hold exactly the three ZIPs and their checksums"; ls -l published; exit 1; }
+          for f in dist/*; do cmp "$f" "published/$(basename "$f")"; done
+          (cd published && for f in *.zip; do sha256sum -c "$f.sha256"; done)
+          echo "Published assets match the verified packages."
