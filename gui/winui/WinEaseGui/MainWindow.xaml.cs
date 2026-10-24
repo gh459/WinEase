@@ -317,6 +317,7 @@ public sealed partial class MainWindow : Window
             if (!string.IsNullOrWhiteSpace(description))
             {
                 AutomationProperties.SetHelpText(fe, description);
+                ToolTipService.SetToolTip(fe, description);
             }
         }
         return Card(grid);
@@ -578,7 +579,7 @@ public sealed partial class MainWindow : Window
         // Global engine switch: applies one engine to every target that supports it
         var allRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 0, 0, 6) };
         // The help mark next to the label: what the engine choice does is not obvious,
-        // so the mark explains it in a tooltip.
+        // so the mark explains it in a tooltip and accessibility properties.
         var engineHelp = new TextBlock
         {
             Text = "?",
@@ -586,6 +587,7 @@ public sealed partial class MainWindow : Window
             FontSize = 15,
         };
         ToolTipService.SetToolTip(engineHelp, _s.Get("Debloat.Engine.Help"));
+        AutomationProperties.SetName(engineHelp, _s.Get("Debloat.Engine.Help"));
         allRow.Children.Add(engineHelp);
         allRow.Children.Add(new TextBlock { Text = _s.Get("Debloat.Engine.All"), VerticalAlignment = VerticalAlignment.Center });
         var allCombo = new ComboBox { MinWidth = 140, SelectedIndex = 0 };
@@ -633,6 +635,8 @@ public sealed partial class MainWindow : Window
             var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 0, 0, 2) };
             string translatedItem = _s.Get("Debloat:" + item, item);
             var cb = new CheckBox { Content = translatedItem, IsChecked = selected.Contains(item), MinWidth = 380 };
+            AutomationProperties.SetName(cb, translatedItem);
+            AutomationProperties.SetHelpText(cb, item);
             cb.Checked += (_, _) => { selected.Add(value); UpdateDebloatEngineState(value); };
             cb.Unchecked += (_, _) => { selected.Remove(value); UpdateDebloatEngineState(value); };
             boxes.Add(cb);
