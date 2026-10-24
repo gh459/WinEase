@@ -48,6 +48,12 @@ public sealed partial class MainWindow : Window
     private TextBlock? _presetStatusText;
     private Button? _revertButton;
     private DispatcherTimer? _presetStateTimer;
+    // Input check (PowerShell: Test-WinEaseBuildInputs): the issue of each media field is shown under its control
+    private readonly Dictionary<string, TextBlock> _fieldMsgs = new();
+    private List<InputIssue> _issues = new();
+    private DispatcherTimer? _validateTimer;
+    private bool _validating;
+    private sealed record InputIssue(string Field, string Severity, string Text, bool Confirm);
     private string _payload = "WIM";
     private bool _useVhdx;
     private readonly Dictionary<string, bool> _tweaks = new(StringComparer.OrdinalIgnoreCase);
@@ -394,6 +400,7 @@ public sealed partial class MainWindow : Window
     {
         PageTitle.Text = CleanTabText(_s.Get("Tab.Media"));
         SetSubtitle(_s.Get("Main.Subtitle"));
+        _fieldMsgs.Clear();
 
         // Source media
         PageHost.Children.Add(Section(_s.Get("Media.Group.Source")));
@@ -429,34 +436,41 @@ public sealed partial class MainWindow : Window
             source.ItemsSource = _sources;
             source.IsSuggestionListOpen = _sources.Count > 0;
         });
-        srcPanel.Children.Add(FieldRow(_s.Get("Media.Label.Source"), source, browseDrive, browseIso, rescan));
+        source.TextChanged += (_, _) => ScheduleValidation();
+        srcPanel.Children.Add(WithMessage("SourceDrive", FieldRow(_s.Get("Media.Label.Source"), source, browseDrive, browseIso, rescan)));
 
         var work = Box(_workDir, v => _workDir = v, _init.DefaultWorkDir);
-        srcPanel.Children.Add(FieldRow(_s.Get("Media.Label.Workspace"), work, Btn(_s.Get("Button.BrowseFolder"), async (_, _) =>
+        work.TextChanged += (_, _) => ScheduleValidation();
+        srcPanel.Children.Add(WithMessage("WorkDir", FieldRow(_s.Get("Media.Label.Workspace"), work, Btn(_s.Get("Button.BrowseFolder"), async (_, _) =>
         {
             string? p = await PickFolderAsync();
             if (p != null) work.Text = p;
-        })));
+        }))));
 
         var index = Box(_index, v => _index = v);
         index.HorizontalAlignment = HorizontalAlignment.Left;
         index.Width = 120;
-        srcPanel.Children.Add(FieldRow(_s.Get("Media.Label.Index"), index));
+        index.TextChanged += (_, _) => ScheduleValidation();
+        srcPanel.Children.Add(WithMessage("Index", FieldRow(_s.Get("Media.Label.Index"), index)));
 
         var drivers = Box(_drivers, v => _drivers = v);
-        srcPanel.Children.Add(FieldRow(_s.Get("Media.Label.Drivers"), drivers, Btn(_s.Get("Button.Browse"), async (_, _) =>
+        drivers.TextChanged += (_, _) => ScheduleValidation();
+        srcPanel.Children.Add(WithMessage("InjectDrivers", FieldRow(_s.Get("Media.Label.Drivers"), drivers, Btn(_s.Get("Button.Browse"), async (_, _) =>
         {
             string? p = await PickFolderAsync();
             if (p != null) drivers.Text = p;
-        })));
+        }))));
 
         var user = Box(_userName, v => _userName = v);
         user.MaxLength = 20;
-        srcPanel.Children.Add(FieldRow(_s.Get("Media.Label.UserName"), user));
+        user.TextChanged += (_, _) => ScheduleValidation();
+        srcPanel.Children.Add(WithMessage("UserName", FieldRow(_s.Get("Media.Label.UserName"), user)));
         var computer = Box(_computerName, v => _computerName = v);
         computer.MaxLength = 15;
-        srcPanel.Children.Add(FieldRow(_s.Get("Media.Label.ComputerName"), computer));
+        computer.TextChanged += (_, _) => ScheduleValidation();
+        srcPanel.Children.Add(WithMessage("ComputerName", FieldRow(_s.Get("Media.Label.ComputerName"), computer)));
         PageHost.Children.Add(Card(srcPanel));
+        ShowIssues();
 
         // Preset
         PageHost.Children.Add(Section(_s.Get("Media.Group.Preset")));
@@ -1330,6 +1344,84 @@ public sealed partial class MainWindow : Window
         return a;
     }
 
+    // Row + a message line under it for -field (issues of OutputDir / disk space are shown at the workspace)
+    private UIElement WithMessage(string field, FrameworkElement row)
+    {
+        var msg = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = Visibility.Collapsed,
+            Margin = new Thickness(198, 0, 0, 4),
+            Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
+        };
+        _fieldMsgs[field] = msg;
+        var sp = new StackPanel();
+        sp.Children.Add(row);
+        sp.Children.Add(msg);
+        return sp;
+    }
+
+    private void ShowIssues()
+    {
+        foreach (var kv in _fieldMsgs)
+        {
+            var mine = _issues.Where(i => i.Field == kv.Key || (kv.Key == "WorkDir" && i.Field == "OutputDir")).ToList();
+            if (mine.Count == 0)
+            {
+                kv.Value.Text = "";
+                kv.Value.Visibility = Visibility.Collapsed;
+                continue;
+            }
+            bool error = mine.Any(i => i.Severity == "Error");
+            kv.Value.Text = (error ? "⚠ " : "ⓘ ") + string.Join(" ", mine.Select(i => i.Text));
+            kv.Value.Foreground = Res(error ? "SystemFillColorCriticalBrush" : "SystemFillColorCautionBrush");
+            kv.Value.Visibility = Visibility.Visible;
+        }
+    }
+
+    // Debounced re-check while the user types or a picker fills a box
+    private void ScheduleValidation()
+    {
+        _validateTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _validateTimer.Tick -= ValidateTimer_Tick;
+        _validateTimer.Tick += ValidateTimer_Tick;
+        _validateTimer.Stop();
+        _validateTimer.Start();
+    }
+
+    private async void ValidateTimer_Tick(object? sender, object e)
+    {
+        _validateTimer?.Stop();
+        if (_busy || _validating || _resultSent) return;
+        var issues = await ValidateAsync(withDisk: false);
+        if (issues == null) return;
+        _issues = issues;
+        ShowIssues();
+    }
+
+    // Test-WinEaseBuildInputs through the host; null when the host could not answer
+    private async Task<List<InputIssue>?> ValidateAsync(bool withDisk)
+    {
+        _validating = true;
+        try
+        {
+            var reply = await _bridge.RequestAsync("validate", _s.Language, new JsonObject { ["Config"] = ResultObject(false), ["Disk"] = withDisk });
+            if (!InitData.Bool(reply["ok"])) return null;
+            var list = new List<InputIssue>();
+            foreach (var i in InitData.Arr(reply["Data"]?["Issues"]))
+                list.Add(new InputIssue(InitData.Str(i?["Field"]), InitData.Str(i?["Severity"]), InitData.Str(i?["Text"]), InitData.Bool(i?["Confirm"])));
+            return list;
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            _validating = false;
+        }
+    }
+
     private JsonObject ResultObject(bool consent)
     {
         var components = new JsonObject();
@@ -1383,24 +1475,25 @@ public sealed partial class MainWindow : Window
     private async void StartButton_Click(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
-        // Same checks as Complete-WinEaseGuiResult
-        if (_source.Trim().Length == 0)
+        // Same input check as Complete-WinEaseGuiResult, the session bridge and the builder (PowerShell: Test-WinEaseBuildInputs).
+        // An Error blocks Start and is shown under its control; never fail open when the check cannot run.
+        var issues = await ValidateAsync(withDisk: true);
+        if (issues == null)
         {
-            await MessageAsync(_s.Get("Msg.SourceRequired.Title"), _s.Get("Msg.SourceRequired.Text"), "Warning");
+            await MessageAsync(_s.Get("Val.Title"), _s.Format("Msg.Error", _s.Get("Plan.Value.Unknown")), "Error");
             return;
         }
-        if (!Regex.IsMatch(_userName.Trim(), @"^[\p{L}\p{N}_][\p{L}\p{N} ._-]{0,19}$"))
+        _issues = issues;
+        ShowIssues();
+        var errors = issues.Where(i => i.Severity == "Error").ToList();
+        if (errors.Count > 0)
         {
-            await MessageAsync(_s.Get("Msg.InvalidUserName.Title"), _s.Get("Msg.InvalidUserName.Text"), "Warning");
+            var mediaItem = Nav.MenuItems.OfType<NavigationViewItem>().FirstOrDefault(i => i.Tag as string == "media");
+            if (mediaItem != null && _page != "media") Nav.SelectedItem = mediaItem;
+            await MessageAsync(_s.Get("Val.Title"), string.Join("\n", errors.Select(i => i.Text)), "Warning");
             return;
         }
-        string computer = _computerName.Trim().Length == 0 ? "*" : _computerName.Trim();
-        if (!Regex.IsMatch(computer, @"^(\*|[A-Za-z0-9][A-Za-z0-9-]{0,14})$"))
-        {
-            await MessageAsync(_s.Get("Msg.InvalidComputerName.Title"), _s.Get("Msg.InvalidComputerName.Text"), "Warning");
-            return;
-        }
-
+        if (issues.Any(i => i.Confirm) && !await ConfirmAsync(_s.Get("Val.Title"), _s.Get("Val.Index.Confirm"))) return;
         // Dependency / feature-impact pre-check
         var dep = await RunAsync("dependencies", new JsonObject { ["Config"] = DraftConfig() }, quiet: true);
         if (dep == null || !InitData.Bool(dep["ok"]))

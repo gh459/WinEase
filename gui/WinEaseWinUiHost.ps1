@@ -202,7 +202,7 @@ function Invoke-WinEaseWinUiRequest {
             # Input check of the media fields (Config = the window's result object). -Strict: the window needs a source;
             # the window shows each issue next to its control. Same function as ConvertFrom-WinEaseWinUiResult / Apply-WinEaseGuiResult.
             $res = ConvertFrom-WinEaseWinUiResult -Result $a.Config -SkipValidation
-            $issues = @(Test-WinEaseGuiResultInputs -Result $res -OutputDir (Get-WinEaseGuiOutputDir) -Strict -CheckDiskSpace)
+            $issues = @(Test-WinEaseGuiResultInputs -Result $res -OutputDir (Get-WinEaseGuiOutputDir) -Strict -CheckDiskSpace:([bool]$a.Disk))
             $rows = @($issues | ForEach-Object { @{ Field = "$($_.Field)"; Severity = "$($_.Severity)"; MessageKey = "$($_.MessageKey)"; Text = (Get-WinEaseInputIssueText -Issue $_); Confirm = [bool]$_.Confirm } })
             return @{ Data = @{ Issues = $rows; HasError = (Test-WinEaseInputHasError -Issues $issues) } }
         }

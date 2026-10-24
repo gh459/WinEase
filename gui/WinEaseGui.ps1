@@ -24,6 +24,10 @@ if (-not $script:WinEaseGuiCorePath) { throw "WinEaseGuiCore.ps1 not found (expe
 $script:WinEaseBuildPlanPath = Join-Path -Path $script:WinEaseGuiRepoRoot -ChildPath 'lib\WinEaseBuildPlan.ps1'
 if (Test-Path -LiteralPath $script:WinEaseBuildPlanPath) { . $script:WinEaseBuildPlanPath }
 
+# The input check (Start, and a field that is left): shared with the WinUI window, the session bridge and the builder.
+$script:WinEaseInputValidationPath = Join-Path -Path $script:WinEaseGuiRepoRoot -ChildPath 'lib\WinEaseInputValidation.ps1'
+if (Test-Path -LiteralPath $script:WinEaseInputValidationPath) { . $script:WinEaseInputValidationPath }
+
 # The user extensibility engine (user tweaks, presets, custom scripts, Tab 10). Loading it inside a
 # function would define its functions in that function's scope only, so it is loaded here once. The
 # migration bundle has no lib\ folder: the file is simply absent there and the tab reports it.
@@ -884,6 +888,49 @@ function Show-WinEaseGuiJobOutcome {
 }
 
 
+# The inputs of the media tab as the shared input check sees them (-Cheap: only the rules that need no file system access)
+function Get-WinEaseGuiInputIssues {
+    param([hashtable]$Gui, [switch]$Cheap, [switch]$CheckDiskSpace)
+    if (-not (Get-Command -Name Test-WinEaseBuildInputs -ErrorAction SilentlyContinue)) { return @() }
+    $p = @{
+        SourceDrive = $Gui.Source.Text.Trim(); WorkDir = $Gui.Work.Text.Trim(); InjectDrivers = $Gui.Drivers.Text.Trim()
+        Index = $Gui.Index.Text.Trim(); UserName = $Gui.UserName.Text.Trim(); ComputerName = $Gui.ComputerName.Text.Trim()
+        OutputDir = $script:WinEaseGuiRepoRoot; RequireSource = $true
+    }
+    if ($Cheap) { $p.Only = @('Index', 'UserName', 'ComputerName'); $p.SkipWriteProbe = $true }
+    if ($CheckDiskSpace) {
+        $p.CheckDiskSpace = $true
+        $p.PayloadFormat = if ($Gui.RadESD.Checked) { 'ESD' } elseif ($Gui.RadSWM.Checked) { 'SWM' } else { 'WIM' }
+        $comps = @{}
+        foreach ($k in $Gui.ComponentCheckboxes.Keys) { $comps[$k] = $Gui.ComponentCheckboxes[$k].Checked }
+        $p.Components = $comps
+    }
+    return @(Test-WinEaseBuildInputs @p)
+}
+
+# Runs the input check and shows each issue under its control (message label + icon). Returns the issues.
+function Update-WinEaseGuiFieldIssues {
+    param([hashtable]$Gui, [switch]$Cheap, [switch]$Full)
+    if (-not $Gui -or -not $Gui.FieldControls) { return @() }
+    $issues = @(Get-WinEaseGuiInputIssues -Gui $Gui -Cheap:$Cheap -CheckDiskSpace:$Full)
+    $fields = if ($Cheap) { @('Index', 'UserName', 'ComputerName') } else { @($Gui.FieldControls.Keys) }
+    foreach ($field in $fields) {
+        # OutputDir and Disk issues have no box of their own: they are shown at the workspace
+        $mine = @($issues | Where-Object { $_.Field -eq $field -or ($field -eq 'WorkDir' -and $_.Field -eq 'OutputDir') })
+        $ctl = $Gui.FieldControls[$field]
+        $lbl = $Gui.FieldMessages[$field]
+        $errs = @($mine | Where-Object { $_.Severity -eq 'Error' })
+        $warns = @($mine | Where-Object { $_.Severity -ne 'Error' })
+        $Gui.ErrProvider.SetError($ctl, $(if ($errs.Count -gt 0) { ($errs | ForEach-Object { Get-WinEaseInputIssueText -Issue $_ }) -join ' ' } else { '' }))
+        $Gui.WarnProvider.SetError($ctl, $(if ($errs.Count -eq 0 -and $warns.Count -gt 0) { ($warns | ForEach-Object { Get-WinEaseInputIssueText -Issue $_ }) -join ' ' } else { '' }))
+        if ($mine.Count -eq 0) { $lbl.Text = ' '; $lbl.Visible = $false; continue }
+        $lbl.Text = ($mine | ForEach-Object { Get-WinEaseInputIssueText -Issue $_ }) -join ' '
+        $lbl.ForeColor = if ($errs.Count -gt 0) { [System.Drawing.Color]::Salmon } else { [System.Drawing.Color]::Gold }
+        $lbl.Visible = $true
+    }
+    return $issues
+}
+
 function Complete-WinEaseGuiResult {
     param(
         [hashtable]$Gui,
@@ -905,15 +952,23 @@ function Complete-WinEaseGuiResult {
     $guiUserName = $Gui.UserName.Text.Trim()
     $guiComputerName = $Gui.ComputerName.Text.Trim()
     if (-not $guiComputerName) { $guiComputerName = '*' }
-    if ($guiUserName -notmatch '^[\p{L}\p{N}_][\p{L}\p{N} ._-]{0,19}$') {
-        Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.InvalidUserName.Text') -Title (Get-WinEaseUiString 'Msg.InvalidUserName.Title') -Kind Warning
+    # One input check for every field (lib\WinEaseInputValidation.ps1, also run by the WinUI window and the session bridge):
+    # an Error blocks Start; a field the user has to confirm (no edition index) asks first
+    $inputIssues = @(Update-WinEaseGuiFieldIssues -Gui $Gui -Full)
+    $inputErrors = @($inputIssues | Where-Object { $_.Severity -eq 'Error' })
+    if ($inputErrors.Count -gt 0) {
+        Show-WinEaseGuiMessage -Text (Format-WinEaseInputIssues -Issues $inputErrors) -Title (Get-WinEaseUiString 'Val.Title') -Kind Warning
+        $bad = $Gui.FieldControls[$inputErrors[0].Field]
+        if (-not $bad) { $bad = $Gui.Work }
+        try { $bad.Focus() | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         return $false
     }
-    if ($guiComputerName -notmatch '^(\*|[A-Za-z0-9][A-Za-z0-9-]{0,14})$') {
-        Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.InvalidComputerName.Text') -Title (Get-WinEaseUiString 'Msg.InvalidComputerName.Title') -Kind Warning
-        return $false
+    if (@($inputIssues | Where-Object { $_.Confirm }).Count -gt 0) {
+        if (-not (Confirm-WinEaseGuiAction -Message (Get-WinEaseUiString 'Val.Index.Confirm') -Title (Get-WinEaseUiString 'Val.Title'))) {
+            try { $Gui.Index.Focus() | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+            return $false
+        }
     }
-
     $formResult = $Gui.Result
     $cmbPreset = $Gui.Preset
     $presetKeyMap = $Gui.PresetKeyMap
@@ -1011,7 +1066,7 @@ function New-WinEaseMediaTab {
     # =========================================================================
     $tabMedia = New-WinEaseTabPage -Text (Get-WinEaseUiString 'Tab.Media') -TabControl $tabControl
 
-    $grpMedia = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'Media.Group.Source') -X 15 -Y 10 -Width 835 -Height 185 -Parent $tabMedia
+    $grpMedia = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'Media.Group.Source') -X 15 -Y 10 -Width 835 -Height 300 -Parent $tabMedia
 
     [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Media.Label.Source') -X 15 -Y 28 -Width 130 -Height 20 -Parent $grpMedia)
     $cmbSource = New-WinEaseComboBox -X 150 -Y 25 -Width 370 -BackColor $script:WinEaseGuiColors.Input -ForeColor ([System.Drawing.Color]::White) -Parent $grpMedia
@@ -1048,28 +1103,53 @@ function New-WinEaseMediaTab {
     }
 
     # WorkDir
-    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Media.Label.Workspace') -X 15 -Y 60 -Width 130 -Height 20 -Parent $grpMedia)
+    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Media.Label.Workspace') -X 15 -Y 74 -Width 130 -Height 20 -Parent $grpMedia)
     $docsDir = [Environment]::GetFolderPath('MyDocuments')
     if (-not $docsDir) { $docsDir = Join-Path $env:USERPROFILE "Documents" }
     $workText = if ($InitialSettings.WorkDir) { $InitialSettings.WorkDir } else { Join-Path -Path $docsDir -ChildPath "WinEase_workspace" }
-    $gui.Work = New-WinEaseTextBox -X 150 -Y 57 -Width 535 -Text $workText -Parent $grpMedia
-    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.BrowseFolder') -X 695 -Y 56 -Width 125 -Height 26 -Tag $gui.Work -OnClick $browseFolder -Parent $grpMedia)
+    $gui.Work = New-WinEaseTextBox -X 150 -Y 71 -Width 535 -Text $workText -Parent $grpMedia
+    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.BrowseFolder') -X 695 -Y 70 -Width 125 -Height 26 -Tag $gui.Work -OnClick $browseFolder -Parent $grpMedia)
 
     # Index & Drivers
-    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Media.Label.Index') -X 15 -Y 95 -Width 130 -Height 20 -Parent $grpMedia)
-    $gui.Index = New-WinEaseTextBox -X 150 -Y 92 -Width 70 -Text $(if ($InitialSettings.Index) { "$($InitialSettings.Index)" }) -Parent $grpMedia
-    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Media.Label.Drivers') -X 235 -Y 95 -Width 140 -Height 20 -Parent $grpMedia)
-    $gui.Drivers = New-WinEaseTextBox -X 380 -Y 92 -Width 305 -Text $(if ($InitialSettings.InjectDrivers) { "$($InitialSettings.InjectDrivers)" }) -Parent $grpMedia
-    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.Browse') -X 695 -Y 91 -Width 125 -Height 26 -Tag $gui.Drivers -OnClick $browseFolder -Parent $grpMedia)
+    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Media.Label.Index') -X 15 -Y 119 -Width 130 -Height 20 -Parent $grpMedia)
+    $gui.Index = New-WinEaseTextBox -X 150 -Y 116 -Width 70 -Text $(if ($InitialSettings.Index) { "$($InitialSettings.Index)" }) -Parent $grpMedia
+    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Media.Label.Drivers') -X 15 -Y 164 -Width 130 -Height 20 -Parent $grpMedia)
+    $gui.Drivers = New-WinEaseTextBox -X 150 -Y 161 -Width 535 -Text $(if ($InitialSettings.InjectDrivers) { "$($InitialSettings.InjectDrivers)" }) -Parent $grpMedia
+    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.Browse') -X 695 -Y 160 -Width 125 -Height 26 -Tag $gui.Drivers -OnClick $browseFolder -Parent $grpMedia)
 
     # User & Computer
-    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Media.Label.UserName') -X 15 -Y 130 -Width 130 -Height 20 -Parent $grpMedia)
-    $gui.UserName = New-WinEaseTextBox -X 150 -Y 127 -Width 160 -Text $(if ($InitialSettings.UserName) { "$($InitialSettings.UserName)" } else { "User" }) -Parent $grpMedia
-    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Media.Label.ComputerName') -X 330 -Y 130 -Width 120 -Height 20 -Parent $grpMedia)
-    $gui.ComputerName = New-WinEaseTextBox -X 450 -Y 127 -Width 160 -Text $(if ($InitialSettings.ComputerName) { "$($InitialSettings.ComputerName)" } else { "*" }) -Parent $grpMedia
+    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Media.Label.UserName') -X 15 -Y 209 -Width 130 -Height 20 -Parent $grpMedia)
+    $gui.UserName = New-WinEaseTextBox -X 150 -Y 206 -Width 160 -Text $(if ($InitialSettings.UserName) { "$($InitialSettings.UserName)" } else { "User" }) -Parent $grpMedia
+    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Media.Label.ComputerName') -X 15 -Y 254 -Width 130 -Height 20 -Parent $grpMedia)
+    $gui.ComputerName = New-WinEaseTextBox -X 150 -Y 251 -Width 160 -Text $(if ($InitialSettings.ComputerName) { "$($InitialSettings.ComputerName)" } else { "*" }) -Parent $grpMedia
+
+    # The message of each field sits right under its control (red = Error, yellow = Warning); ErrorProvider adds the icon
+    $gui.ErrProvider = New-Object System.Windows.Forms.ErrorProvider
+    $gui.ErrProvider.BlinkStyle = [System.Windows.Forms.ErrorBlinkStyle]::NeverBlink
+    $gui.WarnProvider = New-Object System.Windows.Forms.ErrorProvider
+    $gui.WarnProvider.BlinkStyle = [System.Windows.Forms.ErrorBlinkStyle]::NeverBlink
+    $gui.WarnProvider.Icon = [System.Drawing.SystemIcons]::Warning
+    $gui.FieldControls = [ordered]@{ SourceDrive = $cmbSource; WorkDir = $gui.Work; Index = $gui.Index; InjectDrivers = $gui.Drivers; UserName = $gui.UserName; ComputerName = $gui.ComputerName }
+    $gui.FieldMessages = @{}
+    foreach ($field in @($gui.FieldControls.Keys)) {
+        $ctl = $gui.FieldControls[$field]
+        $msg = New-WinEaseLabel -Text ' ' -X 150 -Y ($ctl.Top + 25) -Width 670 -Height 16 -Font (New-Object System.Drawing.Font('Segoe UI', 8.25)) -Parent $grpMedia
+        $msg.Visible = $false
+        $gui.FieldMessages[$field] = $msg
+        $gui.ErrProvider.SetIconAlignment($ctl, [System.Windows.Forms.ErrorIconAlignment]::MiddleRight)
+        $gui.ErrProvider.SetIconPadding($ctl, -20)
+        $gui.WarnProvider.SetIconAlignment($ctl, [System.Windows.Forms.ErrorIconAlignment]::MiddleRight)
+        $gui.WarnProvider.SetIconPadding($ctl, -20)
+        # Leaving a field re-checks the media fields (no disk space check, no probe file while typing)
+        $ctl.Add_Leave({ Update-WinEaseGuiFieldIssues -Gui $this.FindForm().Tag })
+    }
+    # Cheap rules (patterns, a number) run on every keystroke; the file system rules run when the field is left
+    foreach ($field in @('Index', 'UserName', 'ComputerName')) {
+        $gui.FieldControls[$field].Add_TextChanged({ Update-WinEaseGuiFieldIssues -Gui $this.FindForm().Tag -Cheap })
+    }
 
     # Preset Group
-    $grpPreset = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'Media.Group.Preset') -X 15 -Y 205 -Width 835 -Height 75 -Parent $tabMedia
+    $grpPreset = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'Media.Group.Preset') -X 15 -Y 320 -Width 835 -Height 75 -Parent $tabMedia
 
     $cmbPreset = New-WinEaseComboBox -DropList -X 15 -Y 28 -Width 610 -BackColor $script:WinEaseGuiColors.Input -ForeColor ([System.Drawing.Color]::White) -Parent $grpPreset -Items @(
         (Get-WinEaseUiString 'Media.Preset.Extreme'),
@@ -1092,7 +1172,7 @@ function New-WinEaseMediaTab {
     $revertTip.SetToolTip($btnRevert, (Get-WinEaseUiString 'Button.RevertPreset.Tooltip'))
 
     # Payload Format Group
-    $grpPayload = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'Media.Group.Payload') -X 15 -Y 290 -Width 835 -Height 95 -Parent $tabMedia
+    $grpPayload = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'Media.Group.Payload') -X 15 -Y 405 -Width 835 -Height 95 -Parent $tabMedia
     $gui.RadWIM = New-WinEaseCheckBox -Radio -Text (Get-WinEaseUiString 'Media.Radio.WIM') -X 15 -Y 28 -Width 350 -Height 24 -Checked $true -Parent $grpPayload
     $gui.RadESD = New-WinEaseCheckBox -Radio -Text (Get-WinEaseUiString 'Media.Radio.ESD') -X 380 -Y 28 -Width 250 -Height 24 -Parent $grpPayload
     $gui.RadSWM = New-WinEaseCheckBox -Radio -Text (Get-WinEaseUiString 'Media.Radio.SWM') -X 640 -Y 28 -Width 185 -Height 24 -Parent $grpPayload

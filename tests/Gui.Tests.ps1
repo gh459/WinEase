@@ -42,6 +42,9 @@ Describe "Apply-WinEaseGuiResult in lib\WinEaseGuiSession.ps1" {
             if ($de -and $de.Item) { $script:WinEaseDebloatEngines[[string]$de.Item] = $de }
         }
 
+        # The input check Apply-WinEaseGuiResult runs before it changes anything (lib\WinEaseInputValidation.ps1)
+        . (Join-Path -Path $script:RepoRoot -ChildPath 'lib\WinEaseInputValidation.ps1')
+
         # Mock helper functions called inside Apply-WinEaseGuiResult
         function Apply-ProfileSettings { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param($ProfileName) return @{ ProfileName = $ProfileName } }
         function Sync-WinEaseTweakVariables { }
@@ -80,9 +83,14 @@ Describe "Apply-WinEaseGuiResult in lib\WinEaseGuiSession.ps1" {
     }
 
     It "applies full GUI result hashtable and updates session variables" {
+        $iso = Join-Path $TestDrive "Win11.iso"
+        Set-Content -LiteralPath $iso -Value "x"
+        $drivers = Join-Path $TestDrive "Drivers"
+        New-Item -ItemType Directory -Force -Path $drivers | Out-Null
+        $work = Join-Path $TestDrive "WinEaseWork"
         $guiResult = @{
-            SourceDrive = "D:\Win11.iso"
-            WorkDir = "D:\WinEaseWork"
+            SourceDrive = $iso
+            WorkDir = $work
             UserName = "TestUser"
             ComputerName = "WIN-TESTPC"
             UseVHDX = $true
@@ -91,7 +99,7 @@ Describe "Apply-WinEaseGuiResult in lib\WinEaseGuiSession.ps1" {
             AdvancedDebloatStandard = @("TargetA")
             AdvancedDebloatExperimental = @("TargetB")
             Index = "2"
-            InjectDrivers = "D:\Drivers"
+            InjectDrivers = $drivers
             DryRun = $true
             PresetKey = "custom_preset"
             TweakSettings = @{ DisableUAC = $true }
@@ -100,8 +108,8 @@ Describe "Apply-WinEaseGuiResult in lib\WinEaseGuiSession.ps1" {
 
         Apply-WinEaseGuiResult -GuiResult $guiResult
 
-        $script:SourceDrive | Should Be "D:\Win11.iso"
-        $script:WorkDir | Should Be "D:\WinEaseWork"
+        $script:SourceDrive | Should Be $iso
+        $script:WorkDir | Should Be $work
         $script:UserName | Should Be "TestUser"
         $script:ComputerName | Should Be "WIN-TESTPC"
         $script:useVHDX | Should Be $true
@@ -110,12 +118,37 @@ Describe "Apply-WinEaseGuiResult in lib\WinEaseGuiSession.ps1" {
         $script:advancedDebloatStandard | Should Be @("TargetA")
         $script:advancedDebloatExperimental | Should Be @("TargetB")
         $script:Index | Should Be "2"
-        $script:InjectDrivers | Should Be "D:\Drivers"
+        $script:InjectDrivers | Should Be $drivers
         $script:DryRun | Should Be $true
         $script:isDryRunMode | Should Be $true
         $script:selectedProfile | Should Be "custom_preset"
         $script:TweakSettings["DisableUAC"] | Should Be $true
         $script:DebloatEngineSelection["TargetA"] | Should Be "Rust"
+    }
+
+    It "refuses a result with an invalid user name, computer name, path or drivers folder and changes no builder variable" {
+        $bad = @{ UserName = 'a"b'; ComputerName = 'x;calc'; WorkDir = 'C:\bad|path'; InjectDrivers = (Join-Path $TestDrive 'no\such\drivers'); DryRun = $true; UseVHDX = $true }
+        $warn = $null
+        $r = Apply-WinEaseGuiResult -GuiResult $bad -WarningVariable warn -WarningAction SilentlyContinue
+        $r | Should Be $false
+        "$warn" | Should Match 'UserName'
+        "$warn" | Should Match 'ComputerName'
+        "$warn" | Should Match 'WorkDir'
+        "$warn" | Should Match 'InjectDrivers'
+        $script:UserName | Should Be "User"
+        $script:ComputerName | Should Be "PC"
+        $script:WorkDir | Should Be "C:\Work"
+        $script:useVHDX | Should Be $false
+        $script:DryRun | Should Be $false
+    }
+
+    It "refuses a workspace that is the folder the ISO is written to" {
+        $script:scriptDir = Join-Path $TestDrive 'outfolder'
+        New-Item -ItemType Directory -Force -Path $script:scriptDir | Out-Null
+        try {
+            (Apply-WinEaseGuiResult -GuiResult @{ WorkDir = $script:scriptDir } -WarningAction SilentlyContinue) | Should Be $false
+            $script:WorkDir | Should Be "C:\Work"
+        } finally { $script:scriptDir = $null }
     }
 
     It "handles null/missing debloat lists and debloat engine selection safely" {
@@ -1366,7 +1399,8 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
         $used = @(Get-UiKeyUsed $script:GuiPath) + @(Get-UiKeyUsed (Join-Path $script:RepoRoot "tools\migrator\WinEase-Migrator.ps1")) +
             @(Get-UiKeyUsed (Join-Path $script:RepoRoot "gui\WinEaseWinUiHost.ps1")) + @(Get-UiKeyUsedWinUi) +
             @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseDependencies.ps1')), "'(Dep\.[A-Za-z.]+)'\s+=") | ForEach-Object { $_.Groups[1].Value }) +
-            @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseBuildPlan.ps1')), "'(Plan\.[A-Za-z.]+)'") | ForEach-Object { $_.Groups[1].Value })
+            @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseBuildPlan.ps1')), "'(Plan\.[A-Za-z.]+)'") | ForEach-Object { $_.Groups[1].Value }) +
+            @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseInputValidation.ps1')), "'((?:Val|Msg)\.[A-Za-z.]+)'") | ForEach-Object { $_.Groups[1].Value })
         $used.Count | Should BeGreaterThan 100
         $missing = @($used | Where-Object { $_ -notmatch $script:LangOnlyPrefixes -and -not $en.ContainsKey($_) } | Select-Object -Unique)
         ($missing -join ',') | Should Be ''

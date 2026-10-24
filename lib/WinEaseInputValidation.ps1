@@ -57,16 +57,16 @@ function Test-WinEaseInputWritableFolder {
     param([string]$Field, [string]$Path, [string]$Full, [bool]$Probe)
     $issues = @()
     if (-not $Full) {
-        return , @([pscustomobject]@{ Field = $Field; Severity = 'Error'; MessageKey = 'Val.Path.Invalid'; Args = @($Path); Confirm = $false })
+        return @([pscustomobject]@{ Field = $Field; Severity = 'Error'; MessageKey = 'Val.Path.Invalid'; Args = @($Path); Confirm = $false })
     }
     if (Test-Path -LiteralPath $Full -PathType Leaf) {
-        return , @([pscustomobject]@{ Field = $Field; Severity = 'Error'; MessageKey = 'Val.Dir.NotDirectory'; Args = @($Full); Confirm = $false })
+        return @([pscustomobject]@{ Field = $Field; Severity = 'Error'; MessageKey = 'Val.Dir.NotDirectory'; Args = @($Full); Confirm = $false })
     }
     if (Test-Path -LiteralPath $Full -PathType Container) {
         if ($Probe -and -not (Test-WinEaseInputDirWritable -Dir $Full)) {
             $issues += [pscustomobject]@{ Field = $Field; Severity = 'Error'; MessageKey = 'Val.Dir.NotWritable'; Args = @($Full); Confirm = $false }
         }
-        return , @($issues)
+        return @($issues)
     }
     $anc = $Full
     while ($anc -and -not (Test-Path -LiteralPath $anc)) {
@@ -75,12 +75,12 @@ function Test-WinEaseInputWritableFolder {
         $anc = $parent
     }
     if (-not $anc -or -not (Test-Path -LiteralPath $anc -PathType Container)) {
-        return , @([pscustomobject]@{ Field = $Field; Severity = 'Error'; MessageKey = 'Val.Dir.NotCreatable'; Args = @($Full); Confirm = $false })
+        return @([pscustomobject]@{ Field = $Field; Severity = 'Error'; MessageKey = 'Val.Dir.NotCreatable'; Args = @($Full); Confirm = $false })
     }
     if ($Probe -and -not (Test-WinEaseInputDirWritable -Dir $anc)) {
         $issues += [pscustomobject]@{ Field = $Field; Severity = 'Error'; MessageKey = 'Val.Dir.NotCreatable'; Args = @($Full); Confirm = $false }
     }
-    return , @($issues)
+    return @($issues)
 }
 
 # -SourceDrive   an ISO file, a drive letter (E: / E:\) or a path on a drive that holds sources\install.wim|esd
