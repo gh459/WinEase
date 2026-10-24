@@ -176,6 +176,9 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
     $helpersText = Get-WinEaseHelperSourceText
     # the plain registry writes of phase 10 are data (config\registry\*.psd1): a Tweak = 'Key' entry reads the key
     $registryTableText = Get-WinEaseRegistryTableText
+    # The implementation of some tweaks lives in the official built-in plugins (src\WinEase.Plugins.Builtin.*): a plugin
+    # that asks the host for IsTweakEnabled("Key") / IsComponentEnabled("Key") / IsTweakGroupEnabled("Group") reads it.
+    $pluginSourceText = Get-WinEaseBuiltinPluginSourceText
     $scriptText = (Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "scripts") -Filter "*.ps1" -ErrorAction SilentlyContinue |
         ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"
 
@@ -203,6 +206,8 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
             if ($phaseText -match "['`"]$([regex]::Escape($k))['`"]\s*=") { continue }
             if ($uiPrefText -match "Tweak\s*=\s*['`"]$([regex]::Escape($k))['`"]") { continue }
             if ($registryTableText -match "Tweak\s*=\s*['`"]$([regex]::Escape($k))['`"]") { continue }
+            # implemented by a built-in plugin
+            if ($pluginSourceText -match "IsTweakEnabled\(""$([regex]::Escape($k))""") { continue }
             # the lookup tables of the options live in the master schema
             if ($schemaText -match "['`"]$([regex]::Escape($k))['`"]\s*=") { continue }
             if ($varMap.Contains($k)) {
@@ -339,6 +344,7 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
             if ($cd.Type -eq 'Special' -or -not $cd.Variable) { continue }
             $v = $cd.Variable
             if (($phaseText -match "\`$$v\b") -or ($helpersText -match "\`$$v\b") -or ($scriptText -match "\`$$v\b")) { continue }
+            if ($pluginSourceText -match "IsComponentEnabled\(""$([regex]::Escape($cd.Key))""") { continue }
             $unconsumed += "$($cd.Key) (`$$v)"
         }
         ($unconsumed -join ', ') | Should Be ''
@@ -376,6 +382,7 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
         $unused = @()
         foreach ($g in $groups) {
             if ($phaseText -match "activeTweakGroups\['$g'\]") { continue }
+            if ($pluginSourceText -match "IsTweakGroupEnabled\(""$g""") { continue }
             $unused += $g
         }
         ($unused -join ', ') | Should Be ''

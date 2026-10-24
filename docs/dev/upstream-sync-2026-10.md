@@ -9,6 +9,16 @@ data and never run.
 Decision: **adopted** (ported to WinEase), **present** (WinEase already does it),
 **skipped** (with the reason).
 
+Where the adopted items live (R9): the registry values and the AppX packages of this review that
+are plain data are held by the built-in plugin `WinEase.Plugins.Builtin.UpstreamSync`
+(`src/WinEase.Plugins.Builtin.UpstreamSync`, data version 2026.10.1). It hands them over as
+`RegistryEntry` values (same tweak gate and default as before) and `AppxRemovalRule` patterns, and the
+builder applies them in phases 10-registry and 05-appx. The next upstream sync is a change of that data
+plus a new version number. Items that are logic, not data, stay in PowerShell: the merged
+`SettingsPageVisibility` value, the feature-override IDs (`ConvertTo-WinEaseFeatureIdOverride`), the
+service trims, the Defender removal block (services, autologgers, `Ubpm` values), the environment variable
+and the per-user UI toggles of `config\ui-preferences.psd1` (they share that table's runner and tests).
+
 ## ChrisTitusTech/winutil 25.10.06 -> 26.10.07
 
 Source: `config/tweaks.json`. Most of the diff is renamed tweaks (`WPFTweaksTele` ->

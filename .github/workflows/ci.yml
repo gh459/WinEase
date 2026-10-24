@@ -123,9 +123,9 @@ jobs:
 
   binaries:
     name: .NET binaries (${{ matrix.arch }})
-    # Builds the .NET parts (WinUI 3 window and WinEase.exe; plugins are added to
-    # tools/build-binaries.ps1). arm64 is cross-built on the x64 runner. Only jobs that consume
-    # the plugin DLLs should say "needs: binaries"; self-test, Pester and dry-run stay independent
+    # Builds the .NET parts: the WinUI 3 window, WinEase.exe and the built-in plugins (plugins/builtin: the
+    # DLLs and builtin.lock.psd1 with their SHA256). arm64 is cross-built on the x64 runner. Only jobs that
+    # consume the plugin DLLs should say "needs: binaries"; self-test, Pester and dry-run stay independent
     # so a .NET failure never hides a PowerShell result.
     runs-on: windows-latest
     strategy:
@@ -154,15 +154,16 @@ jobs:
         if: matrix.arch == 'x64'
         shell: pwsh
         run: dotnet test src/WinEase.sln -c Release -p:Platform=x64 --nologo
-        # (tests are added together with the plugin host; an empty solution passes)
+        # (the solution holds the plugin contract tests, the launcher tests and the tests of the built-in plugins)
 
-      - name: Upload binaries (WinUI window + WinEase.exe)
+      - name: Upload binaries (WinUI window + WinEase.exe + built-in plugins)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: binaries-${{ matrix.arch }}
           path: |
             gui/winui/bin
             WinEase.exe
+            plugins/builtin
           if-no-files-found: error
           retention-days: 14
 
@@ -189,8 +190,9 @@ jobs:
 
   plugins-dotnet:
     name: Plugin contract (dotnet build + xUnit)
-    # src/WinEase.Plugins.Abstractions is the contract of the plugin host (lib/WinEasePlugins.ps1);
-    # the Pester suite compiles the same sources with the Windows PowerShell compiler.
+    # src/WinEase.Plugins.Abstractions is the contract of the plugin host (lib/WinEasePlugins.ps1) and
+    # src/WinEase.Plugins.Builtin.* are the official plugins; the Pester suite compiles the same sources
+    # with the Windows PowerShell compiler (C# 5), which is what a source checkout without the SDK does.
     runs-on: windows-latest
     steps:
       - name: Checkout

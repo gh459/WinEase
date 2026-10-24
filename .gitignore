@@ -40,6 +40,10 @@ plugins/user/*
 !plugins/user/README.md
 plugins/bin/
 
+# Built-in plugin DLLs and their allow list are build output (tools/build-binaries.ps1, CI, or the builder itself
+# when it compiles src/WinEase.Plugins.Builtin.* on a source checkout)
+plugins/builtin/*
+
 # .NET build output
 src/**/bin/
 src/**/obj/

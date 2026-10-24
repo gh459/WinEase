@@ -19,7 +19,15 @@ $script:WinEasePluginAbstractionsName = 'WinEase.Plugins.Abstractions'
 $script:WinEasePluginMaxBytes = 64MB
 $script:WinEasePluginHives = @('zSYSTEM', 'zSOFTWARE', 'zDEFAULT', 'zNTUSER', 'zCOMPONENTS')
 $script:WinEasePluginOnErrorValues = @('Stop', 'Warn', 'Ignore')
-$script:WinEasePluginKinds = @('Registry', 'Appx', 'Fod', 'Service', 'ImageFile')
+$script:WinEasePluginContributorMap = [ordered]@{
+    Registry  = @{ Interface = 'IRegistryContributor'; Method = 'GetRegistryEntries' }
+    Appx      = @{ Interface = 'IAppxRemovalContributor'; Method = 'GetAppxRemovals' }
+    AppxRule  = @{ Interface = 'IAppxRemovalRuleContributor'; Method = 'GetAppxRemovalRules' }
+    Fod       = @{ Interface = 'IFodRemovalContributor'; Method = 'GetFodRemovals' }
+    Service   = @{ Interface = 'IServiceStartContributor'; Method = 'GetServiceStarts' }
+    ImageFile = @{ Interface = 'IImageFileContributor'; Method = 'GetImageFiles' }
+}
+$script:WinEasePluginKinds = @($script:WinEasePluginContributorMap.Keys)
 if (-not (Test-Path -Path variable:script:WinEasePlugins)) { $script:WinEasePlugins = [System.Collections.Generic.List[object]]::new() }
 if (-not (Test-Path -Path variable:script:WinEasePluginRejected)) { $script:WinEasePluginRejected = [System.Collections.Generic.List[object]]::new() }
 if (-not (Test-Path -Path variable:script:WinEasePluginRunLog)) { $script:WinEasePluginRunLog = [System.Collections.Generic.List[object]]::new() }
@@ -71,7 +79,9 @@ function New-WinEaseCSharpAssembly {
     param(
         [Parameter(Mandatory = $true)][string[]]$Source,
         [Parameter(Mandatory = $true)][string]$OutputPath,
-        [string[]]$References = @()
+        [string[]]$References = @(),
+        # "<file>,<resource name>" pairs, embedded the way <EmbeddedResource LogicalName=...> does in a project
+        [string[]]$Resources = @()
     )
     $provider = New-Object -TypeName Microsoft.CSharp.CSharpCodeProvider
     try {
@@ -79,7 +89,12 @@ function New-WinEaseCSharpAssembly {
         $options.GenerateExecutable = $false
         $options.GenerateInMemory = $false
         $options.OutputAssembly = $OutputPath
-        $options.CompilerOptions = '/optimize+'
+        # csc reads /resource:<file>[,<name>]; each part is quoted on its own because of the spaces in the names
+        $resourceOptions = foreach ($resource in @($Resources | Where-Object { $_ })) {
+            $split = $resource.LastIndexOf(',')
+            ' /resource:"' + $resource.Substring(0, $split) + '","' + $resource.Substring($split + 1) + '"'
+        }
+        $options.CompilerOptions = '/optimize+' + (@($resourceOptions) -join '')
         foreach ($ref in (@('System.dll', 'System.Core.dll') + $References)) { [void]$options.ReferencedAssemblies.Add($ref) }
         $result = $provider.CompileAssemblyFromSource($options, $Source)
         if ($result.Errors.HasErrors) {
@@ -130,12 +145,16 @@ function Get-WinEasePluginAbstractions {
             }
             $sources = @(Get-ChildItem -LiteralPath $paths.SourceDir -Filter '*.cs' -File | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) })
             $sources += '[assembly: System.Reflection.AssemblyVersion("1.0.0.0")]'
-            $dll = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEasePluginAbstractions_{0}.dll" -f [guid]::NewGuid().ToString('N'))
+            # The file name is the assembly name: it has to be WinEase.Plugins.Abstractions, otherwise the plugins
+            # cannot bind to it and a second import compiles (and loads) another contract assembly.
+            $compileDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEasePluginAbstractions_{0}" -f [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Force -Path $compileDir | Out-Null
+            $dll = Join-Path -Path $compileDir -ChildPath "$($script:WinEasePluginAbstractionsName).dll"
             try {
                 [void](New-WinEaseCSharpAssembly -Source $sources -OutputPath $dll)
                 $loaded = [System.Reflection.Assembly]::Load([System.IO.File]::ReadAllBytes($dll))
             } finally {
-                Remove-Item -LiteralPath $dll -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $compileDir -Recurse -Force -ErrorAction SilentlyContinue
             }
         } else {
             $loaded = [System.Reflection.Assembly]::Load([System.IO.File]::ReadAllBytes($dll))
@@ -143,6 +162,119 @@ function Get-WinEasePluginAbstractions {
     }
     Register-WinEasePluginAssemblyResolver -Abstractions $loaded
     return $loaded
+}
+
+# --- built-in plugins ----------------------------------------------------------------------------
+# The official plugins (src\WinEase.Plugins.Builtin.*) are normally built by tools\build-binaries.ps1
+# (dotnet) or by CI, which also writes plugins\builtin\builtin.lock.psd1 with their SHA256. A source
+# checkout has neither the DLLs nor the lock file (both are generated and not committed). Then the
+# builder compiles the plugins from src\ with the C# compiler of Windows PowerShell (the sources are
+# C# 5 for this reason) and writes the lock itself, so the tweaks that live in the plugins work
+# without the .NET SDK. When the sources are missing too, the builder warns and those tweaks are not
+# applied; it does not stop. A DLL that was built here is rebuilt when its sources are newer; a DLL
+# that was shipped (any other lock entry) is never replaced.
+$script:WinEaseBuiltinPluginNames = @('Latency', 'PostInstallTools', 'UpstreamSync')
+$script:WinEaseBuiltinLocalBuildMarker = 'Built on this machine from src\'
+
+function Get-WinEaseBuiltinPluginFileName {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    return "WinEase.Plugins.Builtin.$Name.dll"
+}
+
+function Get-WinEaseBuiltinPluginResources {
+    # "<file>,<resource name>" pairs for the plugins that embed files: the same names the EmbeddedResource
+    # items of the project give (PostInstallTools embeds scripts\tools).
+    param([Parameter(Mandatory = $true)][string]$Name, [Parameter(Mandatory = $true)][string]$RepoRoot)
+    if ($Name -ne 'PostInstallTools') { return @() }
+    $toolsDir = Join-Path -Path $RepoRoot -ChildPath 'scripts\tools'
+    if (-not (Test-Path -LiteralPath $toolsDir -PathType Container)) { return @() }
+    $root = (Get-Item -LiteralPath $toolsDir).FullName.TrimEnd('\') + '\'
+    return @(Get-ChildItem -LiteralPath $toolsDir -File -Recurse | ForEach-Object {
+            "$($_.FullName),tools/$($_.FullName.Substring($root.Length).Replace('\', '/'))"
+        })
+}
+
+function Initialize-WinEaseBuiltinPlugins {
+    <#
+    .SYNOPSIS
+        Builds the built-in plugins from src\ (Windows PowerShell compiler) when their DLLs are not there.
+    .DESCRIPTION
+        Returns the names of the plugins it built. Never throws: a plugin that cannot be built is reported
+        with a warning and its tweaks are not applied.
+    #>
+    [CmdletBinding()]
+    param([string]$RepoRoot)
+    $paths = Get-WinEasePluginPaths -RepoRoot $RepoRoot
+    $entries = @()
+    try { $entries = @(Read-WinEasePluginLock -Path $paths.BuiltinLock) } catch { Write-Verbose "Built-in lock not readable: $($_.Exception.Message)" }
+    $todo = [System.Collections.Generic.List[string]]::new()
+    foreach ($name in $script:WinEaseBuiltinPluginNames) {
+        $file = Get-WinEaseBuiltinPluginFileName -Name $name
+        $entry = @($entries | Where-Object { $_.File -ieq $file })[0]
+        $dll = Join-Path -Path $paths.BuiltinDir -ChildPath $file
+        $srcDir = Join-Path -Path $paths.RepoRoot -ChildPath "src\WinEase.Plugins.Builtin.$name"
+        $hasSource = Test-Path -LiteralPath $srcDir -PathType Container
+        if ($entry -and (Test-Path -LiteralPath $dll -PathType Leaf)) {
+            $stale = $false
+            if ($hasSource -and [string]$entry.Description -like "$($script:WinEaseBuiltinLocalBuildMarker)*") {
+                $inputs = @(Get-ChildItem -LiteralPath $srcDir -Filter '*.cs' -File)
+                $inputs += @(Get-WinEaseBuiltinPluginResources -Name $name -RepoRoot $paths.RepoRoot | ForEach-Object { Get-Item -LiteralPath ($_ -split ',')[0] })
+                $newest = ($inputs | Sort-Object -Property LastWriteTimeUtc -Descending | Select-Object -First 1).LastWriteTimeUtc
+                $stale = $null -ne $newest -and $newest -gt (Get-Item -LiteralPath $dll).LastWriteTimeUtc
+            }
+            if (-not $stale) { continue }
+        }
+        if (-not $hasSource) {
+            Write-Warning "[Plugins] Built-in plugin '$name' is not available: no $file in plugins\builtin and no source in src\. Its tweaks are not applied."
+            continue
+        }
+        $todo.Add($name)
+    }
+    if ($todo.Count -eq 0) { return @() }
+
+    $built = [System.Collections.Generic.List[string]]::new()
+    $work = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEaseBuiltin_{0}" -f [guid]::NewGuid().ToString('N'))
+    try {
+        New-Item -ItemType Directory -Force -Path $paths.BuiltinDir | Out-Null
+        New-Item -ItemType Directory -Force -Path $work | Out-Null
+        # the contract assembly the plugins reference: the prebuilt one, or compiled from src\ like the host does
+        $abstractionsRef = Join-Path -Path $paths.BinDir -ChildPath "$($script:WinEasePluginAbstractionsName).dll"
+        if (-not (Test-Path -LiteralPath $abstractionsRef -PathType Leaf)) {
+            $abstractionsRef = Join-Path -Path $work -ChildPath "$($script:WinEasePluginAbstractionsName).dll"
+            $sources = @(Get-ChildItem -LiteralPath $paths.SourceDir -Filter '*.cs' -File | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) })
+            $sources += '[assembly: System.Reflection.AssemblyVersion("1.0.0.0")]'
+            [void](New-WinEaseCSharpAssembly -Source $sources -OutputPath $abstractionsRef)
+        }
+        foreach ($name in $todo) {
+            $srcDir = Join-Path -Path $paths.RepoRoot -ChildPath "src\WinEase.Plugins.Builtin.$name"
+            $out = Join-Path -Path $paths.BuiltinDir -ChildPath (Get-WinEaseBuiltinPluginFileName -Name $name)
+            try {
+                $sources = @(Get-ChildItem -LiteralPath $srcDir -Filter '*.cs' -File | Sort-Object -Property Name | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) })
+                [void](New-WinEaseCSharpAssembly -Source $sources -OutputPath $out -References @($abstractionsRef) -Resources @(Get-WinEaseBuiltinPluginResources -Name $name -RepoRoot $paths.RepoRoot))
+                $built.Add($name)
+            } catch {
+                Write-Warning "[Plugins] Built-in plugin '$name' could not be built from src\: $($_.Exception.Message) Its tweaks are not applied."
+            }
+        }
+        if ($built.Count -gt 0) {
+            $builtFiles = @($built | ForEach-Object { Get-WinEaseBuiltinPluginFileName -Name $_ })
+            $lockEntries = @($entries | Where-Object { $builtFiles -notcontains $_.File })
+            foreach ($name in $built) {
+                $file = Get-WinEaseBuiltinPluginFileName -Name $name
+                $hash = Get-WinEaseSha256Hex -Bytes ([System.IO.File]::ReadAllBytes((Join-Path -Path $paths.BuiltinDir -ChildPath $file)))
+                $lockEntries += [PSCustomObject]@{ File = $file; Sha256 = $hash; OnError = 'Warn'; Description = "$($script:WinEaseBuiltinLocalBuildMarker)WinEase.Plugins.Builtin.$name"; Enabled = $true }
+            }
+            Write-WinEasePluginLock -Path $paths.BuiltinLock -Entries @($lockEntries | Sort-Object -Property File) -Header @(
+                '# WinEase built-in plugin allow list (generated by tools\build-binaries.ps1, CI, or the builder when it built the plugins from src\).',
+                '# A DLL in plugins\builtin is only loaded when it is listed here with its SHA256. Not committed.')
+            Write-Host "  [Plugins] Built $($built.Count) built-in plugin(s) from src\ (no prebuilt DLL): $($built -join ', ')" -ForegroundColor DarkCyan
+        }
+    } catch {
+        Write-Warning "[Plugins] The built-in plugins could not be built from src\: $($_.Exception.Message) Their tweaks are not applied."
+    } finally {
+        Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    return $built.ToArray()
 }
 
 function Read-WinEasePluginLock {
@@ -256,10 +388,10 @@ function Import-WinEasePluginAssembly {
                 Add-WinEasePluginRejection $Source $file "a plugin with the Id '$($instance.Id)' is already loaded"
                 continue
             }
-            $contributes = @(@('IRegistryContributor', 'IAppxRemovalContributor', 'IFodRemovalContributor', 'IServiceStartContributor', 'IImageFileContributor') | Where-Object {
-                    $iface = $Abstractions.GetType("WinEase.Plugins.$_")
+            $contributes = @($script:WinEasePluginContributorMap.Keys | Where-Object {
+                    $iface = $Abstractions.GetType("WinEase.Plugins.$($script:WinEasePluginContributorMap[$_].Interface)")
                     $iface.IsAssignableFrom($type)
-                } | ForEach-Object { $_ -replace '^I|Contributor$|RemovalContributor$', '' })
+                })
             $script:WinEasePlugins.Add([PSCustomObject]@{
                     Id            = [string]$instance.Id
                     Version       = [string]$instance.Version
@@ -295,9 +427,15 @@ function Import-WinEasePlugins {
         [string]$UserLockPath,
         [string]$BuiltinDir,
         [string]$UserDir,
-        [string]$AbstractionsPath
+        [string]$AbstractionsPath,
+        # Do not build missing built-in plugins from src\ (see Initialize-WinEaseBuiltinPlugins)
+        [switch]$NoBuiltinBuild
     )
     $paths = Get-WinEasePluginPaths -RepoRoot $RepoRoot
+    # Only the real plugin folder is completed; a caller that names its own lock file or folder (tests) gets exactly that.
+    if (-not $NoBuiltinBuild -and -not $BuiltinLockPath -and -not $BuiltinDir) {
+        [void](Initialize-WinEaseBuiltinPlugins -RepoRoot $paths.RepoRoot)
+    }
     if (-not $BuiltinLockPath) { $BuiltinLockPath = $paths.BuiltinLock }
     if (-not $UserLockPath) { $UserLockPath = $paths.UserLock }
     if (-not $BuiltinDir) { $BuiltinDir = $paths.BuiltinDir }
@@ -413,6 +551,17 @@ function New-WinEasePluginHost {
             if ($tweakCommand) { return [bool](& $tweakCommand $key $default) }
             return [bool]$default
         }.GetNewClosure())
+    $settings = Get-WinEasePluginSettingSnapshot
+    $hostObject.IsComponentEnabledFunc = [System.Func[string, bool, bool]]({
+            param($key, $default)
+            if ($settings.Components.ContainsKey($key)) { return [bool]$settings.Components[$key] }
+            return [bool]$default
+        }.GetNewClosure())
+    $hostObject.IsTweakGroupEnabledFunc = [System.Func[string, bool, bool]]({
+            param($group, $default)
+            if ($settings.Groups.ContainsKey($group)) { return [bool]$settings.Groups[$group] }
+            return [bool]$default
+        }.GetNewClosure())
     $hostObject.SetOfflineRegistryAction = [System.Action[string, string, string, string, string]]({
             param($hive, $path, $name, $type, $data)
             if ($hives -notcontains $hive) { throw "Registry hive '$hive' is not allowed (use one of $($hives -join ', '))." }
@@ -449,7 +598,71 @@ function New-WinEasePluginHost {
             if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
             [System.IO.File]::WriteAllBytes($target, $content)
         }.GetNewClosure())
+    $hostObject.WriteImageFileToRootAction = [System.Action[WinEase.Plugins.ImageFileRoot, string, [byte[]]]]({
+            param($root, $relativePath, $content)
+            if (-not $ScratchDir) { throw 'No image is mounted.' }
+            [WinEase.Plugins.DelegateWinEaseHost]::CheckRelativePath($relativePath)
+            # a plugin names one of the fixed roots, never a folder
+            $rootRelative = switch ([string]$root) {
+                'SetupTools' { 'Windows\Setup\Tools' }
+                default { throw "Image file root '$root' is not supported." }
+            }
+            $base = [System.IO.Path]::GetFullPath((Join-Path -Path $ScratchDir -ChildPath $rootRelative)).TrimEnd('\') + '\'
+            $target = [System.IO.Path]::GetFullPath((Join-Path -Path $base -ChildPath $relativePath))
+            if (-not $target.StartsWith($base, [System.StringComparison]::OrdinalIgnoreCase)) { throw "The path leaves the folder: $relativePath" }
+            $dir = Split-Path -Parent $target
+            if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+            [System.IO.File]::WriteAllBytes($target, $content)
+        }.GetNewClosure())
     return $hostObject
+}
+
+function Get-WinEasePluginComponentDefs {
+    # The component settings of config\schema.psd1: the builder's copy, else the file of the repository.
+    [CmdletBinding()]
+    param()
+    if ($null -ne $script:WinEaseSettingsDef -and $script:WinEaseSettingsDef.Components) { return @($script:WinEaseSettingsDef.Components) }
+    if ($null -eq $script:WinEasePluginSchemaComponents) {
+        $schemaPath = Join-Path -Path (Get-WinEasePluginPaths).RepoRoot -ChildPath 'config\schema.psd1'
+        $script:WinEasePluginSchemaComponents = if (Test-Path -LiteralPath $schemaPath -PathType Leaf) { @((Import-PowerShellDataFile -LiteralPath $schemaPath).Components) } else { @() }
+    }
+    return @($script:WinEasePluginSchemaComponents)
+}
+
+function Get-WinEasePluginSettingSnapshot {
+    <#
+    .SYNOPSIS
+        The values of the component settings (by schema key) and the tweak groups at this moment.
+    .DESCRIPTION
+        The component variables of the builder ($mmcssGaming, $atlasReviOSMode, ...) are read here, in the
+        scope of the caller, because the delegates of a plugin host run in a module scope that cannot see them.
+        A component whose variable is not set is left out; IsComponentEnabled then answers with the default.
+    #>
+    [CmdletBinding()]
+    param()
+    $wePluginComponentValues = @{}
+    foreach ($wePluginDef in @(Get-WinEasePluginComponentDefs)) {
+        if (-not $wePluginDef -or -not $wePluginDef.Variable -or [string]$wePluginDef.Type -ne 'Bool') { continue }
+        $wePluginValue = Get-Variable -Name ([string]$wePluginDef.Variable) -ValueOnly -ErrorAction SilentlyContinue
+        if ($null -ne $wePluginValue) { $wePluginComponentValues[[string]$wePluginDef.Key] = [bool]$wePluginValue }
+    }
+    $wePluginGroupValues = @{}
+    if ($null -ne $script:activeTweakGroups) {
+        foreach ($wePluginGroup in @($script:activeTweakGroups.Keys)) { $wePluginGroupValues[[string]$wePluginGroup] = [bool]$script:activeTweakGroups[$wePluginGroup] }
+    }
+    return @{ Components = $wePluginComponentValues; Groups = $wePluginGroupValues }
+}
+
+function Test-WinEasePluginSetting {
+    # The value of the setting that gates plugin data: a component of config\schema.psd1 when the key names
+    # one, otherwise a tweak (Test-TweakEnabled, which also reads aliases and profiles).
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Key, [bool]$Default = $false, $Snapshot)
+    if ($null -eq $Snapshot) { $Snapshot = Get-WinEasePluginSettingSnapshot }
+    if ($Snapshot.Components.ContainsKey($Key)) { return [bool]$Snapshot.Components[$Key] }
+    $tweakCommand = Get-Command -Name Test-TweakEnabled -ErrorAction SilentlyContinue
+    if ($tweakCommand) { return [bool](& $tweakCommand $Key $Default) }
+    return $Default
 }
 
 function Test-WinEasePluginApplies {
@@ -529,14 +742,8 @@ function Get-WinEasePluginContributions {
         dropped with a warning. Each result carries the PluginId.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory = $true)][ValidateSet('Registry', 'Appx', 'Fod', 'Service', 'ImageFile')][string]$Kind)
-    $map = @{
-        Registry  = @{ Interface = 'IRegistryContributor'; Method = 'GetRegistryEntries' }
-        Appx      = @{ Interface = 'IAppxRemovalContributor'; Method = 'GetAppxRemovals' }
-        Fod       = @{ Interface = 'IFodRemovalContributor'; Method = 'GetFodRemovals' }
-        Service   = @{ Interface = 'IServiceStartContributor'; Method = 'GetServiceStarts' }
-        ImageFile = @{ Interface = 'IImageFileContributor'; Method = 'GetImageFiles' }
-    }[$Kind]
+    param([Parameter(Mandatory = $true)][ValidateSet('Registry', 'Appx', 'AppxRule', 'Fod', 'Service', 'ImageFile')][string]$Kind)
+    $map = $script:WinEasePluginContributorMap[$Kind]
     $results = [System.Collections.Generic.List[object]]::new()
     if ($script:WinEasePlugins.Count -eq 0) { return @() }
     $image = Get-WinEasePluginImageInfo
@@ -569,6 +776,11 @@ function Get-WinEasePluginContributions {
                     if ([string]::IsNullOrWhiteSpace([string]$item)) { continue }
                     $results.Add([PSCustomObject]@{ PluginId = $plugin.Id; Pattern = [string]$item })
                 }
+                'AppxRule' {
+                    if ([string]::IsNullOrWhiteSpace([string]$item.Pattern)) { continue }
+                    # the shape of the AppxRemoval definitions of config\schema.psd1 (Get-WinEaseAppxRemovalPatterns)
+                    $results.Add(@{ PluginId = $plugin.Id; Pattern = [string]$item.Pattern; Option = [string]$item.Option; Invert = [bool]$item.Invert })
+                }
                 'Fod' {
                     if ([string]::IsNullOrWhiteSpace([string]$item.Name) -or @('Package', 'Capability', 'Feature') -notcontains [string]$item.Kind) {
                         Write-Warning "[Plugins] $($plugin.Id): FoD removal '$($item.Kind) $($item.Name)' dropped."
@@ -588,7 +800,11 @@ function Get-WinEasePluginContributions {
                         Write-Warning "[Plugins] $($plugin.Id): image file '$($item.RelativePath)' dropped: $($_.Exception.Message)"
                         continue
                     }
-                    $results.Add([PSCustomObject]@{ PluginId = $plugin.Id; RelativePath = [string]$item.RelativePath; Content = [byte[]]$item.Content })
+                    $results.Add([PSCustomObject]@{
+                            PluginId = $plugin.Id; RelativePath = [string]$item.RelativePath; Content = [byte[]]$item.Content
+                            Root = [string]$item.Root; Setting = [string]$item.Setting
+                            SettingDefault = [bool]$item.SettingDefault; WhenEnabled = [bool]$item.WhenEnabled
+                        })
                 }
             }
         }
@@ -603,15 +819,41 @@ function Invoke-WinEasePluginImageFiles {
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string]$ScratchDir, [switch]$DryRun)
+    $snapshot = Get-WinEasePluginSettingSnapshot
     foreach ($file in @(Get-WinEasePluginContributions -Kind ImageFile)) {
+        # A file that names a setting is only written while the setting has the value the file asks for.
+        if ($file.Setting -and ((Test-WinEasePluginSetting -Key $file.Setting -Default $file.SettingDefault -Snapshot $snapshot) -ne $file.WhenEnabled)) { continue }
         $pluginHost = New-WinEasePluginHost -PluginId $file.PluginId -ScratchDir $ScratchDir -DryRun:$DryRun
         try {
-            $pluginHost.WriteImageFile($file.RelativePath, $file.Content)
+            $root = [System.Enum]::Parse([WinEase.Plugins.ImageFileRoot], $(if ($file.Root) { $file.Root } else { 'PluginFolder' }))
+            $pluginHost.WriteImageFile($root, $file.RelativePath, $file.Content)
         } catch {
             $plugin = @($script:WinEasePlugins | Where-Object { $_.Id -eq $file.PluginId })[0]
             Resolve-WinEasePluginFailure -Plugin $plugin -Where "image file $($file.RelativePath)" -ErrorRecord $_
         }
     }
+}
+
+function Get-WinEasePluginAppxPatterns {
+    <#
+    .SYNOPSIS
+        The AppX patterns plugins contribute for the current settings (phase 05-appx).
+    .DESCRIPTION
+        IAppxRemovalContributor patterns are always removed (the plugin decides); the patterns of
+        IAppxRemovalRuleContributor follow the rules of AppxRemoval in config\schema.psd1
+        (Get-WinEaseAppxRemovalPatterns): Option, Invert and RemoveAppxBloatware decide. The caller still
+        runs the protection whitelist over the result.
+    #>
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param([hashtable]$Settings = @{})
+    $patterns = @()
+    foreach ($appx in @(Get-WinEasePluginContributions -Kind Appx)) { $patterns += [string]$appx.Pattern }
+    $rules = @(Get-WinEasePluginContributions -Kind AppxRule)
+    if ($rules.Count -gt 0 -and (Get-Command -Name Get-WinEaseAppxRemovalPatterns -ErrorAction SilentlyContinue)) {
+        $patterns += @(Get-WinEaseAppxRemovalPatterns -Settings $Settings -Definitions $rules)
+    }
+    return @($patterns | Select-Object -Unique)
 }
 
 function Test-WinEasePluginLocks {
@@ -719,11 +961,18 @@ function Add-WinEaseUserPlugin {
 }
 
 function Write-WinEasePluginLock {
-    param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Entries)
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Entries,
+        [string[]]$Header
+    )
     $q = { param([string]$s) "'" + ($s -replace "'", "''") + "'" }
     $lines = [System.Collections.Generic.List[string]]::new()
-    $lines.Add('# WinEase user plugin allow list. A DLL in plugins\user is only loaded when it is listed here with its SHA256.')
-    $lines.Add('# Managed by the GUI (plugins.addUser); edit by hand only if you know the hash of the file.')
+    if (-not $Header) {
+        $Header = @('# WinEase user plugin allow list. A DLL in plugins\user is only loaded when it is listed here with its SHA256.',
+            '# Managed by the GUI (plugins.addUser); edit by hand only if you know the hash of the file.')
+    }
+    foreach ($headerLine in $Header) { $lines.Add($headerLine) }
     $lines.Add('@{')
     $lines.Add('    Version = 1')
     $lines.Add('    Plugins = @(')

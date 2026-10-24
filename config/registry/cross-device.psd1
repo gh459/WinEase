@@ -28,6 +28,5 @@
         # Cross Device Resume app is redirected to ShellHost.exe, so the resume host
         # can never start. Upstream replaced the FeatureManagement override and the
         # IFEO redirect with this one because it is the reliable variant.
-        @{ Tweak = 'DisableCrossDevice'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows\CurrentVersion\Shell\ShellUIHosts\CrossDeviceResumeHost'; Name = 'ProcessPath'; Type = 'REG_SZ'; Data = '%SystemRoot%\system32\ShellHost.exe' }
     )
 }

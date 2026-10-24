@@ -14,6 +14,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\WinEase.Plugins.Abstractions\WinEase.Plugins.Abstractions.csproj" />
+    <!-- the official built-in plugins -->
+    <ProjectReference Include="..\WinEase.Plugins.Builtin.Latency\WinEase.Plugins.Builtin.Latency.csproj" />
+    <ProjectReference Include="..\WinEase.Plugins.Builtin.PostInstallTools\WinEase.Plugins.Builtin.PostInstallTools.csproj" />
+    <ProjectReference Include="..\WinEase.Plugins.Builtin.UpstreamSync\WinEase.Plugins.Builtin.UpstreamSync.csproj" />
   </ItemGroup>
 
 </Project>

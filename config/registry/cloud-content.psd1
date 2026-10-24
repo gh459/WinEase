@@ -43,31 +43,13 @@
         @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\PushToInstall'; Name = 'DisablePushToInstall'; Type = 'REG_DWORD'; Data = '1' }
         @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\MRT'; Name = 'DontOfferThroughWUAU'; Type = 'REG_DWORD'; Data = '1' }
         # WinUtil 26.10.07 (WPFTweaksEdgeDebloat): Edge's "make Edge your default browser" campaign.
-        @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Edge'; Name = 'DefaultBrowserSettingsCampaignEnabled'; Type = 'REG_DWORD'; Data = '0' }
         # Win11Debloat 2026.08.24 (Disable_Edge_Ads_And_Suggestions, Disable_Windows_Suggestions):
         # Edge recommendations, spotlight, feedback, Acrobat and wallet promotions, and the
         # "back up your PC" reminder toast.
-        @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Edge'; Name = 'DefaultBrowserSettingEnabled'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Edge'; Name = 'ShowRecommendationsEnabled'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Edge'; Name = 'SpotlightExperiencesAndRecommendationsEnabled'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Edge'; Name = 'UserFeedbackAllowed'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Edge'; Name = 'ShowAcrobatSubscriptionButton'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Edge'; Name = 'WalletDonationEnabled'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.BackupReminder'; Name = 'Enabled'; Type = 'REG_DWORD'; Data = '0' }
         # Debloat-Win11 v2.3.8: the "finish setting up your device" (SCOOBE) page and the
         # Microsoft account notifications of Start and Settings.
-        @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement'; Name = 'ScoobeSystemSettingEnabled'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'Start_AccountNotifications'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\SystemSettings\AccountNotifications'; Name = 'EnableAccountNotifications'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Windows\CloudContent'; Name = 'DisableWindowsSpotlightOnDesktop'; Type = 'REG_DWORD'; Data = '1' }
         # Bloatynosy 1.01.103: lock screen ads and Spotlight, Edge shopping, startup boost and first run.
-        @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; Name = 'RotatingLockScreenOverlayEnabled'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; Name = 'RotatingLockScreenEnabled'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Edge'; Name = 'EdgeShoppingAssistantEnabled'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Edge'; Name = 'StartupBoostEnabled'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Edge'; Name = 'HideFirstRunExperience'; Type = 'REG_DWORD'; Data = '1' }
         # ReviOS 26.10 (registry/updates/updates.yml): the Media Player must not pull
         # its own updates in the background.
-        @{ Tweak = 'DisableCloudContent'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\WindowsMediaPlayer'; Name = 'DisableAutoUpdate'; Type = 'REG_DWORD'; Data = '1' }
     )
 }

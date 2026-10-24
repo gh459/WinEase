@@ -8,12 +8,18 @@ namespace WinEase.Plugins
     {
         void Log(LogLevel level, string message);
         bool IsTweakEnabled(string key, bool defaultValue);
+        /// <summary>Value of a component setting of config\schema.psd1 (for example AtlasReviOSMode), after presets and switches.</summary>
+        bool IsComponentEnabled(string key, bool defaultValue);
+        /// <summary>Value of a tweak group of config\schema.psd1 (for example GPULatency).</summary>
+        bool IsTweakGroupEnabled(string group, bool defaultValue);
         /// <summary>Writes a value into a loaded offline hive (zSYSTEM, zSOFTWARE, zDEFAULT, zNTUSER, zCOMPONENTS).</summary>
         void SetOfflineRegistry(string hive, string path, string name, string type, string data);
         /// <summary>Runs DISM against the mounted image. The builder adds /Image itself and refuses verbs that change the mount.</summary>
         DismResult RunDism(string[] arguments);
         /// <summary>Writes a file below Windows\Setup\Scripts\Plugins\&lt;plugin id&gt; in the image.</summary>
         void WriteImageFile(string relativePath, byte[] content);
+        /// <summary>Writes a file below one of the fixed image folders (see ImageFileRoot).</summary>
+        void WriteImageFile(ImageFileRoot root, string relativePath, byte[] content);
 
         string ScratchDir { get; }
         string WinEaseDir { get; }
@@ -39,9 +45,12 @@ namespace WinEase.Plugins
 
         public Action<LogLevel, string> LogAction { get; set; }
         public Func<string, bool, bool> IsTweakEnabledFunc { get; set; }
+        public Func<string, bool, bool> IsComponentEnabledFunc { get; set; }
+        public Func<string, bool, bool> IsTweakGroupEnabledFunc { get; set; }
         public Action<string, string, string, string, string> SetOfflineRegistryAction { get; set; }
         public Func<string[], DismResult> RunDismFunc { get; set; }
         public Action<string, byte[]> WriteImageFileAction { get; set; }
+        public Action<ImageFileRoot, string, byte[]> WriteImageFileToRootAction { get; set; }
 
         public string ScratchDir { get; private set; }
         public string WinEaseDir { get; private set; }
@@ -60,6 +69,18 @@ namespace WinEase.Plugins
         {
             if (IsTweakEnabledFunc == null) return defaultValue;
             return IsTweakEnabledFunc(key, defaultValue);
+        }
+
+        public bool IsComponentEnabled(string key, bool defaultValue)
+        {
+            if (IsComponentEnabledFunc == null) return defaultValue;
+            return IsComponentEnabledFunc(key, defaultValue);
+        }
+
+        public bool IsTweakGroupEnabled(string group, bool defaultValue)
+        {
+            if (IsTweakGroupEnabledFunc == null) return defaultValue;
+            return IsTweakGroupEnabledFunc(group, defaultValue);
         }
 
         public void SetOfflineRegistry(string hive, string path, string name, string type, string data)
@@ -98,6 +119,24 @@ namespace WinEase.Plugins
             }
             if (WriteImageFileAction == null) throw new NotSupportedException("The builder gave no file service.");
             WriteImageFileAction(relativePath, content);
+        }
+
+        public void WriteImageFile(ImageFileRoot root, string relativePath, byte[] content)
+        {
+            if (root == ImageFileRoot.PluginFolder)
+            {
+                WriteImageFile(relativePath, content);
+                return;
+            }
+            CheckRelativePath(relativePath);
+            if (content == null) throw new ArgumentNullException("content");
+            if (DryRun)
+            {
+                Record("file [" + root + "] " + relativePath + " (" + content.Length + " bytes)");
+                return;
+            }
+            if (WriteImageFileToRootAction == null) throw new NotSupportedException("The builder gave no file service.");
+            WriteImageFileToRootAction(root, relativePath, content);
         }
 
         /// <summary>Throws unless the path is relative and stays below its folder.</summary>

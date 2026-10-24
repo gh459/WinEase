@@ -441,7 +441,6 @@
         @{ Pattern = '*HEIFImageExtension*'; Group = 'Media' }
         @{ Pattern = '*HEVCVideoExtension*'; Group = 'Media' }
         @{ Pattern = '*Microsoft.StickyNotes*'; Group = 'Media' }
-        @{ Pattern = '*Microsoft.MicrosoftStickyNotes*'; Group = 'Media' }
         @{ Pattern = '*OutlookForWindows*'; Group = 'Media' }
         @{ Pattern = '*RawImageExtension*'; Group = 'Media' }
         @{ Pattern = '*VP9VideoExtensions*'; Group = 'Media' }
@@ -468,7 +467,6 @@
         @{ Pattern = '*WindowsAIClient*'; Group = 'AI' }
         @{ Pattern = '*Microsoft.Windows.StudioFX*'; Group = 'AI' }
         @{ Pattern = '*NewsAndInterests*'; Group = 'AI' }
-        @{ Pattern = '*WidgetsPlatformRuntime*'; Group = 'AI' }
         @{ Pattern = '*RecallAgent*'; Group = 'AI' }
         @{ Pattern = '*AIComponents*'; Group = 'AI' }
         @{ Pattern = '*Microsoft.Windows.AiPca*'; Group = 'AI' }
@@ -483,14 +481,6 @@
         @{ Pattern = '*Amazon*'; Group = 'Sponsor' }
         @{ Pattern = '*PrimeVideo*'; Group = 'Sponsor' }
         @{ Pattern = '*CandyCrush*'; Group = 'Sponsor' }
-        @{ Pattern = '*RoyalRevolt*'; Group = 'Sponsor' }
-        @{ Pattern = 'king.com.*'; Group = 'Sponsor' }
-        @{ Pattern = '*Microsoft.Office.OneNote*'; Group = 'Legacy' }
-        @{ Pattern = '*Microsoft.SkypeApp*'; Group = 'Legacy' }
-        @{ Pattern = '*Microsoft.Microsoft3DViewer*'; Group = 'Legacy' }
-        @{ Pattern = '*Microsoft.Messaging*'; Group = 'Legacy' }
-        @{ Pattern = '*Microsoft.Whiteboard*'; Group = 'Legacy' }
-        @{ Pattern = '*Microsoft.PCManager*'; Group = 'Legacy' }
         @{ Pattern = '*Microsoft.WindowsFeedbackHub*'; Group = 'Legacy' }
         @{ Pattern = '*Microsoft.3DBuilder*'; Group = 'Legacy' }
         @{ Pattern = '*Print3D*'; Group = 'Legacy' }
