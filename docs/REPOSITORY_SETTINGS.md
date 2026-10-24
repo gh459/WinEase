@@ -29,7 +29,6 @@ collaborators, fork-PR workflow approval policy.
 - Require status checks to pass, branch up to date. Required checks (names as shown in the
   Checks tab): `WinEase CI` jobs (self-test, Pester test suite, dry-run, binaries, Rust engine,
   plugin contract), `PSScriptAnalyzer`, `Workflow security audit` (actionlint, zizmor).
-  The AI review (`AI review (advisory, read-only)`) stays **not** required.
 - Block force pushes and branch deletion; require linear history (optional); apply to
   administrators too (no bypass for the agent's token or app).
 - Restrict who can push to matching branches; the agent pushes only `claude/*` branches.
