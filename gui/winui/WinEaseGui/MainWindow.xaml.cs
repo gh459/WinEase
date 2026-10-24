@@ -167,8 +167,13 @@ public sealed partial class MainWindow : Window
         AutomationProperties.SetName(DependenciesButton, _s.Get("Button.CheckDependencies"));
         AutomationProperties.SetName(StartButton, _s.Get("Button.StartBuild"));
         AutomationProperties.SetName(CancelButton, _s.Get("Button.Cancel"));
+        AutomationProperties.SetName(BusyRing, "Processing");
+        ToolTipService.SetToolTip(DryRunCheck, _s.Get("Main.DryRun"));
         ToolTipService.SetToolTip(PresetDiffButton, _s.Get("Button.PresetDiff"));
         ToolTipService.SetToolTip(DependenciesButton, _s.Get("Button.CheckDependencies"));
+        ToolTipService.SetToolTip(StartButton, _s.Get("Button.StartBuild"));
+        ToolTipService.SetToolTip(CancelButton, _s.Get("Button.Cancel"));
+        ToolTipService.SetToolTip(BusyRing, "Processing");
 
         BuildNav();
         UpdateEstimate();
@@ -461,12 +466,14 @@ public sealed partial class MainWindow : Window
         foreach (var (fmt, key) in new[] { ("WIM", "Media.Radio.WIM"), ("ESD", "Media.Radio.ESD"), ("SWM", "Media.Radio.SWM") })
         {
             var rb = new RadioButton { Content = _s.Get(key), GroupName = "payload", Tag = fmt, IsChecked = _payload == fmt };
+            AutomationProperties.SetName(rb, _s.Get(key));
             rb.Checked += (s, _) => { _payload = (string)((RadioButton)s).Tag; UpdateEstimate(); };
             radios.Children.Add(rb);
             _payloadRadios.Add(rb);
         }
         payload.Children.Add(radios);
         var vhdx = new CheckBox { Content = _s.Get("Media.Check.VHDX"), IsChecked = _useVhdx };
+        AutomationProperties.SetName(vhdx, _s.Get("Media.Check.VHDX"));
         vhdx.Checked += (_, _) => _useVhdx = true;
         vhdx.Unchecked += (_, _) => _useVhdx = false;
         payload.Children.Add(vhdx);
@@ -716,10 +723,12 @@ public sealed partial class MainWindow : Window
             if (p != null) root.Text = p;
         })));
         var secrets = new CheckBox { Content = _s.Get("Mig.Check.ExcludeSecrets"), IsChecked = _migExcludeSecrets };
+        AutomationProperties.SetName(secrets, _s.Get("Mig.Check.ExcludeSecrets"));
         secrets.Checked += (_, _) => _migExcludeSecrets = true;
         secrets.Unchecked += (_, _) => _migExcludeSecrets = false;
         backup.Children.Add(secrets);
         var conflict = new ComboBox { MinWidth = 220 };
+        AutomationProperties.SetName(conflict, _s.Get("Mig.Label.ConflictPolicy").TrimEnd(':', '：', ' '));
         foreach (string p in ConflictPolicies) conflict.Items.Add(p);
         conflict.SelectedIndex = Math.Max(0, Array.IndexOf(ConflictPolicies, _migConflict));
         conflict.SelectionChanged += (_, _) => { if (conflict.SelectedIndex >= 0) _migConflict = ConflictPolicies[conflict.SelectedIndex]; };
@@ -890,6 +899,7 @@ public sealed partial class MainWindow : Window
     private readonly List<JsonObject> _csScripts = new();
     private string _csStage = "FirstLogon";
     private int _csSelected = -1;
+    private TextBlock? _csCount;
 
     private void BuildCustomScriptsPage()
     {
@@ -917,6 +927,8 @@ public sealed partial class MainWindow : Window
 
         // The scripts of the stage
         PageHost.Children.Add(Section(_s.Get("CS.Group.Scripts")));
+        _csCount = new TextBlock { Foreground = Res("TextFillColorSecondaryBrush") };
+        PageHost.Children.Add(_csCount);
         var scroll = new ScrollViewer { Content = list, MaxHeight = 320, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto };
         PageHost.Children.Add(Card(scroll));
         _ = LoadCustomScriptsAsync(list);
@@ -941,35 +953,56 @@ public sealed partial class MainWindow : Window
             if (n is JsonObject o) _csScripts.Add(o);
         }
         host.Children.Clear();
+        if (_csCount != null) _csCount.Text = _s.Format("CS.Count", _csScripts.Count, _csStage);
         if (_csScripts.Count == 0)
         {
             host.Children.Add(new TextBlock { Text = _s.Get("CS.Msg.Empty"), Foreground = Res("TextFillColorSecondaryBrush"), TextWrapping = TextWrapping.Wrap });
             return;
         }
+        // Same columns as the classic window: Name, Order, Type, Size, Condition, OnError, Description
+        string[] headers = { "CS.Column.Name", "CS.Column.Order", "CS.Column.Type", "CS.Column.Size", "CS.Column.Condition", "CS.Column.OnError", "CS.Column.Description" };
+        string[] fields = { "Name", "Order", "Type", "Size", "Condition", "OnError", "Description" };
+        double[] widths = { 3, 1, 1, 1, 2, 1, 3 };
+        Grid NewRow()
+        {
+            var g = new Grid { ColumnSpacing = 12, Padding = new Thickness(4, 2, 4, 2) };
+            foreach (double w in widths) g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(w, GridUnitType.Star) });
+            return g;
+        }
+        void Cell(Grid g, int col, string text, bool strong, bool legacy)
+        {
+            var t = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap };
+            if (strong) t.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+            else if (col > 0) t.Foreground = Res("TextFillColorSecondaryBrush");
+            if (legacy) t.Foreground = Res("SystemFillColorCautionBrush");
+            Grid.SetColumn(t, col);
+            g.Children.Add(t);
+        }
+        var head = NewRow();
+        for (int c = 0; c < headers.Length; c++) Cell(head, c, _s.Get(headers[c]), true, false);
+        host.Children.Add(head);
+        var buttons = new List<Button>();
+        void Highlight()
+        {
+            for (int k = 0; k < buttons.Count; k++)
+            {
+                buttons[k].Background = k == _csSelected ? Res("SubtleFillColorSecondaryBrush") : Res("SubtleFillColorTransparentBrush");
+            }
+        }
         for (int i = 0; i < _csScripts.Count; i++)
         {
             var s = _csScripts[i];
             int index = i;
-            var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(4, 2, 4, 2) };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            var name = new TextBlock { Text = InitData.Str(s["Name"]), TextWrapping = TextWrapping.Wrap };
-            var order = new TextBlock { Text = InitData.Str(s["Order"]), Foreground = Res("TextFillColorSecondaryBrush") };
-            var type = new TextBlock { Text = InitData.Str(s["Type"]), Foreground = Res("TextFillColorSecondaryBrush") };
-            var desc = new TextBlock { Text = InitData.Str(s["Description"]), Foreground = Res("TextFillColorSecondaryBrush"), TextWrapping = TextWrapping.Wrap };
-            row.Children.Add(name);
-            Grid.SetColumn(order, 1);
-            row.Children.Add(order);
-            Grid.SetColumn(type, 2);
-            row.Children.Add(type);
-            Grid.SetColumn(desc, 3);
-            row.Children.Add(desc);
+            bool legacy = InitData.Str(s["Location"]) == "Legacy";
+            var row = NewRow();
+            for (int c = 0; c < fields.Length; c++) Cell(row, c, InitData.Str(s[fields[c]]), false, legacy);
             var btn = new Button { Content = row, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left };
-            btn.Click += (_, _) => _csSelected = index;
+            AutomationProperties.SetName(btn, InitData.Str(s["Name"]));
+            btn.Click += (_, _) => { _csSelected = index; Highlight(); };
+            buttons.Add(btn);
             host.Children.Add(btn);
         }
+        Highlight();
     }
 
     private JsonObject? SelectedCustomScript()
@@ -1228,7 +1261,91 @@ public sealed partial class MainWindow : Window
         if (_resultSent) return;
         _resultSent = true;
         await _bridge.SendResultAsync(_s.Language, result);
+        // A real build keeps the window open and shows its progress; cancel and dry run close as before
+        if (_bridge.IsConnected && InitData.Bool(result["Success"]) && !InitData.Bool(result["DryRun"]))
+        {
+            await ShowProgressViewAsync();
+            return;
+        }
         Close();
+    }
+
+    // =======================================================================================================
+    // Build progress (progress lines from the builder after the result was sent)
+    // =======================================================================================================
+    private async Task ShowProgressViewAsync()
+    {
+        var title = new TextBlock { Text = _s.Get("Progress.Title"), Style = (Style)Application.Current.Resources["TitleTextBlockStyle"] };
+        var phaseText = new TextBlock { Text = _s.Get("Progress.Starting"), Style = (Style)Application.Current.Resources["BodyStrongTextBlockStyle"], TextWrapping = TextWrapping.Wrap };
+        var bar = new ProgressBar { Minimum = 0, Maximum = 100, Value = 0, IsIndeterminate = true };
+        var timeText = new TextBlock { Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"] };
+        var hint = new TextBlock { Text = _s.Get("Progress.Hint"), TextWrapping = TextWrapping.Wrap, Opacity = 0.7 };
+        var closeButton = new Button { Content = _s.Get("Progress.Close"), IsEnabled = false, HorizontalAlignment = HorizontalAlignment.Right };
+        closeButton.Click += (_, _) => Close();
+
+        var panel = new StackPanel { Spacing = 12, Padding = new Thickness(32, 64, 32, 32), MaxWidth = 900, VerticalAlignment = VerticalAlignment.Center };
+        panel.Children.Add(title);
+        panel.Children.Add(phaseText);
+        panel.Children.Add(bar);
+        panel.Children.Add(timeText);
+        panel.Children.Add(hint);
+        panel.Children.Add(closeButton);
+        Content = new Grid { Children = { panel } };
+
+        var started = DateTime.UtcNow;
+        double estimate = 0;
+        int phase = 0, total = 0;
+        bool finished = false;
+        void UpdateTime()
+        {
+            var elapsed = DateTime.UtcNow - started;
+            string text = _s.Format("Progress.Elapsed", $"{(int)elapsed.TotalMinutes}:{elapsed.Seconds:D2}");
+            if (estimate > 0 && !finished)
+            {
+                double remain = Math.Max(0, estimate - elapsed.TotalSeconds);
+                text += "  " + _s.Format("Progress.Remaining", Math.Max(1, (int)Math.Ceiling(remain / 60)));
+            }
+            timeText.Text = text;
+        }
+        var timer = new Microsoft.UI.Xaml.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        timer.Tick += (_, _) => UpdateTime();
+        timer.Start();
+        UpdateTime();
+
+        await _bridge.ListenProgressAsync(m =>
+        {
+            switch ((string?)m["event"])
+            {
+                case "phase":
+                    phase = (int?)m["Phase"] ?? phase;
+                    total = (int?)m["Total"] ?? total;
+                    if (m["EstimatedSeconds"] != null) estimate = (double)m["EstimatedSeconds"]!;
+                    if (total > 0)
+                    {
+                        bar.IsIndeterminate = false;
+                        bar.Value = Math.Max(0, phase - 1) * 100.0 / total;
+                    }
+                    phaseText.Text = $"[{phase}/{total}] {InitData.Str(m["Name"])}";
+                    break;
+                case "done":
+                    finished = true;
+                    bar.IsIndeterminate = false;
+                    bool ok = InitData.Bool(m["Success"]);
+                    bar.Value = ok ? 100 : bar.Value;
+                    phaseText.Text = ok ? _s.Get("Progress.Done") : _s.Format("Progress.Failed", InitData.Str(m["Message"]));
+                    break;
+            }
+            UpdateTime();
+        });
+
+        // The builder closed the pipe: finished (or ended abnormally)
+        timer.Stop();
+        if (!finished)
+        {
+            bar.IsIndeterminate = false;
+            phaseText.Text = _s.Get("Progress.Ended");
+        }
+        closeButton.IsEnabled = true;
     }
 
     private async void DependenciesButton_Click(object sender, RoutedEventArgs e)

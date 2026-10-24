@@ -75,7 +75,7 @@ The goal of WinEase is to automate the creation of a streamlined Windows 11 imag
     - **Reboot Loop Trap Removed (`ErrorHandler.cmd`)**: Completely eliminated `ErrorHandler.cmd` and `ChildCompletion` registry overrides from the unattended answer file, preventing reboot loops and allowing Windows Setup to proceed naturally without interference.
     - **Core Accessibility Binaries Retained**: Preserves essential accessibility binaries (`osk.exe`, `Narrator.exe`, `magnify.exe`) in `System32` to prevent handle exceptions during OOBE Ease of Access subsystem initialization.
     - **Safe FontCache Lifecycle**: Defers `FontCache` and `FontCache3.0.0.0` disabling to `FirstLogon.ps1` (after desktop logon) so localized DirectWrite font rendering succeeds 100% during setup.
-    - **Strict Empty Passwords & Permanent AutoAdminLogon**: Normalized all `<Password><Value></Value>` tags to strictly empty single-line elements across all architectures, eliminating whitespace and newline parsing issues where Windows Setup hashed carriage returns as actual password characters. Fully guarantees completely blank passwords for `User` and `Administrator` (`net user User ""` and `/passwordreq:no`), configures persistent registry `AutoAdminLogon = 1` with `ForceAutoLogon = 1`, and eliminates password prompts on wake/idle.
+    - **Strict Empty Passwords & Permanent AutoAdminLogon**: Normalized all `<Password><Value></Value>` tags to strictly empty single-line elements across all architectures, eliminating whitespace and newline parsing issues where Windows Setup hashed carriage returns as actual password characters. Configures persistent registry `AutoAdminLogon = 1` with `ForceAutoLogon = 1`, and eliminates password prompts on wake/idle.
   - **🖱️ Mouse Cursor & Pointer Display Guarantee**: Preserves essential Windows cursor bitmaps in `C:\Windows\Cursors` (~5 MB), ensuring the mouse pointer (`aero_arrow.cur`) is always rendered and fully functional throughout setup and on the installed desktop.
   - **Account Collision Resolved**: Centralized local account creation cleanly into `oobeSystem` `<LocalAccount wcm:action="add">`, eliminating `ERROR_USER_EXISTS` (0x80070524) collisions with `Specialize.ps1`.
   - **Setup Pre-Finalize SafeOS Crash Fixed**: Solved the `0x80070002` / `0x8007000B` error where Windows Setup crashes at ~100% when attempting to stage missing or corrupt `winre.wim`. `winre.wim` is preserved at build time and removed cleanly via online `reagentc /disable` during `FirstLogon.ps1`.
@@ -227,7 +227,7 @@ The settings window is a **WinUI 3** app (`gui/winui`, Windows App SDK, follows 
 .\gui\winui\build.ps1            # publishes gui\winui\bin\WinEaseGui.exe (self-contained, x64 or arm64)
 ```
 
-When `WinEaseGui.exe` is not built, or with `-ClassicGui`, the builder shows the classic WinForms window (`gui/WinEaseGui.ps1`) with the same features. The WinUI window runs as a separate process and talks to the builder over its standard input/output (one JSON message per line, see `gui/WinEaseWinUiHost.ps1`), so presets, the dependency check, Preset Diff and the migration engine still run in PowerShell.
+The WinUI window is the default. **The builder's WinForms window is frozen: new features land in WinUI only** (the Migrator keeps its WinForms window). It is kept as the fallback when `WinEaseGui.exe` is not built, or with `-ClassicGui`; it has the same tabs (including Custom Scripts, Migration and Preset Diff). CI builds both architectures with `tools/build-binaries.ps1 -Architecture x64|arm64` (solution: `src/WinEase.sln`). The WinUI window runs as a separate process and talks to the builder over its standard input/output (one JSON message per line, see `gui/WinEaseWinUiHost.ps1`), so presets, the dependency check, Preset Diff and the migration engine still run in PowerShell.
 
 The GUI allows you to:
 - Select an auto-detected installation media drive or browse directly to an official Windows 11 `.iso` file.
@@ -496,9 +496,17 @@ made on GitHub: [`docs/dev/github-automation-audit.md`](docs/dev/github-automati
 ```
 WinEase/
 ├── WinEasebuilder.ps1          # Main orchestrator (params, options, try/catch)
-├── WinEasehelpers.ps1          # Pure utility helpers (dot-sourced at startup)
+├── WinEasehelpers.ps1          # Compatibility loader for the split helper modules (dot-sourced at startup)
 ├── lib/                       # Builder function libraries (dot-sourced into the builder's scope)
 │   ├── WinEaseMount.ps1        # DISM mount discovery/cleanup, mount directories, offline hives
+│   ├── WinEasePathSafety.ps1   # Path normalization/containment and restore-path validation
+│   ├── WinEaseSystem.ps1       # BuildContext, DISM wrapper, hive unmount, capacity and timing helpers
+│   ├── WinEaseConfig.ps1       # Config conflict resolution, resume integrity, user config paths, config diff, feature-ID overrides
+│   ├── WinEaseBenchmarks.ps1   # Statistical analysis and benchmark comparison
+│   ├── WinEaseDependencies.ps1 # Dependency / feature-impact analysis (config/dependencies.psd1)
+│   ├── WinEaseGuiSession.ps1   # Builder GUI session handling
+│   ├── WinEaseRegistry.ps1     # Invoke-WinEaseReg (every reg.exe call of phase 10), hive loading, config/registry table runner
+│   ├── WinEaseGuiCore.ps1      # UI-independent GUI logic (language tables, debloat items, draft config, migration helpers)
 │   ├── WinEaseFileSystem.ps1   # Directory safety checks, ownership/ACL, robust deletion, capacity
 │   ├── WinEaseWim.ps1          # Native WIM export, fingerprinting and repair
 │   ├── WinEaseDebloat.ps1      # Advanced Debloat engine (PowerShell / Rust) and per-target handlers
@@ -507,7 +515,7 @@ WinEase/
 │   ├── WinEaseSelfTest.ps1     # Self-test suite (loaded only for -TestSelf)
 │   └── WinEaseExtensions.ps1   # User extensibility engine (user tweaks, presets, custom scripts, config diff, recovery readiness)
 ├── gui/
-│   ├── WinEaseGui.ps1          # Classic WinForms GUI, one function per tab (loaded only for -GUI / menu [7]); the migrator window reuses its parts
+│   ├── WinEaseGui.ps1          # Classic WinForms GUI (frozen fallback), one function per tab (loaded only for -GUI / menu [7]); the migrator window reuses its parts
 │   ├── WinEaseWinUiHost.ps1    # Starts the WinUI 3 window and answers its requests (JSON lines over stdin/stdout)
 │   └── winui/                 # WinUI 3 window (C#, Windows App SDK); build.ps1 publishes it to winui/bin
 ├── phases/                    # 18 build phases (dot-sourced by orchestrator)
@@ -516,6 +524,7 @@ WinEase/
 │   ├── schema.psd1            # Single source of truth for every tweak/component setting, CLI switch pair and debloat engine
 │   ├── presets.psd1           # Built-in presets (extreme, balanced, fat32, handheld, vm, audio)
 │   ├── dependencies.psd1      # Dependency & feature-impact catalog (conflicts, impacts, unknowns)
+│   ├── registry/              # Offline registry writes of phase 10 as data (one table per area, see phases/10-registry.ps1)
 │   ├── WinEase.config.schema.json  # JSON Schema for profile validation
 │   ├── ui-strings/            # GUI strings (en.json, ja.json)
 │   └── user/                  # User-edited files (all optional)

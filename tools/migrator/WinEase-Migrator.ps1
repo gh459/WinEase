@@ -68,8 +68,13 @@ function Find-WinEaseMigratorFile {
     return $null
 }
 $script:MigratorParent = Split-Path -Parent (Split-Path -Parent $script:MigratorDir)
-# Shared WinForms parts, colour table and default backup folder: gui\WinEaseGui.ps1 in the repository,
-# WinEaseGui.ps1 in this folder when bundled. Loaded first so the helpers and the engine win any name clash.
+# GUI core (language tables, default backup folder, debloat lists): lib\WinEaseGuiCore.ps1 in the repository,
+# WinEaseGuiCore.ps1 in this folder when bundled. It has no WinForms part, so it is loaded on its own first.
+$script:GuiCorePath = Find-WinEaseMigratorFile @(
+    (Join-Path $script:MigratorParent 'lib\WinEaseGuiCore.ps1'), (Join-Path $script:MigratorDir 'WinEaseGuiCore.ps1'))
+if ($script:GuiCorePath) { . $script:GuiCorePath }
+# Shared WinForms parts and colour table: gui\WinEaseGui.ps1 in the repository, WinEaseGui.ps1 in this folder
+# when bundled. Loaded before the helpers and the engine so those win any name clash.
 $script:GuiPartsPath = Find-WinEaseMigratorFile @(
     (Join-Path $script:MigratorParent 'gui\WinEaseGui.ps1'), (Join-Path $script:MigratorDir 'WinEaseGui.ps1'))
 if ($script:GuiPartsPath) { . $script:GuiPartsPath }
@@ -82,7 +87,7 @@ $script:DefaultPackagePath = if (Test-Path -LiteralPath (Join-Path $script:Bundl
 } elseif (Get-Command -Name Get-WinEaseDefaultMigrationBackupPath -ErrorAction SilentlyContinue) {
     Get-WinEaseDefaultMigrationBackupPath -Base Profile
 } else {
-    # Only without WinEaseGui.ps1 (CLI use of a bundle that does not ship it)
+    # Only without WinEaseGuiCore.ps1 (CLI use of a bundle that does not ship it)
     Join-Path -Path ([Environment]::GetFolderPath('UserProfile')) -ChildPath 'WinEase_migration_backup'
 }
 $script:HelpersPath = Find-WinEaseMigratorFile @(

@@ -1,5 +1,6 @@
 # WinEaseWinUiHost.ps1 - runs the WinUI 3 window (gui\winui) for WinEasebuilder.ps1
-# Dot-sourced after gui\WinEaseGui.ps1 (language tables, migration helpers, debloat lists).
+# Needs only lib\WinEaseGuiCore.ps1 (language tables, migration helpers, debloat lists), which it loads itself;
+# it does not need the WinForms window (gui\WinEaseGui.ps1), though that file also dot-sources it.
 #
 # The window is a separate process (WinEaseGui.exe). It talks to this script over its standard streams,
 # one UTF-8 JSON object per line:
@@ -7,6 +8,14 @@
 #   window  -> builder: requests { id, op, lang, args }; the last one is op 'result' (the chosen settings or cancel)
 # Requests that need PowerShell (dependency check, preset diff, migration engine, ...) run here, in the builder
 # process, so the window never needs its own copy of the build logic.
+
+$script:WinEaseGuiDir = $PSScriptRoot
+if (-not (Get-Command -Name Get-WinEaseUiString -ErrorAction SilentlyContinue)) {
+    . (Join-Path -Path (Split-Path -Parent $PSScriptRoot) -ChildPath 'lib\WinEaseGuiCore.ps1')
+}
+# The custom-script requests need the user extensibility engine (the builder loads it too)
+$winUiExtensions = Join-Path -Path (Split-Path -Parent $PSScriptRoot) -ChildPath 'lib\WinEaseExtensions.ps1'
+if (-not (Get-Command -Name Add-WinEaseCustomScript -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $winUiExtensions)) { . $winUiExtensions }
 
 # WinEaseGui.exe: the published build (gui\winui\bin), then a local Debug/Release build output
 function Find-WinEaseWinUiExe {
@@ -67,11 +76,10 @@ function Get-WinEaseWinUiPresets {
 # The first message: everything the window needs to build itself
 function New-WinEaseWinUiInitMessage {
     param([hashtable]$InitialSettings, [string]$Language)
-    $tweaks = @()
-    foreach ($tk in $script:AllTweakDefs.Keys) {
+    $tweaks = @(foreach ($tk in $script:AllTweakDefs.Keys) {
         $d = $script:AllTweakDefs[$tk]
-        $tweaks += , [ordered]@{ Key = $tk; Category = "$($d.Category)"; Default = [bool]$d.Default; Description = "$($d.Description)"; DescriptionJa = "$($d.DescriptionJa)" }
-    }
+        [ordered]@{ Key = $tk; Category = "$($d.Category)"; Default = [bool]$d.Default; Description = "$($d.Description)"; DescriptionJa = "$($d.DescriptionJa)" }
+    })
     $components = @(foreach ($cd in $script:ComponentDefs.Values) {
         if (-not $cd.Gui) { continue }
         [ordered]@{
@@ -302,6 +310,7 @@ function Invoke-WinEaseWinUiRequest {
                     Condition = [string]$e.Condition
                     OnError = [string]$e.OnError
                     Description = [string]$e.Description
+                    Location = [string]$e.Location
                 }
             }
             return @{ Data = $rows }
@@ -449,6 +458,11 @@ function Show-WinEaseWinUiGUI {
             if ($msg.op -eq 'result') {
                 $result = ConvertFrom-WinEaseWinUiResult -Result $msg.args
                 $writer.WriteLine((@{ id = $msg.id; ok = $true } | ConvertTo-Json -Compress))
+                # A real build keeps the window open to show its progress (Send-WinEaseGuiProgress)
+                if ($result.Success -and -not $result.DryRun) {
+                    $script:WinEaseGuiProgressChannel = @{ Proc = $proc; Writer = $writer }
+                    $keepOpen = $true
+                }
                 break
             }
             $reply = [ordered]@{ id = $msg.id; ok = $true }
@@ -462,9 +476,39 @@ function Show-WinEaseWinUiGUI {
             }
             $writer.WriteLine(($reply | ConvertTo-Json -Depth 12 -Compress))
         }
-        if (-not $proc.WaitForExit(15000)) { Write-Verbose 'WinEaseGui.exe did not exit in time' }
+        if (-not $keepOpen -and -not $proc.WaitForExit(15000)) { Write-Verbose 'WinEaseGui.exe did not exit in time' }
     } finally {
-        try { $writer.Dispose() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        if (-not $keepOpen) {
+            try { $writer.Dispose() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        }
     }
     return $result
+}
+
+# Builder -> window progress notice ({ op = 'progress'; event = phase|log|done; ... }).
+# A no-op without an open window; a closed window drops the channel and never stops the build.
+function Send-WinEaseGuiProgress {
+    param(
+        [Parameter(Mandatory)][ValidateSet('phase', 'log', 'done')][string]$Event,
+        [hashtable]$Data = @{}
+    )
+    $channel = $script:WinEaseGuiProgressChannel
+    if (-not $channel) { return }
+    try {
+        $msg = [ordered]@{ op = 'progress'; event = $Event }
+        foreach ($k in $Data.Keys) { $msg[$k] = $Data[$k] }
+        $channel.Writer.WriteLine(($msg | ConvertTo-Json -Depth 4 -Compress))
+    } catch {
+        Write-Verbose "GUI progress channel closed: $($_.Exception.Message)"
+        $script:WinEaseGuiProgressChannel = $null
+    }
+}
+
+function Close-WinEaseGuiProgress {
+    param([bool]$Success, [string]$Message = '')
+    if (-not $script:WinEaseGuiProgressChannel) { return }
+    Send-WinEaseGuiProgress -Event done -Data @{ Success = $Success; Message = $Message }
+    $channel = $script:WinEaseGuiProgressChannel
+    $script:WinEaseGuiProgressChannel = $null
+    try { $channel.Writer.Dispose() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }

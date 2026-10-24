@@ -213,5 +213,14 @@
   "Tab.UI": " 5. UI & Shell ",
   "Tab.UserTweaks": " 9. User Tweaks ",
   "UserTweaks.Caption": "User-defined switches (config\\user\\user-tweaks.psd1)",
-  "UserTweaks.None": "No user-defined switches with a category outside Security / Privacy / Performance / UI."
+  "UserTweaks.None": "No user-defined switches with a category outside Security / Privacy / Performance / UI.",
+  "Progress.Title": "Building WinEase",
+  "Progress.Starting": "Starting the build...",
+  "Progress.Hint": "The build runs in the WinEase builder. You can close this window; the build keeps running in the console.",
+  "Progress.Close": "Close",
+  "Progress.Elapsed": "Elapsed: {0}",
+  "Progress.Remaining": "Remaining: about {0} min",
+  "Progress.Done": "Build finished. WinEase.iso is ready.",
+  "Progress.Failed": "Build failed. Diagnostics: {0}",
+  "Progress.Ended": "The builder has ended."
 }

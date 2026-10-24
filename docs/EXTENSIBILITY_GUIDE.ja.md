@@ -138,12 +138,12 @@ PC 移行ツール(`tools/migrator/WinEase-Migrator.ps1`)は、標準で約30種
 ```text
 WinEase-main/
 ├── WinEasebuilder.ps1      メイン。引数の定義、設定の組み立て、フェーズの呼び出し
-├── WinEasehelpers.ps1      共通の小さな関数(パス検証、設定ファイルの場所の解決など)
+├── WinEasehelpers.ps1      lib/ の共通モジュールを読み込むローダー(パス検証、設定ファイルの場所の解決など)
 ├── lib/                   ビルダーが読み込む関数群
 ├── phases/                ビルドの各工程(01〜18)
 ├── gui/WinEaseGui.ps1      WinForms の GUI
 ├── config/                設定ファイル
-├── scripts/               イメージに埋め込むセットアップ用スクリプト
+├── scripts/               イメージに埋め込むセットアップ用スクリプト(setup/ 補助、tools/ インストール後ツール)
 ├── tools/                 補助ツールとカスタムスクリプト
 ├── profiles/              保存したプロファイル(JSON)
 ├── templates/report.html  レポートの雛形
@@ -159,6 +159,14 @@ WinEase-main/
 | :--- | :--- |
 | `WinEaseMount.ps1` | DISM のマウント確認とクリーンアップ、マウント用フォルダ、オフラインレジストリ |
 | `WinEaseFileSystem.ps1` | フォルダの安全確認、所有権と ACL、強制削除、空き容量 |
+| `WinEasePathSafety.ps1` | パスの正規化、範囲チェック、復元パスの検証 |
+| `WinEaseSystem.ps1` | BuildContext、DISM ラッパー、ハイブのアンロード、容量と時間の補助 |
+| `WinEaseConfig.ps1` | 設定の競合解決、再開時の整合性確認、ユーザー設定の場所、設定の差分 |
+| `WinEaseBenchmarks.ps1` | 統計分析とベンチマーク比較 |
+| `WinEaseDependencies.ps1` | 依存関係と機能影響の分析 |
+| `WinEaseGuiSession.ps1` | ビルダーの GUI セッション処理 |
+| `WinEaseRegistry.ps1` | フェーズ 10 のオフラインレジストリ操作 (`Invoke-WinEaseReg`、ハイブの読み込み、`config/registry` のテーブル実行) |
+| `WinEaseGuiCore.ps1` | WinForms 画面・WinUI 3 ホスト・移行ツールが共有する、UI に依存しない GUI ロジック |
 | `WinEaseWim.ps1` | WIM の書き出し、フィンガープリント、修復 |
 | `WinEaseReport.ps1` | HTML レポート(`WinEase_report.html`) |
 | `WinEaseResume.ps1` | `-ResumeIsoOnly` と工程ごとのチェックポイント |
@@ -195,6 +203,7 @@ WinEase-main/
 | :--- | :--- |
 | `schema.psd1` | すべての設定スイッチとコンポーネントの**唯一の定義元**。GUI、プロファイル、CLI はここから作られる |
 | `dependencies.psd1` | 設定の依存関係・影響のカタログ(競合、影響、不明の判定に使う) |
+| `registry/<section>.psd1` | フェーズ 10 の単純なレジストリ書き込みをデータ化したもの: `@{ Tweak; Default; Hive; Path; Name; Type; Data; MinBuild; MaxBuild }`。`Invoke-WinEaseRegistryTable` が実行する。`MinBuild`/`MaxBuild` で Windows のビルド番号ごとに切り替えられる |
 | `WinEase.config.schema.json` | プロファイルの JSON スキーマ |
 | `user/user-tweaks.psd1` | ユーザー独自の設定、プリセット、カスタムスクリプト |
 | `user/user-migration-rules.psd1` | ユーザー独自の移行ルール |

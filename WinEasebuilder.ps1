@@ -21,6 +21,7 @@
 
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', 'isoCreatedSuccessfully', Justification = 'Read by New-BuildContextFromScriptScope and the phases in script scope')]
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidAssignmentToAutomaticVariable', '', Justification = '-Profile is the public preset parameter; renaming it would break the command line')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '', Justification = 'UserPassword is an unattended setup string parameter')]
 [CmdletBinding(SupportsShouldProcess=$true)]
 param(
     [alias("Unattended", "Silent", "Batch")]
@@ -64,6 +65,7 @@ param(
     # UserName: letters (incl. Japanese), digits, space, '.', '_', '-'; max 20 characters.
     [ValidatePattern('^[\p{L}\p{N}_][\p{L}\p{N} ._-]{0,19}$')]
     [string]$UserName = 'User',
+    [string]$UserPassword = 'WinEase123!',
     [int]$KeepLogs = 10,
     [string]$InjectDrivers,
     [switch]$KeepBasicApps,
@@ -517,7 +519,7 @@ if ((-not $myWindowsPrincipal.IsInRole([System.Security.Principal.WindowsBuiltIn
     $newProcess.Arguments = New-WinEaseChildArguments -ScriptPath $myInvocation.MyCommand.Definition -ScriptArguments $paramList
     $newProcess.Verb = "runas"
     try {
-        [System.Diagnostics.Process]::Start($newProcess) | Out-Null
+        $null = [System.Diagnostics.Process]::Start($newProcess)
         exit 0
     } catch {
         Write-Host "Failed to elevate privileges: $_" -ForegroundColor Red
@@ -584,8 +586,9 @@ $script:PreservedMountDirs = [System.Collections.Generic.HashSet[string]]::new(
 $script:MountAllocationRoot = $null
 $script:MountDirectoryPrefix = $null
 
-# Low-level DISM mount / offline hive, filesystem / ACL, WIM and telemetry helpers (function definitions only)
-foreach ($WinEaseLibFile in @('WinEaseMount.ps1', 'WinEaseFileSystem.ps1', 'WinEaseWim.ps1', 'WinEaseTelemetry.ps1')) {
+# Low-level DISM mount / offline hive, offline registry access (reg.exe wrapper, config\registry tables), WIM, telemetry and GUI-session helpers (function definitions only).
+# WinEaseFileSystem.ps1 is loaded by WinEasehelpers.ps1 with the other split helper modules.
+foreach ($WinEaseLibFile in @('WinEaseMount.ps1', 'WinEaseRegistry.ps1', 'WinEaseWim.ps1', 'WinEaseTelemetry.ps1', 'WinEaseGuiSession.ps1')) {
     . (Join-Path -Path (Join-Path -Path $scriptDirEarly -ChildPath "lib") -ChildPath $WinEaseLibFile)
 }
 
@@ -658,7 +661,7 @@ foreach ($tk in $script:AllTweakDefs.Keys) {
 
 function Resolve-WinEaseTweakKey {
     param([string]$Name)
-    if ($script:TweakKeyAliases.Contains($Name)) { return $script:TweakKeyAliases[$Name] }
+    if ($null -ne $script:TweakKeyAliases -and $script:TweakKeyAliases.Contains($Name)) { return $script:TweakKeyAliases[$Name] }
     return $Name
 }
 
@@ -744,9 +747,10 @@ function Export-WinEaseProfile {
         [string]$FilePath,
         [hashtable]$Config
     )
+    if ($null -eq $Config) { $Config = @{} }
     $parentDir = Split-Path -Parent $FilePath
     if ($parentDir -and (-not (Test-Path -LiteralPath $parentDir))) {
-        New-Item -ItemType Directory -Force -Path $parentDir | Out-Null
+        $null = New-Item -ItemType Directory -Force -Path $parentDir
     }
     # Settings are written in the same key order as $script:WinEaseProfileKeys so a saved profile
     # round-trips through -LoadProfile without losing any option.
@@ -793,6 +797,17 @@ function Enter-Phase {
     $script:PhaseStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $phaseTitle = "WinEase [$PhaseNumber/$($script:TotalPhases)] $PhaseName"
     try { $host.UI.RawUI.WindowTitle = $phaseTitle } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    if (Get-Command -Name Send-WinEaseGuiProgress -ErrorAction SilentlyContinue) {
+        $progress = @{ Phase = $PhaseNumber; Total = $script:TotalPhases; Name = $PhaseName }
+        if ($PhaseNumber -le 1 -or -not $script:ProgressEstimateSent) {
+            try {
+                $est = Get-WinEaseLastRunTotalSeconds -TimingsPath (Join-Path -Path $logDir -ChildPath 'last_phase_timings.json')
+                if ($est -gt 0) { $progress.EstimatedSeconds = $est }
+            } catch { Write-Verbose "No previous phase timings: $($_.Exception.Message)" }
+            $script:ProgressEstimateSent = $true
+        }
+        Send-WinEaseGuiProgress -Event phase -Data $progress
+    }
     Write-Host ""
     Write-Host "=========================================================" -ForegroundColor Cyan
     Write-Host " [$PhaseNumber/$($script:TotalPhases)] $PhaseName" -ForegroundColor Cyan
@@ -888,7 +903,7 @@ foreach ($aliasKey in @($presetFile.Aliases.Keys)) { $script:BuiltInPresetAliase
 # M2: Load user presets now that BuiltInPresets is defined
 try {
     if (Get-Command -Name Import-WinEaseUserExtensions -ErrorAction SilentlyContinue) {
-        Import-WinEaseUserExtensions -PresetsOnly | Out-Null
+        $null = Import-WinEaseUserExtensions -PresetsOnly
     }
 } catch {
     Write-Verbose "Ignored: $($_.Exception.Message)"
@@ -1349,7 +1364,7 @@ if ($bound.ContainsKey('Profile') -or $bound.ContainsKey('Preset')) {
     $applied = Apply-ProfileSettings -ProfileName $selectedProfile
     if (-not $applied) {
         Write-Warning "Unrecognized profile '$selectedProfile'. Falling back to 'extreme'."
-        Apply-ProfileSettings -ProfileName 'extreme' | Out-Null
+        $null = Apply-ProfileSettings -ProfileName 'extreme'
         $selectedProfile = 'extreme'
     } else {
         Write-Host "Applied Built-in Profile: $($applied.ProfileName)" -ForegroundColor Green
@@ -1363,12 +1378,12 @@ if ($bound.ContainsKey('LoadProfile') -and $bound['LoadProfile']) {
     if (-not $loadedSettings) {
         throw "Could not load JSON profile: $LoadProfile"
     }
-    Apply-ProfileSettings -ProfileObject $loadedSettings | Out-Null
+    $null = Apply-ProfileSettings -ProfileObject $loadedSettings
     $profileNameProp = $loadedSettings.PSObject.Properties['ProfileName']
     $selectedProfile = if ($profileNameProp -and $profileNameProp.Value) { "$($profileNameProp.Value)" } else { [System.IO.Path]::GetFileNameWithoutExtension($LoadProfile) }
 
     # Settings outside Apply-ProfileSettings: only taken from the file when not given on the command line
-    foreach ($extraKey in @('SourceDrive', 'WorkDir', 'Index', 'ComputerName', 'UserName', 'SkipEiCfg', 'NoPostInstallAssets')) {
+    foreach ($extraKey in @('SourceDrive', 'WorkDir', 'Index', 'ComputerName', 'UserName', 'UserPassword', 'SkipEiCfg', 'NoPostInstallAssets')) {
         $prop = $loadedSettings.PSObject.Properties[$extraKey]
         if (-not $prop -or $bound.ContainsKey($extraKey)) { continue }
         $val = $prop.Value
@@ -1383,158 +1398,6 @@ if ($bound.ContainsKey('LoadProfile') -and $bound['LoadProfile']) {
         }
     }
     Write-Host "Loaded JSON profile: $LoadProfile ($selectedProfile)" -ForegroundColor Green
-}
-
-
-function Get-WinEaseGuiInitialSettings {
-    $initialSettings = @{
-        SourceDrive                  = $script:SourceDrive
-        WorkDir                      = $script:WorkDir
-        Index                        = $script:Index
-        InjectDrivers                = $script:InjectDrivers
-        UserName                     = $script:UserName
-        ComputerName                 = $script:ComputerName
-        PresetKey                    = $script:selectedProfile
-        UseVHDX                      = $script:useVHDX
-        ExportESDMode                = $script:exportESDMode
-        SplitWIMMode                 = $script:splitWIMMode
-        TweakSettings                = $script:TweakSettings
-        AdvancedDebloatStandard      = $script:advancedDebloatStandard
-        AdvancedDebloatExperimental  = $script:advancedDebloatExperimental
-        DebloatEngineSelection       = $script:DebloatEngineSelection
-    }
-    # Services & Apps tab checkboxes
-    foreach ($cd in $script:ComponentDefs.Values) {
-        if ($cd.Gui) { $initialSettings[$cd.Key] = Get-WinEaseComponentValue -Def $cd }
-    }
-    return $initialSettings
-}
-
-function Show-WinEaseGuiSessionWindow {
-    param(
-        $InitialSettings
-    )
-    $guiLanguageArgs = @{}
-    if ($UiLanguage) { $guiLanguageArgs["UiLanguage"] = $UiLanguage }
-    # WinUI 3 window when gui\winui is built (and -ClassicGui is not set), else the WinForms window
-    $guiResult = $null
-    $winUiExe = if ($ClassicGui) { $null } else { Find-WinEaseWinUiExe }
-    if ($winUiExe) {
-        try {
-            $guiResult = Show-WinEaseWinUiGUI -InitialSettings $InitialSettings -ExePath $winUiExe @guiLanguageArgs
-        } catch {
-            Write-Warning "WinUI 3 window failed ($($_.Exception.Message)); falling back to the classic window."
-            $winUiExe = $null
-        }
-    }
-    if (-not $winUiExe) { $guiResult = Show-WinEaseGUI -InitialSettings $InitialSettings @guiLanguageArgs }
-    return $guiResult
-}
-
-function Confirm-WinEasePhysicalDebloatConsent {
-    param(
-        $GuiResult
-    )
-    # Explicit Physical Debloat Consent Gate
-    # The GUI windows (WinUI 3 and the classic WinForms window) both ask for this consent
-    # themselves, next to the selection, and report it back as PhysicalDebloatConsent. When
-    # the consent was already granted there is nothing left to confirm here. This fallback
-    # dialog only appears for a non-GUI run that set the advanced debloat lists directly
-    # (e.g. a profile), where no GUI was involved.
-    $advStdCount = @($script:advancedDebloatStandard).Count
-    $advExpCount = @($script:advancedDebloatExperimental).Count
-    $hasConsent = if ($GuiResult) { [bool]$GuiResult.PhysicalDebloatConsent } else { $false }
-    if ((-not $script:allowPhysicalDebloat) -and (($advStdCount + $advExpCount) -gt 0) -and (-not $hasConsent)) {
-        $consentMsg = "Advanced Debloat options selected: Standard=$advStdCount / Experimental=$advExpCount.`n`n" +
-            "These operations physically delete files and directories from the offline image.`n" +
-            "Experimental items permanently break Windows Update and sfc verification.`n`n" +
-            "Enable physical debloat for this build?"
-        $consent = [System.Windows.Forms.MessageBox]::Show(
-            $consentMsg,
-            "WinEase - Confirm Physical Debloat",
-            [System.Windows.Forms.MessageBoxButtons]::YesNo,
-            [System.Windows.Forms.MessageBoxIcon]::Warning)
-        if ($consent -eq [System.Windows.Forms.DialogResult]::Yes) {
-            $script:allowPhysicalDebloat = $true
-            Write-Host "Physical debloat explicitly confirmed for this session." -ForegroundColor Yellow
-        } else {
-            $script:advancedDebloatStandard     = @()
-            $script:advancedDebloatExperimental = @()
-            Write-Warning "Physical debloat was not confirmed; Advanced Debloat selections were cleared for this build."
-        }
-    }
-}
-
-function Apply-WinEaseGuiResult {
-    param(
-        $GuiResult
-    )
-    # The WinUI 3 window asks for the physical debloat consent itself
-    if ($GuiResult.PhysicalDebloatConsent) { $script:allowPhysicalDebloat = $true }
-
-    if ($GuiResult.BasePresetKey) {
-        Apply-ProfileSettings -ProfileName $GuiResult.BasePresetKey | Out-Null
-    }
-
-    if ($GuiResult.SourceDrive) { $script:SourceDrive = $GuiResult.SourceDrive }
-    if ($GuiResult.WorkDir)     { $script:WorkDir = $GuiResult.WorkDir }
-    if ($GuiResult.UserName)     { $script:UserName = $GuiResult.UserName }
-    if ($GuiResult.ComputerName) { $script:ComputerName = $GuiResult.ComputerName }
-    foreach ($cd in $script:ComponentDefs.Values) {
-        if ($cd.Gui) { Set-Variable -Name $cd.Variable -Scope Script -Value ([bool]$GuiResult.($cd.Key)) }
-    }
-    $script:useVHDX                      = [bool]$GuiResult.UseVHDX
-    $script:exportESDMode                = [bool]$GuiResult.ExportESDMode
-    $script:splitWIMMode                 = [bool]$GuiResult.SplitWIMMode
-
-    if ($GuiResult.TweakSettings) {
-        foreach ($tk in $GuiResult.TweakSettings.Keys) {
-            $script:TweakSettings[$tk] = [bool]$GuiResult.TweakSettings[$tk]
-        }
-    }
-    # RadicalRAM, BypassActivationRestrictions, NoHypervisor, ... are tab toggles that phases read as variables
-    Sync-WinEaseTweakVariables
-
-    if ($GuiResult.AdvancedDebloatStandard)     { $script:advancedDebloatStandard     = @($GuiResult.AdvancedDebloatStandard) }     else { $script:advancedDebloatStandard     = @() }
-    if ($GuiResult.AdvancedDebloatExperimental) { $script:advancedDebloatExperimental = @($GuiResult.AdvancedDebloatExperimental) } else { $script:advancedDebloatExperimental = @() }
-
-    # Engine selection (PowerShell <-> Rust) per target. Entries for targets that are not
-    # selected, or that the target does not support, are dropped.
-    $script:DebloatEngineSelection = [ordered]@{}
-    if ($GuiResult.DebloatEngineSelection) {
-        $engineMap = @{}
-        if ($GuiResult.DebloatEngineSelection -is [System.Collections.IDictionary]) {
-            foreach ($k in $GuiResult.DebloatEngineSelection.Keys) { $engineMap[[string]$k] = [string]$GuiResult.DebloatEngineSelection[$k] }
-        } else {
-            foreach ($p in $GuiResult.DebloatEngineSelection.PSObject.Properties) { $engineMap[[string]$p.Name] = [string]$p.Value }
-        }
-        Set-WinEaseDebloatEngineSelection -Selection $engineMap
-    }
-    $rustCount = @($script:advancedDebloatStandard + $script:advancedDebloatExperimental |
-        Where-Object { (Resolve-WinEaseDebloatEngine -Item ([string]$_)) -eq 'Rust' }).Count
-    if ($rustCount -gt 0) {
-        Write-Host "Debloat engine: $rustCount target(s) run on the Rust engine (forced physical deletion)." -ForegroundColor Yellow
-    }
-
-    Confirm-WinEasePhysicalDebloatConsent -GuiResult $GuiResult
-
-    if ($GuiResult.Index)         { $script:Index = $GuiResult.Index }
-    if ($GuiResult.InjectDrivers) { $script:InjectDrivers = $GuiResult.InjectDrivers }
-    if ($GuiResult.DryRun) {
-        $script:DryRun = $true
-        $script:isDryRunMode = $true
-    }
-    $script:selectedProfile = if ($GuiResult.PresetKey) { $GuiResult.PresetKey } elseif ($GuiResult.BasePresetKey) { "custom (based on $($GuiResult.BasePresetKey))" } else { "GUI Selection" }
-    Write-Host "Applied GUI Configuration successfully ($($script:selectedProfile))." -ForegroundColor Green
-}
-
-function Invoke-WinEaseGuiSession {
-    $initialSettings = Get-WinEaseGuiInitialSettings
-    $guiResult = Show-WinEaseGuiSessionWindow -InitialSettings $initialSettings
-    if (-not ($guiResult -and $guiResult.Success)) { return $false }
-
-    Apply-WinEaseGuiResult -GuiResult $guiResult
-    return $true
 }
 
 # The WinForms GUI (Show-WinEaseGUI) lives in gui\WinEaseGui.ps1 and is loaded only when a GUI
@@ -1678,32 +1541,32 @@ if ($isAutomated) {
     if ($pChoice -in @('1', 'extreme', 'gaming', 'slim')) {
         $skipIndividualPrompts = $true
         $selectedProfile = "extreme"
-        Apply-ProfileSettings -ProfileName 'extreme' | Out-Null
+        $null = Apply-ProfileSettings -ProfileName 'extreme'
         Write-Host "Applied Profile: Extreme Slim & Gaming" -ForegroundColor Green
     } elseif ($pChoice -in @('2', 'balanced', 'safe', 'pro')) {
         $skipIndividualPrompts = $true
         $selectedProfile = "balanced"
-        Apply-ProfileSettings -ProfileName 'balanced' | Out-Null
+        $null = Apply-ProfileSettings -ProfileName 'balanced'
         Write-Host "Applied Profile: Balanced Pro (Windows Update & Defender kept)" -ForegroundColor Yellow
     } elseif ($pChoice -in @('4', 'handheld', 'ally', 'deck', 'legion')) {
         $skipIndividualPrompts = $true
         $selectedProfile = "handheld"
-        Apply-ProfileSettings -ProfileName 'handheld' | Out-Null
+        $null = Apply-ProfileSettings -ProfileName 'handheld'
         Write-Host "Applied Profile: Handheld Gaming" -ForegroundColor Green
     } elseif ($pChoice -in @('5', 'vm', 'dev', 'developer')) {
         $skipIndividualPrompts = $true
         $selectedProfile = "vm"
-        Apply-ProfileSettings -ProfileName 'vm' | Out-Null
+        $null = Apply-ProfileSettings -ProfileName 'vm'
         Write-Host "Applied Profile: VM & Developer Workstation" -ForegroundColor Cyan
     } elseif ($pChoice -in @('6', 'audio', 'daw', 'dtm')) {
         $skipIndividualPrompts = $true
         $selectedProfile = "audio"
-        Apply-ProfileSettings -ProfileName 'audio' | Out-Null
+        $null = Apply-ProfileSettings -ProfileName 'audio'
         Write-Host "Applied Profile: Audio & DAW Production" -ForegroundColor Magenta
     } elseif ($pChoice -in @('3', 'fat32', 'split', 'splitwim')) {
         $skipIndividualPrompts = $true
         $selectedProfile = "fat32"
-        Apply-ProfileSettings -ProfileName 'fat32' | Out-Null
+        $null = Apply-ProfileSettings -ProfileName 'fat32'
         Write-Host "Applied Profile: FAT32 USB Split-WIM" -ForegroundColor Yellow
     } elseif ($pChoice -in @('7', 'gui', 'ui')) {
         . $script:WinEaseGuiPath
@@ -1937,7 +1800,7 @@ if ($ComparePreset) {
 # Save build configuration snapshot to logs/<timestamp>.config.json
 $logsDir = Join-Path -Path $scriptDir -ChildPath "logs"
 if (-not (Test-Path -LiteralPath $logsDir)) {
-    New-Item -ItemType Directory -Force -Path $logsDir -ErrorAction SilentlyContinue | Out-Null
+    [void](New-Item -ItemType Directory -Force -Path $logsDir -ErrorAction SilentlyContinue)
 }
 $configSnapshotPath = Join-Path -Path $logsDir -ChildPath "WinEase_$timestampStr.config.json"
 # Use the normalized current configuration instead of the individual script variables.
@@ -2076,7 +1939,7 @@ try {
 # M2: Custom scripts (PreBuild stage)
 if (Get-Command -Name Invoke-WinEaseCustomScriptsStage -ErrorAction SilentlyContinue) {
     try {
-        Invoke-WinEaseCustomScriptsStage -Stage 'PreBuild' -Context @{ Config = $resolvedConfig; ScriptRoot = $scriptDir } -DryRun:$isDryRunMode | Out-Null
+        $null = Invoke-WinEaseCustomScriptsStage -Stage 'PreBuild' -Context @{ Config = $resolvedConfig; ScriptRoot = $scriptDir } -DryRun:$isDryRunMode
     } catch { Write-Warning "PreBuild custom scripts failed: $($_.Exception.Message)" }
 }
 
@@ -2126,7 +1989,7 @@ $script:IsVhdxMounted = $false
 # Diagnostic Session Isolation (Rule 2)
 $script:BuildId = New-WinEaseBuildId
 $script:DiagDir = Join-Path -Path $scriptDir -ChildPath "build_diagnostics\$($script:BuildId)"
-New-Item -ItemType Directory -Path $script:DiagDir -Force | Out-Null
+$null = New-Item -ItemType Directory -Path $script:DiagDir -Force
 
 $script:DiagnosticData = [ordered]@{
     BuildId                  = $script:BuildId
@@ -2169,7 +2032,7 @@ function Write-WinEaseDiagnosticReport {
         # parallel). It is therefore created again before the report is written, so a
         # failed build always leaves its report behind.
         if (-not (Test-Path -LiteralPath $script:DiagDir)) {
-            New-Item -ItemType Directory -Path $script:DiagDir -Force | Out-Null
+            $null = New-Item -ItemType Directory -Path $script:DiagDir -Force
         }
         $jsonPath = Join-Path -Path $script:DiagDir -ChildPath "build_diagnostic_report.json"
         $script:DiagnosticData | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $jsonPath -Encoding utf8
@@ -2718,6 +2581,9 @@ try {
         } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
 
+    if (Get-Command -Name Close-WinEaseGuiProgress -ErrorAction SilentlyContinue) {
+        Close-WinEaseGuiProgress -Success ([bool]$script:BuildSucceeded) -Message $(if ($script:BuildSucceeded) { 'WinEase.iso is ready.' } else { "$script:DiagDir" })
+    }
     if ($script:BuildSucceeded) {
         Write-Host "Done! WinEase.iso is ready." -ForegroundColor Green
     } else {

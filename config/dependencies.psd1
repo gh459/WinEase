@@ -1,6 +1,6 @@
 ﻿# WinEase dependency catalog - single source of truth for deletion/optimization impact analysis.
 #
-# Consumed by Test-WinEaseDependencies (WinEasehelpers.ps1). Each entry describes one
+# Consumed by Test-WinEaseDependencies (lib\WinEaseDependencies.ps1). Each entry describes one
 # deletion/disabling toggle:
 #   TriggerValue     value that means "removed / disabled" (for AdvancedDebloat items the
 #                    trigger is "present in the selected list")
@@ -63,6 +63,7 @@
         'Index' = @{ TriggerValue = $null; Status = 'Safe'; Summary = 'Build option (image index), not a deletion'; AffectedFeatures = @(); ConflictsWith = @() }
         'ComputerName' = @{ TriggerValue = $null; Status = 'Safe'; Summary = 'Build option (computer name), not a deletion'; AffectedFeatures = @(); ConflictsWith = @() }
         'UserName' = @{ TriggerValue = $null; Status = 'Safe'; Summary = 'Build option (user name), not a deletion'; AffectedFeatures = @(); ConflictsWith = @() }
+        'UserPassword' = @{ TriggerValue = $null; Status = 'Safe'; Summary = 'Build option (user password), not a deletion'; AffectedFeatures = @(); ConflictsWith = @() }
         'AdvancedDebloatStandard' = @{ TriggerValue = $null; Status = 'Safe'; Summary = 'Internal advanced debloat list container'; AffectedFeatures = @(); ConflictsWith = @() }
         'AdvancedDebloatExperimental' = @{ TriggerValue = $null; Status = 'Safe'; Summary = 'Internal advanced debloat list container'; AffectedFeatures = @(); ConflictsWith = @() }
         'IncludeMigrationAssistant' = @{ TriggerValue = $null; Status = 'Safe'; Summary = 'Build option (include migration assistant tool)'; AffectedFeatures = @(); ConflictsWith = @() }

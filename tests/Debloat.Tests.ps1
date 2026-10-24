@@ -13,9 +13,17 @@ Describe "WinEase - the Defender stays usable unless its removal was asked for" 
     BeforeAll {
         if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
         $script:Phase05 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\05-appx.ps1"), [System.Text.Encoding]::UTF8)
-        $script:Phase10 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\10-registry.ps1"), [System.Text.Encoding]::UTF8)
+        # the plain registry writes live in config\registry, so the guards read the tables too
+        $script:Phase10 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\10-registry.ps1"), [System.Text.Encoding]::UTF8) + "`n" + (Get-WinEaseRegistryTableText)
         $script:Phase11 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\11-unattend.ps1"), [System.Text.Encoding]::UTF8)
         $script:FirstLogon = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "scripts\FirstLogon.ps1"), [System.Text.Encoding]::UTF8)
+        $script:DefenderEnforce = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "scripts\WinEase-DefenderEnforce.ps1"), [System.Text.Encoding]::UTF8)
+    }
+
+    It "does not set DisableRealtimeMonitoring policy in registry phase, FirstLogon or DefenderEnforce scripts" {
+        $script:Phase10 | Should Not Match 'DisableRealtimeMonitoring'
+        $script:FirstLogon | Should Not Match 'DisableRealtimeMonitoring'
+        $script:DefenderEnforce | Should Not Match 'DisableRealtimeMonitoring'
     }
 
     It "phase 10 only disables the Defender services when the Defender is removed on purpose" {
@@ -24,6 +32,10 @@ Describe "WinEase - the Defender stays usable unless its removal was asked for" 
         # removes the target when the Defender is kept, and this guard is the second
         # line of defence against a target that reaches the phase anyway.
         $script:Phase10 | Should Match ([regex]::Escape('$removeDefender -and (Test-WinEaseDebloatTargetSelected -Item ''Physical: Defender (complete removal) [~50MB]'')'))
+    }
+
+    It "phase 10 outputs a security warning when disabling Defender real-time protection" {
+        $script:Phase10 | Should Match ([regex]::Escape('[SECURITY WARNING] Disabling Windows Defender Real-Time Protection and security policies...'))
     }
 
     It "phase 15 verifies boot-start Defender drivers as disabled, not deleted" {
@@ -739,7 +751,7 @@ Describe "WinEase advanced debloat - every engine can remove its target" {
         # the toggles that were removed: the WinRE cleanup is done by the KeepRecoveryEnv
         # option (the Rust engine must not touch winre.wim, the setup needs it) and the
         # Store cache lives in the user profile, not in the image
-        $guiAst = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiPath, [ref]$null, [ref]$null)
+        $guiAst = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiCorePath, [ref]$null, [ref]$null)
         $assigns = $guiAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in '$script:WinEaseDebloatStandardItems', '$script:WinEaseDebloatExperimentalItems' }, $true)
         $guiItems = @()
         foreach ($a in $assigns) { $guiItems += @($a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value }) }

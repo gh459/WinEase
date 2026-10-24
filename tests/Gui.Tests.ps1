@@ -15,6 +15,155 @@ if (-not (Get-Command -Name Test-WinEasePathWithin -ErrorAction SilentlyContinue
     . (Join-Path -Path $script:RepoRoot -ChildPath "WinEasehelpers.ps1")
 }
 
+Describe "Apply-WinEaseGuiResult in lib\WinEaseGuiSession.ps1" {
+    BeforeAll {
+        $guiSessionText = [System.IO.File]::ReadAllText($script:GuiSessionPath, [System.Text.Encoding]::UTF8)
+        $guiSessionAst = [System.Management.Automation.Language.Parser]::ParseInput($guiSessionText, [ref]$null, [ref]$null)
+
+        # Load functions needed by Apply-WinEaseGuiResult
+        $funcsToLoad = @('Apply-WinEaseGuiResult', 'Confirm-WinEasePhysicalDebloatConsent')
+        $funcs = $guiSessionAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $funcsToLoad -contains $n.Name }, $true)
+        foreach ($fn in $funcs) { . ([scriptblock]::Create($fn.Extent.Text)) }
+
+        # Initialize schema definitions in script scope
+        $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+        $script:AllTweakDefs = [ordered]@{}
+        $script:TweakKeyAliases = [ordered]@{}
+        $script:TweakVariableMap = [ordered]@{}
+        foreach ($td in $settingsDef.Tweaks) {
+            $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description }
+            foreach ($alias in @($td.Aliases)) { if ($alias) { $script:TweakKeyAliases[$alias] = $td.Key } }
+            if ($td.Variable) { $script:TweakVariableMap[$td.Key] = $td.Variable }
+        }
+        $script:ComponentDefs = [ordered]@{}
+        foreach ($cd in $settingsDef.Components) { $script:ComponentDefs[$cd.Key] = $cd }
+        $script:WinEaseDebloatEngines = [ordered]@{}
+        foreach ($de in @($settingsDef.DebloatEngines)) {
+            if ($de -and $de.Item) { $script:WinEaseDebloatEngines[[string]$de.Item] = $de }
+        }
+
+        # Mock helper functions called inside Apply-WinEaseGuiResult
+        function Apply-ProfileSettings { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param($ProfileName) return @{ ProfileName = $ProfileName } }
+        function Sync-WinEaseTweakVariables { }
+        function Set-WinEaseDebloatEngineSelection { param($Selection) $script:DebloatEngineSelection = $Selection }
+        function Resolve-WinEaseDebloatEngine { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param($Item) return "PowerShell" }
+        function Confirm-WinEasePhysicalDebloatConsent { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param($GuiResult) }
+    }
+
+    BeforeEach {
+        $script:allowPhysicalDebloat = $false
+        $script:SourceDrive = "C:\ISO"
+        $script:WorkDir = "C:\Work"
+        $script:UserName = "User"
+        $script:ComputerName = "PC"
+        $script:Index = "1"
+        $script:InjectDrivers = ""
+        $script:useVHDX = $false
+        $script:exportESDMode = $false
+        $script:splitWIMMode = $false
+        $script:DryRun = $false
+        $script:isDryRunMode = $false
+        $script:selectedProfile = "Default"
+        $script:advancedDebloatStandard = @()
+        $script:advancedDebloatExperimental = @()
+        $script:DebloatEngineSelection = [ordered]@{}
+        $script:TweakSettings = [ordered]@{}
+        foreach ($tk in $script:AllTweakDefs.Keys) {
+            $script:TweakSettings[$tk] = [bool]$script:AllTweakDefs[$tk].Default
+        }
+    }
+
+    It "applies physical debloat consent when PhysicalDebloatConsent is true" {
+        $result = @{ PhysicalDebloatConsent = $true }
+        Apply-WinEaseGuiResult -GuiResult $result
+        $script:allowPhysicalDebloat | Should Be $true
+    }
+
+    It "applies full GUI result hashtable and updates session variables" {
+        $guiResult = @{
+            SourceDrive = "D:\Win11.iso"
+            WorkDir = "D:\WinEaseWork"
+            UserName = "TestUser"
+            ComputerName = "WIN-TESTPC"
+            UseVHDX = $true
+            ExportESDMode = $true
+            SplitWIMMode = $false
+            AdvancedDebloatStandard = @("TargetA")
+            AdvancedDebloatExperimental = @("TargetB")
+            Index = "2"
+            InjectDrivers = "D:\Drivers"
+            DryRun = $true
+            PresetKey = "custom_preset"
+            TweakSettings = @{ DisableUAC = $true }
+            DebloatEngineSelection = @{ "TargetA" = "Rust" }
+        }
+
+        Apply-WinEaseGuiResult -GuiResult $guiResult
+
+        $script:SourceDrive | Should Be "D:\Win11.iso"
+        $script:WorkDir | Should Be "D:\WinEaseWork"
+        $script:UserName | Should Be "TestUser"
+        $script:ComputerName | Should Be "WIN-TESTPC"
+        $script:useVHDX | Should Be $true
+        $script:exportESDMode | Should Be $true
+        $script:splitWIMMode | Should Be $false
+        $script:advancedDebloatStandard | Should Be @("TargetA")
+        $script:advancedDebloatExperimental | Should Be @("TargetB")
+        $script:Index | Should Be "2"
+        $script:InjectDrivers | Should Be "D:\Drivers"
+        $script:DryRun | Should Be $true
+        $script:isDryRunMode | Should Be $true
+        $script:selectedProfile | Should Be "custom_preset"
+        $script:TweakSettings["DisableUAC"] | Should Be $true
+        $script:DebloatEngineSelection["TargetA"] | Should Be "Rust"
+    }
+
+    It "handles null/missing debloat lists and debloat engine selection safely" {
+        $guiResult = @{
+            AdvancedDebloatStandard = $null
+            AdvancedDebloatExperimental = $null
+            DebloatEngineSelection = $null
+        }
+
+        Apply-WinEaseGuiResult -GuiResult $guiResult
+
+        @($script:advancedDebloatStandard).Count | Should Be 0
+        @($script:advancedDebloatExperimental).Count | Should Be 0
+        $script:DebloatEngineSelection.Count | Should Be 0
+    }
+
+    It "processes DebloatEngineSelection in PSCustomObject format" {
+        $engineObj = [PSCustomObject]@{
+            "Remove Bluetooth stack (service + binary) [20-40MB]" = "Rust"
+        }
+        $guiResult = @{
+            DebloatEngineSelection = $engineObj
+        }
+
+        Apply-WinEaseGuiResult -GuiResult $guiResult
+
+        $script:DebloatEngineSelection["Remove Bluetooth stack (service + binary) [20-40MB]"] | Should Be "Rust"
+    }
+
+    It "resolves selectedProfile correctly for BasePresetKey when PresetKey is missing" {
+        $guiResult = @{
+            BasePresetKey = "extreme"
+        }
+
+        Apply-WinEaseGuiResult -GuiResult $guiResult
+
+        $script:selectedProfile | Should Be "custom (based on extreme)"
+    }
+
+    It "resolves selectedProfile to 'GUI Selection' when PresetKey and BasePresetKey are both missing" {
+        $guiResult = @{}
+
+        Apply-WinEaseGuiResult -GuiResult $guiResult
+
+        $script:selectedProfile | Should Be "GUI Selection"
+    }
+}
+
 Describe "WinEase GUI wiring - every toggle is consumed by the build" {
     $builderText = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
     $builderAst = [System.Management.Automation.Language.Parser]::ParseInput($builderText, [ref]$null, [ref]$null)
@@ -24,7 +173,9 @@ Describe "WinEase GUI wiring - every toggle is consumed by the build" {
 $phaseText += "`n" + [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "lib\WinEaseDebloat.ps1"))
 # config\schema.psd1 is the master schema: the lookup tables of the options live there
 $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\schema.psd1"))
-    $helpersText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "WinEasehelpers.ps1"))
+    $helpersText = Get-WinEaseHelperSourceText
+    # the plain registry writes of phase 10 are data (config\registry\*.psd1): a Tweak = 'Key' entry reads the key
+    $registryTableText = Get-WinEaseRegistryTableText
     $scriptText = (Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "scripts") -Filter "*.ps1" -ErrorAction SilentlyContinue |
         ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"
 
@@ -51,6 +202,7 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
             # appears as a table key counts as consumed as well.
             if ($phaseText -match "['`"]$([regex]::Escape($k))['`"]\s*=") { continue }
             if ($uiPrefText -match "Tweak\s*=\s*['`"]$([regex]::Escape($k))['`"]") { continue }
+            if ($registryTableText -match "Tweak\s*=\s*['`"]$([regex]::Escape($k))['`"]") { continue }
             # the lookup tables of the options live in the master schema
             if ($schemaText -match "['`"]$([regex]::Escape($k))['`"]\s*=") { continue }
             if ($varMap.Contains($k)) {
@@ -245,7 +397,7 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
     #   * the engine "Rust" hands exactly that one key to the Rust binary
     $engineDefs = (Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")).DebloatEngines
     function Get-DebloatItemFromGuiSource {
-        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiPath, [ref]$null, [ref]$null)
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiCorePath, [ref]$null, [ref]$null)
         $assigns = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in '$script:WinEaseDebloatStandardItems', '$script:WinEaseDebloatExperimentalItems' }, $true)
         $items = @()
         foreach ($a in $assigns) { $items += @($a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value }) }
@@ -585,6 +737,13 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
         New-Item -ItemType Directory -Force -Path $edge | Out-Null
         Set-Content -LiteralPath (Join-Path $edge "msedge.exe") -Value "x" -Encoding ascii
         $script:scratchDir = $scratch
+        # The safe engine may use the protected-directory helper now that the split
+        # helpers are loaded in one go. Treat the fake image as the workspace, as the
+        # builder does, so the safety guard accepts paths under it.
+        $savedBaseWorkDir = $script:BaseWorkDir
+        $savedDismMountDir = $script:DismMountDir
+        $script:BaseWorkDir = $scratch
+        $script:DismMountDir = $scratch
         $script:isDryRunMode = $false
         $script:WinEaseDebloatEngines = [ordered]@{}
         foreach ($def in $engineDefs) { $script:WinEaseDebloatEngines[[string]$def.Item] = $def }
@@ -613,6 +772,8 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
             (Test-Path -LiteralPath $edge) | Should Be $false
         } finally {
             Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
+            $script:BaseWorkDir = $savedBaseWorkDir
+            $script:DismMountDir = $savedDismMountDir
             $script:scratchDir = $null
             $script:WinEaseDebloatEngines = $null
             $script:DebloatEngineSelection = [ordered]@{}
@@ -988,7 +1149,7 @@ Describe "S8 - GUI user extensions tab and Preset Diff" -Tags 'slow' {
 Describe "S10 - GUI and migrator cleanup (shared parts)" -Tags 'slow' {
     $script:S10Gui = Join-Path -Path $script:RepoRoot -ChildPath "gui\WinEaseGui.ps1"
     $script:S10Mig = Join-Path -Path $script:RepoRoot -ChildPath "tools\migrator\WinEase-Migrator.ps1"
-    $script:S10GuiText = [System.IO.File]::ReadAllText($script:S10Gui)
+    $script:S10GuiText = [System.IO.File]::ReadAllText($script:S10Gui); $script:S10CoreText = [System.IO.File]::ReadAllText($script:GuiCorePath)
     $script:S10MigText = [System.IO.File]::ReadAllText($script:S10Mig)
     $script:S10GuiAst = [System.Management.Automation.Language.Parser]::ParseFile($script:S10Gui, [ref]$null, [ref]$null)
 
@@ -1027,7 +1188,7 @@ Describe "S10 - GUI and migrator cleanup (shared parts)" -Tags 'slow' {
     }
 
     It "the default backup folder name is spelled once per file" {
-        ([regex]::Matches($script:S10GuiText, 'WinEase_migration_backup')).Count | Should Be 1
+        ([regex]::Matches($script:S10CoreText, 'WinEase_migration_backup')).Count | Should Be 1
         ([regex]::Matches($script:S10MigText, 'WinEase_migration_backup')).Count | Should Be 1
     }
 
@@ -1173,7 +1334,7 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
     }
     # English Advanced Debloat item names written in the GUI source (both the tab and the dialog)
     function Get-DebloatItemFromSource {
-        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiPath, [ref]$null, [ref]$null)
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiCorePath, [ref]$null, [ref]$null)
         $assigns = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in '$script:WinEaseDebloatStandardItems', '$script:WinEaseDebloatExperimentalItems' }, $true)
         $items = @()
         foreach ($a in $assigns) { $items += @($a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value }) }
@@ -1734,10 +1895,11 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
 
     It "the builder prefers the WinUI 3 window, keeps -ClassicGui and falls back to WinForms" {
         $builder = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'WinEasebuilder.ps1'))
+        $guiSession = [System.IO.File]::ReadAllText($script:GuiSessionPath)
         $builder | Should Match '\[switch\]\$ClassicGui'
-        $builder | Should Match 'Find-WinEaseWinUiExe'
-        $builder | Should Match 'Show-WinEaseWinUiGUI'
-        $builder | Should Match 'falling back to the classic window'
+        $guiSession | Should Match 'Find-WinEaseWinUiExe'
+        $guiSession | Should Match 'Show-WinEaseWinUiGUI'
+        $guiSession | Should Match 'falling back to the classic window'
     }
 
     It "handles WINEASE_WINUI_INIT_DUMP environment variable creating parent directories safely" {
@@ -1763,10 +1925,83 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
     }
 }
 
+Describe "Show-WinEaseGuiSessionWindow session launcher and error handling" {
+    BeforeEach {
+        if (-not (Get-Command Find-WinEaseWinUiExe -ErrorAction SilentlyContinue)) {
+            function Find-WinEaseWinUiExe { return $null }
+        }
+        if (-not (Get-Command Show-WinEaseWinUiGUI -ErrorAction SilentlyContinue)) {
+            function Show-WinEaseWinUiGUI { return $null }
+        }
+        if (-not (Get-Command Show-WinEaseGUI -ErrorAction SilentlyContinue)) {
+            function Show-WinEaseGUI { return $null }
+        }
+
+        $guiSessionAst = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiSessionPath, [ref]$null, [ref]$null)
+        $funcAst = $guiSessionAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq "Show-WinEaseGuiSessionWindow" }, $true)
+        . ([scriptblock]::Create($funcAst.Extent.Text))
+    }
+
+    It "executes WinUI 3 window when executable is found and succeeds" {
+        Mock Find-WinEaseWinUiExe { return "C:\path\to\WinEaseGui.exe" }
+        Mock Show-WinEaseWinUiGUI { return @{ Success = $true; Source = "WinUI3" } }
+        Mock Show-WinEaseGUI { return @{ Success = $true; Source = "Classic" } }
+
+        $res = Show-WinEaseGuiSessionWindow -InitialSettings @{}
+        $res.Source | Should Be "WinUI3"
+        Assert-MockCalled Find-WinEaseWinUiExe -Exactly 1 -Scope It
+        Assert-MockCalled Show-WinEaseWinUiGUI -Exactly 1 -Scope It
+        Assert-MockCalled Show-WinEaseGUI -Exactly 0 -Scope It
+    }
+
+    It "falls back to classic WinForms GUI when WinUI 3 window throws an exception" {
+        Mock Find-WinEaseWinUiExe { return "C:\path\to\WinEaseGui.exe" }
+        Mock Show-WinEaseWinUiGUI { throw "WinUI 3 failed to launch" }
+        Mock Show-WinEaseGUI { return @{ Success = $true; Source = "Classic" } }
+
+        $res = Show-WinEaseGuiSessionWindow -InitialSettings @{}
+        $res.Source | Should Be "Classic"
+        Assert-MockCalled Find-WinEaseWinUiExe -Exactly 1 -Scope It
+        Assert-MockCalled Show-WinEaseWinUiGUI -Exactly 1 -Scope It
+        Assert-MockCalled Show-WinEaseGUI -Exactly 1 -Scope It
+    }
+
+    It "launches classic WinForms GUI directly when ClassicGui switch is set" {
+        Mock Find-WinEaseWinUiExe { return "C:\path\to\WinEaseGui.exe" }
+        Mock Show-WinEaseWinUiGUI { return @{ Success = $true; Source = "WinUI3" } }
+        Mock Show-WinEaseGUI { return @{ Success = $true; Source = "Classic" } }
+
+        $script:ClassicGui = $true
+        try {
+            $res = Show-WinEaseGuiSessionWindow -InitialSettings @{}
+            $res.Source | Should Be "Classic"
+            Assert-MockCalled Show-WinEaseWinUiGUI -Exactly 0 -Scope It
+            Assert-MockCalled Show-WinEaseGUI -Exactly 1 -Scope It
+        } finally {
+            $script:ClassicGui = $false
+        }
+    }
+
+    It "passes UiLanguage argument to GUI when UiLanguage parameter is configured" {
+        Mock Find-WinEaseWinUiExe { return $null }
+        Mock Show-WinEaseGUI { param($InitialSettings, $UiLanguage) $null = $InitialSettings; return @{ Language = $UiLanguage } }
+
+        $script:UiLanguage = "ja"
+        try {
+            $res = Show-WinEaseGuiSessionWindow -InitialSettings @{}
+            $res.Language | Should Be "ja"
+            Assert-MockCalled Show-WinEaseGUI -Exactly 1 -Scope It
+        } finally {
+            $script:UiLanguage = $null
+        }
+    }
+}
+
 Describe "WinEase UI options that have to take effect" {
     BeforeAll {
         $script:UiPrefs = @((Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot 'config\ui-preferences.psd1')).UiPreferences)
-        $script:UiPhase = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\10-registry.ps1'))
+        # the plain writes live in config\registry, the rest in the phase
+        $script:UiPhase = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\10-registry.ps1')) + "`n" + (Get-WinEaseRegistryTableText)
     }
 
     It "disables the accessibility shortcuts without removing the features" {
@@ -1802,7 +2037,7 @@ Describe "WinEase UI options that have to take effect" {
         foreach ($needle in 'MinAnimate', 'UserPreferencesMask', 'TaskbarAnimations', 'ListviewAlphaSelect', 'Control Panel\Accessibility\Animation') {
             $script:UiPhase.Contains($needle) | Should Be $true
         }
-        $script:UiPhase | Should Match 'Test-TweakEnabled ''OptimizeVisualEffects'' \$true'
+        $script:UiPhase | Should Match 'Tweak = ''OptimizeVisualEffects''; Default = \$true'
     }
 
     It "registers the GIF with its own Photo Viewer ProgID" {
@@ -1826,5 +2061,63 @@ Describe "WinEase UI options that have to take effect" {
     It "uses the transparent shell32 icon for the shortcut overlay" {
         $script:UiPhase.Contains('%SystemRoot%\System32\shell32.dll,-50') | Should Be $true
         $script:UiPhase.Contains('imageres.dll,-17') | Should Be $false
+    }
+}
+
+Describe "GUI core (lib\WinEaseGuiCore.ps1)" {
+    $script:CoreText = [System.IO.File]::ReadAllText($script:GuiCorePath)
+
+    It "parses with zero parser errors and loads no WinForms or Drawing assembly" {
+        $errs = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile($script:GuiCorePath, [ref]$null, [ref]$errs)
+        @($errs).Count | Should Be 0
+        $script:CoreText | Should Not Match 'Add-Type\s+-AssemblyName'
+        $script:CoreText | Should Not Match 'System\.Drawing\.'
+    }
+
+    It "works in a fresh process that loads only the core and the WinUI host (no WinForms window functions)" {
+        $cmd = ". '$($script:GuiCorePath)'; . '$(Join-Path $script:RepoRoot 'gui\WinEaseWinUiHost.ps1')'; " +
+            "(Get-WinEaseUiString 'Button.SelectAll' -Language ja).Length; (Get-Command Get-WinEaseGuiDraftConfig).Name; " +
+            "[bool](Get-Command Show-WinEaseGUI -ErrorAction SilentlyContinue); [bool](Get-Command New-WinEaseForm -ErrorAction SilentlyContinue)"
+        $out = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -Command $cmd)
+        $out[-4] | Should Be '5'
+        $out[-3] | Should Be 'Get-WinEaseGuiDraftConfig'
+        $out[-2] | Should Be 'False'
+        $out[-1] | Should Be 'False'
+    }
+
+    It "the WinForms window, the migrator and the Migration Assistant bundle all reference the core" {
+        [System.IO.File]::ReadAllText($script:GuiPath) | Should Match 'WinEaseGuiCore\.ps1'
+        [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'tools\migrator\WinEase-Migrator.ps1')) | Should Match 'WinEaseGuiCore\.ps1'
+        [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\11-unattend.ps1')) | Should Match 'lib\\WinEaseGuiCore\.ps1'
+        [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot '.github\scripts\verify-release-zip.py')) | Should Match 'lib/WinEaseGuiCore\.ps1'
+    }
+}
+
+Describe "Send-WinEaseGuiProgress in gui\WinEaseWinUiHost.ps1" {
+    BeforeAll {
+        . (Join-Path -Path $script:RepoRoot -ChildPath 'gui\WinEaseWinUiHost.ps1')
+    }
+    AfterEach { $script:WinEaseGuiProgressChannel = $null }
+
+    It "is a no-op without an open window" {
+        $script:WinEaseGuiProgressChannel = $null
+        { Send-WinEaseGuiProgress -Event phase -Data @{ Phase = 1; Total = 18; Name = 'x' } } | Should Not Throw
+    }
+    It "writes one JSON line per notice" {
+        $sw = New-Object System.IO.StringWriter
+        $script:WinEaseGuiProgressChannel = @{ Writer = $sw }
+        Send-WinEaseGuiProgress -Event phase -Data @{ Phase = 2; Total = 18; Name = 'Mount' }
+        $o = $sw.ToString().Trim() | ConvertFrom-Json
+        $o.op | Should Be 'progress'
+        $o.event | Should Be 'phase'
+        $o.Phase | Should Be 2
+    }
+    It "drops the channel when the window is gone" {
+        $sw = New-Object System.IO.StringWriter
+        $sw.Dispose()
+        $script:WinEaseGuiProgressChannel = @{ Writer = [pscustomobject]@{} | Add-Member -MemberType ScriptMethod -Name WriteLine -Value { throw 'closed' } -PassThru }
+        { Send-WinEaseGuiProgress -Event log -Data @{ Text = 'a' } } | Should Not Throw
+        $script:WinEaseGuiProgressChannel | Should BeNullOrEmpty
     }
 }

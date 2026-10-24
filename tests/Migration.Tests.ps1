@@ -289,7 +289,7 @@ Describe "S5: Migration Assistant bundling" {
     }
 
     It "the phase targets the four files and the launcher" {
-        foreach ($f in 'tools\migrator\WinEase-Migrator.ps1', 'tools\migrator\WinEaseMigration.ps1', 'tools\migrator\migration-rules.psd1', 'config\user\user-migration-rules.psd1', 'Launch-MigrationAssistant.cmd', 'Windows\Setup\Scripts\Migration', 'Users\Public\Desktop') {
+        foreach ($f in 'tools\migrator\WinEase-Migrator.ps1', 'tools\migrator\WinEaseMigration.ps1', 'tools\migrator\migration-rules.psd1', 'config\user\user-migration-rules.psd1', 'WinEasehelpers.ps1', 'lib\WinEasePathSafety.ps1', 'lib\WinEaseSystem.ps1', 'lib\WinEaseFileSystem.ps1', 'lib\WinEaseConfig.ps1', 'lib\WinEaseBenchmarks.ps1', 'lib\WinEaseDependencies.ps1', 'Launch-MigrationAssistant.cmd', 'Windows\Setup\Scripts\Migration', 'Users\Public\Desktop') {
             $s5Text.Contains($f) | Should Be $true
         }
     }
@@ -308,7 +308,7 @@ Describe "S5: Migration Assistant bundling" {
             $dest = Join-Path $scratchDir 'Windows\Setup\Scripts\Migration'
             # WinEasehelpers.ps1 (restore path validation) and WinEaseGui.ps1 (the wizard window)
             # are part of the bundle: without them the tool cannot start at all.
-            foreach ($n in 'WinEase-Migrator.ps1', 'WinEaseMigration.ps1', 'migration-rules.psd1', 'user-migration-rules.psd1', 'WinEasehelpers.ps1', 'WinEaseGui.ps1') {
+            foreach ($n in 'WinEase-Migrator.ps1', 'WinEaseMigration.ps1', 'migration-rules.psd1', 'user-migration-rules.psd1', 'WinEasehelpers.ps1', 'WinEaseGuiCore.ps1', 'WinEaseGui.ps1') {
                 (Test-Path (Join-Path $dest $n)) | Should Be $true
             }
             foreach ($n in 'en.json', 'ja.json') {

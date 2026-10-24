@@ -638,8 +638,7 @@ Describe "WinEase helpers - process token privileges (Enable-WinEaseTokenPrivile
     }
 
     It "has expected default parameter list containing standard token privileges" {
-        $root = if ($script:RepoRoot) { $script:RepoRoot } else { Split-Path -Parent $PSScriptRoot }
-        $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root "WinEasehelpers.ps1"), [ref]$null, [ref]$null)
+        $ast = Get-WinEaseHelperAst
         $func = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Enable-WinEaseTokenPrivileges' }, $true)
         $func | Should Not Be $null
         $privParam = $func.Body.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Privileges' }
@@ -904,6 +903,7 @@ Describe "WinEase helpers - BuildContext lifecycle" {
 Describe "Export-WinEaseHtmlReport HTML escaping" {
     BeforeAll {
         . (Join-Path $script:RepoRoot "lib\WinEaseReport.ps1")
+        . (Join-Path $script:RepoRoot "tools\migrator\WinEaseMigration.ps1")
     }
 
     It "properly escapes HTML tags and prevents XSS injection" {
@@ -924,6 +924,28 @@ Describe "Export-WinEaseHtmlReport HTML escaping" {
                 Remove-Item -LiteralPath $outPath -Force -ErrorAction SilentlyContinue
             }
         }
+    }
+
+    It "ConvertTo-WinEaseMigrationHtml encodes Sha256Verified and Sha256Missing fields" {
+        $data = [ordered]@{
+            Generated = "2026-10-23"
+            Success   = [ordered]@{
+                Files          = 1
+                TotalSize      = "1 MB"
+                Sha256Verified = '<script>evil</script>'
+                Sha256Missing  = '<img src=x onerror=alert(1)>'
+                Items          = @()
+            }
+            Skipped   = @()
+            Failed    = @()
+            Manual    = @()
+            Tasks     = @()
+        }
+        $html = ConvertTo-WinEaseMigrationHtml -ReportData $data
+        $html | Should Not Match '<script>evil</script>'
+        $html | Should Match '&lt;script&gt;evil&lt;/script&gt;'
+        $html | Should Not Match '<img src=x'
+        $html | Should Match '&lt;img src=x'
     }
 }
 
@@ -959,6 +981,63 @@ Describe "WinEase helpers - ConvertTo-WinEaseNormalizedPath" {
     It "throws when Path is a drive root" {
         { ConvertTo-WinEaseNormalizedPath -Path "C:\" } | Should Throw
         { ConvertTo-WinEaseNormalizedPath -Path "D:/" } | Should Throw
+    }
+}
+
+Describe "WinEase helpers - ConvertTo-WinEaseComparablePath" {
+    BeforeAll {
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+    }
+
+    $isWinPlatform = [Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT -or (Get-Variable -Name IsWindows -ValueOnly -ErrorAction SilentlyContinue)
+
+    It "returns null for whitespace paths" {
+        $res = ConvertTo-WinEaseComparablePath -Path "   "
+        $res | Should Be $null
+    }
+
+    It "converts forward slashes to backslashes and trims trailing separators" {
+        $inputPath = "C:/Windows/System32/"
+        $res = ConvertTo-WinEaseComparablePath -Path $inputPath
+        $expected = [System.IO.Path]::GetFullPath("C:\Windows\System32").TrimEnd('\')
+        $res | Should Be $expected
+    }
+
+    It "preserves root separator for drive root paths" -Skip:(-not $isWinPlatform) {
+        $res = ConvertTo-WinEaseComparablePath -Path "C:\"
+        $expected = [System.IO.Path]::GetFullPath("C:\")
+        $res | Should Be $expected
+    }
+
+    It "returns null and handles exceptions when GetFullPath throws an exception" {
+        $invalidPath = [string]::Concat("C:\test", [char]0, "invalid")
+        $verboseMsg = $null
+        $res = ConvertTo-WinEaseComparablePath -Path $invalidPath -Verbose 4>&1 | ForEach-Object {
+            if ($_ -is [System.Management.Automation.VerboseRecord]) { $verboseMsg = $_.Message }
+            else { $_ }
+        }
+        $res | Should Be $null
+        $verboseMsg | Should Match '^Ignored:'
+    }
+
+    It "falls back to un-resolved path and handles exceptions when Get-Item throws for non-existent paths" -Skip:(-not $isWinPlatform) {
+        $nonExistentPath = "C:/non_existent_directory_win_ease_xyz/sub/"
+        $verboseMsg = $null
+        $res = ConvertTo-WinEaseComparablePath -Path $nonExistentPath -Verbose 4>&1 | ForEach-Object {
+            if ($_ -is [System.Management.Automation.VerboseRecord]) { $verboseMsg = $_.Message }
+            else { $_ }
+        }
+        $expected = [System.IO.Path]::GetFullPath("C:\non_existent_directory_win_ease_xyz\sub").TrimEnd('\')
+        $res | Should Be $expected
+        $verboseMsg | Should Match '^Ignored:'
+    }
+
+    It "resolves existing filesystem item FullName when path exists on disk" -Skip:(-not $isWinPlatform) {
+        $existingFile = $PSScriptRoot
+        $res = ConvertTo-WinEaseComparablePath -Path $existingFile
+        $expectedItem = (Get-Item -LiteralPath $existingFile -Force).FullName.TrimEnd('\')
+        $res | Should Be $expectedItem
     }
 }
 
@@ -1657,5 +1736,96 @@ Describe "WinEase structured logger (lib/WinEaseLogger.ps1)" {
         $script:WinEaseLogEntries.Count | Should Be 0
         $script:WinEaseLogWarningCount | Should Be 0
         $script:WinEaseLogErrorCount | Should Be 0
+    }
+}
+
+Describe "WinEase helpers - split module layout (R2)" {
+    It "keeps the compatibility loader as the only helper entry point" {
+        $loader = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "WinEasehelpers.ps1"))
+        $loader | Should Match 'WinEasePathSafety\.ps1'
+        $loader | Should Match 'WinEaseSystem\.ps1'
+        $loader | Should Match 'WinEaseFileSystem\.ps1'
+        $loader | Should Match 'WinEaseConfig\.ps1'
+        $loader | Should Match 'WinEaseBenchmarks\.ps1'
+        $loader | Should Match 'WinEaseDependencies\.ps1'
+        $loader | Should Match 'throw'
+    }
+
+    It "defines every helper function exactly once across the split modules" {
+        $ast = Get-WinEaseHelperAst
+        $functions = @($ast.FindAll({
+            param($n)
+            $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $n.Parent -is [System.Management.Automation.Language.NamedBlockAst]
+        }, $true))
+        # 42 functions moved out of WinEasehelpers.ps1 plus the 7 functions that
+        # already lived in lib\WinEaseFileSystem.ps1.
+        $functions.Count | Should Be 49
+        $duplicates = @($functions | Group-Object Name | Where-Object Count -gt 1)
+        $duplicates.Count | Should Be 0
+        @($ast.FindAll({
+            param($n) $n -is [System.Management.Automation.Language.TypeDefinitionAst] -and $n.Name -eq 'BuildContext'
+        }, $true)).Count | Should Be 1
+    }
+
+    It "keeps the split modules free of top-level executable statements" {
+        foreach ($relative in $script:HelperSourceFiles | Where-Object { $_ -like 'lib\*.ps1' }) {
+            $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot $relative))
+            $tokens = $null
+            $errors = $null
+            $fileAst = [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$tokens, [ref]$errors)
+            $errors.Count | Should Be 0
+            foreach ($statement in $fileAst.EndBlock.Statements) {
+                $allowed = $statement -is [System.Management.Automation.Language.FunctionDefinitionAst] -or
+                    $statement -is [System.Management.Automation.Language.TypeDefinitionAst]
+                $allowed | Should Be $true
+            }
+        }
+    }
+
+    It "loads the same flat layout used by the migration bundle" {
+        $flatDir = Join-Path ([System.IO.Path]::GetTempPath()) ("WinEase-r2-flat-" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $flatDir -Force | Out-Null
+        $savedHelperRoot = $script:WinEaseHelperRoot
+        try {
+            Copy-Item -LiteralPath (Join-Path $script:RepoRoot "WinEasehelpers.ps1") -Destination $flatDir
+            foreach ($relative in $script:HelperSourceFiles | Where-Object { $_ -like 'lib\*.ps1' }) {
+                Copy-Item -LiteralPath (Join-Path $script:RepoRoot $relative) -Destination $flatDir
+            }
+            Add-Content -LiteralPath (Join-Path $flatDir "WinEaseConfig.ps1") -Value "`nfunction Test-WinEaseR2FlatMarker { return 'flat' }`n"
+            $marker = & {
+                . (Join-Path $flatDir "WinEasehelpers.ps1")
+                Get-Command -Name Test-WinEaseR2FlatMarker -ErrorAction SilentlyContinue
+            }
+            $marker | Should Not Be $null
+        } finally {
+            $script:WinEaseHelperRoot = $savedHelperRoot
+            Remove-Item -LiteralPath $flatDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "throws a clear error when a required split module is missing" {
+        $missingDir = Join-Path ([System.IO.Path]::GetTempPath()) ("WinEase-r2-missing-" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $missingDir -Force | Out-Null
+        $savedHelperRoot = $script:WinEaseHelperRoot
+        try {
+            Copy-Item -LiteralPath (Join-Path $script:RepoRoot "WinEasehelpers.ps1") -Destination $missingDir
+            { . (Join-Path $missingDir "WinEasehelpers.ps1") } | Should Throw
+        } finally {
+            $script:WinEaseHelperRoot = $savedHelperRoot
+            Remove-Item -LiteralPath $missingDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "builder loads the GUI session helpers through the lib loop" {
+        $builderText = [System.IO.File]::ReadAllText($script:BuilderPath)
+        $builderText | Should Match 'WinEaseGuiSession\.ps1'
+        $builderText | Should Not Match "foreach \(\`$WinEaseLibFile in @\([^\)]*'WinEaseFileSystem\.ps1'"
+        $builderAst = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$null, [ref]$null)
+        @($builderAst.FindAll({
+            param($n)
+            $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $n.Name -in @('Apply-WinEaseGuiResult', 'Show-WinEaseGuiSessionWindow', 'Invoke-WinEaseGuiSession')
+        }, $true)).Count | Should Be 0
     }
 }

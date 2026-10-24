@@ -288,7 +288,7 @@ function Export-WinEaseHtmlReport {
                 }
                 $tTag = if ($tval) { '<span class="status-tag status-enabled">Enabled</span>' } else { '<span class="status-tag status-disabled">Disabled</span>' }
                 $label = if ($item.Description) { "$($item.Key): $($item.Description)" } else { $item.Key }
-                [void]$sb.AppendLine("      <div class=`"tweak-item`"><span class=`"tweak-name`">$([System.Security.SecurityElement]::Escape($label))</span>$tTag</div>")
+                [void]$sb.AppendLine("      <div class=`"tweak-item`"><span class=`"tweak-name`">$(& $enc $label)</span>$tTag</div>")
             }
             [void]$sb.AppendLine('    </div>')
         }
@@ -338,8 +338,8 @@ function Export-WinEaseHtmlReport {
             [void]$sb.AppendLine('    <h3 style="color: var(--badge-fail); margin: 8px 0;">Conflicts</h3>')
             [void]$sb.AppendLine('    <table><tbody>')
             foreach ($c in $depResult.Conflicts) {
-                $cw = if ($c.ConflictingWith) { " (conflicts with: $([System.Security.SecurityElement]::Escape("$($c.ConflictingWith)"))" } else { '' }
-                [void]$sb.AppendLine("      <tr><td>$([System.Security.SecurityElement]::Escape("$($c.Source)"))</td><td>$([System.Security.SecurityElement]::Escape("$($c.Summary)"))$cw</td></tr>")
+                $cw = if ($c.ConflictingWith) { " (conflicts with: $(& $enc "$($c.ConflictingWith)"))" } else { '' }
+                [void]$sb.AppendLine("      <tr><td>$(& $enc "$($c.Source)")</td><td>$(& $enc "$($c.Summary)")$cw</td></tr>")
             }
             [void]$sb.AppendLine('    </tbody></table>')
         }
@@ -347,7 +347,7 @@ function Export-WinEaseHtmlReport {
             [void]$sb.AppendLine('    <h3 style="color: var(--badge-warn); margin: 8px 0;">Unknown (&#19981;&#26126;)</h3>')
             [void]$sb.AppendLine('    <table><tbody>')
             foreach ($u in $depResult.Unknowns) {
-                [void]$sb.AppendLine("      <tr><td>$([System.Security.SecurityElement]::Escape("$($u.Source)"))</td><td>$([System.Security.SecurityElement]::Escape("$($u.Summary)")) - $([System.Security.SecurityElement]::Escape("$($u.Reason)"))</td></tr>")
+                [void]$sb.AppendLine("      <tr><td>$(& $enc "$($u.Source)")</td><td>$(& $enc "$($u.Summary)") - $(& $enc "$($u.Reason)")</td></tr>")
             }
             [void]$sb.AppendLine('    </tbody></table>')
         }
@@ -356,7 +356,7 @@ function Export-WinEaseHtmlReport {
             [void]$sb.AppendLine('    <table><tbody>')
             foreach ($i in $depResult.Impacts) {
                 $af = if ($i.AffectedFeatures) { ($i.AffectedFeatures -join ', ') } else { '' }
-                [void]$sb.AppendLine("      <tr><td>$([System.Security.SecurityElement]::Escape("$($i.Source)"))</td><td>$([System.Security.SecurityElement]::Escape("$($i.Summary)"))<br><span style=`"color: var(--text-secondary); font-size: 12px;`">$([System.Security.SecurityElement]::Escape($af))</span></td></tr>")
+                [void]$sb.AppendLine("      <tr><td>$(& $enc "$($i.Source)")</td><td>$(& $enc "$($i.Summary)")<br><span style=`"color: var(--text-secondary); font-size: 12px;`">$(& $enc $af)</span></td></tr>")
             }
             [void]$sb.AppendLine('    </tbody></table>')
         }

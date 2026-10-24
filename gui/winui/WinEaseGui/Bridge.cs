@@ -78,6 +78,28 @@ public sealed class Bridge
         }
     }
 
+    // After the result the builder keeps the pipe open and sends { op: "progress", event: phase|log|done, ... }
+    // lines while it builds. Runs until the builder closes the pipe.
+    public async Task ListenProgressAsync(Action<JsonObject> onProgress)
+    {
+        if (_in == null) return;
+        while (true)
+        {
+            string? line = await _in.ReadLineAsync();
+            if (line == null) return;
+            if (!line.TrimStart().StartsWith('{')) continue;
+            try
+            {
+                var obj = JsonNode.Parse(line)?.AsObject();
+                if (obj != null && (string?)obj["op"] == "progress") onProgress(obj);
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                // Ignore a malformed line
+            }
+        }
+    }
+
     // The final message; the builder replies and stops listening. Offline it goes to stdout for inspection.
     public async Task SendResultAsync(string lang, JsonObject result)
     {

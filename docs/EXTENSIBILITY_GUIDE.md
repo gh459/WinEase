@@ -138,12 +138,12 @@ Files that look like passwords or tokens are excluded automatically by default.
 ```text
 WinEase-main/
 ├── WinEasebuilder.ps1      Main script: parameters, configuration, calls the phases
-├── WinEasehelpers.ps1      Small shared functions (path validation, config file lookup, ...)
+├── WinEasehelpers.ps1      Loader that dot-sources the shared modules in lib/ (path validation, config file lookup, ...)
 ├── lib/                   Function libraries loaded by the builder
 ├── phases/                Build steps (01-18)
 ├── gui/WinEaseGui.ps1      WinForms GUI
 ├── config/                Configuration files
-├── scripts/               Setup scripts embedded into the image
+├── scripts/               Setup scripts embedded into the image (setup/ helpers, tools/ post-install tools)
 ├── tools/                 Helper tools and custom scripts
 ├── profiles/              Saved profiles (JSON)
 ├── templates/report.html  Report template
@@ -159,6 +159,14 @@ Load any new file the same way (turning it into a module would hide those variab
 | :--- | :--- |
 | `WinEaseMount.ps1` | DISM mount discovery/cleanup, mount directories, offline registry |
 | `WinEaseFileSystem.ps1` | Directory safety checks, ownership and ACLs, robust deletion, free space |
+| `WinEasePathSafety.ps1` | Path normalization, containment and restore-path validation |
+| `WinEaseSystem.ps1` | BuildContext, DISM wrapper, hive unmount, capacity and timing helpers |
+| `WinEaseConfig.ps1` | Config conflict resolution, resume integrity, user config paths, config diff |
+| `WinEaseBenchmarks.ps1` | Statistical analysis and benchmark comparison |
+| `WinEaseDependencies.ps1` | Dependency / feature-impact analysis |
+| `WinEaseGuiSession.ps1` | Builder GUI session handling |
+| `WinEaseRegistry.ps1` | Offline registry access of phase 10: `Invoke-WinEaseReg`, hive loading, `config/registry` table runner |
+| `WinEaseGuiCore.ps1` | UI-independent GUI logic shared by the WinForms window, the WinUI 3 host and the Migrator |
 | `WinEaseWim.ps1` | WIM export, fingerprinting, repair |
 | `WinEaseReport.ps1` | HTML report (`WinEase_report.html`) |
 | `WinEaseResume.ps1` | `-ResumeIsoOnly` and per-phase checkpoints |
@@ -195,6 +203,7 @@ Load any new file the same way (turning it into a module would hide those variab
 | :--- | :--- |
 | `schema.psd1` | The **single source of truth** for every switch and component. The GUI, profiles and CLI are generated from it |
 | `dependencies.psd1` | Dependency/impact catalog (used to detect Conflicts, Impacts, Unknowns) |
+| `registry/<section>.psd1` | The plain registry writes of phase 10 as data: `@{ Tweak; Default; Hive; Path; Name; Type; Data; MinBuild; MaxBuild }`. Applied by `Invoke-WinEaseRegistryTable`; `MinBuild`/`MaxBuild` limit an entry to Windows build numbers |
 | `WinEase.config.schema.json` | JSON schema for profiles |
 | `user/user-tweaks.psd1` | Your tweaks, presets and custom scripts |
 | `user/user-migration-rules.psd1` | Your migration rules |

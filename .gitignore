@@ -1,3 +1,6 @@
+# Temporary files from long-path unit tests
+\\?\*
+
 # Build outputs & volatile diagnostics - never commit
 logs/
 build_diagnostics/

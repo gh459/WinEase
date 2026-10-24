@@ -5,6 +5,21 @@ WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
 ## Unreleased (local fork, 2026-10-23) - the migration tool runs from the ISO and custom scripts have a GUI
 
+### Added
+- **Build progress in the WinUI window.** After "Start build" the window stays open and shows the phase ([n/18] name), a progress bar, the elapsed time and an estimate of the remaining time (from the previous run's phase timings), then the result. The builder sends `progress` lines (`Send-WinEaseGuiProgress`) over the existing stdio pipe; closing the window never stops the build. Dry runs and cancel close the window as before. The WinForms window is unchanged.
+
+### Changed
+- **.NET build foundation and WinUI as the official builder window.** New `src/WinEase.sln` and `tools/build-binaries.ps1 -Architecture x64|arm64` (builds `gui\winui` today; the launcher and plugins are added there). CI gets a `binaries` job (x64 and arm64, then `dotnet test`). The WinUI Custom Scripts list now shows the same columns as the WinForms one (Order, Type, Size, Condition, OnError, Description), the script count, a visible selection and the legacy-folder marker. The builder's WinForms window is frozen (new features go to WinUI only) and stays as the fallback; the Migrator keeps WinForms.
+- **Phase 10 registry writes are data.** Every `reg.exe` add/delete/query of `phases/10-registry.ps1` now goes through `Invoke-WinEaseReg` (`lib/WinEaseRegistry.ps1`), and the plain writes moved to `config/registry/<section>.psd1` (`Invoke-WinEaseRegistryTable`). Entries can be limited to a Windows build range with `MinBuild`/`MaxBuild`. Branches, loops with computed values, service trims, the Defender removal logic and the query-based checks stay in the phase. The final registry state per preset is unchanged (Pester snapshots in `tests/fixtures/registry`).
+- **GUI logic that does not need a window moved to `lib\WinEaseGuiCore.ps1`.** Language and UI strings,
+  the Advanced Debloat engine and item lists, source candidates, preset diff text, the draft config and the
+  migration helpers now live there; `gui\WinEaseGui.ps1` dot-sources it, the WinUI 3 host loads only the core,
+  and the Migration Assistant bundle ships it. Function names, parameters and WinForms behaviour are unchanged.
+- **Setup helpers and post-install tools moved out of phase 11.** The five setup helpers
+  are now files under `scripts\setup` and the Browser Grabber, Control Center and Atlas
+  tools under `scripts\tools`; the phase reads them like the Defender helper. Content
+  and write logic are unchanged (byte-identical, checked against recorded SHA256 values).
+
 ### Fixed
 - **Camera, Photos and Snipping Tool/ScreenSketch were listed but not removed.**
   They were only removed through the broad AppX list, so clearing that one switch
