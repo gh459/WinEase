@@ -58,7 +58,7 @@
     "Index": { "type": "string", "description": "Image index inside install.wim to modify" },
     "ComputerName": { "type": "string", "pattern": "^(\\*|[A-Za-z0-9][A-Za-z0-9-]{0,14})$", "default": "*" },
     "UserName": { "type": "string", "pattern": "^[\\p{L}\\p{N}_][\\p{L}\\p{N} ._-]{0,19}$", "default": "User" },
-    "UserPassword": { "type": "string", "default": "WinEase123!" },
+    "UserPassword": { "type": "string", "default": "", "description": "Deprecated in profiles: never saved, loaded only for old files (a warning is printed). Pass -UserPassword on the command line instead." },
     "AdvancedDebloatStandard": {
       "type": "array",
       "items": { "type": "string" },

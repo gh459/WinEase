@@ -65,7 +65,7 @@ param(
     # UserName: letters (incl. Japanese), digits, space, '.', '_', '-'; max 20 characters.
     [ValidatePattern('^[\p{L}\p{N}_][\p{L}\p{N} ._-]{0,19}$')]
     [string]$UserName = 'User',
-    [string]$UserPassword = 'WinEase123!',
+    [string]$UserPassword = '',
     [int]$KeepLogs = 10,
     [string]$InjectDrivers,
     [switch]$KeepBasicApps,
@@ -741,7 +741,8 @@ function Get-WinEaseCurrentConfig {
     foreach ($k in $script:activeTweakGroups.Keys) { $tweakGroups[$k] = [bool]$script:activeTweakGroups[$k] }
     $config = @{ ProfileName = $ProfileName }
     foreach ($cd in $script:ComponentDefs.Values) {
-        if ($cd.Type -ne 'Special') { $config[$cd.Key] = Get-WinEaseComponentValue -Def $cd }
+        # Secret components (UserPassword) are never part of a saved profile
+        if ($cd.Type -ne 'Special' -and -not $cd.Secret) { $config[$cd.Key] = Get-WinEaseComponentValue -Def $cd }
     }
     $engineSel = [ordered]@{}
     foreach ($k in $script:DebloatEngineSelection.Keys) { $engineSel[$k] = [string]$script:DebloatEngineSelection[$k] }
@@ -771,7 +772,11 @@ function Export-WinEaseProfile {
     # Settings are written in the same key order as $script:WinEaseProfileKeys so a saved profile
     # round-trips through -LoadProfile without losing any option.
     $settings = [ordered]@{}
+    # Secret components (UserPassword) are never written to disk, even if a caller passes them in:
+    # a profile is meant to be shared and committed. Pass -UserPassword on the command line instead.
+    $secretKeys = @($script:ComponentDefs.Values | Where-Object { $_.Secret } | ForEach-Object { $_.Key })
     foreach ($k in $script:WinEaseProfileKeys) {
+        if ($secretKeys -contains $k) { continue }
         if ($Config.ContainsKey($k)) { $settings[$k] = $Config[$k] }
     }
     $profileData = [ordered]@{
@@ -1403,6 +1408,11 @@ if ($bound.ContainsKey('LoadProfile') -and $bound['LoadProfile']) {
         $prop = $loadedSettings.PSObject.Properties[$extraKey]
         if (-not $prop -or $bound.ContainsKey($extraKey)) { continue }
         $val = $prop.Value
+        if ($extraKey -eq 'UserPassword' -and -not [string]::IsNullOrEmpty("$val")) {
+            # Old profiles may still carry the password in plain text. It is still honored (compatibility),
+            # never logged, and a new -SaveProfile no longer writes it.
+            Write-Warning "Profile '$([System.IO.Path]::GetFileName($LoadProfile))' contains a plain-text UserPassword. It is still used for this build, but remove it from the file (profiles are meant to be shared) and pass -UserPassword on the command line instead."
+        }
         if ($extraKey -in @('SkipEiCfg', 'NoPostInstallAssets')) {
             Set-Variable -Name $extraKey -Value ([switch][bool]$val)
         } elseif (-not [string]::IsNullOrWhiteSpace("$val")) {

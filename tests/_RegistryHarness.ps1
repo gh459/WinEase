@@ -42,11 +42,24 @@ function Get-WinEaseRegistryPhaseVariables {
 }
 
 function Invoke-WinEaseRegistryPhaseRecording {
-    param([Parameter(Mandatory = $true)][string]$Preset)
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '', Justification = 'Test password, plain text by design')]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingUsernameAndPasswordParams', '', Justification = 'Test harness: the Winlogon password of the build, not a credential prompt')]
+    param(
+        [Parameter(Mandatory = $true)][string]$Preset,
+        [hashtable]$TweakOverride,
+        [string]$UserPassword = ''
+    )
 
     $info = Get-WinEaseRegistryPhaseVariables -Preset $Preset
     $script:RegCalls = [System.Collections.Generic.List[string]]::new()
     $script:TweakSettings = if ($Preset -eq 'default') { $null } else { $info.TweakSettings }
+    if ($TweakOverride) {
+        $merged = [ordered]@{}
+        if ($script:TweakSettings) { foreach ($k in $script:TweakSettings.Keys) { $merged[$k] = $script:TweakSettings[$k] } }
+        foreach ($k in $TweakOverride.Keys) { $merged[$k] = [bool]$TweakOverride[$k] }
+        $script:TweakSettings = $merged
+    }
+    $script:UserPassword = $UserPassword
     $script:TweakKeyAliases = [ordered]@{}
     $script:activeTweakGroups = $info.Groups
     foreach ($name in $info.Variables.Keys) { Set-Variable -Name $name -Value $info.Variables[$name] }
