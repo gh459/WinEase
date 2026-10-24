@@ -23,6 +23,7 @@ WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
   and write logic are unchanged (byte-identical, checked against recorded SHA256 values).
 
 ### Fixed
+- **The user password could inject script code.** A password with a `'` broke out of the string literal in the generated OOBE auto-logon helper (and the helper hides parse errors), and the Winlogon `DefaultPassword` went through the `reg.exe` command line. The helper now receives the password as Base64 of its UTF-16LE bytes and decodes it at run time; the build fails if the generated helper does not parse. `DefaultPassword` is written with the .NET registry API (`lib\WinEaseSecrets.ps1`). A dead `net.exe user User ""` replacement that interpolated the password into a regex replacement string was removed, and a `'` in the user name is doubled in the helper. Passwords stay unrestricted. New tests: `tests/Secrets.Tests.ps1`.
 - **Camera, Photos and Snipping Tool/ScreenSketch were listed but not removed.**
   They were only removed through the broad AppX list, so clearing that one switch
   silently kept them. Each app now has its own switch (`RemoveCameraApp`,

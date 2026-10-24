@@ -118,6 +118,15 @@ function Invoke-WinEaseRegistryPhaseRecording {
     . (Join-Path $script:RepoRoot 'lib\WinEaseDebloat.ps1')
     $registryLib = Join-Path $script:RepoRoot 'lib\WinEaseRegistry.ps1'
     if (Test-Path -LiteralPath $registryLib) { . $registryLib }
+    . (Join-Path $script:RepoRoot 'lib\WinEaseSecrets.ps1')
+    # The Winlogon password is written through the .NET registry API (not reg.exe); record it in the same
+    # line format as a reg.exe call ('""' = empty data) so the snapshots stay comparable.
+    function Set-WinEaseRegistrySecretString {
+        param([string]$Key, [string]$Name, [string]$Value)
+        $data = if ($Value) { $Value } else { '""' }
+        $script:RegCalls.Add("ADD`t$Key`t$Name`tREG_SZ`t$data")
+        return $true
+    }
 
     # The built-in plugins (Latency, UpstreamSync) are part of the phase: the hook after phase 10 and the
     # contributions at its end run exactly like in the builder. The delegates of a plugin host run in a

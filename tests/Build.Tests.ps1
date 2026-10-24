@@ -93,12 +93,8 @@ Describe "WinEase builder - autounattend.xml" {
         $xmlPath = Join-Path $script:RepoRoot "autounattend.xml"
         $raw = [System.IO.File]::ReadAllText($xmlPath, [System.Text.Encoding]::UTF8)
         $doc = [xml]$raw
-        $UserPassword = "TestSecretPassword123!"
-        $targetUserPass = $UserPassword
-        $passValueNodes = $doc.SelectNodes("//*[local-name()='UserAccounts']//*[local-name()='Password']/*[local-name()='Value'] | //*[local-name()='AutoLogon']/*[local-name()='Password']/*[local-name()='Value']")
-        foreach ($pvNode in $passValueNodes) {
-            $pvNode.InnerText = $targetUserPass
-        }
+        . (Join-Path $script:RepoRoot 'lib\WinEaseSecrets.ps1')
+        (Set-WinEaseUnattendPassword -Document $doc -Password "TestSecretPassword123!") | Should BeGreaterThan 0
         $updatedVal = $doc.SelectSingleNode("//*[local-name()='LocalAccount']/*[local-name()='Password']/*[local-name()='Value']").InnerText
         $updatedVal | Should Be "TestSecretPassword123!"
     }

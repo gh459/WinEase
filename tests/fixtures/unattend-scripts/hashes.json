@@ -16,8 +16,8 @@
     },
     {
         "path":  "scripts/setup/WinEase-oobe-autologon-repair.ps1",
-        "sha256":  "8b43eee955d15db5bf96c61b5268b4676c984c0359dab121fc6cb368d63edce4",
-        "bytes":  1811
+        "sha256":  "a64de26bee59ec58b67967a1b8465b774b1863eca04fa7a82cda4722e0cbd097",
+        "bytes":  2043
     },
     {
         "path":  "scripts/setup/WinEase-transition-watchdog.ps1",
