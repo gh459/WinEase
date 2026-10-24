@@ -1759,8 +1759,9 @@ Describe "WinEase helpers - split module layout (R2)" {
             $n.Parent -is [System.Management.Automation.Language.NamedBlockAst]
         }, $true))
         # 42 functions moved out of WinEasehelpers.ps1 plus the 7 functions that
-        # already lived in lib\WinEaseFileSystem.ps1.
-        $functions.Count | Should Be 49
+        # already lived in lib\WinEaseFileSystem.ps1; B2 added 7 dependency display helpers
+        # (Get-WinEaseDependencyStringDefaults/String/Field/View/Review, New-...Result, Format-...ItemLine).
+        $functions.Count | Should Be 56
         $duplicates = @($functions | Group-Object Name | Where-Object Count -gt 1)
         $duplicates.Count | Should Be 0
         @($ast.FindAll({

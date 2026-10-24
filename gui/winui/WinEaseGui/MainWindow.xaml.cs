@@ -1405,7 +1405,11 @@ public sealed partial class MainWindow : Window
         var dep = await RunAsync("dependencies", new JsonObject { ["Config"] = DraftConfig() }, quiet: true);
         if (dep != null && InitData.Bool(dep["ok"]) && InitData.Bool(dep["Data"]?["HasIssues"]))
         {
-            if (!await ConfirmAsync(_s.Get("Msg.Dependency.Title"), _s.Format("Msg.Dependency.Confirm", InitData.Str(dep["Text"])))) return;
+            var depData = dep["Data"]!.AsObject();
+            // Critical (conflict / Unknown) needs its own explicit acknowledgement, separate from the plain-impact confirm
+            if (InitData.Bool(depData["HasCritical"]) && !await ShowDependencyDialogAsync(depData, acknowledge: true)) return;
+            if (InitData.Arr(depData["Impact"]).Any() &&
+                !await ConfirmAsync(_s.Get("Msg.Dependency.Title"), _s.Format("Msg.Dependency.Confirm", InitData.Str(depData["ImpactText"])))) return;
         }
 
         // Physical debloat consent (the builder's -AllowPhysicalDebloat gate)
@@ -1536,7 +1540,82 @@ public sealed partial class MainWindow : Window
 
     private async void DependenciesButton_Click(object sender, RoutedEventArgs e)
     {
-        await RunAndShowAsync("dependencies", new JsonObject { ["Config"] = DraftConfig() }, monospace: true);
+        // Recomputed from the current selection on every click (the host never caches a result)
+        var r = await RunAsync("dependencies", new JsonObject { ["Config"] = DraftConfig() });
+        if (r == null) return;
+        var data = r["Data"]?.AsObject();
+        if (data == null || !InitData.Bool(data["HasIssues"]))
+        {
+            await MessageAsync(_s.Get("Msg.Dependency.Title"), _s.Get("Msg.Dependency.None"));
+            return;
+        }
+        await ShowDependencyDialogAsync(data, acknowledge: false);
+    }
+
+    // Dependency dialog shared by the Dependencies button (acknowledge = false: everything, OK only) and the
+    // Start confirmation (acknowledge = true: Critical items only; Continue stays disabled until the box is
+    // ticked). Every row has a glyph AND a text label, so state never depends on colour alone, and an
+    // Unknown row is labelled as not verified. Returns true when the user acknowledged.
+    private async Task<bool> ShowDependencyDialogAsync(JsonObject data, bool acknowledge)
+    {
+        static (string Glyph, string Brush) IconFor(string kind) => kind switch
+        {
+            "Conflict" => ("\uEA39", "SystemFillColorCriticalBrush"),
+            "Unknown" => ("\uE897", "SystemFillColorCautionBrush"),
+            _ => ("\uE946", "AccentTextFillColorPrimaryBrush"),
+        };
+        var panel = new StackPanel { Spacing = 8 };
+        void Section(string heading, string kind, JsonNode? rows)
+        {
+            var items = InitData.Arr(rows).ToList();
+            if (items.Count == 0) return;
+            var (hg, hb) = IconFor(kind);
+            var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            head.Children.Add(new FontIcon { Glyph = hg, Foreground = Res(hb), FontSize = 16 });
+            head.Children.Add(new TextBlock { Text = heading, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            panel.Children.Add(head);
+            foreach (var row in items)
+            {
+                string rk = InitData.Str(row?["Kind"]);
+                var (g, b) = IconFor(rk);
+                var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(12, 0, 0, 0) };
+                line.Children.Add(new FontIcon { Glyph = g, Foreground = Res(b), FontSize = 14, VerticalAlignment = VerticalAlignment.Top });
+                var text = new StackPanel();
+                text.Children.Add(new TextBlock { Text = InitData.Str(row?["Label"]), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+                text.Children.Add(new TextBlock { Text = InitData.Str(row?["Text"]), IsTextSelectionEnabled = true, TextWrapping = TextWrapping.Wrap });
+                foreach (string af in InitData.StrList(row?["AffectedFeatures"]))
+                    text.Children.Add(new TextBlock { Text = "\u2022 " + af, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12, 0, 0, 0), Opacity = 0.85 });
+                line.Children.Add(text);
+                panel.Children.Add(line);
+            }
+        }
+        string kept = InitData.Str(data["KeptWarning"]);
+        string criticalKind = InitData.Arr(data["Critical"]).Any(x => InitData.Str(x?["Kind"]) == "Conflict") ? "Conflict" : "Unknown";
+        if (kept.Length > 0 && InitData.Arr(data["Critical"]).Any())
+            panel.Children.Add(new TextBlock { Text = kept, TextWrapping = TextWrapping.Wrap, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        Section(_s.Get("Dep.Section.Critical"), criticalKind, data["Critical"]);
+        if (!acknowledge) Section(_s.Get("Dep.Section.Impact"), "Impact", data["Impact"]);
+        if (acknowledge) panel.Children.Insert(0, new TextBlock { Text = _s.Get("Dep.Ack.Intro"), TextWrapping = TextWrapping.Wrap });
+
+        var dlg = new ContentDialog
+        {
+            XamlRoot = Content.XamlRoot,
+            Title = _s.Get(acknowledge ? "Dep.Ack.Title" : "Msg.Dependency.Title"),
+            PrimaryButtonText = _s.Get(acknowledge ? "Dep.Ack.Continue" : "Button.OK"),
+            DefaultButton = acknowledge ? ContentDialogButton.Close : ContentDialogButton.Primary,
+        };
+        if (acknowledge)
+        {
+            var ack = new CheckBox { Content = _s.Get("Dep.Ack.Checkbox"), Margin = new Thickness(0, 8, 0, 0) };
+            dlg.IsPrimaryButtonEnabled = false;
+            ack.Checked += (_, _) => dlg.IsPrimaryButtonEnabled = true;
+            ack.Unchecked += (_, _) => dlg.IsPrimaryButtonEnabled = false;
+            panel.Children.Add(ack);
+            dlg.CloseButtonText = _s.Get("Button.Cancel");
+        }
+        dlg.Content = new ScrollViewer { Content = panel, MaxHeight = 480, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        var res = await dlg.ShowAsync();
+        return res == ContentDialogResult.Primary;
     }
 
     // Preset diff: two pickers and the result in one dialog
