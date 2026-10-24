@@ -91,8 +91,8 @@ Describe "Integration scaffold - artifact scrub" {
         try {
             $ghp = 'ghp_' + ('a' * 36)
             Set-Content -LiteralPath (Join-Path $d 'a.txt') -Value "token $ghp"
-            Set-Content -LiteralPath (Join-Path $d 'b.txt') -Value '-----BEGIN RSA PRIVATE KEY-----'
-            Set-Content -LiteralPath (Join-Path $d 'c.txt') -Value 'AKIAABCDEFGHIJKLMNOP'
+            Set-Content -LiteralPath (Join-Path $d 'b.txt') -Value ('-----BEGIN' + ' RSA PRIVATE KEY-----')
+            Set-Content -LiteralPath (Join-Path $d 'c.txt') -Value ('AKIA' + 'ABCDEFGHIJKLMNOP')
             Set-Content -LiteralPath (Join-Path $d 'd.txt') -Value 'UserPassword = WinEase123!'
             $rules = @(Test-WinEaseArtifactSecrets -Path $d | ForEach-Object { $_.Rule })
             $rules -contains 'github-token' | Should Be $true

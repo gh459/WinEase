@@ -50,13 +50,18 @@ jobs:
       EDITION_INDEX: ${{ inputs.edition_index }}
       WINEASE_PROFILE: ${{ inputs.profile || 'balanced' }}
       WINDOWS_BUILD: ${{ inputs.windows_build || 'scheduled' }}
-      ARTIFACT_DIR: ${{ runner.temp }}\winease-integration-artifacts
-      WORK_DIR: ${{ runner.temp }}\winease-integration-work
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Set work and artifact directories
+        # runner.* is not available in job-level env, so the paths are derived from RUNNER_TEMP here.
+        shell: powershell
+        run: |
+          "ARTIFACT_DIR=$env:RUNNER_TEMP\winease-integration-artifacts" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "WORK_DIR=$env:RUNNER_TEMP\winease-integration-work" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Require an ISO path
         shell: powershell

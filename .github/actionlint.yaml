@@ -1,0 +1,4 @@
+# Labels of the self-hosted runner used by integration-vm.yml (see docs/INTEGRATION_TESTING.md).
+self-hosted-runner:
+  labels:
+    - hyperv
