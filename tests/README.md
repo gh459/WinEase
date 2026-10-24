@@ -12,6 +12,7 @@ The suite targets **Pester 3.4** on **Windows PowerShell 5.1**, the same version
 | `Build.Tests.ps1` | Builder AST, unattend, IME filter, DryRun, diagnostics, registry additions, tweak helper. |
 | `Config.Tests.ps1` | Schema, presets, dependency catalog, user extensions, UI preference table. |
 | `Helpers.Tests.ps1` | Path safety, ACLs, DISM, registry hives, telemetry, logging, shared helpers. |
+| `FileSystemSafety.Tests.ps1` | Filesystem and mount safety: reparse points, path-delete guard, DISM mount guards, robocopy reset (DISM and robocopy mocked; temp dirs only). |
 | `Debloat.Tests.ps1` | Defender, AppX, security options, physical/advanced debloat. |
 | `Migration.Tests.ps1` | Migration engine, Migrator, restore validation, removal/migration wiring. |
 | `Gui.Tests.ps1` | WinForms/WinUI wiring, GUI smoke test, display language, UI options. |
