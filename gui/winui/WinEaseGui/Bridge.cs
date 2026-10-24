@@ -78,6 +78,14 @@ public sealed class Bridge
         }
     }
 
+    // Plugins (lib\WinEasePlugins.ps1): the lock file entries, and the two-step registration of a DLL.
+    public Task<JsonObject> PluginsListAsync(string lang) => RequestAsync("plugins.list", lang);
+
+    // Step 1 (confirmSha256 empty): the reply carries Data.Sha256 for the user to confirm.
+    // Step 2: send the hash that was shown; the builder copies the DLL to plugins\user and adds it to config\user\plugins.lock.psd1.
+    public Task<JsonObject> PluginsAddUserAsync(string lang, string path, string? confirmSha256 = null, string onError = "Warn") =>
+        RequestAsync("plugins.addUser", lang, new JsonObject { ["Path"] = path, ["ConfirmSha256"] = confirmSha256 ?? "", ["OnError"] = onError });
+
     // After the result the builder keeps the pipe open and sends { op: "progress", event: phase|log|done, ... }
     // lines while it builds. Runs until the builder closes the pipe.
     public async Task ListenProgressAsync(Action<JsonObject> onProgress)

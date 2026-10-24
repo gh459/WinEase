@@ -119,7 +119,22 @@ function Invoke-WinEaseRegistryPhaseRecording {
     $registryLib = Join-Path $script:RepoRoot 'lib\WinEaseRegistry.ps1'
     if (Test-Path -LiteralPath $registryLib) { . $registryLib }
 
-    $null = . (Join-Path $script:RepoRoot 'phases\10-registry.ps1') 6>$null 3>$null
+    # The built-in plugins (Latency, UpstreamSync) are part of the phase: the hook after phase 10 and the
+    # contributions at its end run exactly like in the builder. The delegates of a plugin host run in a
+    # module scope, so the recording stubs are also visible globally while the phase runs.
+    . (Join-Path $script:RepoRoot 'lib\WinEasePlugins.ps1')
+    if (-not $script:RegistryHarnessPlugins) {
+        $script:RegistryHarnessPlugins = Import-WinEasePlugins -RepoRoot $script:RepoRoot
+        if ($script:RegistryHarnessPlugins.LoadedCount -lt 3) { throw "The built-in plugins did not load: $(@($script:RegistryHarnessPlugins.Rejected | ForEach-Object { $_.Reason }) -join '; ')" }
+    }
+    Set-Item -Path 'Function:\global:reg.exe' -Value ${function:reg.exe}
+    Set-Item -Path 'Function:\global:regini.exe' -Value ${function:regini.exe}
+    try {
+        $null = . (Join-Path $script:RepoRoot 'phases\10-registry.ps1') 6>$null 3>$null
+        Invoke-WinEasePluginHook -Phase '10-registry' -Stage After 6>$null 3>$null
+    } finally {
+        Remove-Item -Path 'Function:\global:reg.exe', 'Function:\global:regini.exe' -ErrorAction SilentlyContinue
+    }
     return @($script:RegCalls | Where-Object { $_ -notlike 'QUERY*' -and $_ -notlike 'REGINI*' })
 }
 

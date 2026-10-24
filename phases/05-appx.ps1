@@ -43,6 +43,16 @@ if (Get-Command -Name Get-WinEaseAppxRemovalPatterns -ErrorAction SilentlyContin
     }
     $appxPatterns = @($fallback.Keys)
 }
+# Plugin contributions (IAppxRemovalContributor, IAppxRemovalRuleContributor: the built-in
+# UpstreamSync plugin hands over its adopted packages as rules). They join the removal list
+# here, so the protection whitelist below applies to them like to every other pattern.
+if (Get-Command -Name Get-WinEasePluginAppxPatterns -ErrorAction SilentlyContinue) {
+    $pluginAppxPatterns = @(Get-WinEasePluginAppxPatterns -Settings $appxSettings)
+    if ($pluginAppxPatterns.Count -gt 0) {
+        Write-Host "  [Plugins] $($pluginAppxPatterns.Count) AppX removal pattern(s) contributed by plugins" -ForegroundColor DarkCyan
+        $appxPatterns += $pluginAppxPatterns
+    }
+}
 if ($appxPatterns.Count -eq 0) {
     Write-Host "  [Apps] No AppX removal requested - every provisioned package is kept." -ForegroundColor Green
 } else {

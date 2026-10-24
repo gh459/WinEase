@@ -121,21 +121,25 @@ function Invoke-WinEaseRegistryTable {
           MinBuild / MaxBuild  inclusive Windows build numbers the entry applies to
                     (0 / absent = no limit); compared with $script:WinEaseTargetBuild,
                     and ignored while the target build is unknown
+        -Entries runs entries the caller built instead of a table file (the registry entries that
+        plugins contribute, see Get-WinEasePluginContributions); the same rules apply to them.
         -Tweak limits the run to the entries of one setting. -Unconditional skips the
         Test-TweakEnabled gate for callers that already decided (for example
         "$radicalRAM -or Test-TweakEnabled 'SvcHostConsolidation'"); the build range
         still applies.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Section')]
     param(
-        [Parameter(Mandatory = $true)][string]$Section,
+        [Parameter(Mandatory = $true, ParameterSetName = 'Section')][string]$Section,
+        [Parameter(Mandatory = $true, ParameterSetName = 'Entries')][AllowEmptyCollection()][object[]]$Entries,
         [string]$Tweak,
         [switch]$Unconditional,
-        [string]$TableRoot
+        [Parameter(ParameterSetName = 'Section')][string]$TableRoot
     )
     $build = 0
     if ($null -ne $script:WinEaseTargetBuild) { [void][int]::TryParse([string]$script:WinEaseTargetBuild, [ref]$build) }
-    foreach ($entry in (Import-WinEaseRegistryTable -Section $Section -TableRoot $TableRoot)) {
+    $tableEntries = if ($PSCmdlet.ParameterSetName -eq 'Entries') { $Entries } else { Import-WinEaseRegistryTable -Section $Section -TableRoot $TableRoot }
+    foreach ($entry in $tableEntries) {
         $entryTweak = [string]$entry.Tweak
         if ($Tweak -and $entryTweak -ne $Tweak) { continue }
         if ($entryTweak -and -not $Unconditional) {

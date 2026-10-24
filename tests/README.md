@@ -17,6 +17,7 @@ The suite targets **Pester 3.4** on **Windows PowerShell 5.1**, the same version
 | `Gui.Tests.ps1` | WinForms/WinUI wiring, GUI smoke test, display language, UI options. |
 | `Quality.Tests.ps1` | PSScriptAnalyzer and documentation path checks. |
 | `Registry.Tests.ps1` | Phase 10 registry snapshots per preset (`fixtures/registry`), `Invoke-WinEaseReg`, the `config/registry` tables. `_RegistryHarness.ps1` is its shared setup. |
+| `Plugins.Tests.ps1` | Plugin host (`lib/WinEasePlugins.ps1`): SHA256 allow list, hooks, OnError, DryRun, contributions. Compiles test DLLs on the fly against `src/WinEase.Plugins.Abstractions`. |
 | `WinEase.Regression.Tests.ps1` | Child-process builder regressions; self-contained. |
 
 All test files live directly under `tests\`. Do not create subdirectories: some tests use

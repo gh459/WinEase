@@ -38,6 +38,8 @@ Describe "Documentation S12" {
         'SetupComplete.cmd',            # written into the image by phases\11-unattend.ps1 at build time
         'ErrorHandler.cmd',             # written into the image by phases\11-unattend.ps1 at build time
         'gui\winui\bin\WinEaseGui.exe', # WinUI build output (gui\winui\build.ps1); git-ignored, absent from a clean checkout
+        'gui\winui\bin',                # the WinUI folder of the full release package (build output, git-ignored)
+        'plugins\builtin',              # built-in plugin DLLs of the full release package (build output, git-ignored)
         'implementation_plan.md'        # planning note outside the repository
     )
 

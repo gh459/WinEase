@@ -289,6 +289,10 @@ try {
     $reportData['WinSxSBeforeMB']       = if ($script:WinSxsBeforeMB) { $script:WinSxsBeforeMB } else { 0 }
     $reportData['WinSxSAfterMB']        = if ($script:WinSxsAfterMB) { $script:WinSxsAfterMB } else { 0 }
     $reportData['PhaseTimings']        = if ($script:PhaseTimings) { $script:PhaseTimings } else { @{} }
+    if (Get-Command -Name Get-WinEaseLoadedPlugins -ErrorAction SilentlyContinue) {
+        $reportData['Plugins']        = @(Get-WinEaseLoadedPlugins)
+        $reportData['PluginRejected'] = @($script:WinEasePluginRejected)
+    }
     $depResult = $null
     try { $depResult = Test-WinEaseDependencies -Config $resolvedConfig } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     $reportData['DependencyResult'] = $depResult

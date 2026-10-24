@@ -216,41 +216,17 @@ Invoke-WinEaseRegistryTable -Section security -Tweak DisableDeliveryOptimization
 # ============================================================================
 # 9. Performance, Power & Latency Optimizations
 # ============================================================================
-Invoke-WinEaseRegistryTable -Section performance -Tweak DisablePowerThrottling
+# Power throttling, the foreground quantum / DPC settings (ThreadDpcEnable, AtlasReviOSMode) and the MMCSS
+# task profiles (LowLatencyAudioMMCSS, MMCSSGaming) are implemented by the built-in plugin
+# WinEase.Plugins.Builtin.Latency (src\WinEase.Plugins.Builtin.Latency), which runs right after this phase.
 
 Invoke-WinEaseRegistryTable -Section performance -Tweak DisableIdleMaintenance
-
-# AtlasOS & ReviOS low-latency kernel tuning.
-# The GUI exposes "AtlasOS & ReviOS Low-Latency Kernel Tuning" as a component
-# (AtlasReviOSMode) but nothing in the phases read it, so the checkbox had no
-# effect at all. It is the umbrella switch for the latency kernel work below:
-# DPC thread tweaking + foreground quantum scheduling (ThreadDpcEnable) and the
-# MMCSS Games/Pro Audio task profiles. Turning it off skips the whole set.
-$atlasReviOSEnabled = [bool]$atlasReviOSMode
-
-if (Test-TweakEnabled 'ThreadDpcEnable' $false) {
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Kernel" -Name "ThreadDpcEnable" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\PriorityControl" -Name "Win32PrioritySeparation" -Type REG_DWORD -Data '38'
-} elseif ($atlasReviOSEnabled) {
-    # Atlas/ReviOS baseline: foreground quantum scheduling without the DPC tweak.
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\PriorityControl" -Name "Win32PrioritySeparation" -Type REG_DWORD -Data '38'
-}
 
 Invoke-WinEaseRegistryTable -Section performance -Tweak NtfsDisable8dot3
 
 Invoke-WinEaseRegistryTable -Section performance -Tweak EnableLongPaths
 
 Invoke-WinEaseRegistryTable -Section performance -Tweak NetworkTuning
-
-if ($keepAudioTweaks -or $dawMode -or (Test-TweakEnabled 'LowLatencyAudioMMCSS' $false)) {
-    Write-Host "  [Audio DAW] Configuring low-latency Pro Audio MMCSS task profile..." -ForegroundColor Green
-    Invoke-WinEaseRegistryTable -Section performance -Tweak LowLatencyAudioMMCSS -Unconditional
-}
-
-if ($mmcssGaming -or (Test-TweakEnabled 'MMCSSGaming' $false) -or $atlasReviOSEnabled) {
-    Write-Host "  [Gaming] Configuring Games MMCSS task profile..." -ForegroundColor Green
-    Invoke-WinEaseRegistryTable -Section performance -Tweak MMCSSGaming -Unconditional
-}
 
 if ($radicalRAM -or (Test-TweakEnabled 'SvcHostConsolidation' $false)) {
     Invoke-WinEaseRegistryTable -Section performance -Tweak SvcHostConsolidation -Unconditional
@@ -284,11 +260,7 @@ if ($nvidiaLowLatency -or (Test-TweakEnabled 'NvidiaLowLatency' $false)) {
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\CurrentControlSet\Control\Session Manager\kernel\Processor" -Name "DpcProfile" -Type REG_DWORD -Data '1'
 }
 
-# HAGS & MSI
-$gpuLatencyEnabled = [bool]$script:activeTweakGroups['GPULatency'] -or (Test-TweakEnabled 'EnableHAGS' $true)
-if ($gpuLatencyEnabled) {
-    Invoke-WinEaseRegistryTable -Section performance -Tweak EnableHAGS -Unconditional
-}
+# HAGS (EnableHAGS / the GPULatency group) is implemented by the built-in plugin WinEase.Plugins.Builtin.Latency.
 
 # ============================================================================
 # 10. UI & Ergonomics
@@ -839,8 +811,6 @@ if (Test-TweakEnabled 'DisableDiagnosticData' $true) {
 
 Invoke-WinEaseRegistryTable -Section performance -Tweak TuneMemoryAndPaging
 
-Invoke-WinEaseRegistryTable -Section performance -Tweak GamingNetworkTweaks
-
 Invoke-WinEaseRegistryTable -Section privacy -Tweak DisableBackgroundApps
 
 Invoke-WinEaseRegistryTable -Section performance -Tweak DisableGameDVR
@@ -960,6 +930,24 @@ function Save-WinEaseUnattendXml {
     }
 
     Write-Host "  [XML Verified] Saved $($DestinationPath) (Single UTF-8 BOM, valid XML DOM, pass attributes intact)" -ForegroundColor Green
+}
+
+# Plugin contributions (IRegistryContributor, IServiceStartContributor). The registry entries
+# run through the same table runner as config\registry (build range and tweak gate included).
+if (Get-Command -Name Get-WinEasePluginContributions -ErrorAction SilentlyContinue) {
+    $pluginRegistryEntries = @(Get-WinEasePluginContributions -Kind Registry)
+    if ($pluginRegistryEntries.Count -gt 0) {
+        Write-Host "  [Plugins] Applying $($pluginRegistryEntries.Count) registry value(s) contributed by plugins..." -ForegroundColor DarkCyan
+        if ($DryRun) {
+            Write-Host "  [DryRun] Would write the plugin registry values." -ForegroundColor DarkYellow
+        } else {
+            Invoke-WinEaseRegistryTable -Entries $pluginRegistryEntries
+        }
+    }
+    foreach ($pluginService in @(Get-WinEasePluginContributions -Kind Service)) {
+        Write-Host "  [Plugin $($pluginService.PluginId)] service $($pluginService.Name) -> Start=$($pluginService.Start)" -ForegroundColor DarkCyan
+        if (-not $DryRun) { [void](Set-WinEaseServiceStartIfPresent -Name $pluginService.Name -Start $pluginService.Start) }
+    }
 }
 
 # M2: User extension actions (Registry)

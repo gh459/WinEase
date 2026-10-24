@@ -119,22 +119,30 @@ Describe "R3 - setup and tool scripts are files, not here-strings" {
             (Get-Item -LiteralPath $p).Length | Should Be $e.bytes
         }
     }
-    It "Read-WinEaseEmbeddedScript returns the recorded content for every file" {
+    It "Read-WinEaseEmbeddedScript returns the recorded content for every setup helper" {
         $ast = [System.Management.Automation.Language.Parser]::ParseInput($script:R3PhaseText, [ref]$null, [ref]$null)
         $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Read-WinEaseEmbeddedScript' }, $true)
         $fn | Should Not BeNullOrEmpty
         $scriptDir = $script:RepoRoot
         . ([scriptblock]::Create($fn.Extent.Text))
-        foreach ($e in $script:R3Fixture) {
+        foreach ($e in @($script:R3Fixture | Where-Object { $_.path -like 'scripts/setup/*' })) {
             $content = Read-WinEaseEmbeddedScript -RelativePath $e.path.Replace('/', '\')
             $hash = [BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes($content))).Replace('-', '').ToLower()
             $hash | Should Be $e.sha256
         }
     }
-    It "the phase no longer embeds them and references every file" {
+    It "the phase no longer embeds them: it references every setup helper, the tool scripts belong to the PostInstallTools plugin" {
         $script:R3PhaseText | Should Not Match "(?m)^\s*\S+\s*=\s*@'\s*$"
-        foreach ($e in $script:R3Fixture) {
+        foreach ($e in @($script:R3Fixture | Where-Object { $_.path -like 'scripts/setup/*' })) {
             $script:R3PhaseText.Contains($e.path.Replace('/', '\')) | Should Be $true
+        }
+        # R9: Browser Grabber, Control Center and the Atlas-ReviOS tools are embedded resources of the plugin
+        $pluginDir = Join-Path $script:RepoRoot 'src\WinEase.Plugins.Builtin.PostInstallTools'
+        $pluginText = [System.IO.File]::ReadAllText((Join-Path $pluginDir 'PostInstallToolsPlugin.cs'))
+        [System.IO.File]::ReadAllText((Join-Path $pluginDir 'WinEase.Plugins.Builtin.PostInstallTools.csproj')) | Should Match ([regex]::Escape('..\..\scripts\tools\**'))
+        foreach ($e in @($script:R3Fixture | Where-Object { $_.path -like 'scripts/tools/*' })) {
+            $pluginText.Contains('"' + $e.path.Substring('scripts/tools/'.Length) + '"') | Should Be $true
+            $script:R3PhaseText.Contains($e.path.Replace('/', '\')) | Should Be $false
         }
     }
     It "the username placeholder stays in the autologon repair helper and is still substituted" {
@@ -153,5 +161,50 @@ Describe "R3 - setup and tool scripts are files, not here-strings" {
         $ga = Get-Content -LiteralPath (Join-Path $script:RepoRoot '.gitattributes') -Raw
         $ga | Should Match '(?m)^scripts/setup/\*\* -text\s*$'
         $ga | Should Match '(?m)^scripts/tools/\*\* -text\s*$'
+    }
+}
+
+
+Describe "Launcher exe (R8)" {
+    BeforeAll {
+        $script:LauncherDir = Join-Path -Path $script:RepoRoot -ChildPath 'src\WinEase.Launcher'
+    }
+    It "launcher sources, manifest and icon exist" {
+        foreach ($f in 'WinEase.Launcher.csproj', 'Program.cs', 'LauncherLogic.cs', 'app.manifest', 'app.ico') {
+            Test-Path -LiteralPath (Join-Path -Path $script:LauncherDir -ChildPath $f) | Should Be $true
+        }
+    }
+    It "manifest requests asInvoker" {
+        (Get-Content -LiteralPath (Join-Path -Path $script:LauncherDir -ChildPath 'app.manifest') -Raw) | Should Match 'level="asInvoker"'
+    }
+    It "app.ico holds the nine frame sizes" {
+        $bytes = [IO.File]::ReadAllBytes((Join-Path -Path $script:LauncherDir -ChildPath 'app.ico'))
+        [BitConverter]::ToInt16($bytes, 2) | Should Be 1
+        $sizes = foreach ($i in 0..([BitConverter]::ToInt16($bytes, 4) - 1)) { $w = $bytes[6 + 16 * $i]; if ($w -eq 0) { 256 } else { [int]$w } }
+        ($sizes -join ',') | Should Be '16,20,24,32,40,48,64,128,256'
+    }
+    It "New-WinEaseIcon.ps1 turns a PNG into a transparent-background icon" {
+        Add-Type -AssemblyName System.Drawing
+        $dir = Join-Path -Path ([IO.Path]::GetTempPath()) -ChildPath ('we-icon-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        try {
+            $png = Join-Path -Path $dir -ChildPath 'in.png'
+            $bmp = New-Object System.Drawing.Bitmap -ArgumentList 300, 300
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.Clear([System.Drawing.Color]::FromArgb(40, 40, 40))
+            $g.FillEllipse([System.Drawing.Brushes]::Teal, 50, 50, 200, 200)
+            $g.Dispose(); $bmp.Save($png); $bmp.Dispose()
+            $ico = Join-Path -Path $dir -ChildPath 'out.ico'
+            & (Join-Path -Path $script:RepoRoot -ChildPath 'tools\New-WinEaseIcon.ps1') -Source $png -Destination $ico | Out-Null
+            $bytes = [IO.File]::ReadAllBytes($ico)
+            [BitConverter]::ToInt16($bytes, 4) | Should Be 9
+            $icon = New-Object System.Drawing.Icon -ArgumentList $ico
+            $icon.Dispose()
+        }
+        finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    It "build-binaries.ps1 builds the launcher and the solution lists it" {
+        (Get-Content -LiteralPath (Join-Path -Path $script:RepoRoot -ChildPath 'tools\build-binaries.ps1') -Raw) | Should Match 'Launcher = \{'
+        (Get-Content -LiteralPath (Join-Path -Path $script:RepoRoot -ChildPath 'src\WinEase.sln') -Raw) | Should Match 'WinEase\.Launcher\.csproj'
     }
 }

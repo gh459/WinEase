@@ -26,17 +26,11 @@
         @{ Tweak = 'DisableWebSearch'; Default = $true; Hive = @('zDEFAULT', 'zNTUSER'); Path = 'Software\Microsoft\Windows\CurrentVersion\Search'; Name = 'BingSearchEnabled'; Type = 'REG_DWORD'; Data = '0' }
         @{ Tweak = 'DisableWebSearch'; Default = $true; Hive = @('zDEFAULT', 'zNTUSER'); Path = 'Software\Policies\Microsoft\Windows\Explorer'; Name = 'DisableSearchBoxSuggestions'; Type = 'REG_DWORD'; Data = '1' }
         # Win11Debloat 2026.08.24 (Disable_Search_Highlights, Disable_Search_History).
-        @{ Tweak = 'DisableWebSearch'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\SearchSettings'; Name = 'IsDynamicSearchBoxEnabled'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableWebSearch'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\SearchSettings'; Name = 'IsDeviceSearchHistoryEnabled'; Type = 'REG_DWORD'; Data = '0' }
         # ReviOS 26.10 / main (registry/explorer/search.yml): the web and the
         # Microsoft Store results that the Search box offers (26H2).
-        @{ Tweak = 'DisableWebSearch'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\SearchSettings'; Name = 'IsWebSuggestionsEnabled'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableWebSearch'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\SearchSettings'; Name = 'IsStoreSuggestionsEnabled'; Type = 'REG_DWORD'; Data = '0' }
         # ReviOS 26.10 (registry/explorer/search.yml): the activatable class of the
         # Store search task is disabled outright (25H2 and newer).
-        @{ Tweak = 'DisableWebSearch'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Microsoft\WindowsRuntime\ActivatableClassId\WinStore.Tasks.WindowsSearchTask'; Name = 'ActivationType'; Type = 'REG_DWORD'; Data = '4294967295' }
         # Empty Data = the empty string (the runner passes it to reg.exe as the literal "").
-        @{ Tweak = 'DisableWebSearch'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Microsoft\WindowsRuntime\ActivatableClassId\WinStore.Tasks.WindowsSearchTask'; Name = 'Server'; Type = 'REG_SZ'; Data = '' }
 
         # --- HideSearchBox -----------------------------------------------
         @{ Tweak = 'HideSearchBox'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Search'; Name = 'SearchboxTaskbarMode'; Type = 'REG_DWORD'; Data = '0' }
@@ -45,7 +39,6 @@
         @{ Tweak = 'DisableWidgets'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Dsh'; Name = 'AllowNewsAndInterests'; Type = 'REG_DWORD'; Data = '0' }
         @{ Tweak = 'DisableWidgets'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Windows\Widgets'; Name = 'AllowWidgets'; Type = 'REG_DWORD'; Data = '0' }
         # Bloatynosy 1.01.103: the "News and interests" feeds policy.
-        @{ Tweak = 'DisableWidgets'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Windows\Windows Feeds'; Name = 'EnableFeeds'; Type = 'REG_DWORD'; Data = '0' }
         @{ Tweak = 'DisableWidgets'; Default = $true; Hive = @('zDEFAULT', 'zNTUSER'); Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'TaskbarDa'; Type = 'REG_DWORD'; Data = '0' }
 
         # --- HideRecommendedSection --------------------------------------
@@ -59,8 +52,5 @@
         @{ Tweak = 'HideRecommendedSection'; Default = $true; Hive = @('zDEFAULT', 'zNTUSER'); Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'Start_IrisRecommendations'; Type = 'REG_DWORD'; Data = '0' }
         # Sophia Script 8.0.0 (RecentlyAddedStartApps, MostUsedStartApps, StartRecommendedSection):
         # the recent / most used lists of the new Start menu and recent documents tracking.
-        @{ Tweak = 'HideRecommendedSection'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Start'; Name = 'ShowRecentList'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'HideRecommendedSection'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Start'; Name = 'ShowFrequentList'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'HideRecommendedSection'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'Start_TrackDocs'; Type = 'REG_DWORD'; Data = '0' }
     )
 }

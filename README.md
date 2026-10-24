@@ -219,7 +219,17 @@ The resulting minimal OS is **not serviceable via cumulative updates** when WinS
 ### **2. Running the Builder**
 
 #### **Option A: Graphical User Interface (GUI - Recommended)**
-Simply double-click **`WinEase-GUI.bat`** (or run `.\WinEasebuilder.ps1 -GUI` as Administrator).  
+Double-click **`WinEase.exe`** (it asks for administrator rights, then opens the settings window; extra arguments such as `-ClassicGui` are passed to the builder). The exe is built by `tools\build-binaries.ps1` and ships in the full release package; it is not code-signed yet, so Windows SmartScreen may warn on first launch. If you only have the source tree and no .NET SDK, use **`WinEase-GUI.bat`** (same steps) or run `.\WinEasebuilder.ps1 -GUI` as Administrator.  
+
+**Getting `WinEase.exe` (full release package).** Every GitHub release has three ZIPs, each with a `.sha256` file and a build provenance attestation:
+
+| Asset | Contents | Use it for |
+|---|---|---|
+| `WinEase-<tag>-win-x64.zip` | the source tree + `WinEase.exe`, the WinUI window (`gui\winui\bin`), the built-in plugins (`plugins\builtin`) | Windows 11 x64: unzip and double-click `WinEase.exe`, no .NET SDK needed |
+| `WinEase-<tag>-win-arm64.zip` | the same for ARM64 (cross-built in CI; not yet tested on ARM64 hardware) | Windows 11 on ARM |
+| `WinEase-<tag>.zip` | the source tree only (`git archive`) | reading, auditing, or building the binaries yourself with `tools\build-binaries.ps1` |
+
+Unzip the package to a normal folder and double-click `WinEase.exe`; `WinEase.exe -ClassicGui` opens the WinForms window instead of the WinUI one. The exe is not code-signed, so check the download first (commands under *Development & Release Automation* below). A step-by-step check of an unpacked package, including `-DryRun`, is in [`docs/dev/release-package.md`](docs/dev/release-package.md).
 
 The settings window is a **WinUI 3** app (`gui/winui`, Windows App SDK, follows the Windows light/dark theme with Mica). It is built once with the .NET 8 SDK; `WinEase-GUI.bat` does this automatically on first launch when `dotnet` is installed, or run it yourself:
 
@@ -476,12 +486,13 @@ This working copy carries the following changes on top of the upstream fork:
 | `ci.yml` | push / PR to `main` | `-TestSelf` (PowerShell 5.1 + 7), Pester (`tests\`, split by area; includes `tests\WinEase.Regression.Tests.ps1`), dry-runs of extreme / balanced / none / vm, Rust engine build |
 | `lint.yml` | push / PR to `main` | PSScriptAnalyzer (errors fail) |
 | `workflow-audit.yml` | changes under `.github/` | actionlint + zizmor security audit of the workflows |
-| `release.yml` | `v*` tag | runs all of the above on the tagged commit, verifies the tag did not move, builds and checks the ZIP, publishes it with a `.sha256` file and a build provenance attestation |
+| `release.yml` | `v*` tag (or a manual dry run) | runs all of the above on the tagged commit, verifies the tag did not move, builds the source ZIP and the full packages (`win-x64`, `win-arm64`; `tools/package-release.ps1`), checks them with `verify-release-zip.py` and publishes them with `.sha256` files and build provenance attestations. A manual run builds and checks everything but publishes nothing |
 | `claude-issue-agent.yml` | issue assigned / `@claude` from a collaborator | implements the request on a branch and opens a **draft** PR |
 | `claude-pr-review.yml` | PR from a branch of this repository | **read-only, advisory** AI review comments; never approves or merges |
 
-Verify a downloaded release: `sha256sum -c WinEase-<tag>.zip.sha256` (or `Get-FileHash`) and
-`gh attestation verify WinEase-<tag>.zip -R gh459/WinEase`.
+Verify a downloaded release (for each ZIP you use): `sha256sum -c WinEase-<tag>-win-x64.zip.sha256`
+(or compare `Get-FileHash -Algorithm SHA256` with the file) and
+`gh attestation verify WinEase-<tag>-win-x64.zip -R gh459/WinEase`.
 
 Dependency updates: Dependabot opens monthly PRs for GitHub Actions (SHA-pinned), Cargo
 (`tools/winease-physical-debloat`) and NuGet (`gui/winui`). Each one goes through the full CI and
@@ -570,7 +581,8 @@ WinEase/
 │   ├── dependabot.yml
 │   └── workflows/             # ci.yml (Pester), lint.yml (PSScriptAnalyzer), release.yml, claude-issue-agent.yml
 ├── autounattend.xml           # Unattended setup template (scripts injected at build time)
-├── WinEase-GUI.bat             # GUI launcher
+├── WinEase.exe                 # GUI launcher (built from src/WinEase.Launcher; not in the git tree)
+├── WinEase-GUI.bat             # GUI launcher fallback for source checkouts without the exe
 ├── oscdimg.exe                # Bundled ISO mastering tool
 ├── PSScriptAnalyzerSettings.psd1  # Linter configuration
 ├── LICENSE                    # MIT License

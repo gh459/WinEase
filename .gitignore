@@ -23,7 +23,27 @@ tools/winease-physical-debloat/target/
 # Regenerated on every build (template: templates/report.html)
 WinEase_report.html
 
+# Launcher (WinEase.exe) build output; build with: tools\build-binaries.ps1
+/WinEase.exe
+/src/WinEase.Launcher/bin/
+/src/WinEase.Launcher/obj/
+/src/WinEase.Launcher.Tests/bin/
+/src/WinEase.Launcher.Tests/obj/
+
 # WinUI 3 window build output (build with: gui\winuiuild.ps1)
 gui/winui/bin/
 gui/winui/WinEaseGui/bin/
 gui/winui/WinEaseGui/obj/
+
+# Plugin DLLs of the user: only the lock file (config/user/plugins.lock.psd1) and the README are committed
+plugins/user/*
+!plugins/user/README.md
+plugins/bin/
+
+# Built-in plugin DLLs and their allow list are build output (tools/build-binaries.ps1, CI, or the builder itself
+# when it compiles src/WinEase.Plugins.Builtin.* on a source checkout)
+plugins/builtin/*
+
+# .NET build output
+src/**/bin/
+src/**/obj/

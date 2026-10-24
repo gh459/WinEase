@@ -192,9 +192,9 @@ Describe "Builder cleanup S11" {
         $src -match 'Test-WinEasePathWithin -Path \$fp -Root \$scratchDir' | Should Be $true
         $src -match 'Parallel cleanup failed for folder' | Should Be $true
     }
-    It "self-test is split into per-check functions and still runs 21 checks" {
+    It "self-test is split into per-check functions and still runs 22 checks" {
         $src = [System.IO.File]::ReadAllText((Join-Path $script:S11Root "lib\WinEaseSelfTest.ps1"))
-        @([regex]::Matches($src, '(?m)^function Test-WinEaseSelfCheck\d\d')).Count | Should Be 21
+        @([regex]::Matches($src, '(?m)^function Test-WinEaseSelfCheck\d\d')).Count | Should Be 22
     }
     It "no -isAnyBound repetition remains in the builder beyond the component-switch loop" {
         $src = [System.IO.File]::ReadAllText((Join-Path $script:S11Root "WinEasebuilder.ps1"))

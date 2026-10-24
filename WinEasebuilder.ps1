@@ -394,6 +394,9 @@ if (Test-Path -LiteralPath $helperModuleEarly) {
 # M2: dot-source the extension module early (functions needed before AllTweakDefs init); the PC migration engine lives in tools\migrator and is not part of the ISO build
 $extModuleEarly = Join-Path -Path $scriptDirEarly -ChildPath "lib\WinEaseExtensions.ps1"
 if (Test-Path -LiteralPath $extModuleEarly) { . $extModuleEarly }
+# Plugin host (lib\WinEasePlugins.ps1): loads the allow-listed plugin DLLs and calls them around the phases.
+$pluginModuleEarly = Join-Path -Path $scriptDirEarly -ChildPath "lib\WinEasePlugins.ps1"
+if (Test-Path -LiteralPath $pluginModuleEarly) { . $pluginModuleEarly }
 # The Advanced Debloat engine table and the safe per-target handlers (lib\WinEaseDebloat.ps1).
 # The phases call these, so the module has to be loaded before the first phase runs.
 $debloatModuleEarly = Join-Path -Path $scriptDirEarly -ChildPath "lib\WinEaseDebloat.ps1"
@@ -628,6 +631,19 @@ try {
     $script:UserExtensionsResult = [PSCustomObject]@{ Loaded = $false; UserTweakCount = 0; UserPresetCount = 0; CustomScriptCount = 0; Errors = @($_.Exception.Message) }
 }
 
+# R7: plugins (DLLs listed with their SHA256 in plugins\builtin\builtin.lock.psd1 / config\user\plugins.lock.psd1).
+# A plugin that cannot be loaded is reported and skipped; it never stops the build.
+$script:PluginImportResult = $null
+if (Get-Command -Name Import-WinEasePlugins -ErrorAction SilentlyContinue) {
+    if (-not $TestSelf) {
+        try {
+            $script:PluginImportResult = Import-WinEasePlugins -RepoRoot $scriptDirEarly
+        } catch {
+            Write-Warning "Plugin import failed: $($_.Exception.Message)"
+        }
+    }
+}
+
 # Component settings (Key -> Variable / Type / Default / Gui), in profile key order
 $script:ComponentDefs = [ordered]@{}
 foreach ($cd in $script:WinEaseSettingsDef.Components) { $script:ComponentDefs[$cd.Key] = $cd }
@@ -799,7 +815,7 @@ function Enter-Phase {
     try { $host.UI.RawUI.WindowTitle = $phaseTitle } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     if (Get-Command -Name Send-WinEaseGuiProgress -ErrorAction SilentlyContinue) {
         $progress = @{ Phase = $PhaseNumber; Total = $script:TotalPhases; Name = $PhaseName }
-        if ($PhaseNumber -le 1 -or -not $script:ProgressEstimateSent) {
+        if (-not $script:ProgressEstimateSent) {
             try {
                 $est = Get-WinEaseLastRunTotalSeconds -TimingsPath (Join-Path -Path $logDir -ChildPath 'last_phase_timings.json')
                 if ($est -gt 0) { $progress.EstimatedSeconds = $est }
@@ -2035,6 +2051,12 @@ function Write-WinEaseDiagnosticReport {
             $null = New-Item -ItemType Directory -Path $script:DiagDir -Force
         }
         $jsonPath = Join-Path -Path $script:DiagDir -ChildPath "build_diagnostic_report.json"
+        # R7: the plugins that took part in this build (loaded) and the ones that were refused
+        if (Get-Command -Name Get-WinEaseLoadedPlugins -ErrorAction SilentlyContinue) {
+            $script:DiagnosticData['Plugins'] = @(Get-WinEaseLoadedPlugins | ForEach-Object { [ordered]@{ Id = $_.Id; Version = $_.Version; Source = $_.Source; File = $_.File; Sha256 = $_.Sha256; OnError = $_.OnError } })
+            $script:DiagnosticData['PluginsRejected'] = @($script:WinEasePluginRejected | ForEach-Object { [ordered]@{ Source = $_.Source; File = $_.File; Reason = $_.Reason } })
+            $script:DiagnosticData['PluginRuns'] = @($script:WinEasePluginRunLog | ForEach-Object { [ordered]@{ Plugin = $_.Plugin; Phase = $_.Phase; Stage = $_.Stage; Status = $_.Status } })
+        }
         $script:DiagnosticData | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $jsonPath -Encoding utf8
 
         $txtPath = Join-Path -Path $script:DiagDir -ChildPath "build_diagnostic_summary.txt"
@@ -2069,6 +2091,9 @@ function Write-WinEaseDiagnosticReport {
             "Oscdimg Exit Code:        $($script:DiagnosticData.OscdimgExitCode)",
             "ISO Embedded WIM SHA256:  $($script:DiagnosticData.IsoEmbeddedWimSha256)",
             "ISO Payload Match:        $($script:DiagnosticData.IsoPayloadMatch)",
+            "---------------------------------------------------------",
+            "Plugins loaded:           $(if ($script:DiagnosticData['Plugins']) { (@($script:DiagnosticData['Plugins']) | ForEach-Object { "$($_.Id) $($_.Version) [$($_.Sha256)]" }) -join '; ' } else { '(none)' })",
+            "Plugins refused:          $(if ($script:DiagnosticData['PluginsRejected']) { (@($script:DiagnosticData['PluginsRejected']) | ForEach-Object { "$($_.File): $($_.Reason)" }) -join '; ' } else { '(none)' })",
             "---------------------------------------------------------",
             "Preserved Artifacts:",
             ($script:DiagnosticData.PreservedArtifacts | ForEach-Object { "  - $_" }),
@@ -2271,68 +2296,51 @@ try {
         }
     }
 
-    Enter-Phase 1 "Environment Validation & Workspace Preparation"
-    . (Join-Path -Path $phasesDir -ChildPath "01-environment.ps1")
-
-    Enter-Phase 2 "Source Media Detection & Validation"
-    . (Join-Path -Path $phasesDir -ChildPath "02-source-media.ps1")
-
-    Enter-Phase 3 "Installation Media Preparation & Staging"
-    . (Join-Path -Path $phasesDir -ChildPath "03-staging.ps1")
-
-    Enter-Phase 4 "Mount install.wim & Baseline Analysis"
-    . (Join-Path -Path $phasesDir -ChildPath "04-mount-baseline.ps1")
-
-    Enter-Phase 5 "Removing provisioned AppX packages (Bloatware)"
-    . (Join-Path -Path $phasesDir -ChildPath "05-appx.ps1")
-
-    Enter-Phase 6 "Removing system packages (FoD / Optional features)"
-    . (Join-Path -Path $phasesDir -ChildPath "06-fod.ps1")
-
-    Enter-Phase 7 "Removing NativeImages (.NET)"
-    . (Join-Path -Path $phasesDir -ChildPath "07-nativeimages.ps1")
-
-    Enter-Phase 8 "File system slimming (Drivers, WinRE, Fonts)"
-    . (Join-Path -Path $phasesDir -ChildPath "08-filesystem.ps1")
-
-    Enter-Phase 9 "Component Store (WinSxS) Optimization"
-    . (Join-Path -Path $phasesDir -ChildPath "09-winsxs.ps1")
-
-    Enter-Phase 9.5 "Physical Debloat (Experimental - Rust-based)"
-    $physDebloatPhase = Join-Path -Path $phasesDir -ChildPath "09-physical-debloat.ps1"
-    if (Test-Path -LiteralPath $physDebloatPhase) {
-        . $physDebloatPhase
-    } else {
-        Write-Host "  [Phase 9.5] 09-physical-debloat.ps1 not found. Skipping." -ForegroundColor DarkGray
+    # Every phase runs as: Enter-Phase -> plugin hooks (Before) -> the phase script -> plugin hooks (After).
+    # The phase scripts are dot-sourced here, in the script scope, because they share its variables; this is
+    # why the loop is not a function. A plugin can only run before and after a phase: it cannot replace one,
+    # so the safety gates and the mount handling of the phases always run.
+    $buildPhases = @(
+        @{ Number = 1;   Name = "Environment Validation & Workspace Preparation";     File = "01-environment.ps1" }
+        @{ Number = 2;   Name = "Source Media Detection & Validation";                File = "02-source-media.ps1" }
+        @{ Number = 3;   Name = "Installation Media Preparation & Staging";           File = "03-staging.ps1" }
+        @{ Number = 4;   Name = "Mount install.wim & Baseline Analysis";              File = "04-mount-baseline.ps1" }
+        @{ Number = 5;   Name = "Removing provisioned AppX packages (Bloatware)";     File = "05-appx.ps1" }
+        @{ Number = 6;   Name = "Removing system packages (FoD / Optional features)"; File = "06-fod.ps1" }
+        @{ Number = 7;   Name = "Removing NativeImages (.NET)";                       File = "07-nativeimages.ps1" }
+        @{ Number = 8;   Name = "File system slimming (Drivers, WinRE, Fonts)";       File = "08-filesystem.ps1" }
+        @{ Number = 9;   Name = "Component Store (WinSxS) Optimization";              File = "09-winsxs.ps1" }
+        @{ Number = 9.5; Name = "Physical Debloat (Experimental - Rust-based)";       File = "09-physical-debloat.ps1" }
+        @{ Number = 10;  Name = "Load Registry Hives and Apply Optimizations";        File = "10-registry.ps1" }
+        @{ Number = 11;  Name = "Configure autounattend.xml & Pre-extract Setup Scripts"; File = "11-unattend.ps1" }
+        @{ Number = 12;  Name = "Unmount and Commit install.wim Image";               File = "12-unmount-commit.ps1" }
+        @{ Number = 13;  Name = "Export Modified Image (WIM / ESD / SWM)";            File = "13-export.ps1" }
+        @{ Number = 14;  Name = "Patch boot.wim (LabConfig & Bypasses)";              File = "14-bootwim.ps1" }
+        @{ Number = 15;  Name = "Verify Final Installation Payload";                  File = "15-verify.ps1" }
+        @{ Number = 16;  Name = "ISO Root Cleanup & Traceability Embedding";          File = "16-iso-cleanup.ps1" }
+        @{ Number = 17;  Name = "Locate or Verify oscdimg.exe";                       File = "17-oscdimg.ps1" }
+        @{ Number = 18;  Name = "Create Bootable ISO Image";                          File = "18-iso.ps1" }
+    )
+    foreach ($buildPhase in $buildPhases) {
+        $phaseFile = Join-Path -Path $phasesDir -ChildPath $buildPhase.File
+        $phaseId = [System.IO.Path]::GetFileNameWithoutExtension($buildPhase.File)
+        Enter-Phase $buildPhase.Number $buildPhase.Name
+        if (-not (Test-Path -LiteralPath $phaseFile)) {
+            # Only the optional physical debloat phase may be absent.
+            if ($buildPhase.Number -eq 9.5) {
+                Write-Host "  [Phase 9.5] $($buildPhase.File) not found. Skipping." -ForegroundColor DarkGray
+                continue
+            }
+            throw "Phase script not found: $phaseFile"
+        }
+        if (Get-Command -Name Invoke-WinEasePluginHook -ErrorAction SilentlyContinue) {
+            Invoke-WinEasePluginHook -Phase $phaseId -Stage Before -DryRun:$isDryRunMode
+        }
+        . $phaseFile
+        if (Get-Command -Name Invoke-WinEasePluginHook -ErrorAction SilentlyContinue) {
+            Invoke-WinEasePluginHook -Phase $phaseId -Stage After -DryRun:$isDryRunMode
+        }
     }
-
-    Enter-Phase 10 "Load Registry Hives and Apply Optimizations"
-    . (Join-Path -Path $phasesDir -ChildPath "10-registry.ps1")
-
-    Enter-Phase 11 "Configure autounattend.xml & Pre-extract Setup Scripts"
-    . (Join-Path -Path $phasesDir -ChildPath "11-unattend.ps1")
-
-    Enter-Phase 12 "Unmount and Commit install.wim Image"
-    . (Join-Path -Path $phasesDir -ChildPath "12-unmount-commit.ps1")
-
-    Enter-Phase 13 "Export Modified Image (WIM / ESD / SWM)"
-    . (Join-Path -Path $phasesDir -ChildPath "13-export.ps1")
-
-    Enter-Phase 14 "Patch boot.wim (LabConfig & Bypasses)"
-    . (Join-Path -Path $phasesDir -ChildPath "14-bootwim.ps1")
-
-    Enter-Phase 15 "Verify Final Installation Payload"
-    . (Join-Path -Path $phasesDir -ChildPath "15-verify.ps1")
-
-    Enter-Phase 16 "ISO Root Cleanup & Traceability Embedding"
-    . (Join-Path -Path $phasesDir -ChildPath "16-iso-cleanup.ps1")
-
-    Enter-Phase 17 "Locate or Verify oscdimg.exe"
-    . (Join-Path -Path $phasesDir -ChildPath "17-oscdimg.ps1")
-
-    Enter-Phase 18 "Create Bootable ISO Image"
-    . (Join-Path -Path $phasesDir -ChildPath "18-iso.ps1")
-
     # F3: close out the final phase and persist the complete timings table. No
     # Enter-Phase 19 will ever arrive to record Phase 18, and the snapshot written
     # inside 18-iso.ps1 was taken while the phase was still running.
