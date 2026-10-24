@@ -345,6 +345,146 @@ function Get-WinEaseGuiPresetDiffText {
     return (Format-WinEaseConfigDiff -DiffResult $diff)
 }
 
+# ---------------------------------------------------------------------------------------------
+# Preset state: "is the current window still the preset it started from?"
+# Shared by the WinForms window, the WinUI 3 window (request 'presetState') and the tests.
+# The schema (config\schema.psd1 + config\presets.psd1) is the only source of the rules; the
+# windows never compare values themselves. See docs\GUI_PRESET_STATE.md.
+# ---------------------------------------------------------------------------------------------
+
+# A preset as the windows apply it: every Gui component the preset names, every tweak (preset
+# TweakSettings, then a top-level preset key, then the schema default), the payload format and
+# the Advanced Debloat lists/engines the preset defines (none of the built-in presets define any).
+# Returns $null for an unknown preset name.
+function Get-WinEaseGuiPresetValues {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    $pObj = Get-WinEasePreset -Name $Name
+    if (-not $pObj) { return $null }
+    $components = [ordered]@{}
+    foreach ($cd in $script:ComponentDefs.Values) {
+        if ($cd.Gui -and $pObj.Contains($cd.Key)) { $components[$cd.Key] = [bool]$pObj[$cd.Key] }
+    }
+    $pTweaks = $pObj.TweakSettings
+    $tweaks = [ordered]@{}
+    foreach ($tk in $script:AllTweakDefs.Keys) {
+        if ($pTweaks -and $pTweaks.Contains($tk)) { $tweaks[$tk] = [bool]$pTweaks[$tk] }
+        elseif ($pObj.Contains($tk)) { $tweaks[$tk] = [bool]$pObj[$tk] }
+        else { $tweaks[$tk] = [bool]$script:AllTweakDefs[$tk].Default }
+    }
+    $fmt = "$($pObj.PayloadFormat)".ToUpper()
+    if ($fmt -notin @('ESD', 'SWM')) { $fmt = 'WIM' }
+    $std = @(); $exp = @(); $engines = [ordered]@{}
+    if ($pObj.Contains('AdvancedDebloatStandard') -and $pObj['AdvancedDebloatStandard']) { $std = @($pObj['AdvancedDebloatStandard'] | ForEach-Object { "$_" }) }
+    if ($pObj.Contains('AdvancedDebloatExperimental') -and $pObj['AdvancedDebloatExperimental']) { $exp = @($pObj['AdvancedDebloatExperimental'] | ForEach-Object { "$_" }) }
+    if ($pObj.Contains('DebloatEngineSelection') -and $pObj['DebloatEngineSelection'] -is [System.Collections.IDictionary]) {
+        foreach ($k in $pObj['DebloatEngineSelection'].Keys) { $engines["$k"] = "$($pObj['DebloatEngineSelection'][$k])" }
+    }
+    return [ordered]@{
+        Key                         = "$Name".Trim().ToLower()
+        Components                  = $components
+        Tweaks                      = $tweaks
+        PayloadFormat               = $fmt
+        AdvancedDebloatStandard     = $std
+        AdvancedDebloatExperimental = $exp
+        DebloatEngineSelection      = $engines
+    }
+}
+
+# Value of a key in a hashtable or an object (ConvertFrom-Json); $null when absent
+function Get-WinEaseGuiMemberValue {
+    param($Object, [string]$Key)
+    if ($null -eq $Object) { return $null }
+    # ',' keeps an empty array an empty array (it would otherwise vanish into $null)
+    if ($Object -is [System.Collections.IDictionary]) { if ($Object.Contains($Key)) { return ,$Object[$Key] } else { return $null } }
+    $p = $Object.PSObject.Properties[$Key]
+    if ($p) { return ,$p.Value }
+    return $null
+}
+
+# Compares the current window settings with a base preset.
+#   -Current  Components (key -> bool; flat component keys are accepted too), TweakSettings or Tweaks,
+#             PayloadFormat (or ExportESDMode / SplitWIMMode), AdvancedDebloatStandard,
+#             AdvancedDebloatExperimental, DebloatEngineSelection.
+#             A part that is absent from -Current is not compared.
+# What is compared (everything else - paths, user name, UseVHDX, Dry Run, migration - is not preset data):
+#   - components the preset names (a component the preset does not name keeps its value: not compared)
+#   - every tweak (an unnamed tweak means its schema default)
+#   - payload format
+#   - Advanced Debloat items (as sets) and the engine of every selected item; a preset that defines
+#     no Advanced Debloat list means "no items", so any selected item is a difference
+# Result: BasePresetKey, Known, IsModified, State ('Preset' | 'Modified' | 'Custom'), PresetKey
+# ('custom' once modified or without a known base, else the base key), DifferingKeys, Differences.
+function Get-WinEaseGuiPresetState {
+    param([string]$BasePresetKey, $Current, $BaseValues)
+    $baseKey = "$BasePresetKey".Trim().ToLower()
+    if (-not $BaseValues -and $baseKey) { $BaseValues = Get-WinEaseGuiPresetValues -Name $baseKey }
+    if (-not $BaseValues) {
+        return [PSCustomObject]@{ BasePresetKey = $null; Known = $false; IsModified = $true; State = 'Custom'; PresetKey = 'custom'; DifferingKeys = @(); Differences = @() }
+    }
+    $diffs = [System.Collections.Generic.List[object]]::new()
+    $add = { param($k, $kind, $pv, $cv) $diffs.Add([PSCustomObject]@{ Key = $k; Kind = $kind; Preset = $pv; Current = $cv }) }
+
+    $curComponents = Get-WinEaseGuiMemberValue $Current 'Components'
+    if ($null -eq $curComponents) { $curComponents = $Current }
+    foreach ($k in $BaseValues.Components.Keys) {
+        $cv = Get-WinEaseGuiMemberValue $curComponents $k
+        if ($null -eq $cv) { continue }
+        if ([bool]$cv -ne [bool]$BaseValues.Components[$k]) { & $add $k 'Component' $BaseValues.Components[$k] ([bool]$cv) }
+    }
+    $curTweaks = Get-WinEaseGuiMemberValue $Current 'TweakSettings'
+    if ($null -eq $curTweaks) { $curTweaks = Get-WinEaseGuiMemberValue $Current 'Tweaks' }
+    if ($null -ne $curTweaks) {
+        foreach ($k in $BaseValues.Tweaks.Keys) {
+            $cv = Get-WinEaseGuiMemberValue $curTweaks $k
+            if ($null -eq $cv) { continue }
+            if ([bool]$cv -ne [bool]$BaseValues.Tweaks[$k]) { & $add $k 'Tweak' $BaseValues.Tweaks[$k] ([bool]$cv) }
+        }
+    }
+    $curFmt = Get-WinEaseGuiMemberValue $Current 'PayloadFormat'
+    if (-not $curFmt) {
+        if ($null -ne (Get-WinEaseGuiMemberValue $Current 'ExportESDMode') -or $null -ne (Get-WinEaseGuiMemberValue $Current 'SplitWIMMode')) {
+            $curFmt = if (Get-WinEaseGuiMemberValue $Current 'ExportESDMode') { 'ESD' } elseif (Get-WinEaseGuiMemberValue $Current 'SplitWIMMode') { 'SWM' } else { 'WIM' }
+        }
+    }
+    if ($curFmt -and "$curFmt".ToUpper() -ne $BaseValues.PayloadFormat) { & $add 'PayloadFormat' 'Payload' $BaseValues.PayloadFormat "$curFmt".ToUpper() }
+
+    $selected = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($listKey in @('AdvancedDebloatStandard', 'AdvancedDebloatExperimental')) {
+        $curRaw = Get-WinEaseGuiMemberValue $Current $listKey
+        if ($null -eq $curRaw) { continue }   # not reported by the caller: not compared
+        $curSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        foreach ($i in @($curRaw)) { if ($i) { [void]$curSet.Add("$i") } }
+        $baseSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        foreach ($i in @($BaseValues[$listKey])) { if ($i) { [void]$baseSet.Add("$i") } }
+        foreach ($i in $curSet) { [void]$selected.Add($i); if (-not $baseSet.Contains($i)) { & $add "${listKey}:$i" 'Debloat' $false $true } }
+        foreach ($i in $baseSet) { [void]$selected.Add($i); if (-not $curSet.Contains($i)) { & $add "${listKey}:$i" 'Debloat' $true $false } }
+    }
+    # Engine per target: only for targets that are selected on either side, with the registered default filled in
+    $curEngines = Get-WinEaseGuiMemberValue $Current 'DebloatEngineSelection'
+    if ($null -ne $curEngines -and $selected.Count -gt 0) {
+        $defs = Get-WinEaseDebloatEngineDefs
+        $curMap = @{}; $baseMap = @{}
+        if ($curEngines -is [System.Collections.IDictionary]) { foreach ($k in $curEngines.Keys) { $curMap["$k"] = "$($curEngines[$k])" } }
+        else { foreach ($p in $curEngines.PSObject.Properties) { $curMap[$p.Name] = "$($p.Value)" } }
+        foreach ($k in $BaseValues.DebloatEngineSelection.Keys) { $baseMap["$k"] = "$($BaseValues.DebloatEngineSelection[$k])" }
+        foreach ($i in $selected) {
+            $ce = Get-WinEaseDebloatEngine -Item $i -EngineDefs $defs -EngineSelection $curMap
+            $be = Get-WinEaseDebloatEngine -Item $i -EngineDefs $defs -EngineSelection $baseMap
+            if ($ce -ne $be) { & $add "DebloatEngine:$i" 'Engine' $be $ce }
+        }
+    }
+    $modified = $diffs.Count -gt 0
+    return [PSCustomObject]@{
+        BasePresetKey = $BaseValues.Key
+        Known         = $true
+        IsModified    = $modified
+        State         = if ($modified) { 'Modified' } else { 'Preset' }
+        PresetKey     = if ($modified) { 'custom' } else { $BaseValues.Key }
+        DifferingKeys = @($diffs | ForEach-Object { $_.Key })
+        Differences   = @($diffs)
+    }
+}
+
 # Validate the form and fill $Gui.Result; returns $false (after a message) if input is invalid
 function Get-WinEaseGuiDraftConfig {
     param([hashtable]$Gui)

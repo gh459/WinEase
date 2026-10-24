@@ -1364,7 +1364,8 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
     It "every string key used by the GUI and the migrator exists in the English table, and no English key is unused" {
         $en = Read-UiTable 'en'
         $used = @(Get-UiKeyUsed $script:GuiPath) + @(Get-UiKeyUsed (Join-Path $script:RepoRoot "tools\migrator\WinEase-Migrator.ps1")) +
-            @(Get-UiKeyUsed (Join-Path $script:RepoRoot "gui\WinEaseWinUiHost.ps1")) + @(Get-UiKeyUsedWinUi)
+            @(Get-UiKeyUsed (Join-Path $script:RepoRoot "gui\WinEaseWinUiHost.ps1")) + @(Get-UiKeyUsedWinUi) +
+            @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseDependencies.ps1')), "'(Dep\.[A-Za-z.]+)'\s+=") | ForEach-Object { $_.Groups[1].Value })
         $used.Count | Should BeGreaterThan 100
         $missing = @($used | Where-Object { $_ -notmatch $script:LangOnlyPrefixes -and -not $en.ContainsKey($_) } | Select-Object -Unique)
         ($missing -join ',') | Should Be ''
@@ -2126,5 +2127,228 @@ Describe "Send-WinEaseGuiProgress in gui\WinEaseWinUiHost.ps1" {
         $script:WinEaseGuiProgressChannel = @{ Writer = [pscustomobject]@{} | Add-Member -MemberType ScriptMethod -Name WriteLine -Value { throw 'closed' } -PassThru }
         { Send-WinEaseGuiProgress -Event log -Data @{ Text = 'a' } } | Should Not Throw
         $script:WinEaseGuiProgressChannel | Should BeNullOrEmpty
+    }
+}
+
+Describe "B1 - preset vs custom state (Get-WinEaseGuiPresetState and the window result)" -Tags 'slow' {
+    $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
+    $script:AllTweakDefs = [ordered]@{}
+    foreach ($td in $settingsDef.Tweaks) { $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description } }
+    $script:ComponentDefs = [ordered]@{}
+    foreach ($cd in $settingsDef.Components) { $script:ComponentDefs[$cd.Key] = $cd }
+    $script:WinEaseDebloatEngines = [ordered]@{}
+    foreach ($de in @($settingsDef.DebloatEngines)) { if ($de -and $de.Item) { $script:WinEaseDebloatEngines[[string]$de.Item] = $de } }
+    $presetFile = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\presets.psd1")
+    $script:BuiltInPresets = [ordered]@{}
+    foreach ($k in $presetFile.Presets.Keys) { $script:BuiltInPresets[[string]$k] = $presetFile.Presets[$k] }
+    function Get-WinEasePreset { param([string]$Name) if ($Name -and $script:BuiltInPresets.Contains($Name.Trim().ToLower())) { $script:BuiltInPresets[$Name.Trim().ToLower()] } else { $null } }
+    . $script:GuiPath
+    # Session function with the build-side helpers replaced by recorders
+    $sessionAst = [System.Management.Automation.Language.Parser]::ParseInput([System.IO.File]::ReadAllText($script:GuiSessionPath), [ref]$null, [ref]$null)
+    foreach ($fn in $sessionAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Apply-WinEaseGuiResult' }, $true)) { . ([scriptblock]::Create($fn.Extent.Text)) }
+    function Apply-ProfileSettings { param($ProfileName) $script:B1AppliedBase = $ProfileName; return @{} }
+    function Sync-WinEaseTweakVariables { }
+    function Set-WinEaseDebloatEngineSelection { param($Selection) $script:DebloatEngineSelection = $Selection }
+    function Resolve-WinEaseDebloatEngine { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param($Item) return 'PowerShell' }
+    function Confirm-WinEasePhysicalDebloatConsent { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param($GuiResult) }
+
+    # The settings a window reports for a preset (what the WinUI window sends)
+    function Get-B1Current($key) {
+        $v = Get-WinEaseGuiPresetValues -Name $key
+        $c = @{ Components = @{}; TweakSettings = @{}; PayloadFormat = $v.PayloadFormat; AdvancedDebloatStandard = @($v.AdvancedDebloatStandard); AdvancedDebloatExperimental = @($v.AdvancedDebloatExperimental); DebloatEngineSelection = @{} }
+        foreach ($k in $v.Components.Keys) { $c.Components[$k] = $v.Components[$k] }
+        foreach ($k in $v.Tweaks.Keys) { $c.TweakSettings[$k] = $v.Tweaks[$k] }
+        return $c
+    }
+    # one Advanced Debloat target that supports both engines, and one standard target
+    $script:B1BothEngines = @($script:WinEaseDebloatEngines.Values | Where-Object { @($_.Engines).Count -gt 1 })[0]
+    $script:B1StdItem = $script:WinEaseDebloatStandardItems[0]
+
+    It "Get-WinEaseGuiPresetValues resolves every built-in preset from the schema, an unknown name is null" {
+        foreach ($k in 'extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio') {
+            $v = Get-WinEaseGuiPresetValues -Name $k
+            $v.Key | Should Be $k
+            $v.Tweaks.Count | Should Be $script:AllTweakDefs.Count
+            @('WIM', 'ESD', 'SWM') -contains $v.PayloadFormat | Should Be $true
+            @($v.AdvancedDebloatStandard).Count | Should Be 0
+            @($v.AdvancedDebloatExperimental).Count | Should Be 0
+        }
+        (Get-WinEaseGuiPresetValues -Name 'no-such-preset') | Should BeNullOrEmpty
+    }
+
+    It "reports a window that equals its preset as unmodified, for every preset" {
+        foreach ($k in 'extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio') {
+            $st = Get-WinEaseGuiPresetState -BasePresetKey $k -Current (Get-B1Current $k)
+            $st.IsModified | Should Be $false
+            $st.State | Should Be 'Preset'
+            $st.PresetKey | Should Be $k
+            @($st.DifferingKeys).Count | Should Be 0
+        }
+    }
+
+    It "a changed tweak makes the state Modified: PresetKey custom, the base stays, the key is listed" {
+        $cur = Get-B1Current 'balanced'
+        $tk = @($cur.TweakSettings.Keys)[0]
+        $cur.TweakSettings[$tk] = -not $cur.TweakSettings[$tk]
+        $st = Get-WinEaseGuiPresetState -BasePresetKey 'balanced' -Current $cur
+        $st.IsModified | Should Be $true
+        $st.State | Should Be 'Modified'
+        $st.PresetKey | Should Be 'custom'
+        $st.BasePresetKey | Should Be 'balanced'
+        @($st.DifferingKeys) -join ',' | Should Be $tk
+        # and back: switching the value back is unmodified again
+        $cur.TweakSettings[$tk] = -not $cur.TweakSettings[$tk]
+        (Get-WinEaseGuiPresetState -BasePresetKey 'balanced' -Current $cur).IsModified | Should Be $false
+    }
+
+    It "a changed component, the payload format and a flat (WinForms draft) component dictionary are compared too" {
+        $cur = Get-B1Current 'balanced'
+        $ck = @($cur.Components.Keys)[0]
+        $cur.Components[$ck] = -not $cur.Components[$ck]
+        @((Get-WinEaseGuiPresetState -BasePresetKey 'balanced' -Current $cur).DifferingKeys) -join ',' | Should Be $ck
+        $cur = Get-B1Current 'balanced'
+        $cur.PayloadFormat = if ($cur.PayloadFormat -eq 'ESD') { 'SWM' } else { 'ESD' }
+        @((Get-WinEaseGuiPresetState -BasePresetKey 'balanced' -Current $cur).DifferingKeys) -join ',' | Should Be 'PayloadFormat'
+        # WinForms draft shape: component keys at the top level, payload from the radios
+        $bv = Get-WinEaseGuiPresetValues -Name 'balanced'
+        $flat = @{ TweakSettings = (Get-B1Current 'balanced').TweakSettings; ExportESDMode = $true; SplitWIMMode = $false }
+        foreach ($k in $bv.Components.Keys) { $flat[$k] = $bv.Components[$k] }
+        $expected = if ($bv.PayloadFormat -eq 'ESD') { 0 } else { 1 }
+        @((Get-WinEaseGuiPresetState -BasePresetKey 'balanced' -Current $flat).DifferingKeys).Count | Should Be $expected
+    }
+
+    It "settings the preset does not name are not compared; parts the caller does not report are not compared" {
+        $cur = Get-B1Current 'balanced'
+        $cur.Components['NotAPresetComponent'] = $true
+        (Get-WinEaseGuiPresetState -BasePresetKey 'balanced' -Current $cur).IsModified | Should Be $false
+        (Get-WinEaseGuiPresetState -BasePresetKey 'balanced' -Current @{}).IsModified | Should Be $false
+    }
+
+    It "no known base preset is Custom" {
+        foreach ($b in $null, '', 'no-such-preset') {
+            $st = Get-WinEaseGuiPresetState -BasePresetKey $b -Current (Get-B1Current 'balanced')
+            $st.State | Should Be 'Custom'
+            $st.PresetKey | Should Be 'custom'
+            $st.Known | Should Be $false
+        }
+    }
+
+    It "Advanced Debloat items and engines: a selection is a difference, the engine of an unselected target is not" {
+        $cur = Get-B1Current 'balanced'
+        $cur.AdvancedDebloatStandard = @($script:B1StdItem)
+        $st = Get-WinEaseGuiPresetState -BasePresetKey 'balanced' -Current $cur
+        $st.IsModified | Should Be $true
+        @($st.DifferingKeys) -join ',' | Should Be "AdvancedDebloatStandard:$($script:B1StdItem)"
+        # the same selection is still a difference against another preset: presets define none, switching keeps it
+        (Get-WinEaseGuiPresetState -BasePresetKey 'extreme' -Current $cur).IsModified | Should Be $true
+
+        $item = [string]$script:B1BothEngines.Item
+        $other = if ($script:B1BothEngines.Default -eq 'Rust') { 'PowerShell' } else { 'Rust' }
+        # engine picked for a target that is not selected: ignored (the build drops it)
+        $cur = Get-B1Current 'balanced'
+        $cur.DebloatEngineSelection = @{ $item = $other }
+        (Get-WinEaseGuiPresetState -BasePresetKey 'balanced' -Current $cur).IsModified | Should Be $false
+        # selected with the non-default engine: the item and the engine both differ
+        $list = if (@($script:WinEaseDebloatStandardItems) -contains $item) { 'AdvancedDebloatStandard' } else { 'AdvancedDebloatExperimental' }
+        $cur[$list] = @($item)
+        $st = Get-WinEaseGuiPresetState -BasePresetKey 'balanced' -Current $cur
+        (@($st.DifferingKeys) -contains "DebloatEngine:$item") | Should Be $true
+        (@($st.DifferingKeys) -contains "${list}:$item") | Should Be $true
+        # an explicitly written default engine equals "no entry"
+        $cur.DebloatEngineSelection = @{ $item = [string]$script:B1BothEngines.Default }
+        (@((Get-WinEaseGuiPresetState -BasePresetKey 'balanced' -Current $cur).DifferingKeys) -contains "DebloatEngine:$item") | Should Be $false
+    }
+
+    It "a user preset that defines Advanced Debloat items is the base: its own selection is not a difference" {
+        $script:BuiltInPresets['b1user'] = @{ TweakSettings = @{}; AdvancedDebloatStandard = @($script:B1StdItem); PayloadFormat = 'WIM' }
+        try {
+            $cur = Get-B1Current 'b1user'
+            @($cur.AdvancedDebloatStandard).Count | Should Be 1
+            (Get-WinEaseGuiPresetState -BasePresetKey 'b1user' -Current $cur).IsModified | Should Be $false
+            $cur.AdvancedDebloatStandard = @()
+            @((Get-WinEaseGuiPresetState -BasePresetKey 'b1user' -Current $cur).DifferingKeys) -join ',' | Should Be "AdvancedDebloatStandard:$($script:B1StdItem)"
+        } finally { $script:BuiltInPresets.Remove('b1user') }
+    }
+
+    It "round trip of a modified preset: PresetKey custom, BasePresetKey kept, every value preserved" {
+        $cur = Get-B1Current 'balanced'
+        $tk = @($cur.TweakSettings.Keys)[0]
+        $flipped = -not $cur.TweakSettings[$tk]
+        $cur.TweakSettings[$tk] = $flipped
+        $st = Get-WinEaseGuiPresetState -BasePresetKey 'balanced' -Current $cur
+        $ck = @($cur.Components.Keys)[0]
+        $std = @($script:B1StdItem)
+        $json = [ordered]@{
+            Success = $true; SourceDrive = 'E:\'; WorkDir = 'D:\w'; UserName = 'Tester'; ComputerName = '*'; Index = '1'; InjectDrivers = ''
+            PresetKey = $st.PresetKey; BasePresetKey = 'balanced'; DryRun = $false; UseVHDX = $false; ExportESDMode = $false; SplitWIMMode = $false
+            Components = $cur.Components; TweakSettings = $cur.TweakSettings
+            AdvancedDebloatStandard = $std; AdvancedDebloatExperimental = @(); DebloatEngineSelection = @{}; PhysicalDebloatConsent = $true
+        } | ConvertTo-Json -Depth 6 -Compress
+        $r = ConvertFrom-WinEaseWinUiResult -Result ($json | ConvertFrom-Json)
+        $r.PresetKey | Should Be 'custom'
+        $r.BasePresetKey | Should Be 'balanced'
+        $r.TweakSettings[$tk] | Should Be $flipped
+        $r.$ck | Should Be ([bool]$cur.Components[$ck])
+        @($r.AdvancedDebloatStandard) -join ',' | Should Be ($std -join ',')
+
+        $script:TweakSettings = [ordered]@{}
+        foreach ($k in $script:AllTweakDefs.Keys) { $script:TweakSettings[$k] = [bool]$script:AllTweakDefs[$k].Default }
+        $script:B1AppliedBase = $null
+        Apply-WinEaseGuiResult -GuiResult $r
+        $script:B1AppliedBase | Should Be 'balanced'                    # the base preset is applied first ...
+        $script:TweakSettings[$tk] | Should Be $flipped                 # ... and the hand edit wins over it
+        @($script:advancedDebloatStandard) -join ',' | Should Be ($std -join ',')
+        $script:selectedProfile | Should Be 'custom (based on balanced)'
+    }
+
+    It "an unmodified result keeps the preset key; Custom without a base is reported as GUI Selection" {
+        $r = ConvertFrom-WinEaseWinUiResult -Result (('{"Success":true,"PresetKey":"balanced","BasePresetKey":"balanced","TweakSettings":{}}') | ConvertFrom-Json)
+        Apply-WinEaseGuiResult -GuiResult $r
+        $script:selectedProfile | Should Be 'balanced'
+        $r = ConvertFrom-WinEaseWinUiResult -Result (('{"Success":true,"PresetKey":"Custom","BasePresetKey":null,"TweakSettings":{}}') | ConvertFrom-Json)
+        Apply-WinEaseGuiResult -GuiResult $r
+        $script:selectedProfile | Should Be 'GUI Selection'
+    }
+
+    It "the WinUI request presetState answers with the shared function" {
+        $cur = Get-B1Current 'balanced'
+        $cur.AdvancedDebloatStandard = @($script:B1StdItem)
+        $reply = Invoke-WinEaseWinUiRequest -Op 'presetState' -Arguments ([PSCustomObject]@{ BasePresetKey = 'balanced'; Config = ($cur | ConvertTo-Json -Depth 6 | ConvertFrom-Json) })
+        $reply.Data.IsModified | Should Be $true
+        $reply.Data.PresetKey | Should Be 'custom'
+        $reply.Data.BasePresetKey | Should Be 'balanced'
+        (@($reply.Data.DifferingKeys) -contains "AdvancedDebloatStandard:$($script:B1StdItem)") | Should Be $true
+        $reply2 = Invoke-WinEaseWinUiRequest -Op 'presetState' -Arguments ([PSCustomObject]@{ BasePresetKey = 'balanced'; Config = ((Get-B1Current 'balanced') | ConvertTo-Json -Depth 6 | ConvertFrom-Json) })
+        $reply2.Data.IsModified | Should Be $false
+        $reply2.Data.PresetKey | Should Be 'balanced'
+    }
+
+    It "WinForms: switching presets keeps the Advanced Debloat selection and engines; Revert to preset restores the preset" {
+        $gui = Show-WinEaseGUI -NoShow -InitialSettings @{ PresetKey = 'balanced'; TweakSettings = [ordered]@{} }
+        try {
+            $row = @($gui.GrdStd.Rows | Where-Object { [string]$_.Tag -eq $script:B1StdItem })[0]
+            $row.Cells['On'].Value = $true
+            $gui.Preset.SelectedIndex | Should Be ($gui.Preset.Items.Count - 1)   # a manual change selects Custom
+            # choose another preset: components/tweaks/payload follow it, the debloat selection stays exactly as it was
+            $gui.Preset.SelectedIndex = 2
+            @($gui.GrdStd.Rows | Where-Object { [bool]$_.Cells['On'].Value }).Count | Should Be 1
+            (Get-WinEaseGuiDraftConfig -Gui $gui).AdvancedDebloatStandard -join ',' | Should Be $script:B1StdItem
+            $v = Get-WinEaseGuiPresetValues -Name 'fat32'
+            foreach ($k in $v.Tweaks.Keys) { [bool]$gui.TweakCheckboxes[$k].Checked | Should Be ([bool]$v.Tweaks[$k]) }
+            # the state against the new base reports the leftover selection as a difference ...
+            $st = Get-WinEaseGuiPresetState -BasePresetKey 'fat32' -Current (Get-WinEaseGuiDraftConfig -Gui $gui)
+            @($st.DifferingKeys) -join ',' | Should Be "AdvancedDebloatStandard:$($script:B1StdItem)"
+            # ... and Revert to preset removes it and puts the combo back on the base preset
+            (Restore-WinEaseGuiBasePreset -Gui $gui) | Should Be $true
+            $gui.Preset.SelectedIndex | Should Be 2
+            @($gui.GrdStd.Rows | Where-Object { [bool]$_.Cells['On'].Value }).Count | Should Be 0
+            (Get-WinEaseGuiPresetState -BasePresetKey 'fat32' -Current (Get-WinEaseGuiDraftConfig -Gui $gui)).IsModified | Should Be $false
+            # a hand-edited tweak, then Revert
+            $tk = @($gui.TweakCheckboxes.Keys)[0]
+            $gui.TweakCheckboxes[$tk].Checked = -not $gui.TweakCheckboxes[$tk].Checked
+            (Get-WinEaseGuiPresetState -BasePresetKey 'fat32' -Current (Get-WinEaseGuiDraftConfig -Gui $gui)).IsModified | Should Be $true
+            $null = Restore-WinEaseGuiBasePreset -Gui $gui
+            (Get-WinEaseGuiPresetState -BasePresetKey 'fat32' -Current (Get-WinEaseGuiDraftConfig -Gui $gui)).IsModified | Should Be $false
+        } finally { $gui.Form.Dispose() }
     }
 }

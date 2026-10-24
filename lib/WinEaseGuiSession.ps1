@@ -141,7 +141,8 @@ function Apply-WinEaseGuiResult {
         $script:DryRun = $true
         $script:isDryRunMode = $true
     }
-    $script:selectedProfile = if ($GuiResult.PresetKey) { $GuiResult.PresetKey } elseif ($GuiResult.BasePresetKey) { "custom (based on $($GuiResult.BasePresetKey))" } else { "GUI Selection" }
+    # PresetKey 'custom' = the window was edited after the preset was chosen (Get-WinEaseGuiPresetState); the base preset stays in BasePresetKey
+    $script:selectedProfile = if ("$($GuiResult.PresetKey)" -ieq 'custom') { if ($GuiResult.BasePresetKey) { "custom (based on $($GuiResult.BasePresetKey))" } else { "GUI Selection" } } elseif ($GuiResult.PresetKey) { $GuiResult.PresetKey } elseif ($GuiResult.BasePresetKey) { "custom (based on $($GuiResult.BasePresetKey))" } else { "GUI Selection" }
     Write-Host "Applied GUI Configuration successfully ($($script:selectedProfile))." -ForegroundColor Green
 }
 

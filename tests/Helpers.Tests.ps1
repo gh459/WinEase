@@ -9,15 +9,25 @@ param()
 . (Join-Path -Path $PSScriptRoot -ChildPath '_TestCommon.ps1')
 
 
-Describe "WinEase builder - path safety guards (mock)" {
+# The helpers must be loaded before the first Describe: these tests call the real functions.
+# Deeper coverage (junctions, mounts, robocopy) is in FileSystemSafety.Tests.ps1.
+if (-not (Get-Command -Name Remove-WinEaseTreeRobust -ErrorAction SilentlyContinue)) {
+    . (Join-Path -Path $script:RepoRoot -ChildPath "WinEasehelpers.ps1")
+}
+
+Describe "WinEase builder - path safety guards" {
     It "rejects drive roots" {
-        $norm = 'C:'
-        ($norm.Length -le 3) | Should Be $true
+        foreach ($p in @('C:\', 'c:\', 'C:/', 'D:\')) {
+            Test-IsSafePathToDelete -Path $p | Should Be $false
+        }
+        { Assert-WinEaseDirectorySafety -Path 'C:\' -Operation 'Reset' } | Should Throw 'root or drive'
     }
     It "rejects host system directories" {
         $hostWin = [System.Environment]::GetFolderPath('Windows')
         $target = Join-Path -Path $hostWin -ChildPath "System32"
-        $target.StartsWith($hostWin + '\', [System.StringComparison]::OrdinalIgnoreCase) | Should Be $true
+        Test-IsSafePathToDelete -Path $hostWin | Should Be $false
+        Test-IsSafePathToDelete -Path $target | Should Be $false
+        { Assert-WinEaseDirectorySafety -Path $target -Operation 'Reset' } | Should Throw 'protected host'
     }
 }
 
@@ -1759,8 +1769,9 @@ Describe "WinEase helpers - split module layout (R2)" {
             $n.Parent -is [System.Management.Automation.Language.NamedBlockAst]
         }, $true))
         # 42 functions moved out of WinEasehelpers.ps1 plus the 7 functions that
-        # already lived in lib\WinEaseFileSystem.ps1.
-        $functions.Count | Should Be 49
+        # already lived in lib\WinEaseFileSystem.ps1; B2 added 7 dependency display helpers
+        # (Get-WinEaseDependencyStringDefaults/String/Field/View/Review, New-...Result, Format-...ItemLine).
+        $functions.Count | Should Be 56
         $duplicates = @($functions | Group-Object Name | Where-Object Count -gt 1)
         $duplicates.Count | Should Be 0
         @($ast.FindAll({

@@ -47,27 +47,16 @@ function ConvertTo-WinEaseHashtable {
     return $InputObject
 }
 
-# Built-in presets resolved the way the window applies them (Set-WinEaseGuiPreset): every component the preset
-# names, every tweak (preset TweakSettings, then a top-level preset key, then the tweak default), payload format
+# Built-in presets resolved the way the window applies them (Get-WinEaseGuiPresetValues in lib\WinEaseGuiCore.ps1,
+# shared with the WinForms window): every component the preset names, every tweak, payload format and the
+# Advanced Debloat lists / engines the preset defines (none of the built-in presets define any)
 function Get-WinEaseWinUiPresets {
     $list = @(
         foreach ($pKey in @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')) {
-            $pObj = Get-WinEasePreset -Name $pKey
-            if (-not $pObj) { continue }
-            $components = [ordered]@{}
-            foreach ($cd in $script:ComponentDefs.Values) {
-                if ($cd.Gui -and $pObj.Contains($cd.Key)) { $components[$cd.Key] = [bool]$pObj[$cd.Key] }
-            }
-            $pTweaks = $pObj.TweakSettings
-            $tweaks = [ordered]@{}
-            foreach ($tk in $script:AllTweakDefs.Keys) {
-                if ($pTweaks -and $pTweaks.Contains($tk)) { $tweaks[$tk] = [bool]$pTweaks[$tk] }
-                elseif ($pObj.Contains($tk)) { $tweaks[$tk] = [bool]$pObj[$tk] }
-                else { $tweaks[$tk] = [bool]$script:AllTweakDefs[$tk].Default }
-            }
-            $fmt = "$($pObj.PayloadFormat)".ToUpper()
-            if ($fmt -notin @('ESD', 'SWM')) { $fmt = 'WIM' }
-            [ordered]@{ Key = $pKey; Components = $components; Tweaks = $tweaks; PayloadFormat = $fmt }
+            $v = Get-WinEaseGuiPresetValues -Name $pKey
+            if (-not $v) { continue }
+            $v.Key = $pKey
+            $v
         }
     )
     return ,$list
@@ -177,10 +166,29 @@ function Invoke-WinEaseWinUiRequest {
             return @{}
         }
         'dependencies' {
-            $res = Test-WinEaseDependencies -Config $a.Config
-            $txt = Format-WinEaseDependencyReport -Result $res
+            # Same library entry point as the WinForms window; recomputed from the config sent with this request
+            $rev = Get-WinEaseDependencyReview -Config $a.Config
+            $txt = $rev.Text
             if (-not $txt) { $txt = Get-WinEaseUiString 'Msg.Dependency.None' }
-            return @{ Title = (Get-WinEaseUiString 'Msg.Dependency.Title'); Text = "$txt"; Data = @{ HasIssues = [bool]$res.HasIssues } }
+            $row = { param($i) @{ Kind = "$($i.Kind)"; Severity = "$($i.Severity)"; Glyph = "$($i.Glyph)"; Label = "$($i.Label)"; Text = "$($i.Text)"; KeptFeature = [bool]$i.KeptFeature; AffectedFeatures = @($i.AffectedFeatures | Where-Object { $_ } | ForEach-Object { "$_" }) } }
+            $keptCount = @($rev.KeptFeature).Count
+            return @{
+                Title = (Get-WinEaseUiString 'Msg.Dependency.Title'); Text = "$txt"
+                Data = @{
+                    HasIssues    = [bool]$rev.HasIssues
+                    HasCritical  = [bool]$rev.HasCritical
+                    Critical     = @($rev.Critical | ForEach-Object { & $row $_ })
+                    Impact       = @($rev.Impact | ForEach-Object { & $row $_ })
+                    CriticalText = "$($rev.CriticalText)"
+                    ImpactText   = "$($rev.ImpactText)"
+                    KeptWarning  = $(if ($keptCount -gt 0) { Get-WinEaseUiString 'Dep.Kept.Warning' -Format $keptCount } else { '' })
+                }
+            }
+        }
+        'presetState' {
+            # Is the window still the base preset? Rules: Get-WinEaseGuiPresetState (lib\WinEaseGuiCore.ps1)
+            $st = Get-WinEaseGuiPresetState -BasePresetKey "$($a.BasePresetKey)" -Current $a.Config
+            return @{ Data = @{ BasePresetKey = $st.BasePresetKey; Known = [bool]$st.Known; IsModified = [bool]$st.IsModified; State = "$($st.State)"; PresetKey = "$($st.PresetKey)"; DifferingKeys = @($st.DifferingKeys) } }
         }
         'presetDiff' {
             $resolved = @()

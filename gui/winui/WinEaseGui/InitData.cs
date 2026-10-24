@@ -8,7 +8,10 @@ namespace WinEaseGui;
 
 public sealed record TweakDef(string Key, string Category, bool Default, string Description, string DescriptionJa);
 public sealed record ComponentDef(string Key, string Text, string Description, bool Default, string Tab, int Order);
-public sealed record PresetDef(string Key, Dictionary<string, bool> Components, Dictionary<string, bool> Tweaks, string PayloadFormat);
+// Debloat* = the Advanced Debloat selection the preset itself defines (none of the built-in presets define any);
+// "Revert to preset" restores it, switching presets leaves the window's selection alone.
+public sealed record PresetDef(string Key, Dictionary<string, bool> Components, Dictionary<string, bool> Tweaks, string PayloadFormat,
+    List<string> DebloatStandard, List<string> DebloatExperimental, Dictionary<string, string> DebloatEngines);
 
 // The execution engine of one Advanced Debloat target (config\schema.psd1 -> DebloatEngines)
 public sealed record EngineDef(List<string> Engines, string Default);
@@ -48,7 +51,10 @@ public sealed class InitData
         }
         foreach (var p in Arr(o["Presets"]))
         {
-            Presets.Add(new PresetDef(Str(p?["Key"]), BoolMap(p?["Components"]), BoolMap(p?["Tweaks"]), Str(p?["PayloadFormat"], "WIM")));
+            var presetEngines = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (p?["DebloatEngineSelection"] is JsonObject pe) foreach (var kv in pe) presetEngines[kv.Key] = Str(kv.Value);
+            Presets.Add(new PresetDef(Str(p?["Key"]), BoolMap(p?["Components"]), BoolMap(p?["Tweaks"]), Str(p?["PayloadFormat"], "WIM"),
+                StrList(p?["AdvancedDebloatStandard"]), StrList(p?["AdvancedDebloatExperimental"]), presetEngines));
         }
         PresetNames = StrList(o["PresetNames"]);
         if (PresetNames.Count == 0) PresetNames = Presets.Select(p => p.Key).ToList();

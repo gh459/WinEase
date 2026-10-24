@@ -2105,3 +2105,125 @@ Describe "WinEase builder - Export-WinEaseProfile edge cases" {
         }
     }
 }
+
+# --- B2: unified dependency / conflict / Unknown display ---
+Describe "WinEase dependency display model (B2)" {
+    $emptyLists = @{ TweakSettings = @{}; AdvancedDebloatStandard = @(); AdvancedDebloatExperimental = @() }
+
+    It "treats a custom tweak with unspecified Impact as Unknown and Critical, labelled as not verified (never safe)" {
+        $saved = $script:UserTweakDefs
+        try {
+            $script:UserTweakDefs = [ordered]@{ B2NoImpact = @{ Key = 'B2NoImpact' } }
+            $cfg = $emptyLists.Clone(); $cfg['TweakSettings'] = @{ B2NoImpact = $true }
+            $rev = Get-WinEaseDependencyReview -Config $cfg
+            $rev.HasCritical | Should Be $true
+            $u = @($rev.Critical | Where-Object { $_.Source -eq 'B2NoImpact' })
+            $u.Count | Should Be 1
+            $u[0].Kind | Should Be 'Unknown'
+            $u[0].Severity | Should Be 'Critical'
+            $u[0].Glyph | Should Be '[?]'
+            $u[0].Label | Should Match 'not verified'
+            $u[0].Label | Should Not Match '^(SAFE|OK)'
+            @($rev.Impact | Where-Object { $_.Source -eq 'B2NoImpact' }).Count | Should Be 0
+        } finally { $script:UserTweakDefs = $saved }
+    }
+
+    It "reports a conflict as Critical with a glyph and label, and flags a removed kept feature" {
+        $cfg = $emptyLists.Clone(); $cfg['KeepBluetooth'] = $true; $cfg['AdvancedDebloatStandard'] = @('Remove Bluetooth stack (service + binary) [20-40MB]')
+        $rev = Get-WinEaseDependencyReview -Config $cfg
+        $c = @($rev.Critical | Where-Object { $_.Kind -eq 'Conflict' -and $_.Source -eq 'KeepBluetooth' })
+        $c.Count | Should Be 1
+        $c[0].Severity | Should Be 'Critical'
+        $c[0].Glyph | Should Be '[X]'
+        $c[0].Label | Should Be 'CONFLICT'
+        $c[0].KeptFeature | Should Be $true
+        @($rev.KeptFeature).Count | Should BeGreaterThan 0
+        $rev.CriticalText | Should Match 'removes a feature you chose to keep'
+    }
+
+    It "HasCritical is true for conflicts and Unknowns only, never for plain Impact" {
+        $none = Test-WinEaseDependencies -Config $emptyLists
+        $none.HasIssues | Should Be $false
+        $none.HasCritical | Should Be $false
+
+        $impactOnly = $emptyLists.Clone(); $impactOnly['RemoveStore'] = $true
+        $r = Test-WinEaseDependencies -Config $impactOnly
+        $r.HasIssues | Should Be $true
+        $r.HasCritical | Should Be $false
+        $rev = Get-WinEaseDependencyReview -Config $impactOnly
+        @($rev.Critical).Count | Should Be 0
+        @($rev.Impact).Count | Should BeGreaterThan 0
+        @($rev.Impact | Where-Object { $_.Severity -ne 'Impact' -or $_.Glyph -ne '[i]' }).Count | Should Be 0
+
+        $unknown = $emptyLists.Clone(); $unknown['RemoveDrivers'] = $true
+        (Test-WinEaseDependencies -Config $unknown).HasCritical | Should Be $true
+
+        $conflict = $emptyLists.Clone(); $conflict['WSLSupport'] = $true; $conflict['NoHypervisor'] = $true
+        (Test-WinEaseDependencies -Config $conflict).HasCritical | Should Be $true
+    }
+
+    It "recomputes from the CURRENT selection every time (no stale warnings)" {
+        $bad = $emptyLists.Clone(); $bad['WSLSupport'] = $true; $bad['NoHypervisor'] = $true; $bad['RemoveStore'] = $true
+        $good = $emptyLists.Clone()
+        $a1 = Get-WinEaseDependencyReview -Config $bad
+        $a1.HasCritical | Should Be $true
+        $b = Get-WinEaseDependencyReview -Config $good
+        $b.HasIssues | Should Be $false
+        $b.HasCritical | Should Be $false
+        @($b.Critical).Count | Should Be 0
+        @($b.Impact).Count | Should Be 0
+        $b.Text | Should Be ''
+        # deselecting only the conflict cause keeps the unrelated impact and drops the conflict
+        $partial = $bad.Clone(); $partial['NoHypervisor'] = $false
+        $p = Get-WinEaseDependencyReview -Config $partial
+        @($p.Critical | Where-Object { $_.Source -eq 'WSLSupport' }).Count | Should Be 0
+        @($p.Impact | Where-Object { $_.Source -eq 'RemoveStore' }).Count | Should Be 1
+        (Get-WinEaseDependencyReview -Config $bad).HasCritical | Should Be $true
+    }
+
+    It "keeps the legacy Format-WinEaseDependencyReport headings in English" {
+        $bad = $emptyLists.Clone(); $bad['WSLSupport'] = $true; $bad['NoHypervisor'] = $true
+        $bad['RemoveStore'] = $true; $bad['RemoveDrivers'] = $true
+        $txt = Format-WinEaseDependencyReport -Result (Test-WinEaseDependencies -Config $bad)
+        $txt | Should Match '\[DEPENDENCY CONFLICT\]'
+        $txt | Should Match '\[DEPENDENCY UNKNOWN / .*\]'
+        $txt | Should Match '\[FEATURE IMPACT\]'
+    }
+
+    It "every dependency string key exists in en.json and ja.json, and the English fallback matches en.json" {
+        $read = {
+            param($lang)
+            $j = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\ui-strings\$lang.json"), (New-Object System.Text.UTF8Encoding($false))) | ConvertFrom-Json
+            $t = @{}
+            foreach ($p in $j.PSObject.Properties) { $t[$p.Name] = [string]$p.Value }
+            $t
+        }
+        $en = & $read 'en'
+        $ja = & $read 'ja'
+        $defaults = Get-WinEaseDependencyStringDefaults
+        $keys = @($defaults.Keys)
+        $keys.Count | Should BeGreaterThan 10
+        foreach ($k in $keys) {
+            $en.ContainsKey($k) | Should Be $true
+            $ja.ContainsKey($k) | Should Be $true
+            $en[$k] | Should Be $defaults[$k]
+        }
+        # GUI-only keys (dialog sections / acknowledgement)
+        foreach ($k in 'Dep.Section.Critical', 'Dep.Section.Impact', 'Dep.Ack.Title', 'Dep.Ack.Intro', 'Dep.Ack.Checkbox', 'Dep.Ack.Continue', 'Dep.Kept.Warning') {
+            $en.ContainsKey($k) | Should Be $true
+            $ja.ContainsKey($k) | Should Be $true
+        }
+        # no hard-coded bilingual heading left in the library
+        [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseDependencies.ps1')) | Should Not Match ([regex]::Escape([string][char]0x4E0D))
+    }
+
+    It "both GUIs call the same library function (Get-WinEaseDependencyReview) and not the raw checker" {
+        foreach ($rel in 'gui\WinEaseGui.ps1', 'gui\WinEaseWinUiHost.ps1') {
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:RepoRoot $rel), [ref]$null, [ref]$null)
+            $names = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { $_.GetCommandName() })
+            ($names -contains 'Get-WinEaseDependencyReview') | Should Be $true
+            ($names -contains 'Test-WinEaseDependencies') | Should Be $false
+            ($names -contains 'Format-WinEaseDependencyReport') | Should Be $false
+        }
+    }
+}

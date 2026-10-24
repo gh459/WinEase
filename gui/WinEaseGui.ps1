@@ -374,6 +374,54 @@ function Show-WinEaseGuiMessage {
 }
 
 
+# Text of a dependency review for the Dependencies dialog: Critical block (with its section heading and
+# kept-feature warning) first, then plain impact; every line carries a [X] / [?] / [i] glyph and a text label.
+function Format-WinEaseGuiDependencyText {
+    param([Parameter(Mandatory = $true)]$Review, [switch]$CriticalOnly)
+    $lines = New-Object System.Collections.Generic.List[string]
+    $fmt = {
+        param($items)
+        foreach ($i in $items) {
+            $lines.Add("$($i.Glyph) $($i.Label): $($i.Text)")
+            foreach ($af in @($i.AffectedFeatures | Where-Object { $_ })) { $lines.Add("      * $af") }
+        }
+    }
+    if (@($Review.Critical).Count -gt 0) {
+        $lines.Add((Get-WinEaseUiString 'Dep.Section.Critical'))
+        $kept = @($Review.KeptFeature).Count
+        if ($kept -gt 0) { $lines.Add((Get-WinEaseUiString 'Dep.Kept.Warning' -Format $kept)) }
+        & $fmt $Review.Critical
+    }
+    if (-not $CriticalOnly -and @($Review.Impact).Count -gt 0) {
+        if ($lines.Count -gt 0) { $lines.Add('') }
+        $lines.Add((Get-WinEaseUiString 'Dep.Section.Impact'))
+        & $fmt $Review.Impact
+    }
+    return ($lines -join "`r`n")
+}
+
+# Explicit acknowledgement for Critical dependency items: a dialog of its own where Continue stays
+# disabled until the checkbox is ticked (a plain Yes/No box would be too easy to click through).
+function Confirm-WinEaseGuiCriticalDependency {
+    param([Parameter(Mandatory = $true)]$Review)
+    $dlg = New-WinEaseForm -Text (Get-WinEaseUiString 'Dep.Ack.Title') -Width 640 -Height 420 -ClientSize -FixedDialog -NoMaximize -NoMinimize
+    try {
+        [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Dep.Ack.Intro') -X 12 -Y 10 -Width 616 -Height 40 -Parent $dlg)
+        [void](New-WinEaseTextBox -X 12 -Y 54 -Width 616 -Height 280 -Multiline -ReadOnly -ScrollBars Vertical -WordWrap $true `
+            -Text (Format-WinEaseGuiDependencyText -Review $Review -CriticalOnly) -Parent $dlg)
+        $chk = New-WinEaseCheckBox -Text (Get-WinEaseUiString 'Dep.Ack.Checkbox') -X 12 -Y 344 -Width 616 -Height 24 -Parent $dlg
+        $ok = New-WinEaseButton -Text (Get-WinEaseUiString 'Dep.Ack.Continue') -X 388 -Y 378 -Width 150 -Height 32 -Parent $dlg
+        $ok.Enabled = $false
+        $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $cancel = New-WinEaseButton -Text (Get-WinEaseUiString 'Button.Cancel') -X 546 -Y 378 -Width 82 -Height 32 -Parent $dlg
+        $cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $chk.Add_CheckedChanged({ $ok.Enabled = $chk.Checked }.GetNewClosure())
+        $dlg.AcceptButton = $null
+        $dlg.CancelButton = $cancel
+        return ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK)
+    } finally { $dlg.Dispose() }
+}
+
 function Confirm-WinEaseGuiAction {
     param([string]$Message, [string]$Title = (Get-WinEaseUiString 'Msg.Title.Confirm'))
     $ans = [System.Windows.Forms.MessageBox]::Show($Message, $Title,
@@ -515,7 +563,8 @@ function New-WinEaseDebloatGrid {
         }
     })
     $grid.Add_CellValueChanged({
-        $e = $args[0]
+        # $args[0] is the sender, $args[1] the DataGridViewCellEventArgs
+        $e = $args[1]
         if (-not $e -or $e.RowIndex -lt 0) { return }
         $defs = Get-WinEaseDebloatEngineDefs
         if ($e.ColumnIndex -eq 0) {
@@ -658,44 +707,66 @@ function Update-WinEaseGuiEstimate {
     } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
 
-# Apply built-in preset number -PresetIndex (order of $Gui.PresetKeyMap) to every checkbox
+# Apply built-in preset number -PresetIndex (order of $Gui.PresetKeyMap) to every checkbox.
+# Values come from Get-WinEaseGuiPresetValues (lib\WinEaseGuiCore.ps1), shared with the WinUI window.
+# Advanced Debloat items and engines are not touched (see docs\GUI_PRESET_STATE.md); Revert does that.
 function Set-WinEaseGuiPreset {
     param([hashtable]$Gui, [int]$PresetIndex)
     $presetKeyMap = $Gui.PresetKeyMap
     $script:updatingPreset = $true
-    if ($PresetIndex -ge 0 -and $PresetIndex -lt $presetKeyMap.Count) {
-        $pKey = $presetKeyMap[$PresetIndex]
-        $pObj = Get-WinEasePreset -Name $pKey
-        if ($pObj) {
-            # Update component checkboxes
-            foreach ($k in $Gui.ComponentCheckboxes.Keys) {
-                if ($pObj.Contains($k)) {
-                    $Gui.ComponentCheckboxes[$k].Checked = [bool]$pObj[$k]
+    try {
+        if ($PresetIndex -ge 0 -and $PresetIndex -lt $presetKeyMap.Count) {
+            $pKey = $presetKeyMap[$PresetIndex]
+            $pv = Get-WinEaseGuiPresetValues -Name $pKey
+            if ($pv) {
+                foreach ($k in $Gui.ComponentCheckboxes.Keys) {
+                    if ($pv.Components.Contains($k)) { $Gui.ComponentCheckboxes[$k].Checked = [bool]$pv.Components[$k] }
                 }
-            }
-            # Update tweak checkboxes
-            $pTweaks = if ($pObj.TweakSettings) { $pObj.TweakSettings } else { $null }
-            foreach ($tk in $Gui.TweakCheckboxes.Keys) {
-                if ($pTweaks -and $pTweaks.Contains($tk)) {
-                    $Gui.TweakCheckboxes[$tk].Checked = [bool]$pTweaks[$tk]
-                } elseif ($pObj.Contains($tk)) {
-                    $Gui.TweakCheckboxes[$tk].Checked = [bool]$pObj[$tk]
-                } else {
-                    $Gui.TweakCheckboxes[$tk].Checked = [bool]$script:AllTweakDefs[$tk].Default
+                foreach ($tk in $Gui.TweakCheckboxes.Keys) {
+                    if ($pv.Tweaks.Contains($tk)) { $Gui.TweakCheckboxes[$tk].Checked = [bool]$pv.Tweaks[$tk] }
+                    else { $Gui.TweakCheckboxes[$tk].Checked = [bool]$script:AllTweakDefs[$tk].Default }
                 }
+                if ($pv.PayloadFormat -eq 'ESD') { $Gui.RadESD.Checked = $true }
+                elseif ($pv.PayloadFormat -eq 'SWM') { $Gui.RadSWM.Checked = $true }
+                else { $Gui.RadWIM.Checked = $true }
+                $script:guiBasePresetKey = $pKey
             }
-            # Update payload radio
-            $fmt = "$($pObj.PayloadFormat)".ToUpper()
-            if ($fmt -eq 'ESD') { $Gui.RadESD.Checked = $true }
-            elseif ($fmt -eq 'SWM') { $Gui.RadSWM.Checked = $true }
-            else { $Gui.RadWIM.Checked = $true }
-            $script:guiBasePresetKey = $pKey
         }
-    }
-    $script:updatingPreset = $false
+    } finally { $script:updatingPreset = $false }
     Update-WinEaseGuiEstimate -Gui $Gui
 }
 
+# "Revert to preset": every preset-controlled value goes back to the base preset the window started
+# from, including the Advanced Debloat selection and engines (a preset that defines none clears them).
+# Returns $false when there is no base preset (Custom from the start).
+function Restore-WinEaseGuiBasePreset {
+    param([hashtable]$Gui)
+    $base = "$script:guiBasePresetKey"
+    $idx = if ($base) { [array]::IndexOf(@($Gui.PresetKeyMap), $base) } else { -1 }
+    if ($idx -lt 0) { return $false }
+    $pv = Get-WinEaseGuiPresetValues -Name $base
+    if (-not $pv) { return $false }
+    $script:updatingPreset = $true
+    try { $Gui.Preset.SelectedIndex = $idx } finally { $script:updatingPreset = $false }
+    Set-WinEaseGuiPreset -Gui $Gui -PresetIndex $idx
+    $script:updatingPreset = $true
+    try {
+        $defs = Get-WinEaseDebloatEngineDefs
+        foreach ($pair in @(@($Gui.GrdStd, $pv.AdvancedDebloatStandard), @($Gui.GrdExp, $pv.AdvancedDebloatExperimental))) {
+            $grid = $pair[0]
+            if (-not $grid) { continue }
+            for ($i = 0; $i -lt $grid.Rows.Count; $i++) {
+                $row = $grid.Rows[$i]
+                $item = [string]$row.Tag
+                $row.Cells['On'].Value = (@($pair[1]) -contains $item)
+                $row.Cells['Engine'].Value = (Get-WinEaseDebloatEngine -Item $item -EngineDefs $defs -EngineSelection $pv.DebloatEngineSelection)
+                Update-WinEaseDebloatRowState -Grid $grid -RowIndex $i -EngineDefs $defs
+            }
+        }
+    } finally { $script:updatingPreset = $false }
+    Update-WinEaseGuiEstimate -Gui $Gui
+    return $true
+}
 
 # Read-only, scrollable text dialog (MessageBox truncates long results)
 function Show-WinEaseGuiTextDialog {
@@ -947,7 +1018,7 @@ function New-WinEaseMediaTab {
     # Preset Group
     $grpPreset = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'Media.Group.Preset') -X 15 -Y 205 -Width 835 -Height 75 -Parent $tabMedia
 
-    $cmbPreset = New-WinEaseComboBox -DropList -X 15 -Y 28 -Width 805 -BackColor $script:WinEaseGuiColors.Input -ForeColor ([System.Drawing.Color]::White) -Parent $grpPreset -Items @(
+    $cmbPreset = New-WinEaseComboBox -DropList -X 15 -Y 28 -Width 610 -BackColor $script:WinEaseGuiColors.Input -ForeColor ([System.Drawing.Color]::White) -Parent $grpPreset -Items @(
         (Get-WinEaseUiString 'Media.Preset.Extreme'),
         (Get-WinEaseUiString 'Media.Preset.Balanced'),
         (Get-WinEaseUiString 'Media.Preset.Fat32'),
@@ -957,6 +1028,15 @@ function New-WinEaseMediaTab {
         (Get-WinEaseUiString 'Media.Preset.Custom')
     )
     $gui.Preset = $cmbPreset
+    # Revert to preset: every preset-controlled value (and the Advanced Debloat selection) back to the base preset
+    $revertTip = New-Object System.Windows.Forms.ToolTip
+    $btnRevert = New-WinEaseButton -Text (Get-WinEaseUiString 'Button.RevertPreset') -X 635 -Y 26 -Width 185 -Height 28 -Parent $grpPreset -OnClick {
+        $g = $this.FindForm().Tag
+        if (-not (Restore-WinEaseGuiBasePreset -Gui $g)) {
+            Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.RevertPreset.NoBase') -Title (Get-WinEaseUiString 'Button.RevertPreset') -Kind Info
+        }
+    }
+    $revertTip.SetToolTip($btnRevert, (Get-WinEaseUiString 'Button.RevertPreset.Tooltip'))
 
     # Payload Format Group
     $grpPayload = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'Media.Group.Payload') -X 15 -Y 290 -Width 835 -Height 95 -Parent $tabMedia
@@ -1781,10 +1861,10 @@ function Initialize-WinEaseGuiContent {
         $g = $f.Tag
         try {
             $cfg = Get-WinEaseGuiDraftConfig -Gui $g
-            $res = Test-WinEaseDependencies -Config $cfg
-            $txt = Format-WinEaseDependencyReport -Result $res
+            $rev = Get-WinEaseDependencyReview -Config $cfg
+            $txt = Format-WinEaseGuiDependencyText -Review $rev
             if (-not $txt) { $txt = Get-WinEaseUiString 'Msg.Dependency.None' }
-            Show-WinEaseGuiMessage -Text $txt -Title (Get-WinEaseUiString 'Msg.Dependency.Title') -Kind Info
+            Show-WinEaseGuiMessage -Text $txt -Title (Get-WinEaseUiString 'Msg.Dependency.Title') -Kind $(if ($rev.HasCritical) { 'Warning' } else { 'Info' })
         } catch {
             Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.Dependency.Failed' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'Msg.Dependency.Title') -Kind Error
         }
@@ -1796,10 +1876,13 @@ function Initialize-WinEaseGuiContent {
         # Dependency / feature-impact pre-check before starting the build
         try {
             $depCfg = Get-WinEaseGuiDraftConfig -Gui $g
-            $depResult = Test-WinEaseDependencies -Config $depCfg
-            if ($depResult.HasIssues) {
-                $depText = Format-WinEaseDependencyReport -Result $depResult
-                $msg = Get-WinEaseUiString 'Msg.Dependency.Confirm' -Format $depText
+            $depReview = Get-WinEaseDependencyReview -Config $depCfg
+            # Critical (conflict / Unknown) needs its own explicit acknowledgement, separate from the plain-impact confirm
+            if ($depReview.HasCritical) {
+                if (-not (Confirm-WinEaseGuiCriticalDependency -Review $depReview)) { return }
+            }
+            if (@($depReview.Impact).Count -gt 0) {
+                $msg = Get-WinEaseUiString 'Msg.Dependency.Confirm' -Format $depReview.ImpactText
                 if (-not (Confirm-WinEaseGuiAction -Message $msg -Title (Get-WinEaseUiString 'Msg.Dependency.Title'))) { return }
             }
         } catch {
@@ -1853,7 +1936,15 @@ function Initialize-WinEaseGuiContent {
     })
 
     foreach ($r in @($Gui.RadWIM, $Gui.RadESD, $Gui.RadSWM)) {
-        $r.Add_CheckedChanged({ Update-WinEaseGuiEstimate -Gui $this.FindForm().Tag })
+        $r.Add_CheckedChanged({
+            $g = $this.FindForm().Tag
+            # Choosing a payload format by hand is a change from the preset, like every other switch
+            if ($this.Checked -and -not $script:updatingPreset -and $g.Preset -and $g.Preset.Items.Count -gt 0) {
+                $script:updatingPreset = $true
+                try { $g.Preset.SelectedIndex = ($g.Preset.Items.Count - 1) } finally { $script:updatingPreset = $false }
+            }
+            Update-WinEaseGuiEstimate -Gui $g
+        })
     }
     Update-WinEaseGuiEstimate -Gui $Gui
 

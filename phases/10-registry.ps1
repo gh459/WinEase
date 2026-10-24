@@ -100,8 +100,12 @@ Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Lsa" -Nam
 if (Test-TweakEnabled 'ConfigureWinlogon' $false) {
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "AutoAdminLogon" -Type REG_SZ -Data "1"
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "DefaultUserName" -Type REG_SZ -Data "$UserName"
-    $defPassVal = if ($null -ne $script:UserPassword -and $script:UserPassword -ne '') { $script:UserPassword } else { '""' }
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "DefaultPassword" -Type REG_SZ -Data "$defPassVal"
+    # The password is written through the .NET registry API, not reg.exe: a native command line
+    # cannot carry an arbitrary password (quotes, backslashes) and would expose it to argument parsing.
+    $defPassVal = if ($null -ne $script:UserPassword -and $script:UserPassword -ne '') { [string]$script:UserPassword } else { '' }
+    if (-not (Set-WinEaseRegistrySecretString -Key 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name 'DefaultPassword' -Value $defPassVal)) {
+        Write-Warning "The Winlogon DefaultPassword could not be written; the automatic logon may not work."
+    }
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "ForceAutoLogon" -Type REG_SZ -Data "1"
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Policies\Microsoft\Windows\System" -Name "AllowDomainDelayLock" -Type REG_DWORD -Data '1'
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "FilterAdministratorToken" -Type REG_DWORD -Data '0'
