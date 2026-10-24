@@ -1,0 +1,97 @@
+name: Integration VM (manual)
+
+# UNVERIFIED SCAFFOLD (spec PR F2). Real ISO build + Hyper-V VM boot on a dedicated self-hosted runner.
+# Independent of ci.yml: never triggered by pull requests, never a required check.
+# The weekly schedule is a no-op unless the repository variable INTEGRATION_ENABLED is 'true'
+# (and INTEGRATION_ISO_PATH names the ISO on the runner). See docs/INTEGRATION_TESTING.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      iso_path:
+        description: Path of the Windows 11 ISO on the runner (empty = repository variable INTEGRATION_ISO_PATH)
+        required: false
+        type: string
+      edition_index:
+        description: Image/edition index passed to the builder (empty = builder default)
+        required: false
+        type: string
+      profile:
+        description: WinEase profile
+        required: false
+        type: choice
+        default: balanced
+        options: [balanced, extreme, none, vm]
+      windows_build:
+        description: Label of the source Windows build, recorded in the report only (e.g. 26100.1742 24H2)
+        required: false
+        type: string
+        default: unspecified
+  schedule:
+    - cron: '23 3 * * 0'
+
+concurrency:
+  group: integration-vm
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  integration:
+    name: ISO build + VM boot
+    # schedule: only when explicitly enabled; manual dispatch always runs.
+    if: github.event_name == 'workflow_dispatch' || vars.INTEGRATION_ENABLED == 'true'
+    runs-on: [self-hosted, windows, hyperv]
+    timeout-minutes: 240
+    permissions:
+      contents: read
+    env:
+      ISO_PATH: ${{ inputs.iso_path || vars.INTEGRATION_ISO_PATH }}
+      EDITION_INDEX: ${{ inputs.edition_index }}
+      WINEASE_PROFILE: ${{ inputs.profile || 'balanced' }}
+      WINDOWS_BUILD: ${{ inputs.windows_build || 'scheduled' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set work and artifact directories
+        # runner.* is not available in job-level env, so the paths are derived from RUNNER_TEMP here.
+        shell: powershell
+        run: |
+          "ARTIFACT_DIR=$env:RUNNER_TEMP\winease-integration-artifacts" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "WORK_DIR=$env:RUNNER_TEMP\winease-integration-work" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Require an ISO path
+        shell: powershell
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:ISO_PATH)) { throw 'No ISO path: set the iso_path input or the INTEGRATION_ISO_PATH repository variable.' }
+
+      - name: Run integration test
+        id: run
+        shell: powershell
+        run: |
+          .\tools\Test-WinEaseIntegration.ps1 -IsoPath $env:ISO_PATH -Profile $env:WINEASE_PROFILE -Index $env:EDITION_INDEX `
+            -WindowsBuild $env:WINDOWS_BUILD -WorkDir $env:WORK_DIR -ArtifactDir $env:ARTIFACT_DIR
+          if ($LASTEXITCODE -ne 0) { throw "Integration test failed with exit code $LASTEXITCODE" }
+
+      - name: Scrub artifacts for secrets
+        # Runs even after a failed test. Offending files are deleted and the step fails, so the
+        # upload below (which needs this step to succeed) can never publish them.
+        id: scrub
+        if: always()
+        shell: powershell
+        run: |
+          if (-not (Test-Path -LiteralPath $env:ARTIFACT_DIR)) { Write-Host 'No artifact directory, nothing to scrub.'; exit 0 }
+          .\tools\Test-WinEaseIntegration.ps1 -ScrubOnly -ArtifactDir $env:ARTIFACT_DIR
+          if ($LASTEXITCODE -ne 0) { throw 'Secret scrub failed; artifacts are not uploaded.' }
+
+      - name: Upload logs, report and result
+        if: always() && steps.scrub.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-vm-${{ github.run_id }}
+          path: ${{ runner.temp }}\winease-integration-artifacts
+          if-no-files-found: warn
+          retention-days: 14
