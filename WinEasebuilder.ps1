@@ -591,7 +591,7 @@ $script:MountDirectoryPrefix = $null
 
 # Low-level DISM mount / offline hive, offline registry access (reg.exe wrapper, config\registry tables), WIM, telemetry and GUI-session helpers (function definitions only).
 # WinEaseFileSystem.ps1 is loaded by WinEasehelpers.ps1 with the other split helper modules.
-foreach ($WinEaseLibFile in @('WinEaseMount.ps1', 'WinEaseRegistry.ps1', 'WinEaseWim.ps1', 'WinEaseTelemetry.ps1', 'WinEaseGuiSession.ps1')) {
+foreach ($WinEaseLibFile in @('WinEaseMount.ps1', 'WinEaseRegistry.ps1', 'WinEaseWim.ps1', 'WinEaseTelemetry.ps1', 'WinEaseGuiSession.ps1', 'WinEaseBuildPlan.ps1')) {
     . (Join-Path -Path (Join-Path -Path $scriptDirEarly -ChildPath "lib") -ChildPath $WinEaseLibFile)
 }
 
@@ -1905,6 +1905,12 @@ if (Test-Path -LiteralPath $configSnapshotPath) {
     Write-Host "  - Config Snapshot:         $configSnapshotPath" -ForegroundColor DarkCyan
 }
 Write-Host "  - Payload Format:          $(if ($exportESDMode) { 'install.esd (LZMS)' } elseif ($splitWIMMode) { 'install.swm (Split-WIM / FAT32)' } else { 'install.wim (LZX - Recommended)' })"
+# Build plan from the GUI's final confirmation: log it and compare it with what was just resolved (throws on a critical mismatch)
+$planResolved = [ordered]@{}
+foreach ($rp in $resolvedConfig.PSObject.Properties) { $planResolved[$rp.Name] = $rp.Value }
+$planResolved['UseVHDX'] = [bool]$useVHDX
+$planResolved['DryRun'] = [bool]$isDryRunMode
+[void](Invoke-WinEaseBuildPlanCheck -Plan $script:GuiBuildPlan -Resolved $planResolved -LogDirectory $logsDir -BaseName "WinEase_$timestampStr")
 Write-Host ""
 # G5: estimated build time from last run's phase timings
 try {
@@ -2136,7 +2142,7 @@ function Invoke-WinEaseHostHealthCheck {
             if ($psd) {
                 $freeGB = [math]::Round($psd.Free / 1GB, 1)
                 Write-Host "  - Free space ($($volLetter):):     $freeGB GB" -ForegroundColor Gray
-                if ($freeGB -lt 40) { $hostIssues.Add("Low free space on the $volLetter`: drive ($freeGB GB free, 40+ GB recommended).") }
+                if ($freeGB -lt (Get-WinEaseRecommendedFreeGB)) { $hostIssues.Add("Low free space on the $volLetter`: drive ($freeGB GB free, $(Get-WinEaseRecommendedFreeGB)+ GB recommended).") }
             }
         }
     } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }

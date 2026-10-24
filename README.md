@@ -515,6 +515,7 @@ WinEase/
 │   ├── WinEaseConfig.ps1       # Config conflict resolution, resume integrity, user config paths, config diff, feature-ID overrides
 │   ├── WinEaseBenchmarks.ps1   # Statistical analysis and benchmark comparison
 │   ├── WinEaseDependencies.ps1 # Dependency / feature-impact analysis (config/dependencies.psd1)
+│   ├── WinEaseBuildPlan.ps1    # Build plan: final confirmation before a build (docs/BUILD_PREVIEW.md)
 │   ├── WinEaseGuiSession.ps1   # Builder GUI session handling
 │   ├── WinEaseRegistry.ps1     # Invoke-WinEaseReg (every reg.exe call of phase 10), hive loading, config/registry table runner
 │   ├── WinEaseGuiCore.ps1      # UI-independent GUI logic (language tables, debloat items, draft config, migration helpers)

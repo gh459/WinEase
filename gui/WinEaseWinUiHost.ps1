@@ -13,6 +13,9 @@ $script:WinEaseGuiDir = $PSScriptRoot
 if (-not (Get-Command -Name Get-WinEaseUiString -ErrorAction SilentlyContinue)) {
     . (Join-Path -Path (Split-Path -Parent $PSScriptRoot) -ChildPath 'lib\WinEaseGuiCore.ps1')
 }
+# The build-plan request (final confirmation) needs lib\WinEaseBuildPlan.ps1 (the builder loads it too)
+$winUiBuildPlan = Join-Path -Path (Split-Path -Parent $PSScriptRoot) -ChildPath 'lib\WinEaseBuildPlan.ps1'
+if (-not (Get-Command -Name Get-WinEaseBuildPlan -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $winUiBuildPlan)) { . $winUiBuildPlan }
 # The custom-script requests need the user extensibility engine (the builder loads it too)
 $winUiExtensions = Join-Path -Path (Split-Path -Parent $PSScriptRoot) -ChildPath 'lib\WinEaseExtensions.ps1'
 if (-not (Get-Command -Name Add-WinEaseCustomScript -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $winUiExtensions)) { . $winUiExtensions }
@@ -184,6 +187,13 @@ function Invoke-WinEaseWinUiRequest {
                     KeptWarning  = $(if ($keptCount -gt 0) { Get-WinEaseUiString 'Dep.Kept.Warning' -Format $keptCount } else { '' })
                 }
             }
+        }
+        'buildPlan' {
+            # Final confirmation: the plan of the settings the window would send now (Config = the window's result object)
+            # Recomputed on every request, never cached. Rules: Get-WinEaseBuildPlan (lib\WinEaseBuildPlan.ps1)
+            $plan = Get-WinEaseBuildPlan -Result (ConvertFrom-WinEaseWinUiResult -Result $a.Config)
+            $view = Get-WinEaseBuildPlanView -Plan $plan
+            return @{ Data = @{ Plan = $plan; View = $view } }
         }
         'presetState' {
             # Is the window still the base preset? Rules: Get-WinEaseGuiPresetState (lib\WinEaseGuiCore.ps1)
@@ -428,7 +438,8 @@ function Invoke-WinEaseWinUiRequest {
 # Window result -> the hashtable Show-WinEaseGUI returns (Success, SourceDrive, TweakSettings, ...)
 function ConvertFrom-WinEaseWinUiResult {
     param($Result)
-    $r = ConvertTo-WinEaseHashtable $Result
+    # A request argument is a hashtable already (ConvertTo-WinEaseHashtable would turn it into a list of entries)
+    $r = if ($Result -is [System.Collections.IDictionary]) { $Result } else { ConvertTo-WinEaseHashtable $Result }
     if (-not $r -or -not $r.Success) { return @{ Success = $false } }
     $out = @{ Success = $true }
     $srcText = "$($r.SourceDrive)".Trim()
@@ -440,6 +451,8 @@ function ConvertFrom-WinEaseWinUiResult {
     $out.PresetKey = if ($r.PresetKey) { "$($r.PresetKey)" } else { $null }
     $out.BasePresetKey = if ($r.BasePresetKey) { "$($r.BasePresetKey)" } else { $null }
     foreach ($k in @('DryRun', 'UseVHDX', 'ExportESDMode', 'SplitWIMMode', 'PhysicalDebloatConsent')) { $out[$k] = [bool]$r[$k] }
+    # The plan the window showed in the final confirmation (the builder logs it and compares it with the resolved settings)
+    if ($r.BuildPlan) { $out.BuildPlan = $r.BuildPlan }
     if ($r.Components) { foreach ($k in $r.Components.Keys) { $out[$k] = [bool]$r.Components[$k] } }
     $tweaks = [ordered]@{}
     if ($r.TweakSettings) { foreach ($k in $r.TweakSettings.Keys) { $tweaks[$k] = [bool]$r.TweakSettings[$k] } }

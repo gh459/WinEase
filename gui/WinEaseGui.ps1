@@ -20,6 +20,10 @@ $script:WinEaseGuiCorePath = @((Join-Path $script:WinEaseGuiRepoRoot 'lib\WinEas
 if (-not $script:WinEaseGuiCorePath) { throw "WinEaseGuiCore.ps1 not found (expected in <repo>\lib or next to '$PSScriptRoot')." }
 . $script:WinEaseGuiCorePath
 
+# The build plan (final confirmation before the result is returned): plan function shared with the WinUI window and the builder.
+$script:WinEaseBuildPlanPath = Join-Path -Path $script:WinEaseGuiRepoRoot -ChildPath 'lib\WinEaseBuildPlan.ps1'
+if (Test-Path -LiteralPath $script:WinEaseBuildPlanPath) { . $script:WinEaseBuildPlanPath }
+
 # The user extensibility engine (user tweaks, presets, custom scripts, Tab 10). Loading it inside a
 # function would define its functions in that function's scope only, so it is loaded here once. The
 # migration bundle has no lib\ folder: the file is simply absent there and the tab reports it.
@@ -422,6 +426,66 @@ function Confirm-WinEaseGuiCriticalDependency {
     } finally { $dlg.Dispose() }
 }
 
+# Scrollable confirmation: -Text in a read-only, word-wrapped box that scrolls (nothing is truncated), a prominent
+# -Banner line (the DRY RUN / REAL BUILD mode), and, when -AckText is set, a checkbox that must be ticked before the
+# confirm button enables. Returns $true only when the confirm button was used.
+function Show-WinEaseGuiAckDialog {
+    param(
+        [Parameter(Mandatory = $true)][string]$Title,
+        [Parameter(Mandatory = $true)][string]$Text,
+        [string]$Banner,
+        [switch]$BannerWarn,
+        [string]$AckText,
+        [string]$ConfirmText = (Get-WinEaseUiString 'Button.OK')
+    )
+    $dlg = New-WinEaseForm -Text $Title -Width 760 -Height 620 -ClientSize -NoMinimize
+    try {
+        $dlg.MinimumSize = New-Object System.Drawing.Size(520, 420)
+        $y = 10
+        if ($Banner) {
+            $bannerColor = if ($BannerWarn) { $script:WinEaseGuiColors.Warn } else { $script:WinEaseGuiColors.Accent }
+            $lbl = New-WinEaseLabel -Text $Banner -X 12 -Y $y -Width 736 -Height 50 -ForeColor $bannerColor -Font (New-Object System.Drawing.Font('Segoe UI', 12, [System.Drawing.FontStyle]::Bold)) -Parent $dlg
+            $lbl.Anchor = 'Top, Left, Right'
+            $y += 56
+        }
+        $boxHeight = 620 - $y - $(if ($AckText) { 110 } else { 70 })
+        $box = New-WinEaseTextBox -X 12 -Y $y -Width 736 -Height $boxHeight -Multiline -ReadOnly -ScrollBars Vertical -WordWrap $true `
+            -Text ($Text -replace "(?<!`r)`n", "`r`n") -Parent $dlg
+        $box.Anchor = 'Top, Bottom, Left, Right'
+        [void]$box.Select(0, 0)
+        $by = 620 - 46
+        $chk = $null
+        if ($AckText) {
+            $chk = New-WinEaseCheckBox -Text $AckText -X 12 -Y ($by - 38) -Width 736 -Height 28 -Parent $dlg
+            $chk.Anchor = 'Bottom, Left, Right'
+        }
+        $ok = New-WinEaseButton -Text $ConfirmText -X 478 -Y $by -Width 170 -Height 34 -Parent $dlg
+        $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $ok.Anchor = 'Bottom, Right'
+        $cancel = New-WinEaseButton -Text (Get-WinEaseUiString 'Button.Cancel') -X 656 -Y $by -Width 92 -Height 34 -Parent $dlg
+        $cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $cancel.Anchor = 'Bottom, Right'
+        if ($chk) {
+            $ok.Enabled = $false
+            $chk.Add_CheckedChanged({ $ok.Enabled = $chk.Checked }.GetNewClosure())
+        }
+        $dlg.AcceptButton = $null
+        $dlg.CancelButton = $cancel
+        return ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK)
+    } finally { $dlg.Dispose() }
+}
+
+# Final confirmation of the WinForms window: plan from the shared Get-WinEaseBuildPlan, shown by Show-WinEaseGuiAckDialog.
+# Returns the plan (confirmed) or $null (cancelled); throws when the plan cannot be built.
+function Confirm-WinEaseGuiBuildPlan {
+    param([Parameter(Mandatory = $true)]$Result)
+    $plan = Get-WinEaseBuildPlan -Result $Result
+    $view = Get-WinEaseBuildPlanView -Plan $plan
+    $ack = if ($view.RequiresAck) { $view.AckText } else { '' }
+    $ok = Show-WinEaseGuiAckDialog -Title $view.Title -Text $view.Text -Banner $view.ModeText -BannerWarn:(-not $view.IsDryRun) -AckText $ack -ConfirmText $view.ConfirmText
+    if ($ok) { return $plan }
+    return $null
+}
 function Confirm-WinEaseGuiAction {
     param([string]$Message, [string]$Title = (Get-WinEaseUiString 'Msg.Title.Confirm'))
     $ans = [System.Windows.Forms.MessageBox]::Show($Message, $Title,
@@ -690,23 +754,12 @@ function Update-WinEaseGuiSources {
 function Update-WinEaseGuiEstimate {
     param([hashtable]$Gui)
     try {
-        $componentCheckboxes = $Gui.ComponentCheckboxes
-        $mb = 5500.0
-        if ($componentCheckboxes['KeepExtraFonts'] -and $componentCheckboxes['KeepExtraFonts'].Checked) { $mb += 150 }
-        if ($componentCheckboxes['KeepAsianIME'] -and $componentCheckboxes['KeepAsianIME'].Checked)     { $mb += 400 }
-        if ($componentCheckboxes['RemoveDefender'] -and -not $componentCheckboxes['RemoveDefender'].Checked) { $mb += 200 }
-        if ($componentCheckboxes['RemoveStore'] -and -not $componentCheckboxes['RemoveStore'].Checked)       { $mb += 120 }
-        if ($componentCheckboxes['DisableWindowsUpdate'] -and -not $componentCheckboxes['DisableWindowsUpdate'].Checked) { $mb += 50 }
-        if ($componentCheckboxes['KeepBasicApps'] -and $componentCheckboxes['KeepBasicApps'].Checked)       { $mb += 30 }
-        if ($componentCheckboxes['KeepSearchIndex'] -and $componentCheckboxes['KeepSearchIndex'].Checked)   { $mb += 20 }
-        if ($componentCheckboxes['KeepXboxServices'] -and $componentCheckboxes['KeepXboxServices'].Checked) { $mb += 40 }
-        if ($componentCheckboxes['RemoveDrivers'] -and $componentCheckboxes['RemoveDrivers'].Checked)       { $mb -= 80 }
-        if ($componentCheckboxes['UltraSlimMode'] -and $componentCheckboxes['UltraSlimMode'].Checked)       { $mb -= 200 }
-        if ($Gui.RadESD.Checked) { $mb = [math]::Round($mb * 0.82) }
+        $components = @{}
+        foreach ($k in $Gui.ComponentCheckboxes.Keys) { $components[$k] = [bool]$Gui.ComponentCheckboxes[$k].Checked }
+        $mb = Get-WinEaseBuildSizeEstimateMB -Components $components -PayloadFormat $(if ($Gui.RadESD.Checked) { 'ESD' } else { 'WIM' })
         $Gui.Estimate.Text = (Get-WinEaseUiString 'Main.Estimate' -Format ([math]::Round($mb / 1024, 2)))
     } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
-
 # Apply built-in preset number -PresetIndex (order of $Gui.PresetKeyMap) to every checkbox.
 # Values come from Get-WinEaseGuiPresetValues (lib\WinEaseGuiCore.ps1), shared with the WinUI window.
 # Advanced Debloat items and engines are not touched (see docs\GUI_PRESET_STATE.md); Revert does that.
@@ -1886,9 +1939,21 @@ function Initialize-WinEaseGuiContent {
                 if (-not (Confirm-WinEaseGuiAction -Message $msg -Title (Get-WinEaseUiString 'Msg.Dependency.Title'))) { return }
             }
         } catch {
-            Write-Verbose "Dependency check skipped: $($_.Exception.Message)"
+            # Never fail open: an unchecked selection may hide a conflict or an unknown impact, so the user has to say so explicitly
+            $acked = Show-WinEaseGuiAckDialog -Title (Get-WinEaseUiString 'Msg.Dependency.Title') `
+                -Text (Get-WinEaseUiString 'Msg.Dependency.CheckFailed' -Format $_.Exception.Message) -BannerWarn `
+                -AckText (Get-WinEaseUiString 'Msg.Dependency.CheckFailed.Checkbox') -ConfirmText (Get-WinEaseUiString 'Dep.Ack.Continue')
+            if (-not $acked) { return }
         }
         if (Complete-WinEaseGuiResult -Gui $g) {
+            # Final confirmation (build plan) on the settings that are about to be returned
+            try {
+                $confirmedPlan = Confirm-WinEaseGuiBuildPlan -Result $g.Result
+                if (-not $confirmedPlan) { return }
+                $g.Result.BuildPlan = $confirmedPlan
+            } catch {
+                if (-not (Confirm-WinEaseGuiAction -Message (Get-WinEaseUiString 'Msg.Plan.Failed.Continue' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'Msg.Dependency.Title'))) { return }
+            }
             $f.DialogResult = [System.Windows.Forms.DialogResult]::OK
             $f.Close()
         }
