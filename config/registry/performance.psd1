@@ -15,9 +15,6 @@
     Version = '1.0'
 
     Entries = @(
-        # --- DisablePowerThrottling --------------------------------------
-        @{ Tweak = 'DisablePowerThrottling'; Default = $true; Hive = 'zSYSTEM'; Path = 'ControlSet001\Control\Power\PowerThrottling'; Name = 'PowerThrottlingOff'; Type = 'REG_DWORD'; Data = '1' }
-
         # --- DisableIdleMaintenance --------------------------------------
         @{ Tweak = 'DisableIdleMaintenance'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance'; Name = 'MaintenanceDisabled'; Type = 'REG_DWORD'; Data = '1' }
 
@@ -36,23 +33,6 @@
         @{ Tweak = 'NetworkTuning'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Windows NT\DNSClient'; Name = 'EnableMulticast'; Type = 'REG_DWORD'; Data = '0' }
         @{ Tweak = 'NetworkTuning'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Windows NT\DNSClient'; Name = 'DisableSmartNameResolution'; Type = 'REG_DWORD'; Data = '1' }
 
-        # --- LowLatencyAudioMMCSS ----------------------------------------
-        @{ Tweak = 'LowLatencyAudioMMCSS'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio'; Name = 'Priority'; Type = 'REG_DWORD'; Data = '1' }
-        @{ Tweak = 'LowLatencyAudioMMCSS'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio'; Name = 'Scheduling Category'; Type = 'REG_SZ'; Data = 'High' }
-        @{ Tweak = 'LowLatencyAudioMMCSS'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio'; Name = 'SFIO Priority'; Type = 'REG_SZ'; Data = 'High' }
-        @{ Tweak = 'LowLatencyAudioMMCSS'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio'; Name = 'Background Only'; Type = 'REG_SZ'; Data = 'False' }
-        @{ Tweak = 'LowLatencyAudioMMCSS'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio'; Name = 'Clock Rate'; Type = 'REG_DWORD'; Data = '10000' }
-        @{ Tweak = 'LowLatencyAudioMMCSS'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Pro Audio'; Name = 'GPU Priority'; Type = 'REG_DWORD'; Data = '8' }
-
-        # --- MMCSSGaming -------------------------------------------------
-        @{ Tweak = 'MMCSSGaming'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games'; Name = 'Priority'; Type = 'REG_DWORD'; Data = '6' }
-        @{ Tweak = 'MMCSSGaming'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games'; Name = 'Scheduling Category'; Type = 'REG_SZ'; Data = 'High' }
-        @{ Tweak = 'MMCSSGaming'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games'; Name = 'SFIO Priority'; Type = 'REG_SZ'; Data = 'High' }
-        @{ Tweak = 'MMCSSGaming'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games'; Name = 'GPU Priority'; Type = 'REG_DWORD'; Data = '8' }
-        @{ Tweak = 'MMCSSGaming'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games'; Name = 'Affinity'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'MMCSSGaming'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games'; Name = 'Background Only'; Type = 'REG_SZ'; Data = 'False' }
-        @{ Tweak = 'MMCSSGaming'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games'; Name = 'Clock Rate'; Type = 'REG_DWORD'; Data = '10000' }
-
         # --- SvcHostConsolidation ----------------------------------------
         @{ Tweak = 'SvcHostConsolidation'; Default = $false; Hive = 'zSYSTEM'; Path = 'ControlSet001\Control'; Name = 'SvcHostSplitThresholdInKB'; Type = 'REG_DWORD'; Data = '67108864' }
         @{ Tweak = 'SvcHostConsolidation'; Default = $false; Hive = 'zSYSTEM'; Path = 'ControlSet001\Control\Session Manager\Memory Management'; Name = 'DisablePageCombining'; Type = 'REG_DWORD'; Data = '0' }
@@ -70,21 +50,9 @@
         @{ Tweak = 'DisableFSE'; Default = $false; Hive = 'zDEFAULT'; Path = 'System\GameConfigStore'; Name = 'GameDVR_FSEBehaviorMode'; Type = 'REG_DWORD'; Data = '2' }
         @{ Tweak = 'DisableFSE'; Default = $false; Hive = 'zDEFAULT'; Path = 'System\GameConfigStore'; Name = 'GameDVR_HonorUserFSEBehaviorMode'; Type = 'REG_DWORD'; Data = '1' }
 
-        # --- EnableHAGS --------------------------------------------------
-        @{ Tweak = 'EnableHAGS'; Default = $true; Hive = 'zSYSTEM'; Path = 'ControlSet001\Control\GraphicsDrivers'; Name = 'HwSchMode'; Type = 'REG_DWORD'; Data = '2' }
-
-        # --- DisableSuperfetch -------------------------------------------
-        @{ Tweak = 'DisableSuperfetch'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows NT\CurrentVersion\EMDMgmt'; Name = 'GroupPolicyDisallowCaches'; Type = 'REG_DWORD'; Data = '1' }
-        @{ Tweak = 'DisableSuperfetch'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows NT\CurrentVersion\EMDMgmt'; Name = 'AllowNewCachesByDefault'; Type = 'REG_DWORD'; Data = '0' }
-
         # --- TuneMemoryAndPaging -----------------------------------------
         @{ Tweak = 'TuneMemoryAndPaging'; Default = $true; Hive = 'zSYSTEM'; Path = 'ControlSet001\Control\Session Manager\Memory Management'; Name = 'ClearPageFileAtShutdown'; Type = 'REG_DWORD'; Data = '0' }
         @{ Tweak = 'TuneMemoryAndPaging'; Default = $true; Hive = 'zSYSTEM'; Path = 'ControlSet001\Control\Session Manager\Memory Management'; Name = 'LargeSystemCache'; Type = 'REG_DWORD'; Data = '0' }
-
-        # --- GamingNetworkTweaks -----------------------------------------
-        # Per-adapter TcpAckFrequency needs interface GUIDs that only exist online; these are the offline-safe parts
-        @{ Tweak = 'GamingNetworkTweaks'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile'; Name = 'NetworkThrottlingIndex'; Type = 'REG_DWORD'; Data = '0xffffffff' }
-        @{ Tweak = 'GamingNetworkTweaks'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Microsoft\MSMQ\Parameters'; Name = 'TCPNoDelay'; Type = 'REG_DWORD'; Data = '1' }
 
         # --- DisableGameDVR ----------------------------------------------
         @{ Tweak = 'DisableGameDVR'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Windows\GameDVR'; Name = 'AllowGameDVR'; Type = 'REG_DWORD'; Data = '0' }

@@ -752,47 +752,11 @@ $setupTools = Join-Path -Path $scratchDir -ChildPath "Windows\Setup\Tools"
 New-Item -Path $pubDesktop -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
 New-Item -Path $setupTools -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
 
-$browserPs1Content = (Read-WinEaseEmbeddedScript -RelativePath 'scripts\tools\Install-Browser.ps1')
-
-$browserCmdContent = (Read-WinEaseEmbeddedScript -RelativePath 'scripts\tools\Install-Browser.cmd')
-
-$controlCenterContent = (Read-WinEaseEmbeddedScript -RelativePath 'scripts\tools\WinEase Control Center.bat')
-
+# The tool scripts (Browser Grabber, WinEase Control Center, Atlas-ReviOS tools) are provided as image
+# files by the built-in plugin WinEase.Plugins.Builtin.PostInstallTools (src\; its resources are
+# scripts\tools). Invoke-WinEasePluginImageFiles below writes them to Windows\Setup\Tools unless
+# -NoPostInstallAssets is set.
 if (-not $NoPostInstallAssets) {
-    # Keep maintenance tools safely in Windows\Setup\Tools (do not pollute Public Desktop)
-    $browserPs1Content | Set-Content -LiteralPath (Join-Path -Path $setupTools -ChildPath "Install-Browser.ps1") -Encoding utf8
-    $browserCmdContent | Set-Content -LiteralPath (Join-Path -Path $setupTools -ChildPath "Install-Browser.cmd") -Encoding ascii
-    $controlCenterContent | Set-Content -LiteralPath (Join-Path -Path $setupTools -ChildPath "WinEase Control Center.bat") -Encoding ascii
-    Write-Host "  - Staged Browser Grabber and WinEase Control Center to Windows\Setup\Tools" -ForegroundColor Green
-
-    $atlasDir = Join-Path -Path $setupTools -ChildPath "Atlas-ReviOS Tools"
-    if (-not (Test-Path -LiteralPath $atlasDir)) {
-        New-Item -Path $atlasDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-    }
-
-    $tool1Def = (Read-WinEaseEmbeddedScript -RelativePath 'scripts\tools\Atlas-ReviOS Tools\1. Toggle Windows Defender.bat')
-
-    $tool2WU = (Read-WinEaseEmbeddedScript -RelativePath 'scripts\tools\Atlas-ReviOS Tools\2. Toggle Windows Update.bat')
-
-    $tool3Hiber = (Read-WinEaseEmbeddedScript -RelativePath 'scripts\tools\Atlas-ReviOS Tools\3. Toggle Hibernation.bat')
-
-    $tool4BT = (Read-WinEaseEmbeddedScript -RelativePath 'scripts\tools\Atlas-ReviOS Tools\4. Toggle Bluetooth.bat')
-
-    $tool5Spool = (Read-WinEaseEmbeddedScript -RelativePath 'scripts\tools\Atlas-ReviOS Tools\5. Toggle Print Spooler.bat')
-
-    $tool6Mem = (Read-WinEaseEmbeddedScript -RelativePath 'scripts\tools\Atlas-ReviOS Tools\6. Free Memory & Clear Temp.bat')
-
-    $tool7MAS = (Read-WinEaseEmbeddedScript -RelativePath 'scripts\tools\Atlas-ReviOS Tools\7. Check Activation Status.bat')
-
-    $tool1Def   | Set-Content -LiteralPath (Join-Path -Path $atlasDir -ChildPath "1. Toggle Windows Defender.bat") -Encoding ascii
-    $tool2WU    | Set-Content -LiteralPath (Join-Path -Path $atlasDir -ChildPath "2. Toggle Windows Update.bat") -Encoding ascii
-    $tool3Hiber | Set-Content -LiteralPath (Join-Path -Path $atlasDir -ChildPath "3. Toggle Hibernation.bat") -Encoding ascii
-    $tool4BT    | Set-Content -LiteralPath (Join-Path -Path $atlasDir -ChildPath "4. Toggle Bluetooth.bat") -Encoding ascii
-    $tool5Spool | Set-Content -LiteralPath (Join-Path -Path $atlasDir -ChildPath "5. Toggle Print Spooler.bat") -Encoding ascii
-    $tool6Mem   | Set-Content -LiteralPath (Join-Path -Path $atlasDir -ChildPath "6. Free Memory & Clear Temp.bat") -Encoding ascii
-    $tool7MAS   | Set-Content -LiteralPath (Join-Path -Path $atlasDir -ChildPath "7. Check Activation Status.bat") -Encoding ascii
-    Write-Host "  - Staged Atlas-ReviOS maintenance tools to Windows\Setup\Tools\Atlas-ReviOS Tools" -ForegroundColor Green
-
     # Ensure Public Desktop is clean of tools folders
     $cleanItems = @("Atlas-ReviOS Tools", "Install-Browser.cmd", "Install-Browser.ps1", "WinEase Control Center.bat", "WinEase Control Center.cmd")
     foreach ($ci in $cleanItems) {
@@ -876,6 +840,9 @@ $script:WinSxsSavedMB  = if ($script:WinSxsBeforeMB -gt 0 -and $script:WinSxsAft
 # A plugin DLL never runs in the guest; a script it wants to run there is handed over as a file.
 if (Get-Command -Name Invoke-WinEasePluginImageFiles -ErrorAction SilentlyContinue) {
     Invoke-WinEasePluginImageFiles -ScratchDir $scratchDir -DryRun:$DryRun
+    if (-not $NoPostInstallAssets -and -not (@(Get-WinEaseLoadedPlugins) | Where-Object { $_.Id -eq 'winease.builtin.postinstalltools' })) {
+        Write-Warning "The built-in plugin 'PostInstallTools' is not loaded, so Browser Grabber, WinEase Control Center and the Atlas-ReviOS tools were not staged in Windows\Setup\Tools (see the plugin messages above, or build it with tools\build-binaries.ps1)."
+    }
 }
 
 # M2: User extension actions (SetupScripts)

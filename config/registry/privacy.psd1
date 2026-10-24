@@ -30,22 +30,12 @@
         @{ Tweak = 'DisableTelemetryAndDiagnostics'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Windows\Device Metadata'; Name = 'PreventDeviceMetadataFromNetwork'; Type = 'REG_DWORD'; Data = '1' }
         # WinUtil 26.10.07 (WPFTweaksTelemetry): contact harvesting, the inking/typing privacy
         # consent, app launch tracking and the PowerShell 7 telemetry opt-out.
-        @{ Tweak = 'DisableTelemetryAndDiagnostics'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\InputPersonalization\TrainedDataStore'; Name = 'HarvestContacts'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableTelemetryAndDiagnostics'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Personalization\Settings'; Name = 'AcceptedPrivacyPolicy'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableTelemetryAndDiagnostics'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'Start_TrackProgs'; Type = 'REG_DWORD'; Data = '0' }
         @{ Tweak = 'DisableTelemetryAndDiagnostics'; Default = $true; Hive = 'zSYSTEM'; Path = 'ControlSet001\Control\Session Manager\Environment'; Name = 'POWERSHELL_TELEMETRY_OPTOUT'; Type = 'REG_SZ'; Data = '1' }
         # Debloat-Win11 v2.3.8 (Edge.ps1): Edge diagnostic data and personalization reporting.
-        @{ Tweak = 'DisableTelemetryAndDiagnostics'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Edge'; Name = 'DiagnosticData'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableTelemetryAndDiagnostics'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Edge'; Name = 'PersonalizationReportingEnabled'; Type = 'REG_DWORD'; Data = '0' }
         # Bloatynosy 1.01.103: tailored experiences (user policy), online speech recognition and
         # Narrator's online services.
-        @{ Tweak = 'DisableTelemetryAndDiagnostics'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\InputPersonalization'; Name = 'AllowInputPersonalization'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'DisableTelemetryAndDiagnostics'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Policies\Microsoft\Windows\CloudContent'; Name = 'DisableTailoredExperiencesWithDiagnosticData'; Type = 'REG_DWORD'; Data = '1' }
-        @{ Tweak = 'DisableTelemetryAndDiagnostics'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Narrator\NoRoam'; Name = 'OnlineServicesEnabled'; Type = 'REG_DWORD'; Data = '0' }
         # Revision Tool 2.14.1: the Sleep Study power diagnostics recorder.
-        @{ Tweak = 'DisableTelemetryAndDiagnostics'; Default = $true; Hive = 'zSYSTEM'; Path = 'ControlSet001\Control\Session Manager\Power'; Name = 'SleepStudyDisabled'; Type = 'REG_DWORD'; Data = '1' }
         # hellzerg/optimizer (master, after 16.7): Edge's 3P service telemetry.
-        @{ Tweak = 'DisableTelemetryAndDiagnostics'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Edge'; Name = 'Edge3PSerpTelemetryEnabled'; Type = 'REG_DWORD'; Data = '0' }
 
         # --- DisableErrorReporting ---------------------------------------
         @{ Tweak = 'DisableErrorReporting'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Windows\Windows Error Reporting'; Name = 'Disabled'; Type = 'REG_DWORD'; Data = '1' }
@@ -59,8 +49,6 @@
         @{ Tweak = 'DisableActivityHistory'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Windows\SettingSync'; Name = 'DisableSettingSync'; Type = 'REG_DWORD'; Data = '2' }
         @{ Tweak = 'DisableActivityHistory'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Windows\SettingSync'; Name = 'DisableSettingSyncUserOverride'; Type = 'REG_DWORD'; Data = '1' }
         # Debloat-Win11 v2.3.8: the Windows Backup UI and its monitoring.
-        @{ Tweak = 'DisableActivityHistory'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Windows\WindowsBackup'; Name = 'DisableBackupUI'; Type = 'REG_DWORD'; Data = '1' }
-        @{ Tweak = 'DisableActivityHistory'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows\CurrentVersion\WindowsBackup'; Name = 'DisableMonitoring'; Type = 'REG_DWORD'; Data = '1' }
 
         # --- DisableIMETelemetry -----------------------------------------
         @{ Tweak = 'DisableIMETelemetry'; Default = $true; Hive = 'zDEFAULT'; Path = 'Software\Microsoft\IME\15.0\IMEJP\MSIME'; Name = 'CloudCandidate'; Type = 'REG_DWORD'; Data = '0' }
@@ -101,10 +89,8 @@
         # ReviOS 26.10 (registry/security/security.yml): never send a sample to
         # Microsoft. The old WinEase value 0 means "always prompt", which is the
         # opposite of a debloat image.
-        @{ Tweak = 'DisableDiagnosticData'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Windows Defender\Spynet'; Name = 'SubmitSamplesConsent'; Type = 'REG_DWORD'; Data = '2' }
         # ReviOS 26.10 (registry/updates/updates.yml): the Malicious Software
         # Removal Tool must not report infections.
-        @{ Tweak = 'DisableDiagnosticData'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\MRT'; Name = 'DontReportInfectionInformation'; Type = 'REG_DWORD'; Data = '1' }
 
         # --- DisableBackgroundApps ---------------------------------------
         @{ Tweak = 'DisableBackgroundApps'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Windows\AppPrivacy'; Name = 'LetAppsRunInBackground'; Type = 'REG_DWORD'; Data = '2' }

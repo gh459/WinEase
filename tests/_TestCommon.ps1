@@ -45,11 +45,38 @@ $script:UnattendPath = Join-Path -Path $script:RepoRoot -ChildPath "autounattend
 # display-language tests in Gui.Tests.ps1 set and restore their own values.
 $env:WINEASE_UI_LANGUAGE = 'en'
 
+function Get-WinEaseBuiltinPluginSourceText {
+    # The C# sources of the official built-in plugins (src\WinEase.Plugins.Builtin.*) as one text.
+    $parts = Get-ChildItem -LiteralPath (Join-Path -Path $script:RepoRoot -ChildPath 'src') -Directory -Filter 'WinEase.Plugins.Builtin.*' |
+        ForEach-Object { Get-ChildItem -LiteralPath $_.FullName -Filter '*.cs' -File } |
+        ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }
+    return ($parts -join "`n")
+}
+
+function Get-WinEaseUpstreamSyncRegistryEntries {
+    # The registry values of the built-in UpstreamSync plugin (one hashtable per hive), read from its source.
+    $path = Join-Path -Path $script:RepoRoot -ChildPath 'src\WinEase.Plugins.Builtin.UpstreamSync\UpstreamSyncPlugin.cs'
+    $text = [System.IO.File]::ReadAllText($path)
+    $pattern = 'Add\(list, "([^"]*)", (true|false), "([^"]*)", @"((?:[^"]|"")*)", @"((?:[^"]|"")*)", "([^"]*)", @"((?:[^"]|"")*)"\);'
+    foreach ($m in [regex]::Matches($text, $pattern)) {
+        @{
+            Tweak = $m.Groups[1].Value; Default = ($m.Groups[2].Value -eq 'true'); Hive = $m.Groups[3].Value
+            Path = $m.Groups[4].Value.Replace('""', '"'); Name = $m.Groups[5].Value.Replace('""', '"')
+            Type = $m.Groups[6].Value; Data = $m.Groups[7].Value.Replace('""', '"')
+        }
+    }
+}
+
 function Get-WinEaseRegistryTableText {
     # The config\registry tables of phase 10 as one text: the plain registry writes that
     # moved out of phases\10-registry.ps1. Tests that look for a registry value read the
-    # phase text plus this one.
+    # phase text plus this one. The values of the built-in UpstreamSync plugin follow in the
+    # same notation, so a test that asks "is this value written" does not care whether a
+    # table or the plugin holds it.
     $dir = Join-Path -Path $script:RepoRoot -ChildPath 'config\registry'
-    $parts = Get-ChildItem -LiteralPath $dir -Filter '*.psd1' | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }
+    $parts = @(Get-ChildItem -LiteralPath $dir -Filter '*.psd1' | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) })
+    $parts += (@(Get-WinEaseUpstreamSyncRegistryEntries | ForEach-Object {
+                "@{ Tweak = '$($_.Tweak)'; Default = `$$($_.Default.ToString().ToLower()); Hive = '$($_.Hive)'; Path = '$($_.Path)'; Name = '$($_.Name)'; Type = '$($_.Type)'; Data = '$($_.Data)' }"
+            }) -join "`n")
     return ($parts -join "`n")
 }

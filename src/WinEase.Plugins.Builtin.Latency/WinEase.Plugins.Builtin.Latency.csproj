@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Official built-in plugin: GPU, scheduler, power and multimedia-class latency tweaks of phase 10-registry.
+       C# 5 syntax on purpose: when no prebuilt DLL exists the builder compiles the sources with the C# compiler of
+       Windows PowerShell (lib\WinEasePlugins.ps1, Initialize-WinEaseBuiltinPlugins). -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>5</LangVersion>
+    <RootNamespace>WinEase.Plugins.Builtin.Latency</RootNamespace>
+    <AssemblyName>WinEase.Plugins.Builtin.Latency</AssemblyName>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Nullable>disable</Nullable>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Private=false: the contract assembly is not copied next to the plugin (the builder loads it itself). -->
+    <ProjectReference Include="..\WinEase.Plugins.Abstractions\WinEase.Plugins.Abstractions.csproj" Private="false" />
+  </ItemGroup>
+
+</Project>

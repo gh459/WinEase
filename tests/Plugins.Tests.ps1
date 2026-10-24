@@ -178,7 +178,8 @@ namespace @@NS@@ {
         }
 
         It "loads nothing and warns nothing when both lock files are empty" {
-            $r = Import-WinEasePlugins -RepoRoot $script:RepoRoot
+            # the repository's own user lock file, with an empty built-in folder (the built-in plugins have their own tests)
+            $r = Import-WinEasePlugins -RepoRoot $script:RepoRoot -BuiltinLockPath (Join-Path $script:PluginWork 'empty-builtin.lock.psd1') -BuiltinDir (Join-Path $script:PluginWork 'emptybuiltin')
             $r.LoadedCount | Should Be 0
             $r.RejectedCount | Should Be 0
         }
@@ -326,7 +327,7 @@ namespace @@NS@@ {
             Test-Path -LiteralPath (Join-Path $scratch 'Windows\Setup\Scripts\Plugins\escape.txt') | Should Be $false
         }
         It "has no contributions without plugins" {
-            [void](Import-WinEasePlugins -RepoRoot $script:RepoRoot)
+            [void](Import-WinEasePlugins -RepoRoot $script:RepoRoot -BuiltinLockPath (Join-Path $script:PluginWork 'empty-builtin.lock.psd1') -BuiltinDir (Join-Path $script:PluginWork 'emptybuiltin'))
             @(Get-WinEasePluginContributions -Kind Registry).Count | Should Be 0
         }
     }

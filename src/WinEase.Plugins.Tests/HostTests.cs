@@ -67,6 +67,32 @@ namespace WinEase.Plugins.Tests
         }
 
         [Fact]
+        public void ComponentsAndGroupsFallBackToTheDefaultAndFollowTheBuilder()
+        {
+            DelegateWinEaseHost host = new DelegateWinEaseHost("", "", null, false);
+            Assert.True(host.IsComponentEnabled("AtlasReviOSMode", true));
+            Assert.False(host.IsTweakGroupEnabled("GPULatency", false));
+            host.IsComponentEnabledFunc = delegate(string key, bool def) { return key == "On"; };
+            host.IsTweakGroupEnabledFunc = delegate(string key, bool def) { return key == "Group"; };
+            Assert.True(host.IsComponentEnabled("On", false));
+            Assert.False(host.IsComponentEnabled("Off", true));
+            Assert.True(host.IsTweakGroupEnabled("Group", false));
+            Assert.False(host.IsTweakGroupEnabled("Other", true));
+        }
+
+        [Fact]
+        public void PluginFolderRootIsTheDefaultWriteOfTheFileService()
+        {
+            int[] calls;
+            DelegateWinEaseHost host = NewHost(false, out calls);
+            host.WriteImageFile(ImageFileRoot.PluginFolder, "a.txt", new byte[] { 1 });
+            Assert.Equal(1, calls[2]);
+            ImageFile file = new ImageFile("x", new byte[0]);
+            Assert.Equal(ImageFileRoot.PluginFolder, file.Root);
+            Assert.True(file.WhenEnabled);
+        }
+
+        [Fact]
         public void ReadOnlyPropertiesCarryTheBuildContext()
         {
             int[] calls;

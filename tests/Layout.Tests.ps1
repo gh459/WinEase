@@ -119,22 +119,30 @@ Describe "R3 - setup and tool scripts are files, not here-strings" {
             (Get-Item -LiteralPath $p).Length | Should Be $e.bytes
         }
     }
-    It "Read-WinEaseEmbeddedScript returns the recorded content for every file" {
+    It "Read-WinEaseEmbeddedScript returns the recorded content for every setup helper" {
         $ast = [System.Management.Automation.Language.Parser]::ParseInput($script:R3PhaseText, [ref]$null, [ref]$null)
         $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Read-WinEaseEmbeddedScript' }, $true)
         $fn | Should Not BeNullOrEmpty
         $scriptDir = $script:RepoRoot
         . ([scriptblock]::Create($fn.Extent.Text))
-        foreach ($e in $script:R3Fixture) {
+        foreach ($e in @($script:R3Fixture | Where-Object { $_.path -like 'scripts/setup/*' })) {
             $content = Read-WinEaseEmbeddedScript -RelativePath $e.path.Replace('/', '\')
             $hash = [BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes($content))).Replace('-', '').ToLower()
             $hash | Should Be $e.sha256
         }
     }
-    It "the phase no longer embeds them and references every file" {
+    It "the phase no longer embeds them: it references every setup helper, the tool scripts belong to the PostInstallTools plugin" {
         $script:R3PhaseText | Should Not Match "(?m)^\s*\S+\s*=\s*@'\s*$"
-        foreach ($e in $script:R3Fixture) {
+        foreach ($e in @($script:R3Fixture | Where-Object { $_.path -like 'scripts/setup/*' })) {
             $script:R3PhaseText.Contains($e.path.Replace('/', '\')) | Should Be $true
+        }
+        # R9: Browser Grabber, Control Center and the Atlas-ReviOS tools are embedded resources of the plugin
+        $pluginDir = Join-Path $script:RepoRoot 'src\WinEase.Plugins.Builtin.PostInstallTools'
+        $pluginText = [System.IO.File]::ReadAllText((Join-Path $pluginDir 'PostInstallToolsPlugin.cs'))
+        [System.IO.File]::ReadAllText((Join-Path $pluginDir 'WinEase.Plugins.Builtin.PostInstallTools.csproj')) | Should Match ([regex]::Escape('..\..\scripts\tools\**'))
+        foreach ($e in @($script:R3Fixture | Where-Object { $_.path -like 'scripts/tools/*' })) {
+            $pluginText.Contains('"' + $e.path.Substring('scripts/tools/'.Length) + '"') | Should Be $true
+            $script:R3PhaseText.Contains($e.path.Replace('/', '\')) | Should Be $false
         }
     }
     It "the username placeholder stays in the autologon repair helper and is still substituted" {

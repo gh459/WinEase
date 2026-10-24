@@ -31,6 +31,13 @@ namespace WinEase.Plugins
         IEnumerable<string> GetAppxRemovals(ImageInfo image);
     }
 
+    /// <summary>Like IAppxRemovalContributor, but every pattern names the setting that controls it, so the package
+    /// is only removed when the user asked for it (the same rules as AppxRemoval in config\schema.psd1).</summary>
+    public interface IAppxRemovalRuleContributor
+    {
+        IEnumerable<AppxRemovalRule> GetAppxRemovalRules(ImageInfo image);
+    }
+
     /// <summary>Packages, capabilities and features removed in phase 06-fod.</summary>
     public interface IFodRemovalContributor
     {

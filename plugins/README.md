@@ -6,9 +6,10 @@ way to follow a new Windows build without changing the builder.
 
 | Folder | Content |
 |---|---|
-| `plugins\builtin` | plugins that ship with WinEase, allow list: `builtin\builtin.lock.psd1` (none yet) |
+| `plugins\builtin` | the official plugins (build output, not committed), allow list: `builtin\builtin.lock.psd1` (generated) |
 | `plugins\user` | your own plugins (DLLs are not committed), allow list: `config\user\plugins.lock.psd1` |
 | `src\WinEase.Plugins.Abstractions` | the contract (netstandard2.0, C# 5 syntax) |
+| `src\WinEase.Plugins.Builtin.*` | the official plugins: `Latency`, `PostInstallTools`, `UpstreamSync` (netstandard2.0, C# 5 syntax) |
 | `src\WinEase.Plugins.Tests` | xUnit tests of the contract |
 
 ## Trust model
@@ -44,17 +45,40 @@ Optional data interfaces (implement any of them):
 |---|---|
 | `IRegistryContributor` (`RegistryEntry`) | phase 10, through the same runner as `config\registry` |
 | `IAppxRemovalContributor` (patterns) | phase 05-appx, with the protection whitelist |
+| `IAppxRemovalRuleContributor` (`AppxRemovalRule`: pattern, option, invert) | phase 05-appx, like `AppxRemoval` of `config\schema.psd1`: the setting decides, then the protection whitelist |
 | `IFodRemovalContributor` (`Package` / `Capability` / `Feature`) | phase 06-fod |
 | `IServiceStartContributor` (name, 0-4) | phase 10, services section |
-| `IImageFileContributor` (path, bytes) | phase 11, below `Windows\Setup\Scripts\Plugins\<plugin id>` |
+| `IImageFileContributor` (`ImageFile`: path, bytes, root, optional gating setting) | phase 11, below `Windows\Setup\Scripts\Plugins\<plugin id>` or, with `Root = SetupTools`, in `Windows\Setup\Tools` (a plugin names one of the two fixed roots, never a folder) |
 
-`IWinEaseHost` (`context.Host`) offers `Log`, `IsTweakEnabled`, `SetOfflineRegistry`, `RunDism`,
-`WriteImageFile` and the read-only `ScratchDir`, `WinEaseDir`, `ImageInfo`, `DryRun`. With **DryRun** the
+`IWinEaseHost` (`context.Host`) offers `Log`, `IsTweakEnabled`, `IsComponentEnabled` (a component of
+`config\schema.psd1`, for example `AtlasReviOSMode`), `IsTweakGroupEnabled` (for example `GPULatency`), `SetOfflineRegistry`,
+`RunDism`, `WriteImageFile` and the read-only `ScratchDir`, `WinEaseDir`, `ImageInfo`, `DryRun`. With **DryRun** the
 write operations are only recorded and do nothing. `RunDism` allows read and remove verbs on the mounted
 image only (the builder adds `/Image`); `SetOfflineRegistry` only writes into the offline hives.
 
 The build range (`MinBuild` / `MaxBuild` of `Describe()`) is checked by the builder before `AppliesTo`; it
 is ignored while the build is still unknown (before phase 4 has read the image).
+
+## The built-in plugins
+
+The tweak **definitions** (key, alias, CLI switch, default) stay in `config\schema.psd1`, which is the one source of
+truth for the CLI, the GUI and the profiles. A built-in plugin only **implements** tweaks, and every key of the schema is
+implemented either by the PowerShell phases or by a built-in plugin (checked by `tests\BuiltinPlugins.Tests.ps1`).
+What stays in PowerShell is everything that decides whether the image boots or is safe: mount and unmount, the OOBE and
+requirement bypasses, the unattend core, the basic AppX and FoD lists, and the safety gates of the physical debloat.
+
+| Plugin | Implements |
+|---|---|
+| `WinEase.Plugins.Builtin.Latency` | `EnableHAGS` (and the `GPULatency` group), `DisablePowerThrottling`, `ThreadDpcEnable` and the foreground quantum (`AtlasReviOSMode`), the MMCSS Games / Pro Audio profiles (`MMCSSGaming`, `LowLatencyAudioMMCSS`, `KeepAudioTweaks`, `DAWMode`), `GamingNetworkTweaks`. Runs after phase 10-registry through `IsTweakEnabled` / `SetOfflineRegistry`. |
+| `WinEase.Plugins.Builtin.PostInstallTools` | Browser Grabber, WinEase Control Center and the Atlas-ReviOS tools: the files of `scripts\tools`, embedded byte for byte, written to `Windows\Setup\Tools` unless `-NoPostInstallAssets` is set. |
+| `WinEase.Plugins.Builtin.UpstreamSync` | The registry values and AppX packages adopted from the credited tools (`docs\dev\upstream-sync-2026-10.md`). The next upstream sync changes this data and raises its version. |
+
+Where the DLLs come from: `tools\build-binaries.ps1` (and CI) build them into `plugins\builtin` and write
+`builtin.lock.psd1` with their SHA256. Neither is committed. On a source checkout without the .NET SDK the builder compiles
+the plugins from `src\` with the C# compiler of Windows PowerShell the first time it starts (that is why the sources are
+C# 5), writes the lock file itself, and rebuilds a DLL it built when the sources are newer; a DLL that was shipped is never
+replaced. If a plugin can be neither found nor built, the builder **warns and goes on without it**: the tweaks of that plugin
+are not applied (and, for `PostInstallTools`, the tools are not staged), the build does not stop.
 
 ## Errors
 

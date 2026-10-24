@@ -123,14 +123,58 @@ namespace WinEase.Plugins
         public int Start { get; set; }
     }
 
-    /// <summary>A file the builder puts into the image below Windows\Setup\Scripts\Plugins\&lt;plugin id&gt;.</summary>
+    /// <summary>The folders of the image a plugin file can be placed in. A plugin never names a folder itself.</summary>
+    public enum ImageFileRoot
+    {
+        /// <summary>Windows\Setup\Scripts\Plugins\&lt;plugin id&gt; (default).</summary>
+        PluginFolder = 0,
+        /// <summary>Windows\Setup\Tools, where the post-install tools of WinEase live.</summary>
+        SetupTools = 1
+    }
+
+    /// <summary>A file the builder puts into the image, by default below Windows\Setup\Scripts\Plugins\&lt;plugin id&gt;.</summary>
     public sealed class ImageFile
     {
-        public ImageFile() { }
-        public ImageFile(string relativePath, byte[] content) { RelativePath = relativePath; Content = content; }
+        public ImageFile()
+        {
+            Root = ImageFileRoot.PluginFolder;
+            WhenEnabled = true;
+        }
+
+        public ImageFile(string relativePath, byte[] content) : this()
+        {
+            RelativePath = relativePath;
+            Content = content;
+        }
 
         public string RelativePath { get; set; }
         public byte[] Content { get; set; }
+        public ImageFileRoot Root { get; set; }
+        /// <summary>Setting that gates the file: a component of config\schema.psd1 when the key names one, otherwise a tweak. Empty = always.</summary>
+        public string Setting { get; set; }
+        /// <summary>Value of the setting when nothing sets it.</summary>
+        public bool SettingDefault { get; set; }
+        /// <summary>The file is written when the setting has this value (false = written while the setting is off, like NoPostInstallAssets).</summary>
+        public bool WhenEnabled { get; set; }
+    }
+
+    /// <summary>An AppX removal pattern with the setting that controls it (same meaning as AppxRemoval in config\schema.psd1).</summary>
+    public sealed class AppxRemovalRule
+    {
+        public AppxRemovalRule() { }
+        public AppxRemovalRule(string pattern, string option, bool invert)
+        {
+            Pattern = pattern;
+            Option = option;
+            Invert = invert;
+        }
+
+        /// <summary>Package name or wildcard pattern.</summary>
+        public string Pattern { get; set; }
+        /// <summary>Setting key of config\schema.psd1; empty = part of the default removal list (RemoveAppxBloatware).</summary>
+        public string Option { get; set; }
+        /// <summary>The setting is a "Keep..." option: the pattern applies while it is off.</summary>
+        public bool Invert { get; set; }
     }
 
     public sealed class DismResult

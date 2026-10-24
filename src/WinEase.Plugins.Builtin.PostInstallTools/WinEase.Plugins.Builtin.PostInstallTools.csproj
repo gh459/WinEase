@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Official built-in plugin: Browser Grabber, WinEase Control Center and the Atlas-ReviOS tools. The scripts
+       are the files of scripts\tools, embedded byte for byte; the builder places them in Windows\Setup\Tools
+       (a DLL never runs in the guest, the scripts do). C# 5 syntax so that the builder can compile the sources
+       with the C# compiler of Windows PowerShell when no prebuilt DLL exists. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>5</LangVersion>
+    <RootNamespace>WinEase.Plugins.Builtin.PostInstallTools</RootNamespace>
+    <AssemblyName>WinEase.Plugins.Builtin.PostInstallTools</AssemblyName>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Nullable>disable</Nullable>
+    <Deterministic>true</Deterministic>
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WinEase.Plugins.Abstractions\WinEase.Plugins.Abstractions.csproj" Private="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Resource name: tools/<path below scripts\tools>. RecursiveDir keeps the backslash; the plugin normalises it. -->
+    <EmbeddedResource Include="..\..\scripts\tools\**\*" LogicalName="tools/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>
