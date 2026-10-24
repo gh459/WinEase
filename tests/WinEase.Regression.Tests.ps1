@@ -360,3 +360,38 @@ Describe "Regression - delete and restore safety (temporary directories only)" -
         @(Get-ChildItem -LiteralPath $dir -Force | Where-Object { $_.Name -ne 'state.json' }).Count | Should Be 0
     }
 }
+
+Describe "Regression - the user password is not stored in profiles" -Tags 'slow' {
+    # The sentinel is assembled at run time so it is not a literal in this file.
+    $sentinel = 'Sentinel-' + 'Pw-4711'
+
+    It "-SaveProfile does not write UserPassword, even when -UserPassword is given" {
+        $saved = Join-Path $TestDrive 'nopw.json'
+        $r = Invoke-WinEaseBuilderProcess -Arguments @('-DryRun', '-NonInteractive', '-Profile', 'vm', '-UserPassword', $sentinel, '-SaveProfile', $saved)
+        $r.ExitCode | Should Be 0
+        Test-Path -LiteralPath $saved | Should Be $true
+        $json = [System.IO.File]::ReadAllText($saved, [System.Text.Encoding]::UTF8)
+        $json | Should Not Match 'UserPassword'
+        $json.Contains($sentinel) | Should Be $false
+        $r.Output.Contains($sentinel) | Should Be $false
+    }
+
+    It "a profile that still contains UserPassword loads, warns, and the warning does not show the value" {
+        $p = New-WinEaseTestProfile -Path (Join-Path $TestDrive 'oldpw.json') -Data @{ ProfileName = 'OldPw'; Settings = @{ UserPassword = $sentinel; UserName = 'Someone' } }
+        $r = Invoke-WinEaseBuilderProcess -Arguments @('-DryRun', '-NonInteractive', '-LoadProfile', $p)
+        $r.ExitCode | Should Be 0
+        ($r.Output -replace '\s+', '') | Should Match 'containsaplain-textUserPassword'
+        # the console wraps long warning lines, so compare without whitespace
+        ($r.Output -replace '\s+', '') | Should Match 'removeitfromthefile'
+        $r.Output | Should Not Match 'unrecognized setting'
+        $r.Output.Contains($sentinel) | Should Be $false
+        $r.Snapshot.Profile | Should Be 'OldPw'
+    }
+
+    It "a profile with an empty UserPassword loads without that warning" {
+        $p = New-WinEaseTestProfile -Path (Join-Path $TestDrive 'emptypw.json') -Data @{ ProfileName = 'EmptyPw'; Settings = @{ UserPassword = ''; UserName = 'Someone' } }
+        $r = Invoke-WinEaseBuilderProcess -Arguments @('-DryRun', '-NonInteractive', '-LoadProfile', $p)
+        $r.ExitCode | Should Be 0
+        $r.Output | Should Not Match 'plain-text UserPassword'
+    }
+}

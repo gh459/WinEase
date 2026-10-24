@@ -5,11 +5,15 @@
 # Runs from SetupComplete.cmd as the LAST writer before the transition logon is attempted.
 $ErrorActionPreference = 'SilentlyContinue'
 $user = '__WINEASE_USERNAME__'
+# The password is data, never source: Base64 of its UTF-16LE bytes (phase 11 fills the placeholder).
+$pwB64 = '__WINEASE_USERPASSWORD_B64__'
+$pw = ''
+if ($pwB64) { $pw = [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($pwB64)) }
 $key  = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
 
 Set-ItemProperty -LiteralPath $key -Name 'AutoAdminLogon'  -Value '1'    -Type String -Force
 Set-ItemProperty -LiteralPath $key -Name 'DefaultUserName' -Value $user -Type String -Force
-Set-ItemProperty -LiteralPath $key -Name 'DefaultPassword' -Value '__WINEASE_USERPASSWORD__' -Type String -Force
+Set-ItemProperty -LiteralPath $key -Name 'DefaultPassword' -Value $pw -Type String -Force
 Set-ItemProperty -LiteralPath $key -Name 'ForceAutoLogon'  -Value '1'    -Type String -Force
 
 $sid = $null

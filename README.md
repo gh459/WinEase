@@ -76,7 +76,7 @@ The goal of WinEase is to automate the creation of a streamlined Windows 11 imag
     - **Reboot Loop Trap Removed (`ErrorHandler.cmd`)**: Completely eliminated `ErrorHandler.cmd` and `ChildCompletion` registry overrides from the unattended answer file, preventing reboot loops and allowing Windows Setup to proceed naturally without interference.
     - **Core Accessibility Binaries Retained**: Preserves essential accessibility binaries (`osk.exe`, `Narrator.exe`, `magnify.exe`) in `System32` to prevent handle exceptions during OOBE Ease of Access subsystem initialization.
     - **Safe FontCache Lifecycle**: Defers `FontCache` and `FontCache3.0.0.0` disabling to `FirstLogon.ps1` (after desktop logon) so localized DirectWrite font rendering succeeds 100% during setup.
-    - **Strict Empty Passwords & Permanent AutoAdminLogon**: Normalized all `<Password><Value></Value>` tags to strictly empty single-line elements across all architectures, eliminating whitespace and newline parsing issues where Windows Setup hashed carriage returns as actual password characters. Configures persistent registry `AutoAdminLogon = 1` with `ForceAutoLogon = 1`, and eliminates password prompts on wake/idle.
+    - **Strict Empty Passwords & Permanent AutoAdminLogon**: Normalized all `<Password><Value></Value>` tags to strictly empty single-line elements across all architectures, eliminating whitespace and newline parsing issues where Windows Setup hashed carriage returns as actual password characters. The default account password is empty (there is no fixed default password; pass `-UserPassword` to set one). The auto-logon (`AutoAdminLogon = 1`, `ForceAutoLogon = 1`) is armed only when `ConfigureWinlogon` is on, and the first logon tears it down again, removes `DefaultPassword` and deletes the Setup copies of the answer file (see [`SECURITY.md`](SECURITY.md)). The behaviour of Windows Setup with an empty password and AutoLogon is not verified on a real ISO/VM.
   - **🖱️ Mouse Cursor & Pointer Display Guarantee**: Preserves essential Windows cursor bitmaps in `C:\Windows\Cursors` (~5 MB), ensuring the mouse pointer (`aero_arrow.cur`) is always rendered and fully functional throughout setup and on the installed desktop.
   - **Account Collision Resolved**: Centralized local account creation cleanly into `oobeSystem` `<LocalAccount wcm:action="add">`, eliminating `ERROR_USER_EXISTS` (0x80070524) collisions with `Specialize.ps1`.
   - **Setup Pre-Finalize SafeOS Crash Fixed**: Solved the `0x80070002` / `0x8007000B` error where Windows Setup crashes at ~100% when attempting to stage missing or corrupt `winre.wim`. `winre.wim` is preserved at build time and removed cleanly via online `reagentc /disable` during `FirstLogon.ps1`.
@@ -179,7 +179,9 @@ The resulting minimal OS is **not serviceable via cumulative updates** when WinS
 > exact steps to restore the protection. The defaults of those options are
 > conservative: **Defender, Windows Update and the blank-password auto-logon are
 > off unless you ask for them** (the `extreme` preset still asks for them
-> explicitly).
+> explicitly). The account password is **empty by default** (no fixed default
+> password) and is never saved in a profile. Before you share or upload a built
+> ISO, go through the checklist in [`SECURITY.md`](SECURITY.md).
 
 ---
 

@@ -67,7 +67,7 @@
             <DisplayName>User</DisplayName>
             <Group>Administrators</Group>
             <Password>
-              <Value>WinEase123!</Value>
+              <Value></Value>
               <PlainText>true</PlainText>
             </Password>
           </LocalAccount>
@@ -78,7 +78,7 @@
         <Enabled>true</Enabled>
         <LogonCount>1</LogonCount>
         <Password>
-          <Value>WinEase123!</Value>
+          <Value></Value>
           <PlainText>true</PlainText>
         </Password>
       </AutoLogon>
@@ -108,7 +108,7 @@
             <DisplayName>User</DisplayName>
             <Group>Administrators</Group>
             <Password>
-              <Value>WinEase123!</Value>
+              <Value></Value>
               <PlainText>true</PlainText>
             </Password>
           </LocalAccount>
@@ -119,7 +119,7 @@
         <Enabled>true</Enabled>
         <LogonCount>1</LogonCount>
         <Password>
-          <Value>WinEase123!</Value>
+          <Value></Value>
           <PlainText>true</PlainText>
         </Password>
       </AutoLogon>
@@ -835,11 +835,49 @@ $scripts = @(
 			if (-not (Test-Path $markerDir)) { New-Item -ItemType Directory -Force -Path $markerDir | Out-Null; }
 			Set-Content -LiteralPath "$markerDir\firstlogon.done" -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding ascii;
 
-			# Security restore: Tear down permanent AutoLogon after setup logon succeeds
-			Set-ItemProperty -LiteralPath 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name 'AutoAdminLogon' -Value '0' -Force -ErrorAction SilentlyContinue;
-			Set-ItemProperty -LiteralPath 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name 'ForceAutoLogon' -Value '0' -Force -ErrorAction SilentlyContinue;
-			Remove-ItemProperty -LiteralPath 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name 'DefaultPassword' -Force -ErrorAction SilentlyContinue;
 		} catch {}
+	};
+	{
+		# Security cleanup after the first logon: tear down the auto-logon and remove every copy of the
+		# password. Each step is verified by reading the result back and is logged to firstlogon-child.log
+		# (through the redirected output stream). Only names, paths and results are logged, never a value.
+		$wlKey = 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon';
+		try {
+			Set-ItemProperty -LiteralPath $wlKey -Name 'AutoAdminLogon' -Value '0' -Type String -Force -ErrorAction Stop;
+			Set-ItemProperty -LiteralPath $wlKey -Name 'ForceAutoLogon' -Value '0' -Type String -Force -ErrorAction Stop;
+		} catch { Write-Output ("[AutoLogon-Cleanup] WARN: writing AutoAdminLogon/ForceAutoLogon failed: " + $_.Exception.GetType().Name); }
+		try {
+			$wlItem = Get-Item -LiteralPath $wlKey -ErrorAction Stop;
+			if ($null -ne $wlItem.GetValue('DefaultPassword', $null)) {
+				Remove-ItemProperty -LiteralPath $wlKey -Name 'DefaultPassword' -Force -ErrorAction Stop;
+			}
+			$wlItem = Get-Item -LiteralPath $wlKey -ErrorAction Stop;
+			$autoNow = [string]$wlItem.GetValue('AutoAdminLogon', '');
+			$forceNow = [string]$wlItem.GetValue('ForceAutoLogon', '');
+			$pwGone = ($null -eq $wlItem.GetValue('DefaultPassword', $null));
+			if ($pwGone -and $autoNow -eq '0' -and $forceNow -eq '0') {
+				Write-Output "[AutoLogon-Cleanup] OK: AutoAdminLogon=0, ForceAutoLogon=0, DefaultPassword removed (verified).";
+			} else {
+				Write-Output ("[AutoLogon-Cleanup] FAILED: verification found AutoAdminLogon='" + $autoNow + "', ForceAutoLogon='" + $forceNow + "', DefaultPassword removed=" + $pwGone);
+			}
+		} catch { Write-Output ("[AutoLogon-Cleanup] FAILED: could not clean or verify the Winlogon values: " + $_.Exception.GetType().Name); }
+
+		# Setup keeps copies of the answer file (they hold the account password in clear text) and the
+		# OOBE helper carries the password as Base64. Delete them; a failure is logged, never fatal.
+		$secretFiles = @();
+		foreach ($answerDir in @('C:\Windows\Panther', 'C:\Windows\Panther\unattend', 'C:\Windows\Panther\UnattendGC', 'C:\Windows\System32\Sysprep')) {
+			foreach ($answerName in @('unattend.xml', 'autounattend.xml')) { $secretFiles += (Join-Path -Path $answerDir -ChildPath $answerName); }
+		}
+		$secretFiles += 'C:\Windows\Setup\Scripts\WinEase-oobe-autologon-repair.ps1';
+		foreach ($secretFile in $secretFiles) {
+			try {
+				if (Test-Path -LiteralPath $secretFile) {
+					Remove-Item -LiteralPath $secretFile -Force -ErrorAction Stop;
+					if (Test-Path -LiteralPath $secretFile) { Write-Output ("[AutoLogon-Cleanup] WARN: still present after delete: " + $secretFile); }
+					else { Write-Output ("[AutoLogon-Cleanup] OK: deleted " + $secretFile); }
+				}
+			} catch { Write-Output ("[AutoLogon-Cleanup] WARN: could not delete " + $secretFile + ": " + $_.Exception.GetType().Name); }
+		}
 	};
 );
 
