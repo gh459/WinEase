@@ -513,7 +513,6 @@ This working copy carries the following changes on top of the upstream fork:
 | `workflow-audit.yml` | changes under `.github/` | actionlint + zizmor security audit of the workflows |
 | `release.yml` | `v*` tag (or a manual dry run) | runs all of the above on the tagged commit, verifies the tag did not move, builds the source ZIP and the full packages (`win-x64`, `win-arm64`; `tools/package-release.ps1`), checks them with `verify-release-zip.py` and publishes them with `.sha256` files and build provenance attestations. A manual run builds and checks everything but publishes nothing |
 | `claude-issue-agent.yml` | issue assigned / `@claude` from a collaborator | implements the request on a branch and opens a **draft** PR |
-| `claude-pr-review.yml` | PR from a branch of this repository | **read-only, advisory** AI review comments; never approves or merges |
 
 Verify a downloaded release (for each ZIP you use): `sha256sum -c WinEase-<tag>-win-x64.zip.sha256`
 (or compare `Get-FileHash -Algorithm SHA256` with the file) and

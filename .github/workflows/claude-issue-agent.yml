@@ -11,8 +11,7 @@ name: Claude issue agent
 #     (author_association), never a bot; anyone else's "@claude" is ignored before the job starts.
 #   - assignment: GitHub only lets users with triage/write access assign issues.
 #   - claude-code-action additionally refuses actors without write access to the repository.
-# Automatic, read-only pull request reviews live in claude-pr-review.yml; this workflow is the
-# write-capable implementation agent.
+# This workflow is the write-capable implementation agent.
 
 on:
   issues:
