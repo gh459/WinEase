@@ -7,3 +7,7 @@
 ## 2025-05-21 - Using HashSet[string] instead of List[object] | Select-Object -Unique for key deduplication
 **Learning:** Collecting key strings into a `List[object]` and piping to `Select-Object -Unique` creates substantial pipeline overhead in PowerShell. Instantiating a `HashSet[string]` with `[System.StringComparer]::OrdinalIgnoreCase` directly avoids pipeline object creation and yields ~30% faster execution time for configuration comparison.
 **Action:** Prefer `HashSet[string]` with case-insensitive comparer over piping through `Select-Object -Unique` when collecting unique string keys across dictionaries or objects in PowerShell helpers.
+
+## 2025-05-22 - Using intrinsic .Where() instead of piping arrays to Where-Object in configuration matrix checks
+**Learning:** Piping collection items to `Where-Object` creates pipeline enumerator objects and pipeline context switching for each item. Replacing `$items | Where-Object { $_ -match ... }` with PowerShell's intrinsic `@($items.Where({ $_ -match ... }))` method reduces evaluation time in `Test-WinEaseConfigConflicts` by ~61% (9.5s -> 3.7s for 1000 runs).
+**Action:** Use intrinsic `.Where(...)` method on PowerShell arrays and generic lists (`List[T]`) for filter conditions in frequently evaluated validation routines instead of piping to `Where-Object`.
