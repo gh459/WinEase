@@ -100,11 +100,17 @@ function ConvertTo-WinEaseComparablePath {
     }
     if ([string]::IsNullOrEmpty($full)) { return $null }
     $resolved = $full
-    try {
-        $item = Get-Item -LiteralPath $full -Force -ErrorAction Stop
-        if ($item -and -not [string]::IsNullOrEmpty($item.FullName)) { $resolved = $item.FullName }
-    } catch {
-        Write-Verbose "Ignored: $($_.Exception.Message)"
+    # Only an existing path can resolve to a different spelling (8.3 short form, case).
+    # Probing with File/Directory.Exists instead of letting Get-Item throw keeps the
+    # common not-found case exception-free: the migration backup calls this helper for
+    # every file, and most destinations do not exist yet.
+    if (Test-WinEasePathExistsSafe -Path $full) {
+        try {
+            $item = Get-Item -LiteralPath $full -Force -ErrorAction Stop
+            if ($item -and -not [string]::IsNullOrEmpty($item.FullName)) { $resolved = $item.FullName }
+        } catch {
+            Write-Verbose "Ignored: $($_.Exception.Message)"
+        }
     }
     $trimmed = $resolved.TrimEnd('\')
     if ([string]::IsNullOrEmpty($trimmed)) { return $resolved }
@@ -231,6 +237,12 @@ function Test-WinEasePathHasReparsePoint {
 # leaves the root after normalization, and a path that traverses a symbolic link or a
 # junction.
 #
+# -LookupCache (optional): a hashtable shared across calls by hot loops (the migration
+# backup validates every file). Memoizes the resolved allowed root and the directories
+# already proven reparse-free, keyed 'root|<root>' / 'dir|<parent>'. Omitting it keeps
+# the exact one-shot behaviour. Callers must not reuse a cache across different roots
+# that could be swapped for links mid-run; a per-operation cache is expected.
+#
 # Returns @{ IsSafe = $bool; Path = <string>; Reason = <string> }
 function Resolve-WinEaseSafeRelativePath {
     [CmdletBinding()]
@@ -241,7 +253,8 @@ function Resolve-WinEaseSafeRelativePath {
         [string]$RelativePath,
         [Parameter(Mandatory = $true)]
         [string]$Root,
-        [string]$Label = 'path'
+        [string]$Label = 'path',
+        [hashtable]$LookupCache
     )
     $result = [PSCustomObject]@{ IsSafe = $false; Path = $null; Reason = '' }
     if ([string]::IsNullOrWhiteSpace($RelativePath)) {
@@ -261,7 +274,8 @@ function Resolve-WinEaseSafeRelativePath {
         $result.Reason = "the $Label contains an invalid character: '$RelativePath'"
         return $result
     }
-    $segments = @($clean -split '\\' | Where-Object { $_ -ne '' -and $_ -ne '.' })
+    $segments = @()
+    foreach ($seg in ($clean -split '\\')) { if ($seg -ne '' -and $seg -ne '.') { $segments += $seg } }
     if ($segments.Count -eq 0) {
         $result.Reason = "the $Label does not name a file: '$RelativePath'"
         return $result
@@ -272,7 +286,13 @@ function Resolve-WinEaseSafeRelativePath {
             return $result
         }
     }
-    $rootFull = ConvertTo-WinEaseComparablePath -Path $Root
+    $rootFull = $null
+    $rootKey = 'root|' + $Root
+    if ($null -ne $LookupCache -and $LookupCache.ContainsKey($rootKey)) { $rootFull = $LookupCache[$rootKey] }
+    if (-not $rootFull) {
+        $rootFull = ConvertTo-WinEaseComparablePath -Path $Root
+        if ($null -ne $LookupCache -and $rootFull) { $LookupCache[$rootKey] = $rootFull }
+    }
     if (-not $rootFull) {
         $result.Reason = "the allowed root cannot be resolved: '$Root'"
         return $result
@@ -287,7 +307,32 @@ function Resolve-WinEaseSafeRelativePath {
         $result.Reason = "the $Label leaves the allowed root '$Root': '$RelativePath'"
         return $result
     }
-    if (Test-WinEasePathHasReparsePoint -Path $full -Root $rootFull) {
+    $traversesReparse = $null
+    if ($null -ne $LookupCache) {
+        # Directories repeat across files: a parent once proven reparse-free up to the
+        # root lets the check shrink to the file itself (a file can still be a link).
+        $parent = [System.IO.Path]::GetDirectoryName($full)
+        if ([string]::IsNullOrEmpty($parent)) { $parent = $rootFull }
+        $dirKey = 'dir|' + $parent.ToLowerInvariant()
+        $parentSafe = $false
+        if ($LookupCache.ContainsKey($dirKey)) { $parentSafe = [bool]$LookupCache[$dirKey] }
+        else {
+            $parentSafe = -not (Test-WinEasePathHasReparsePoint -Path $parent -Root $rootFull)
+            $LookupCache[$dirKey] = $parentSafe
+        }
+        if (-not $parentSafe) {
+            $traversesReparse = $true
+        } elseif (Test-WinEasePathExistsSafe -Path $full) {
+            # The target exists: it must not be a link itself.
+            try {
+                $item = Get-Item -LiteralPath $full -Force -ErrorAction Stop
+                if ($item -and ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { $traversesReparse = $true }
+            } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        }
+    } else {
+        $traversesReparse = Test-WinEasePathHasReparsePoint -Path $full -Root $rootFull
+    }
+    if ($traversesReparse) {
         $result.Reason = "the $Label traverses a symbolic link or junction: '$RelativePath'"
         return $result
     }

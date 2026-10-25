@@ -263,7 +263,14 @@ function Invoke-WinEaseWinUiRequest {
                     }
                 } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
             )
-            return @{ Data = $rules }
+            # Load errors (broken user-migration-rules.psd1, duplicate Ids) travel with the
+            # reply so the window can show why custom rules are missing.
+            $ruleErrors = @(
+                try {
+                    if ($data) { @($data.Errors | ForEach-Object { "$_" }) }
+                } catch { }
+            )
+            return @{ Data = $rules; Errors = $ruleErrors }
         }
         'exportApps' {
             $o = Invoke-WinEaseGuiMigrationJob -RepoRoot $repo -Script 'param($a) Export-WinEaseAppInventory -OutputPath $a.OutputPath' -Arguments @{ OutputPath = "$($a.OutputPath)" }
@@ -285,7 +292,25 @@ function Invoke-WinEaseWinUiRequest {
             $ba = @{ BackupRoot = $root; RuleIds = @($a.RuleIds | Where-Object { $_ }); FolderMap = (Get-WinEaseMigrationFolderMapFromNames -Names @($a.Folders)) }
             if ($a.IncludeSecrets) { $ba['IncludeSecrets'] = $true }
             $o = Invoke-WinEaseGuiMigrationJob -RepoRoot $repo -Arguments $ba -Script 'param($a) Start-WinEaseMigrationBackup @a'
-            $r = Get-WinEaseWinUiJobReply -Outcome $o -SuccessMessage (Get-WinEaseUiString 'Mig.Backup.Done' -Format $root)
+            # The message has to say what the rules actually did: a rule whose application
+            # is still running is skipped (its files would be restored uselessly), and a
+            # broken user rules file is reported instead of being silently ignored.
+            $detail = @()
+            if (-not $o.Error -and $o.Result) {
+                $res = $o.Result
+                $rr = $res.RulesResult
+                if ($rr) {
+                    $detail += (Get-WinEaseUiString 'Mig.Backup.Rules' -Format @($rr.BackedUpRules).Count, (@($rr.SkipReasons).Count + [int]$rr.SkippedFiles), @($rr.FailedFiles).Count)
+                    foreach ($s in @($rr.SkipReasons)) { $detail += ('  {0}: {1}' -f $s.Item, $s.Reason) }
+                    foreach ($f in @($rr.FailedFiles)) { $detail += ('  {0}: {1}' -f $f.Rule, $f.Error) }
+                }
+                $udFailed = @($res.UserData.FailedFiles | Where-Object { $_ }).Count
+                if ($udFailed -gt 0) { $detail += (Get-WinEaseUiString 'Mig.Backup.DataFailed' -Format $udFailed) }
+                foreach ($e in @($res.RuleErrors)) { $detail += (Get-WinEaseUiString 'Mig.Rules.LoadErrors' -Format ("$e")) }
+            }
+            $done = Get-WinEaseUiString 'Mig.Backup.Done' -Format $root
+            if ($detail.Count -gt 0) { $done += "`n`n" + ($detail -join "`n") }
+            $r = Get-WinEaseWinUiJobReply -Outcome $o -SuccessMessage $done
             $r.Title = Get-WinEaseUiString 'Mig.Backup.Title'
             if (-not $o.Error) { $r.Data = @{ Status = (Get-WinEaseUiString 'Mig.Backup.Status') } }
             return $r

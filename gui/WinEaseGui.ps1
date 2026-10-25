@@ -1757,8 +1757,8 @@ function New-WinEaseMigrationTab {
 
     # Left: personal data folders + migration rules
     $grpRules = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'Mig.Group.Rules') -Width 410 -Height 420 -Parent $flowMig
-    $folderNames = @('Documents', 'Desktop', 'Pictures', 'Videos', 'Downloads')
-    $gui.MigFolders = New-WinEaseCheckedList -Items $folderNames -Selected @('Documents', 'Desktop', 'Pictures') -X 10 -Y 20 -Width 390 -Height 100 -Parent $grpRules
+    $folderNames = @('Documents', 'Desktop', 'Pictures', 'Videos', 'Music', 'Downloads', 'Saved Games')
+    $gui.MigFolders = New-WinEaseCheckedList -Items $folderNames -Selected @('Documents', 'Desktop', 'Pictures') -X 10 -Y 20 -Width 390 -Height 104 -Parent $grpRules
     [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Mig.Label.Rules') -X 10 -Y 126 -Width 390 -Height 18 -Parent $grpRules)
     $clbMig = New-WinEaseCheckedList -Items @() -X 10 -Y 146 -Width 390 -Height 264 -Parent $grpRules
     # Rules are filled in the first time this tab is opened (the migration engine is not loaded before that)

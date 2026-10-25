@@ -608,12 +608,14 @@ function Get-WinEaseMigrationFolderMapFromNames {
     $map = @{}
     foreach ($name in $Names) {
         $path = switch ("$name") {
-            'Documents' { [Environment]::GetFolderPath('MyDocuments') }
-            'Desktop'   { [Environment]::GetFolderPath('Desktop') }
-            'Pictures'  { [Environment]::GetFolderPath('MyPictures') }
-            'Videos'    { [Environment]::GetFolderPath('MyVideos') }
-            'Downloads' { Join-Path $env:USERPROFILE 'Downloads' }
-            default     { '' }
+            'Documents'   { [Environment]::GetFolderPath('MyDocuments') }
+            'Desktop'     { [Environment]::GetFolderPath('Desktop') }
+            'Pictures'    { [Environment]::GetFolderPath('MyPictures') }
+            'Videos'      { [Environment]::GetFolderPath('MyVideos') }
+            'Music'       { [Environment]::GetFolderPath('MyMusic') }
+            'Downloads'   { Join-Path $env:USERPROFILE 'Downloads' }
+            'Saved Games' { Join-Path $env:USERPROFILE 'Saved Games' }
+            default       { '' }
         }
         if ($path -and (Test-Path -LiteralPath $path)) { $map["$name"] = $path }
     }
@@ -625,6 +627,7 @@ function Initialize-WinEaseGuiMigrationRules {
     param($List)
     $migRuleRows = @()
     $migRuleIds = @()
+    $migRuleErrors = @()
     try {
         . (Join-Path $script:WinEaseGuiRepoRoot 'tools\migrator\WinEaseMigration.ps1')
         $migRulesData = Get-WinEaseMigrationRules
@@ -633,6 +636,7 @@ function Initialize-WinEaseGuiMigrationRules {
             $migRuleRows += "$($r.Id) - $($r.Name)"
             $migRuleIds += [string]$r.Id
         }
+        $migRuleErrors = @($migRulesData.Errors)
     } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     if ($migRuleRows.Count -eq 0) {
         # Placeholder row only: the list is disabled so it can never be checked or passed as a rule Id
@@ -641,6 +645,10 @@ function Initialize-WinEaseGuiMigrationRules {
     } else {
         foreach ($row in $migRuleRows) { [void]$List.Items.Add($row) }
     }
+    # Load errors (a broken user-migration-rules.psd1, duplicate Ids) as an extra row at
+    # the end: it sits beyond the Id array in the Tag, so checking it can never reach a
+    # rule and Get-WinEaseGuiMigrationRuleIds ignores it.
+    foreach ($e in $migRuleErrors) { [void]$List.Items.Add(('{0} {1}' -f ([char]0x26A0), (Get-WinEaseUiString 'Mig.Rules.LoadErrors' -Format $e))) }
     $List.Tag = $migRuleIds
 }
 

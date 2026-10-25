@@ -27,7 +27,7 @@ public sealed partial class MainWindow : Window
         ("extreme", "Media.Preset.Extreme"), ("balanced", "Media.Preset.Balanced"), ("fat32", "Media.Preset.Fat32"),
         ("handheld", "Media.Preset.Handheld"), ("vm", "Media.Preset.VM"), ("audio", "Media.Preset.Audio"),
     };
-    private static readonly string[] MigrationFolders = { "Documents", "Desktop", "Pictures", "Videos", "Downloads" };
+    private static readonly string[] MigrationFolders = { "Documents", "Desktop", "Pictures", "Videos", "Music", "Downloads", "Saved Games" };
     private static readonly string[] ConflictPolicies = { "BackupExisting", "Skip", "OverwriteIfNewer", "Overwrite" };
     private const string CurrentSettingsId = "__current__";
 
@@ -1154,14 +1154,17 @@ public sealed partial class MainWindow : Window
         var allRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 0, 0, 6) };
         // The help mark next to the label: what the engine choice does is not obvious,
         // so the mark explains it in a tooltip and accessibility properties.
-        var engineHelp = new TextBlock
+        var engineHelp = new Button
         {
-            Text = "?",
+            Content = "?",
             VerticalAlignment = VerticalAlignment.Center,
-            FontSize = 15,
+            Padding = new Thickness(6, 2, 6, 2),
+            MinHeight = 0,
+            MinWidth = 0,
         };
-        ToolTipService.SetToolTip(engineHelp, _s.Get("Debloat.Engine.Help"));
         AutomationProperties.SetName(engineHelp, _s.Get("Debloat.Engine.Help"));
+        ToolTipService.SetToolTip(engineHelp, _s.Get("Debloat.Engine.Help"));
+        engineHelp.Click += async (_, _) => await MessageAsync(_s.Get("Debloat.Engine.All").TrimEnd(':', '：', ' '), _s.Get("Debloat.Engine.Help"));
         allRow.Children.Add(engineHelp);
         allRow.Children.Add(new TextBlock { Text = _s.Get("Debloat.Engine.All"), VerticalAlignment = VerticalAlignment.Center });
         var allCombo = new ComboBox { MinWidth = 140, SelectedIndex = 0 };
@@ -1453,10 +1456,12 @@ public sealed partial class MainWindow : Window
     // Rules are read from tools\migrator the first time the page is opened
     private async void FillMigrationRules(StackPanel host)
     {
+        List<string>? ruleErrors = null;
         if (_migRules == null)
         {
             host.Children.Add(new ProgressRing { IsActive = true, Width = 20, Height = 20, HorizontalAlignment = HorizontalAlignment.Left });
             var r = await _bridge.RequestAsync("migrationRules", _s.Language);
+            ruleErrors = InitData.StrList(r["Errors"]);
             var list = new List<(string, string)>();
             foreach (var n in InitData.Arr(r["Data"]))
             {
@@ -1465,6 +1470,20 @@ public sealed partial class MainWindow : Window
             }
             _migRules = list;
             host.Children.Clear();
+        }
+        // Load errors (a broken user-migration-rules.psd1, duplicate Ids): the custom
+        // rules are missing for a reason, and the window says which one.
+        if (ruleErrors is { Count: > 0 })
+        {
+            foreach (string err in ruleErrors)
+            {
+                host.Children.Add(new TextBlock
+                {
+                    Text = "\u26A0 " + _s.Format("Mig.Rules.LoadErrors", err),
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = Res("SystemFillColorCautionBrush"),
+                });
+            }
         }
         if (_migRules.Count == 0)
         {

@@ -25,6 +25,10 @@
     Include credential/token files in the backup (excluded by default).
 .PARAMETER RetryFailedOnly
     Restore only the tasks that failed (or are still pending) last time.
+.PARAMETER VerifyAfterBackup
+    After a backup, re-read and re-hash every copied file (an extra full pass over the
+    data). By default the backup reports the SHA-256 hashes recorded while copying and
+    the full check stays available through -Mode Verify.
 .PARAMETER DryRun
     Simulate without making changes.
 .PARAMETER GUI
@@ -47,6 +51,7 @@ param(
     [string]$ConflictPolicy = 'BackupExisting',
     [switch]$IncludeSecrets,
     [switch]$RetryFailedOnly,
+    [switch]$VerifyAfterBackup,
     [switch]$DryRun,
     [Parameter(ParameterSetName = 'CLI')]
     [string]$OutputPath = '',
@@ -125,6 +130,7 @@ function Resolve-MigratorUserFolders {
             '^Videos$' { [Environment]::GetFolderPath('MyVideos') }
             '^Music$' { [Environment]::GetFolderPath('MyMusic') }
             '^Downloads$' { Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads' }
+            '^Saved Games$' { Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Saved Games' }
             default { $null }
         }
         if (-not $p) { Write-Warning "Unknown user folder '$n' skipped (use -CustomPaths for arbitrary paths)."; continue }
@@ -489,6 +495,10 @@ switch ($Mode) {
         $rules.GameRules | ForEach-Object { Write-Host ('  {0}: {1}' -f $_.Id, $_.Name) }
         Write-Host '=== App Config Rules ===' -ForegroundColor Cyan
         $rules.AppConfigRules | ForEach-Object { Write-Host ('  {0}: {1}' -f $_.Id, $_.Name) }
+        if (@($rules.Errors).Count -gt 0) {
+            Write-Host '=== Rule load errors ===' -ForegroundColor Yellow
+            $rules.Errors | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+        }
     }
     'ExportApps' {
         $out = if ($OutputPath) { $OutputPath } else { Join-Path $PackagePath 'apps-inventory.json' }
@@ -530,7 +540,32 @@ switch ($Mode) {
         $verify = [PSCustomObject]@{ Success = $true; Message = 'DryRun: nothing to verify.' }
         $report = $null
         if (-not $DryRun) {
-            $verify = Test-MigratorBackupIntegrity -Root $PackagePath
+            # The SHA-256 of every copied file was recorded while copying (one read per
+            # file). Re-reading and re-hashing everything only happens on request: the
+            # full check is -Mode Verify / the GUI verify button, or -VerifyAfterBackup.
+            if ($VerifyAfterBackup) {
+                $verify = Test-MigratorBackupIntegrity -Root $PackagePath
+            } else {
+                $failedCount = 0
+                foreach ($part in @($result.UserData, $result.CustomResult, $result.RulesResult)) {
+                    if ($part) { $failedCount += @($part.FailedFiles | Where-Object { $_ }).Count }
+                }
+                $verified = @(Get-WinEaseMigrationManifestEntries -BackupRoot $PackagePath | Where-Object { $_ -and $_.Sha256 }).Count
+                $ruleFiles = 0
+                $ruleCount = 0
+                if ($result.RulesResult) {
+                    foreach ($b in @($result.RulesResult.BackedUpRules)) { $ruleFiles += [int]$b.FileCount }
+                    $ruleCount = @($result.RulesResult.BackedUpRules).Count
+                }
+                $message = ('{0} data file(s) recorded with SHA-256 during the copy' -f $verified)
+                if ($ruleCount -gt 0) { $message += ('; {0} further file(s) from {1} migration rule(s) copied as-is' -f $ruleFiles, $ruleCount) }
+                $message += '. Run -Mode Verify for a full integrity check.'
+                $verify = [PSCustomObject]@{
+                    Success = ($failedCount -eq 0)
+                    Checked = $verified
+                    Message = $message
+                }
+            }
             $report = Join-Path $PackagePath 'migration-report.html'
             Write-Host "Backup completed. Manifest: $(Join-Path $PackagePath 'migration-manifest.json')" -ForegroundColor Green
             Write-Host $verify.Message
