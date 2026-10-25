@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
@@ -2116,10 +2116,9 @@ public sealed partial class MainWindow : Window
         var openDocs = MakeButton(_s.Get("Progress.Button.OpenDocs"), _s.Get("Progress.Help.OpenDocs"), () => TryOpenPath(docsPath), visible: false);
         var closeButton = new Button { Content = _s.Get("Progress.Close"), IsEnabled = false, HorizontalAlignment = HorizontalAlignment.Right };
         closeButton.Click += (_, _) => Close();
-        var buttons = new VariableSizedWrapGrid { Orientation = Orientation.Horizontal, ItemWidth = double.NaN, ItemHeight = double.NaN };
+        var buttons = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 8, HorizontalAlignment = HorizontalAlignment.Left };
         foreach (var b in new[] { openLog, openReport, openOutput, openDiag, openDocs })
         {
-            b.Margin = new Thickness(0, 0, 8, 8);
             buttons.Children.Add(b);
         }
 
