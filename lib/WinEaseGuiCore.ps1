@@ -1,4 +1,4 @@
-# WinEaseGuiCore.ps1 - UI-independent GUI logic shared by the windows and the Migration Assistant
+﻿# WinEaseGuiCore.ps1 - UI-independent GUI logic shared by the windows and the Migration Assistant
 # Dot-sourced by gui\WinEaseGui.ps1 (WinForms window), gui\WinEaseWinUiHost.ps1 (WinUI 3 host) and
 # tools\migrator\WinEase-Migrator.ps1. Function and variable definitions only; it loads no
 # WinForms/Drawing assembly, so the WinUI 3 host can use it without the classic window.
@@ -731,4 +731,313 @@ function Get-WinEaseGuiDefaultWorkDir {
     $docsDir = [Environment]::GetFolderPath('MyDocuments')
     if (-not $docsDir) { $docsDir = Join-Path $env:USERPROFILE "Documents" }
     return (Join-Path -Path $docsDir -ChildPath "WinEase_workspace")
+}
+
+# ---------------------------------------------------------------------------------------------
+# "Save as preset": write the current window settings as a user preset file.
+# Shared by the WinForms window and the WinUI 3 window (request 'savePreset'); the rules live
+# here, the windows never write the file themselves. The file is one preset per file under
+# config\user\presets\<key>.psd1 and is loaded by Import-WinEaseUserExtensions like every other
+# user preset. Secrets (schema Secret = $true) and paths are never stored. See docs\GUI_PRESET_STATE.md.
+# ---------------------------------------------------------------------------------------------
+
+# The single-quoted form of a value for a .psd1 file: every ' becomes '' inside the quotes.
+# Everything else (Japanese, parentheses, brackets) is safe inside a single-quoted string.
+function ConvertTo-WinEasePsd1QuotedString {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
+    return "'" + ("$Value" -replace "'", "''") + "'"
+}
+
+# The key of a preset name as every lookup uses it (Get-WinEasePreset, the state rules): trimmed, lower-case.
+function Get-WinEaseGuiUserPresetKey {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    return "$Name".Trim().ToLower()
+}
+
+# The folder the per-file user presets live in (config\user\presets).
+function Get-WinEaseGuiUserPresetDir {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([string]$RepoRoot = '')
+    if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = $script:WinEaseGuiRepoRoot }
+    if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = (Get-Location).Path }
+    return (Join-Path -Path (Join-Path -Path $RepoRoot -ChildPath 'config\user') -ChildPath 'presets')
+}
+
+function Get-WinEaseGuiUserPresetFilePath {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [string]$RepoRoot = '',
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+    return (Join-Path -Path (Get-WinEaseGuiUserPresetDir -RepoRoot $RepoRoot) -ChildPath ((Get-WinEaseGuiUserPresetKey -Name $Name) + '.psd1'))
+}
+
+# The preset-name rule: 1-40 characters, letters (any script, so Japanese names work), digits,
+# spaces, '-' and '_'. Path characters, quotes and control characters are all refused.
+function Test-WinEaseGuiUserPresetName {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    $trimmed = $Name.Trim()
+    if ($trimmed.Length -gt 40) { return $false }
+    return [regex]::IsMatch($trimmed, '^[\p{L}\p{Nd}][\p{L}\p{Nd} _-]{0,39}$')
+}
+
+# The user presets that are not built-in: keys in BuiltInPresets outside config\presets.psd1's
+# order, with their ProfileName as the display label (the key as the fallback). Re-read after a
+# save; Import-WinEaseUserExtensions -PresetsOnly is the reload when it is loaded.
+function Get-WinEaseGuiUserPresetChoices {
+    [CmdletBinding()]
+    [OutputType([object[]])]
+    param()
+    $builtInKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($k in @('none', 'extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')) { [void]$builtInKeys.Add($k) }
+    $out = @()
+    if ($script:BuiltInPresets) {
+        foreach ($k in @($script:BuiltInPresets.Keys)) {
+            if ($builtInKeys.Contains("$k")) { continue }
+            $raw = $script:BuiltInPresets[$k]
+            $label = $null
+            if ($raw -is [System.Collections.IDictionary] -and $raw.Contains('ProfileName')) { $label = "$($raw['ProfileName'])" }
+            elseif ($raw -and $raw.PSObject -and $raw.PSObject.Properties['ProfileName']) { $label = "$($raw.PSObject.Properties['ProfileName'].Value)" }
+            if ([string]::IsNullOrWhiteSpace($label)) { $label = "$k" }
+            $out += [PSCustomObject]@{ Key = "$k"; Label = $label }
+        }
+    }
+    return @($out)
+}
+
+# Re-read the user presets (user-tweaks.psd1 and the per-file folder) and return the list.
+function Update-WinEaseGuiUserPresets {
+    [CmdletBinding()]
+    [OutputType([object[]])]
+    param()
+    if (Get-Command -Name Import-WinEaseUserExtensions -ErrorAction SilentlyContinue) {
+        try { $null = Import-WinEaseUserExtensions -PresetsOnly } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
+    return (Get-WinEaseGuiUserPresetChoices)
+}
+
+# Collect the preset-controlled parts of a window config (the draft of Get-WinEaseGuiDraftConfig
+# or the PresetStateConfig of the WinUI window): every Gui component, every tweak, the payload
+# format and the Advanced Debloat selection with its engines.
+function Get-WinEaseGuiUserPresetData {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Current,
+        [string]$PayloadFormat = ''
+    )
+    $components = [ordered]@{}
+    $curComponents = $null
+    if ($Current -is [System.Collections.IDictionary]) {
+        if ($Current.Contains('Components') -and $Current['Components'] -is [System.Collections.IDictionary]) { $curComponents = $Current['Components'] }
+    }
+    foreach ($cd in $script:ComponentDefs.Values) {
+        if (-not $cd.Gui) { continue }
+        $val = $null
+        if ($curComponents -and $curComponents.Contains($cd.Key)) { $val = [bool]$curComponents[$cd.Key] }
+        elseif ($Current -is [System.Collections.IDictionary] -and $Current.Contains($cd.Key)) { $val = [bool]$Current[$cd.Key] }
+        else { $val = [bool]$cd.Gui.Default }
+        $components[$cd.Key] = $val
+    }
+    $tweaks = [ordered]@{}
+    $curTweaks = $null
+    if ($Current -is [System.Collections.IDictionary]) {
+        foreach ($tk in @('TweakSettings', 'Tweaks')) {
+            if ($Current.Contains($tk) -and $Current[$tk] -is [System.Collections.IDictionary]) { $curTweaks = $Current[$tk]; break }
+        }
+    }
+    foreach ($tkKey in $script:AllTweakDefs.Keys) {
+        $val = if ($curTweaks -and $curTweaks.Contains($tkKey)) { [bool]$curTweaks[$tkKey] } else { [bool]$script:AllTweakDefs[$tkKey].Default }
+        $tweaks[$tkKey] = $val
+    }
+    $fmt = "$PayloadFormat".Trim().ToUpper()
+    if ($fmt -notin @('ESD', 'SWM', 'WIM')) {
+        $fmt = ''
+        if ($Current -is [System.Collections.IDictionary]) {
+            if ($Current.Contains('PayloadFormat') -and $Current['PayloadFormat']) { $fmt = "$($Current['PayloadFormat'])".Trim().ToUpper() }
+            elseif ($Current.Contains('ExportESDMode') -and $Current['ExportESDMode']) { $fmt = 'ESD' }
+            elseif ($Current.Contains('SplitWIMMode') -and $Current['SplitWIMMode']) { $fmt = 'SWM' }
+        }
+        if ($fmt -notin @('ESD', 'SWM')) { $fmt = 'WIM' }
+    }
+    $std = @(); $exp = @(); $engines = [ordered]@{}
+    if ($Current -is [System.Collections.IDictionary]) {
+        if ($Current.Contains('AdvancedDebloatStandard')) { $std = @($Current['AdvancedDebloatStandard'] | ForEach-Object { "$_" } | Where-Object { $_ }) }
+        if ($Current.Contains('AdvancedDebloatExperimental')) { $exp = @($Current['AdvancedDebloatExperimental'] | ForEach-Object { "$_" } | Where-Object { $_ }) }
+        if ($Current.Contains('DebloatEngineSelection') -and $Current['DebloatEngineSelection'] -is [System.Collections.IDictionary]) {
+            foreach ($k in $Current['DebloatEngineSelection'].Keys) { $engines["$k"] = "$($Current['DebloatEngineSelection'][$k])" }
+        }
+    }
+    return [ordered]@{
+        Components                  = $components
+        Tweaks                      = $tweaks
+        PayloadFormat               = $fmt
+        AdvancedDebloatStandard     = @($std)
+        AdvancedDebloatExperimental = @($exp)
+        DebloatEngineSelection      = $engines
+    }
+}
+
+# Render the collected data as the .psd1 text of one user preset (UTF-8 with BOM, so Japanese
+# names survive the way Import-PowerShellDataFile reads them).
+function ConvertTo-WinEaseUserPresetFileText {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [string]$Description = '',
+        [Parameter(Mandatory = $true)]$Data
+    )
+    $sb = [System.Text.StringBuilder]::new()
+    [void]$sb.AppendLine('# WinEase user preset - written by the GUI "Save as preset".')
+    [void]$sb.AppendLine("# Name: $Name")
+    [void]$sb.AppendLine("# Saved: $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))")
+    [void]$sb.AppendLine('# Secrets (the schema marks them Secret) and paths are never stored here.')
+    [void]$sb.AppendLine('@{')
+    [void]$sb.AppendLine("    SchemaVersion = '1.0'")
+    [void]$sb.AppendLine("    ProfileName   = $(ConvertTo-WinEasePsd1QuotedString -Value $Name)")
+    [void]$sb.AppendLine("    Description   = $(ConvertTo-WinEasePsd1QuotedString -Value $Description)")
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('    # Components (every Gui switch of the window)')
+    foreach ($k in $Data.Components.Keys) {
+        [void]$sb.AppendLine("    $k = `$$("$($Data.Components[$k])".ToLower())")
+    }
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('    TweakSettings = @{')
+    foreach ($k in $Data.Tweaks.Keys) {
+        [void]$sb.AppendLine("        $(ConvertTo-WinEasePsd1QuotedString -Value $k) = `$$("$($Data.Tweaks[$k])".ToLower())")
+    }
+    [void]$sb.AppendLine('    }')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine("    PayloadFormat = $(ConvertTo-WinEasePsd1QuotedString -Value $Data.PayloadFormat)")
+    [void]$sb.AppendLine('')
+    $stdItems = @($Data.AdvancedDebloatStandard | ForEach-Object { ConvertTo-WinEasePsd1QuotedString -Value $_ })
+    $expItems = @($Data.AdvancedDebloatExperimental | ForEach-Object { ConvertTo-WinEasePsd1QuotedString -Value $_ })
+    [void]$sb.AppendLine("    AdvancedDebloatStandard     = @($($stdItems -join ', '))")
+    [void]$sb.AppendLine("    AdvancedDebloatExperimental = @($($expItems -join ', '))")
+    [void]$sb.AppendLine('    DebloatEngineSelection = @{')
+    foreach ($k in $Data.DebloatEngineSelection.Keys) {
+        [void]$sb.AppendLine("        $(ConvertTo-WinEasePsd1QuotedString -Value $k) = $(ConvertTo-WinEasePsd1QuotedString -Value $Data.DebloatEngineSelection[$k])")
+    }
+    [void]$sb.AppendLine('    }')
+    [void]$sb.AppendLine('}')
+    return $sb.ToString()
+}
+
+# The saved preset read back through Get-WinEaseGuiPresetValues must equal what was saved.
+function Test-WinEaseGuiUserPresetDataMatches {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param($Expected, $Actual)
+    if (-not $Actual) { return $false }
+    foreach ($k in $Expected.Components.Keys) {
+        if (-not $Actual.Components.Contains($k)) { return $false }
+        if ([bool]$Actual.Components[$k] -ne [bool]$Expected.Components[$k]) { return $false }
+    }
+    foreach ($k in $Expected.Tweaks.Keys) {
+        if (-not $Actual.Tweaks.Contains($k)) { return $false }
+        if ([bool]$Actual.Tweaks[$k] -ne [bool]$Expected.Tweaks[$k]) { return $false }
+    }
+    if ("$($Actual.PayloadFormat)".ToUpper() -ne "$($Expected.PayloadFormat)".ToUpper()) { return $false }
+    foreach ($listKey in @('AdvancedDebloatStandard', 'AdvancedDebloatExperimental')) {
+        $a = @($Actual[$listKey] | ForEach-Object { "$_" } | Sort-Object)
+        $b = @($Expected[$listKey] | ForEach-Object { "$_" } | Sort-Object)
+        if (($a -join "`n") -ne ($b -join "`n")) { return $false }
+    }
+    if (@($Actual.DebloatEngineSelection.Keys).Count -ne @($Expected.DebloatEngineSelection.Keys).Count) { return $false }
+    foreach ($k in $Expected.DebloatEngineSelection.Keys) {
+        if (-not $Actual.DebloatEngineSelection.Contains($k)) { return $false }
+        if ("$($Actual.DebloatEngineSelection[$k])" -ne "$($Expected.DebloatEngineSelection[$k])") { return $false }
+    }
+    return $true
+}
+
+# Save the current window settings as a user preset: validate the name, refuse built-in and
+# reserved names, refuse an existing preset without -Overwrite, write the file atomically and
+# read it back through the same loader the GUIs use; only a verified read-back reports success.
+# Returns Saved / Key / Path / ReasonKey / Error / Reloaded.
+function Save-WinEaseGuiUserPreset {
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [string]$Description = '',
+        [Parameter(Mandatory = $true)]$Current,
+        [string]$PayloadFormat = '',
+        [string]$RepoRoot = '',
+        [switch]$Overwrite
+    )
+    $result = [PSCustomObject]@{ Saved = $false; Key = ''; Path = ''; ReasonKey = ''; Error = ''; Reloaded = $false }
+    if (-not (Test-WinEaseGuiUserPresetName -Name $Name)) { $result.ReasonKey = 'SavePreset.Reason.InvalidName'; return $result }
+    $key = Get-WinEaseGuiUserPresetKey -Name $Name
+    $result.Key = $key
+    if ($key -eq 'custom' -or $key -eq 'none') { $result.ReasonKey = 'SavePreset.Reason.Reserved'; return $result }
+    # Only the built-in order keys are refused. User presets (re-loaded into BuiltInPresets after a
+    # save) are overwritten through the -Overwrite flow, not refused as a conflict.
+    $builtInOrderKeys = @('none', 'extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')
+    if ($builtInOrderKeys -contains $key) {
+        $result.ReasonKey = 'SavePreset.Reason.ConflictBuiltin'
+        return $result
+    }
+    $path = Get-WinEaseGuiUserPresetFilePath -RepoRoot $RepoRoot -Name $Name
+    $result.Path = $path
+    if (Test-Path -LiteralPath $path) {
+        if (-not $Overwrite) { $result.ReasonKey = 'SavePreset.Reason.Exists'; return $result }
+    }
+
+    $data = Get-WinEaseGuiUserPresetData -Current $Current -PayloadFormat $PayloadFormat
+    $content = ConvertTo-WinEaseUserPresetFileText -Name $Name.Trim() -Description $Description -Data $data
+
+    $written = $false
+    try {
+        if (Get-Command -Name Write-WinEaseTextFileAtomic -ErrorAction SilentlyContinue) {
+            $written = [bool](Write-WinEaseTextFileAtomic -Path $path -Content $content)
+        } else {
+            $dir = Split-Path -Parent $path
+            if ($dir -and -not (Test-Path -LiteralPath $dir)) { $null = New-Item -ItemType Directory -Force -Path $dir }
+            [System.IO.File]::WriteAllText($path, $content, (New-Object System.Text.UTF8Encoding($true)))
+            $written = $true
+        }
+    } catch {
+        $result.Error = $_.Exception.Message
+        $result.ReasonKey = 'SavePreset.Reason.Write'
+        return $result
+    }
+    if (-not $written) { $result.ReasonKey = 'SavePreset.Reason.Write'; return $result }
+
+    # Read the file back through the same loader and only then report success. The loader gets the
+    # config path of the same repository the file was written to (the GUIs have only one anyway).
+    $cfgPath = $null
+    if (Get-Command -Name Resolve-WinEaseUserConfigPath -ErrorAction SilentlyContinue) {
+        $effectiveRoot = $RepoRoot
+        if ([string]::IsNullOrWhiteSpace($effectiveRoot)) { $effectiveRoot = $script:WinEaseGuiRepoRoot }
+        if (-not [string]::IsNullOrWhiteSpace($effectiveRoot)) {
+            $cfgPath = Resolve-WinEaseUserConfigPath -RepoRoot $effectiveRoot -Name 'user-tweaks.psd1'
+        }
+    }
+    if (Get-Command -Name Import-WinEaseUserExtensions -ErrorAction SilentlyContinue) {
+        try {
+            if ($cfgPath) { $null = Import-WinEaseUserExtensions -ConfigPath $cfgPath -PresetsOnly }
+            else { $null = Import-WinEaseUserExtensions -PresetsOnly }
+            $result.Reloaded = $true
+        } catch {
+            $result.Error = $_.Exception.Message
+            $result.ReasonKey = 'SavePreset.Reason.Readback'
+            return $result
+        }
+    }
+    $back = $null
+    try { $back = Get-WinEaseGuiPresetValues -Name $key } catch { $back = $null }
+    if (-not (Test-WinEaseGuiUserPresetDataMatches -Expected $data -Actual $back)) {
+        $result.ReasonKey = 'SavePreset.Reason.Readback'
+        return $result
+    }
+    $result.Saved = $true
+    return $result
 }

@@ -55,7 +55,9 @@ function ConvertTo-WinEaseHashtable {
 
 # Built-in presets resolved the way the window applies them (Get-WinEaseGuiPresetValues in lib\WinEaseGuiCore.ps1,
 # shared with the WinForms window): every component the preset names, every tweak, payload format and the
-# Advanced Debloat lists / engines the preset defines (none of the built-in presets define any)
+# Advanced Debloat lists / engines the preset defines (none of the built-in presets define any), then every
+# user preset (config\user\user-tweaks.psd1 and the per-file folder config\user\presets) with its ProfileName
+# as the Label - the window shows its own localized text for the built-ins and the Label for user presets.
 function Get-WinEaseWinUiPresets {
     $list = @(
         foreach ($pKey in @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')) {
@@ -65,6 +67,13 @@ function Get-WinEaseWinUiPresets {
             $v
         }
     )
+    foreach ($u in @(Get-WinEaseGuiUserPresetChoices)) {
+        $v = Get-WinEaseGuiPresetValues -Name $u.Key
+        if (-not $v) { continue }
+        $v.Key = $u.Key
+        $v.Label = $u.Label
+        $list += $v
+    }
     return ,$list
 }
 
@@ -210,6 +219,26 @@ function Invoke-WinEaseWinUiRequest {
             # Is the window still the base preset? Rules: Get-WinEaseGuiPresetState (lib\WinEaseGuiCore.ps1)
             $st = Get-WinEaseGuiPresetState -BasePresetKey "$($a.BasePresetKey)" -Current $a.Config
             return @{ Data = @{ BasePresetKey = $st.BasePresetKey; Known = [bool]$st.Known; IsModified = [bool]$st.IsModified; State = "$($st.State)"; PresetKey = "$($st.PresetKey)"; DifferingKeys = @($st.DifferingKeys) } }
+        }
+        'presets' {
+            # The preset list again (after a save the window refreshes without a restart)
+            return @{ Data = @{ Presets = (Get-WinEaseWinUiPresets) } }
+        }
+        'savePreset' {
+            # "Save as preset": the rules are Save-WinEaseGuiUserPreset (lib\WinEaseGuiCore.ps1), shared
+            # with the WinForms window - name validation, built-in collision, overwrite confirmation
+            # (the window asks), atomic write and a read-back through the same loader.
+            $res = Save-WinEaseGuiUserPreset -Name "$($a.Name)" -Description "$($a.Description)" -Current $a.Config -Overwrite:([bool]$a.Overwrite)
+            $data = @{ Success = [bool]$res.Saved; Key = "$($res.Key)"; ReasonKey = "$($res.ReasonKey)"; Presets = $null }
+            if ($res.Saved) {
+                $data.Presets = (Get-WinEaseWinUiPresets)
+                $data.Text = (Get-WinEaseUiString 'Msg.SavePreset.Success' -Format ("$($a.Name)".Trim()))
+            } elseif ($res.ReasonKey) {
+                $data.Text = (Get-WinEaseUiString $res.ReasonKey)
+            } else {
+                $data.Text = (Get-WinEaseUiString 'Msg.SavePreset.Error' -Format "$($res.Error)")
+            }
+            return @{ Data = $data }
         }
         'presetDiff' {
             $resolved = @()
