@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
@@ -910,7 +910,7 @@ public sealed partial class MainWindow : Window
             var engines = new Dictionary<string, string>(StringComparer.Ordinal);
             if (p["DebloatEngineSelection"] is JsonObject pe) foreach (var kv in pe) engines[kv.Key] = InitData.Str(kv.Value);
             parsed.Add(new PresetDef(InitData.Str(p["Key"]), InitData.BoolMap(p["Components"]), InitData.BoolMap(p["Tweaks"]),
-                InitData.Str(p["PayloadFormat"], "WIM"), InitData.StrList(p["AdvancedDebloatStandard"]),
+                InitData.Str(p["PayloadFormat"], "WIM"), InitData.Bool(p["UseVHDX"]), InitData.StrList(p["AdvancedDebloatStandard"]),
                 InitData.StrList(p["AdvancedDebloatExperimental"]), engines, InitData.Str(p["Label"])));
         }
         if (parsed.Count == 0) return;
