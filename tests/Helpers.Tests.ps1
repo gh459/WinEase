@@ -1,4 +1,4 @@
-﻿# Helpers.Tests.ps1 - shared helpers, path safety, ACL, DISM and logging
+# Helpers.Tests.ps1 - shared helpers, path safety, ACL, DISM and logging
 # Run with:  Invoke-Pester -Path .\tests\Helpers.Tests.ps1
 # Requires:  Pester 3.4 on Windows PowerShell 5.1
 # Split from the former tests\WinEase.Tests.ps1 in R1. Shared setup is in _TestCommon.ps1.
@@ -1809,7 +1809,8 @@ Describe "WinEase helpers - split module layout (R2)" {
         # already lived in lib\WinEaseFileSystem.ps1; B2 added 7 dependency display helpers
         # (Get-WinEaseDependencyStringDefaults/String/Field/View/Review, New-...Result, Format-...ItemLine).
         # G1 added ConvertTo-WinEaseRealPath and Test-WinEaseProtectedLexicalPath (path safety).
-        $functions.Count | Should Be 58
+        # P1-01 added Test-WinEaseUnattendXmlStructure (unattend template safety).
+        $functions.Count | Should Be 59
         $duplicates = @($functions | Group-Object Name | Where-Object Count -gt 1)
         $duplicates.Count | Should Be 0
         @($ast.FindAll({

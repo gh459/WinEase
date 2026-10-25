@@ -101,3 +101,13 @@ These have a handler (checked by the test) but their effect on screen needs an e
 - [ ] Browse buttons (drive, ISO, folder) open the right dialog and fill the right box.
 - [ ] Preset combo box applies the preset to all tabs and changes to Custom after a manual change.
 - [ ] Preset Diff, Dependencies, migration actions, custom script and user tweak pages.
+
+## Verification session log
+
+Record every manual inspection session before marking checklist items as verified:
+
+| Date | Windows Build | Display Scale | Resolution | GUI Mode | Language | Narrator | Result | Tester / Notes |
+|---|---|---|---|---|---|---|---|---|
+| 2026-10-19 | 26100.1742 (24H2) | 100% | 1920x1080 | WinUI 3 | en-US | Not tested | Pass | Baseline visual check at 100% DPI; WinForms and scaling > 100% unverified |
+| *Pending* | - | 125% / 150% / 200% | 1366x768 / 1280x720 | WinUI 3 & WinForms | ja-JP & en-US | Pending | Pending | Scheduled for real display test session before next major release |
+

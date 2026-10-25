@@ -41,7 +41,18 @@ Winlogon `DefaultPassword`. The first logon then:
   as Base64). A file that cannot be deleted is reported as a warning in the same log.
 
 This only protects the **installed system**. It does not change the ISO you built:
-the ISO itself still contains `autounattend.xml` with the password.
+the ISO itself permanently contains `autounattend.xml` with the password in plaintext.
+**Never assume that post-install cleanup makes an ISO safe to publish or share.**
+ISO media and post-install systems have completely different security perimeters.
+
+## High-risk security toggles
+
+WinEase exposes low-level Windows features that intentionally weaken security defenses when enabled:
+* **`DisableUAC`**: Bypasses all User Account Control elevation prompts, executing every app with full administrative privileges. This does **not** guarantee gaming or system performance gains.
+* **`DisableCPUMitigations`**: Disables speculative execution CPU hardware mitigations (Spectre/Meltdown/etc.), exposing the host to microarchitectural side-channel attacks. Performance gains are unverified and workload-dependent.
+* **`ConfigureWinlogon`**: Implants unattended credentials in cleartext within ISO answer files.
+
+Keep these disabled for daily-driver environments.
 
 Not verified: this was checked by automated tests of the script text, not on a real
 installation. How Windows Setup behaves with an empty password plus AutoLogon, and

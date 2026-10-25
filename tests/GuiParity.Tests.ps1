@@ -1308,5 +1308,42 @@ Describe "GUI parity (WinUI 3 / WinForms / command line)" {
                 foreach ($tab in $gui.Tabs.TabPages) { $tab.AutoScroll | Should Be $true }
             } finally { Close-ParityGui $gui }
         }
+
+        It "UseVHDX toggle detection parity: manual change switches state to modified/custom, revert restores preset value (P1-05)" {
+            $gui = Show-WinEaseGUI -NoShow -UiLanguage en
+            try {
+                # 1. Apply balanced preset (built-in presets have UseVHDX = $false)
+                $idxBalanced = [array]::IndexOf(@($gui.PresetKeyMap), 'balanced')
+                $idxBalanced | Should BeGreaterThan -1
+                Set-WinEaseGuiPreset -Gui $gui -PresetIndex $idxBalanced
+                $gui.Preset.SelectedIndex = $idxBalanced
+                $gui.VHDX.Checked | Should Be $false
+
+                # Initial state is unmodified
+                $draft = Get-WinEaseGuiDraftConfig -Gui $gui
+                $draft['UseVHDX'] = [bool]$gui.VHDX.Checked
+                $st = Get-WinEaseGuiPresetState -BasePresetKey 'balanced' -Current $draft
+                $st.IsModified | Should Be $false
+
+                # 2. Toggle UseVHDX to $true by user action
+                $gui.VHDX.Checked = $true
+                $draftAfter = Get-WinEaseGuiDraftConfig -Gui $gui
+                $draftAfter['UseVHDX'] = [bool]$gui.VHDX.Checked
+                $stAfter = Get-WinEaseGuiPresetState -BasePresetKey 'balanced' -Current $draftAfter
+                $stAfter.IsModified | Should Be $true
+                @($stAfter.DifferingKeys) -contains 'UseVHDX' | Should Be $true
+                # In WinForms, the preset combo shifted to Custom
+                $gui.Preset.SelectedIndex | Should Be ($gui.Preset.Items.Count - 1)
+
+                # 3. Revert to preset restores UseVHDX and clears modified
+                $reverted = Restore-WinEaseGuiBasePreset -Gui $gui
+                $reverted | Should Be $true
+                $gui.VHDX.Checked | Should Be $false
+                $draftReverted = Get-WinEaseGuiDraftConfig -Gui $gui
+                $draftReverted['UseVHDX'] = [bool]$gui.VHDX.Checked
+                $stReverted = Get-WinEaseGuiPresetState -BasePresetKey 'balanced' -Current $draftReverted
+                $stReverted.IsModified | Should Be $false
+            } finally { Close-ParityGui $gui }
+        }
     }
 }

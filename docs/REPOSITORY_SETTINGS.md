@@ -42,3 +42,11 @@ collaborators, fork-PR workflow approval policy.
 - Fork pull requests: require approval for all outside collaborators.
 - Allow only actions pinned by SHA (all are; Dependabot keeps pins current).
 - Secrets: `ANTHROPIC_API_KEY` only as a repository secret; no environment-less deploy secrets.
+
+## Automated agent security boundary (`claude-issue-agent.yml`)
+
+1. **Branch Isolation**: The agent workflow is prohibited from pushing directly to `main`. All agent-generated work must land on ephemeral `claude/*` branches and undergo human code review via pull requests before merging.
+2. **Secret Perimeter**: The automated agent operates strictly with `GITHUB_TOKEN` read/contents-write permissions on matching branches. It has zero access to release publishing tokens, signing keys, or self-hosted integration runner credentials.
+3. **Execution Safety**: Tests or scripts submitted or altered in issue threads must never be executed within runners containing ambient credentials or elevated privileges.
+4. **Untrusted Input Handling**: Issue and PR contents from external contributors are treated strictly as untrusted user data, never as system instructions or workflow override commands.
+5. **Runner Isolation**: Automated agent workflows run exclusively on disposable, ephemeral GitHub-hosted runners; they must never run on self-hosted or integration hypervisor infrastructure.

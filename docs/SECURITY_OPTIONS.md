@@ -91,8 +91,10 @@ reached through the GUI ("Services & Apps" tab), the command line, a preset
 * **Impact when on:** the account has the configured password (none by default)
   during the setup, and the image, its Setup answer-file copies and the OOBE helper
   contain the password in clear text or Base64 until the first sign-in removes them.
-  An ISO built with a non-empty password therefore contains that password: do not
-  share it (see `SECURITY.md`).
+  **CRITICAL: First-logon cleanup only cleans the local disk copies inside the installed
+  system. It does NOT retroactively remove or sanitize credentials from the generated ISO.**
+  An ISO built with a non-empty password permanently contains that password in cleartext:
+  do not distribute or share it (see `SECURITY.md`).
 * **Residual risk when off:** the local account still has an empty password, so a
   user at the console can sign in without one. Set a password after the first
   sign-in (`net user <name> <password>`). The empty password was not removed from
@@ -109,7 +111,8 @@ reached through the GUI ("Services & Apps" tab), the command line, a preset
 * **What the build does:** the User Account Control consent prompts are disabled.
 * **Impact:** every process runs with full administrative rights without a prompt.
   This is the single most effective way to make a Windows system vulnerable to
-  malware.
+  malware. **Disabling UAC does not guarantee any measurable performance improvement**
+  and should never be treated as an optimization tweak.
 * **Recovery:** set `ConsentPromptBehaviorAdmin = 5` and `EnableLUA = 1` under
   `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System`.
 
@@ -125,9 +128,11 @@ reached through the GUI ("Services & Apps" tab), the command line, a preset
 ### DisableCPUMitigations (GUI: Security tab)
 
 * **Default:** off
-* **What the build does:** the Spectre / Meltdown mitigations of the CPU are
-  disabled, which removes a small performance cost and a real protection.
-* **Impact:** the system is exposed to the speculative-execution side channels.
+* **What the build does:** the Spectre / Meltdown speculative execution mitigations
+  of the CPU are disabled.
+* **Impact:** the system is exposed to hardware speculative-execution side-channel
+  vulnerabilities (Spectre, Meltdown, Foreshadow, etc.). **Performance improvements
+  are workload-dependent, unmeasured in baseline, and not guaranteed.**
 * **Recovery:** `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory
   \SystemAudit` / re-enable the mitigation policies through the Windows Security
   processor mitigation settings.

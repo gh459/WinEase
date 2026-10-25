@@ -60,6 +60,9 @@ Describe "WinEase builder - AST syntax" {
 }
 
 Describe "WinEase builder - autounattend.xml" {
+    BeforeAll {
+        . (Join-Path $script:RepoRoot 'WinEasehelpers.ps1')
+    }
     It "loads as valid XML with unattend root" {
         $doc = [xml]([System.IO.File]::ReadAllText($script:UnattendPath, [System.Text.Encoding]::UTF8))
         $doc.DocumentElement.Name | Should Be "unattend"
@@ -97,6 +100,27 @@ Describe "WinEase builder - autounattend.xml" {
         (Set-WinEaseUnattendPassword -Document $doc -Password "TestSecretPassword123!") | Should BeGreaterThan 0
         $updatedVal = $doc.SelectSingleNode("//*[local-name()='LocalAccount']/*[local-name()='Password']/*[local-name()='Value']").InnerText
         $updatedVal | Should Be "TestSecretPassword123!"
+    }
+    It "passes Test-WinEaseUnattendXmlStructure on the checked-in autounattend.xml" {
+        $doc = [xml]([System.IO.File]::ReadAllText($script:UnattendPath, [System.Text.Encoding]::UTF8))
+        (Test-WinEaseUnattendXmlStructure -XmlDocument $doc) | Should Be $true
+    }
+    It "Test-WinEaseUnattendXmlStructure throws on malformed or missing required elements" {
+        $badDoc1 = [xml]'<root><settings /></root>'
+        { Test-WinEaseUnattendXmlStructure -XmlDocument $badDoc1 } | Should Throw "must be <unattend>"
+
+        $badDoc2 = [xml]'<unattend></unattend>'
+        { Test-WinEaseUnattendXmlStructure -XmlDocument $badDoc2 } | Should Throw "contains no <settings>"
+
+        $badDoc3 = [xml]'<unattend><settings><component name="Microsoft-Windows-Setup" /></settings></unattend>'
+        { Test-WinEaseUnattendXmlStructure -XmlDocument $badDoc3 } | Should Throw "no embedded script <File> nodes"
+    }
+    It "phases/11-unattend.ps1 does not contain uncontrolled upstream nano11 fallback" {
+        $p11 = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "phases\11-unattend.ps1"), [System.Text.Encoding]::UTF8)
+        $p11 | Should Not Match 'ntdevlabs/nano11'
+        $p11 | Should Match '177f3631d3b172611e9c0d38a3d9a6e310b7467c'
+        $p11 | Should Match 'C21459A21AB1FB10D4B01F52D829529CBAAE2B212A88FFB533A6FC85B94A6397'
+        $p11 | Should Match 'AllowTemplateDownload'
     }
 }
 

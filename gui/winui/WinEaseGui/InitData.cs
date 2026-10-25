@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -10,7 +10,7 @@ public sealed record TweakDef(string Key, string Category, bool Default, string 
 public sealed record ComponentDef(string Key, string Text, string Description, bool Default, string Tab, int Order);
 // Debloat* = the Advanced Debloat selection the preset itself defines (none of the built-in presets define any);
 // "Revert to preset" restores it, switching presets leaves the window's selection alone.
-// UseVHDX is applied when a preset is applied, but the state rules do not compare it (docs\GUI_PRESET_STATE.md).
+// UseVHDX is applied when a preset is applied and compared by the state rules (docs\GUI_PRESET_STATE.md).
 // Label = the display name of a user preset (its ProfileName); the built-ins are localized by the window.
 public sealed record PresetDef(string Key, Dictionary<string, bool> Components, Dictionary<string, bool> Tweaks, string PayloadFormat, bool UseVHDX,
     List<string> DebloatStandard, List<string> DebloatExperimental, Dictionary<string, string> DebloatEngines, string Label = "");

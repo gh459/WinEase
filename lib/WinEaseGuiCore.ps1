@@ -373,10 +373,9 @@ function Get-WinEaseGuiPresetValues {
     }
     $fmt = "$($pObj.PayloadFormat)".ToUpper()
     if ($fmt -notin @('ESD', 'SWM')) { $fmt = 'WIM' }
-    # The VHDX switch is preset data for the APPLICATION (both windows set the checkbox when a
-    # preset is applied) even though the state comparison excludes it (a hand change there does
-    # not make the window "modified" - see docs\GUI_PRESET_STATE.md). Every built-in preset
-    # carries UseVHDX = $false, so this only shows with user presets.
+    # The VHDX switch is preset data (both windows set the checkbox when a preset is applied
+    # and Get-WinEaseGuiPresetState compares it). Every built-in preset carries UseVHDX = $false,
+    # so this only shows with user presets.
     $useVhdx = $false
     if ($pObj.Contains('UseVHDX')) { $useVhdx = [bool]$pObj['UseVHDX'] }
     $std = @(); $exp = @(); $engines = [ordered]@{}
@@ -413,10 +412,11 @@ function Get-WinEaseGuiMemberValue {
 #             PayloadFormat (or ExportESDMode / SplitWIMMode), AdvancedDebloatStandard,
 #             AdvancedDebloatExperimental, DebloatEngineSelection.
 #             A part that is absent from -Current is not compared.
-# What is compared (everything else - paths, user name, UseVHDX, Dry Run, migration - is not preset data):
+# What is compared (everything else - paths, user name, Dry Run, migration - is not preset data):
 #   - components the preset names (a component the preset does not name keeps its value: not compared)
 #   - every tweak (an unnamed tweak means its schema default)
 #   - payload format
+#   - UseVHDX
 #   - Advanced Debloat items (as sets) and the engine of every selected item; a preset that defines
 #     no Advanced Debloat list means "no items", so any selected item is a difference
 # Result: BasePresetKey, Known, IsModified, State ('Preset' | 'Modified' | 'Custom'), PresetKey
@@ -454,6 +454,12 @@ function Get-WinEaseGuiPresetState {
         }
     }
     if ($curFmt -and "$curFmt".ToUpper() -ne $BaseValues.PayloadFormat) { & $add 'PayloadFormat' 'Payload' $BaseValues.PayloadFormat "$curFmt".ToUpper() }
+
+    $curVhdx = Get-WinEaseGuiMemberValue $Current 'UseVHDX'
+    if ($null -ne $curVhdx) {
+        $baseVhdx = if ($BaseValues.Contains('UseVHDX')) { [bool]$BaseValues.UseVHDX } else { $false }
+        if ([bool]$curVhdx -ne $baseVhdx) { & $add 'UseVHDX' 'Component' $baseVhdx ([bool]$curVhdx) }
+    }
 
     $selected = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     foreach ($listKey in @('AdvancedDebloatStandard', 'AdvancedDebloatExperimental')) {
@@ -881,10 +887,14 @@ function Get-WinEaseGuiUserPresetData {
             foreach ($k in $Current['DebloatEngineSelection'].Keys) { $engines["$k"] = "$($Current['DebloatEngineSelection'][$k])" }
         }
     }
+    $useVhdx = $false
+    $curVhdx = Get-WinEaseGuiMemberValue $Current 'UseVHDX'
+    if ($null -ne $curVhdx) { $useVhdx = [bool]$curVhdx }
     return [ordered]@{
         Components                  = $components
         Tweaks                      = $tweaks
         PayloadFormat               = $fmt
+        UseVHDX                     = $useVhdx
         AdvancedDebloatStandard     = @($std)
         AdvancedDebloatExperimental = @($exp)
         DebloatEngineSelection      = $engines
@@ -923,6 +933,8 @@ function ConvertTo-WinEaseUserPresetFileText {
     [void]$sb.AppendLine('    }')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine("    PayloadFormat = $(ConvertTo-WinEasePsd1QuotedString -Value $Data.PayloadFormat)")
+    $vhdxVal = if ($Data.Contains('UseVHDX')) { [bool]$Data.UseVHDX } else { $false }
+    [void]$sb.AppendLine("    UseVHDX       = `$$("$vhdxVal".ToLower())")
     [void]$sb.AppendLine('')
     $stdItems = @($Data.AdvancedDebloatStandard | ForEach-Object { ConvertTo-WinEasePsd1QuotedString -Value $_ })
     $expItems = @($Data.AdvancedDebloatExperimental | ForEach-Object { ConvertTo-WinEasePsd1QuotedString -Value $_ })
@@ -952,6 +964,7 @@ function Test-WinEaseGuiUserPresetDataMatches {
         if ([bool]$Actual.Tweaks[$k] -ne [bool]$Expected.Tweaks[$k]) { return $false }
     }
     if ("$($Actual.PayloadFormat)".ToUpper() -ne "$($Expected.PayloadFormat)".ToUpper()) { return $false }
+    if ($Expected.Contains('UseVHDX') -and [bool]$Actual.UseVHDX -ne [bool]$Expected.UseVHDX) { return $false }
     foreach ($listKey in @('AdvancedDebloatStandard', 'AdvancedDebloatExperimental')) {
         $a = @($Actual[$listKey] | ForEach-Object { "$_" } | Sort-Object)
         $b = @($Expected[$listKey] | ForEach-Object { "$_" } | Sort-Object)

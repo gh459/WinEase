@@ -51,6 +51,23 @@ Files:
 Each cell becomes "verified" only after a human has reviewed a real run's artifacts and recorded the
 build label; the result JSON has `"verified": false` and the script never sets it to true.
 
+### Release gating and verification criteria
+
+A release candidate or configuration is deemed **Verified** if and only if it satisfies the following stepwise gates:
+
+1. **Phase Rollout Order:**
+   - **Baseline Gate (Primary):** x64 architecture, Windows 11 24H2 (build 26100.x), `balanced` preset.
+   - **Extended Matrix Gate:** `extreme`, `none`, and `vm` presets; Japanese environment (`ja-JP` keyboard/IME); Windows 11 Pro and Home editions.
+   - **Isolation Policy:** Experimental physical debloat (`-AllowPhysicalDebloat`) and deep component store pruning (`-ForceWinSxSCleanup`) are quarantined from standard integration suites and tested only on isolated disposable runs.
+2. **Success Assertions (All mandatory):**
+   - **Full ISO Generation:** Builder completes all 18 phases, passes Phase 15 deep-apply verification and Phase 18 ISO payload hash verification.
+   - **Unattended VM Boot & Setup:** Gen2 VM boots, processes unattended setup passes (`windowsPE`, `specialize`, `oobeSystem`) without manual intervention.
+   - **First Logon Execution:** System reaches desktop, executes `FirstLogon.ps1`, and produces the completion signal `C:\ProgramData\WinEase\firstlogon.done` with zero `firstlogon_script.failed` triggers.
+   - **Residue & Teardown Zero-Tolerance:** Host teardown destroys the VM, unmounts all DISM images, unloads temporary registry hives (`z*`), detaches VHDX scratch drives, and deletes the work folder. `dism /Get-MountedImageInfo` must remain clean.
+   - **Secret Scrub:** Diagnostic artifacts pass recursive regex scrubbing for sensitive tokens and user passwords before export.
+3. **Audit Trail Record:**
+   - Every verified run logs the source Windows build, source ISO SHA-256, architecture, edition index, preset name, test timestamp, and runner ID in `integration-result.json`.
+
 ## How to run
 
 Plan only (safe anywhere, touches nothing):

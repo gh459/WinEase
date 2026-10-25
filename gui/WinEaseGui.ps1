@@ -2264,6 +2264,17 @@ function Initialize-WinEaseGuiContent {
             Update-WinEaseGuiEstimate -Gui $g
         })
     }
+    if ($Gui.VHDX) {
+        $Gui.VHDX.Add_CheckedChanged({
+            $g = $this.FindForm().Tag
+            # Toggling VHDX by hand is a change from the preset, like every other switch (P1-05)
+            if (-not $script:updatingPreset -and $g.Preset -and $g.Preset.Items.Count -gt 0) {
+                $script:updatingPreset = $true
+                try { $g.Preset.SelectedIndex = ($g.Preset.Items.Count - 1) } finally { $script:updatingPreset = $false }
+            }
+            Update-WinEaseGuiEstimate -Gui $g
+        })
+    }
     Update-WinEaseGuiEstimate -Gui $Gui
 
     $form.AccessibleName = Get-WinEaseUiString 'Main.WindowTitle'

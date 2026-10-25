@@ -287,17 +287,37 @@ function Test-WinEaseResumeIntegrity {
         [Parameter(Mandatory=$true)]
         [string]$WorkspaceDir,
         [int]$TargetPhase = 0,
-        [switch]$IsIsoOnly
+        [switch]$IsIsoOnly,
+        [string]$ExpectedArchitecture = '',
+        [string]$ExpectedEdition = ''
     )
     $errors = [System.Collections.Generic.List[string]]::new()
     $warnings = [System.Collections.Generic.List[string]]::new()
     $payloadPath = $null
     $payloadType = $null
     $bootWimPath = $null
+    $checkpointData = $null
 
     if (-not (Test-Path -LiteralPath $WorkspaceDir)) {
         $errors.Add("Workspace directory '$WorkspaceDir' does not exist.")
-        return [PSCustomObject]@{ IsValid = $false; Errors = [string[]]$errors; Warnings = [string[]]$warnings; BuildDir = $null; PayloadPath = $null; PayloadType = $null; BootWimPath = $null }
+        return [PSCustomObject]@{ IsValid = $false; Errors = [string[]]$errors; Warnings = [string[]]$warnings; BuildDir = $null; PayloadPath = $null; PayloadType = $null; BootWimPath = $null; Checkpoint = $null }
+    }
+
+    # Validate checkpoint against expected inputs if checkpoint.json is present (P1-06)
+    $cpPath = Join-Path -Path $WorkspaceDir -ChildPath "checkpoint.json"
+    if (Test-Path -LiteralPath $cpPath) {
+        try {
+            $rawCp = [System.IO.File]::ReadAllText($cpPath, [System.Text.Encoding]::UTF8)
+            $checkpointData = $rawCp | ConvertFrom-Json
+            if ($ExpectedArchitecture -and $checkpointData.Architecture -and ($checkpointData.Architecture -ine $ExpectedArchitecture)) {
+                $errors.Add("Checkpoint architecture mismatch: checkpoint has '$($checkpointData.Architecture)', current run requested '$ExpectedArchitecture'.")
+            }
+            if ($ExpectedEdition -and $checkpointData.TargetEditionName -and ($checkpointData.TargetEditionName -ine $ExpectedEdition)) {
+                $errors.Add("Checkpoint edition mismatch: checkpoint has '$($checkpointData.TargetEditionName)', current run requested '$ExpectedEdition'.")
+            }
+        } catch {
+            $warnings.Add("Failed to parse existing checkpoint.json: $($_.Exception.Message)")
+        }
     }
 
     $buildDir = Join-Path -Path $WorkspaceDir -ChildPath "build"
@@ -362,6 +382,7 @@ function Test-WinEaseResumeIntegrity {
         PayloadPath = $payloadPath
         PayloadType = $payloadType
         BootWimPath = $bootWimPath
+        Checkpoint  = $checkpointData
     }
 }
 
@@ -647,4 +668,48 @@ function ConvertFrom-WinEaseFeatureIdOverride {
     [int64]$b3 = ($v -shr 1) -band 0xFF
     [int64]$w = ($b0 -bor ($b1 -shl 8) -bor ($b2 -shl 16) -bor ($b3 -shl 24))
     return [int64](($w -bxor $seed) -band $uint32Max)
+}
+
+function Test-WinEaseUnattendXmlStructure {
+    <#
+    .SYNOPSIS
+        Validates the structure and embedded setup scripts of autounattend.xml.
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [xml]$XmlDocument
+    )
+    if (-not $XmlDocument.DocumentElement -or $XmlDocument.DocumentElement.LocalName -ne 'unattend') {
+        throw "Validation failed: autounattend.xml root element must be <unattend>."
+    }
+    $ns = $XmlDocument.DocumentElement.NamespaceURI
+    $nsMgr = New-Object System.Xml.XmlNamespaceManager($XmlDocument.NameTable)
+    if ($ns) { $nsMgr.AddNamespace("u", $ns) }
+
+    $settingsNodes = if ($ns) { $XmlDocument.SelectNodes("//u:settings", $nsMgr) } else { $XmlDocument.SelectNodes("//settings") }
+    if (-not $settingsNodes -or $settingsNodes.Count -eq 0) {
+        throw "Validation failed: autounattend.xml contains no <settings> passes."
+    }
+
+    $compNodes = if ($ns) { $XmlDocument.SelectNodes("//u:component", $nsMgr) } else { $XmlDocument.SelectNodes("//component") }
+    if (-not $compNodes -or $compNodes.Count -eq 0) {
+        throw "Validation failed: autounattend.xml contains no <component> nodes."
+    }
+
+    $fileNodes = $XmlDocument.SelectNodes("//*[local-name()='Extensions']/*[local-name()='File']")
+    if (-not $fileNodes -or $fileNodes.Count -eq 0) {
+        throw "Validation failed: autounattend.xml contains no embedded script <File> nodes in Extensions block."
+    }
+    $filePaths = @($fileNodes | ForEach-Object { $_.GetAttribute('path') })
+    $requiredScripts = @('Winhancements.ps1', 'Specialize.ps1', 'UserOnce.ps1', 'DefaultUser.ps1', 'FirstLogon.ps1')
+    foreach ($req in $requiredScripts) {
+        $found = $false
+        foreach ($fp in $filePaths) {
+            if ($fp -like "*\$req" -or $fp -like "*/$req") { $found = $true; break }
+        }
+        if (-not $found) {
+            throw "Validation failed: autounattend.xml is missing required embedded script: $req"
+        }
+    }
+    return $true
 }
