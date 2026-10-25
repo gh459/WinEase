@@ -75,6 +75,10 @@ public sealed partial class MainWindow : Window
     private string _page = "media";
     private bool _busy;
     private bool _resultSent;
+    // Build progress / cancel (D2): the builder advertises cancel support in its 'hello' event; nothing is assumed.
+    private bool _progressActive, _buildFinished, _cancelSupported, _cancelRequested, _allowClose, _closeDialogOpen;
+    private string _cancelRequestPath = "";
+    private Func<string?>? _requestCancel;
     private bool _suppressLanguage;
     private readonly List<RadioButton> _payloadRadios = new();
 
@@ -1641,10 +1645,59 @@ public sealed partial class MainWindow : Window
 
     private async void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        if (_resultSent) return;
+        if (_resultSent)
+        {
+            // Closing during a real build is a decision, not an accident: cancel it, keep it running in the
+            // console, or stay. Without a running build (finished, or no progress view) the window just closes.
+            if (!_progressActive || _buildFinished || _allowClose) return;
+            args.Cancel = true;
+            if (!_closeDialogOpen) await ConfirmCloseDuringBuildAsync();
+            return;
+        }
         args.Cancel = true;
         if (_busy) return;
         await SendResultAndCloseAsync(new JsonObject { ["Success"] = false });
+    }
+
+    // Cancel build / Keep running in console / Stay. Cancel is offered only when the builder advertised it.
+    private async Task ConfirmCloseDuringBuildAsync()
+    {
+        _closeDialogOpen = true;
+        try
+        {
+            var body = new StackPanel { Spacing = 8 };
+            body.Children.Add(new TextBlock { Text = _s.Get("Progress.Close.Body"), TextWrapping = TextWrapping.Wrap });
+            string note = _cancelRequested ? _s.Get("Progress.Close.CancelPending")
+                : !_cancelSupported ? _s.Get("Progress.Close.CancelUnavailable") : "";
+            if (note.Length > 0) body.Children.Add(new TextBlock { Text = note, TextWrapping = TextWrapping.Wrap, Opacity = 0.8 });
+            var dlg = new ContentDialog
+            {
+                XamlRoot = Content.XamlRoot,
+                Title = _s.Get("Progress.Close.Title"),
+                Content = body,
+                PrimaryButtonText = _s.Get("Progress.Close.CancelBuild"),
+                SecondaryButtonText = _s.Get("Progress.Close.KeepRunning"),
+                CloseButtonText = _s.Get("Progress.Close.Stay"),
+                DefaultButton = ContentDialogButton.Close,
+                IsPrimaryButtonEnabled = _cancelSupported && !_cancelRequested,
+            };
+            var choice = await dlg.ShowAsync();
+            if (choice == ContentDialogResult.Primary)
+            {
+                // The window stays open: it shows "Cancelling..." and the result when the builder reports it
+                _requestCancel?.Invoke();
+            }
+            else if (choice == ContentDialogResult.Secondary)
+            {
+                // Explicit: the window closes, the build keeps running in the console
+                _allowClose = true;
+                Close();
+            }
+        }
+        finally
+        {
+            _closeDialogOpen = false;
+        }
     }
 
     private async Task SendResultAndCloseAsync(JsonObject result)
@@ -1667,6 +1720,16 @@ public sealed partial class MainWindow : Window
     // Data files the progress window may open with the shell; programs and scripts are never launched from here.
     private static readonly string[] OpenableExtensions = { ".log", ".txt", ".html", ".htm", ".json", ".md" };
     private const int MaxLogLines = 500;
+
+    // The cancel request file the builder advertised: an absolute path whose file name is exactly cancel.request
+    // in an existing folder. The window only creates that one file; it never deletes or runs anything.
+    private static bool IsValidCancelPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !System.IO.Path.IsPathRooted(path)) return false;
+        if (!string.Equals(System.IO.Path.GetFileName(path), "cancel.request", StringComparison.OrdinalIgnoreCase)) return false;
+        string? dir = System.IO.Path.GetDirectoryName(path);
+        return !string.IsNullOrEmpty(dir) && System.IO.Directory.Exists(dir);
+    }
 
     private static bool PathExists(string? path) =>
         !string.IsNullOrWhiteSpace(path) && System.IO.Path.IsPathRooted(path) && (System.IO.File.Exists(path) || System.IO.Directory.Exists(path));
@@ -1715,6 +1778,11 @@ public sealed partial class MainWindow : Window
         var timeText = new TextBlock { Style = caption };
         var verifyText = new TextBlock { TextWrapping = TextWrapping.Wrap, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Visibility = Visibility.Collapsed };
         var hint = new TextBlock { Text = _s.Get("Progress.Hint"), TextWrapping = TextWrapping.Wrap, Opacity = 0.7 };
+        // Cancel: enabled only when the builder advertises it (hello event); until then it says why it is disabled
+        var cancelBuildButton = new Button { Content = _s.Get("Progress.Button.Cancel"), IsEnabled = false, HorizontalAlignment = HorizontalAlignment.Left };
+        var cancelText = new TextBlock { Text = _s.Get("Progress.Cancel.Unsupported"), TextWrapping = TextWrapping.Wrap, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+        ToolTipService.SetToolTip(cancelBuildButton, _s.Get("Progress.Cancel.Unsupported"));
+        cancelBuildButton.Click += (_, _) => _requestCancel?.Invoke();
 
         // Failure panel: failed step, reason, details without secrets, log location and the next actions
         var failTitle = new TextBlock { Text = _s.Get("Progress.Failure.Title"), Style = bodyStrong };
@@ -1726,6 +1794,8 @@ public sealed partial class MainWindow : Window
         failNext.Children.Add(new TextBlock { Text = _s.Get("Progress.Failure.NextHeading"), Style = bodyStrong, Margin = new Thickness(0, 6, 0, 0) });
         foreach (string nextText in new[] { _s.Get("Progress.Failure.Next.Log"), _s.Get("Progress.Failure.Next.Diag"), _s.Get("Progress.Failure.Next.Retry"), _s.Get("Progress.Failure.Next.Docs") })
             failNext.Children.Add(new TextBlock { Text = "• " + nextText, TextWrapping = TextWrapping.Wrap });
+        var failCancelNext = new TextBlock { Text = "• " + _s.Get("Progress.Cancel.Next.Docs"), TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+        failNext.Children.Add(failCancelNext);
         var failPanel = new StackPanel { Spacing = 4, Visibility = Visibility.Collapsed };
         failPanel.Children.Add(failTitle);
         failPanel.Children.Add(failStep);
@@ -1788,10 +1858,13 @@ public sealed partial class MainWindow : Window
         AutomationProperties.SetName(logHeading, _s.Get("Progress.Log.Heading"));
         AutomationProperties.SetName(hint, _s.Get("Progress.Hint"));
         AutomationProperties.SetName(closeButton, _s.Get("Progress.Close"));
+        AutomationProperties.SetName(cancelBuildButton, _s.Get("Progress.Button.Cancel"));
+        AutomationProperties.SetHelpText(cancelBuildButton, _s.Get("Progress.Help.Cancel"));
+        AutomationProperties.SetLiveSetting(cancelText, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
         AutomationProperties.SetHelpText(closeButton, _s.Get("Progress.Help.Close"));
         foreach (var failText in new[] { failStep, failReason, failDetail, failLog })
             AutomationProperties.SetHelpText(failText, _s.Get("Progress.Failure.Title"));
-        var dynamicTexts = new[] { stateText, stepText, barText, timeText, verifyText, failStep, failReason, failDetail, failLog };
+        var dynamicTexts = new[] { stateText, stepText, barText, timeText, verifyText, cancelText, failStep, failReason, failDetail, failLog };
 
         var panel = new StackPanel { Spacing = 10, Padding = new Thickness(32, 48, 32, 32), MaxWidth = 900, VerticalAlignment = VerticalAlignment.Center };
         panel.Children.Add(title);
@@ -1805,6 +1878,8 @@ public sealed partial class MainWindow : Window
         panel.Children.Add(logHeading);
         panel.Children.Add(logView);
         panel.Children.Add(hint);
+        panel.Children.Add(cancelBuildButton);
+        panel.Children.Add(cancelText);
         panel.Children.Add(buttons);
         panel.Children.Add(closeButton);
         Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -1814,7 +1889,12 @@ public sealed partial class MainWindow : Window
         double phase = 0, total = 0;
         string phaseName = "", state = "Preparing", verification = "";
         string failedPhase = "", failKey = "", failSummary = "";
-        bool finished = false, doneSuccess = false, failed = false;
+        bool finished = false, doneSuccess = false, failed = false, cancelledFlag = false;
+        _progressActive = true;
+        _buildFinished = false;
+        _cancelSupported = false;
+        _cancelRequested = false;
+        _cancelRequestPath = "";
 
         string StateLabel(string st) => st switch
         {
@@ -1834,6 +1914,7 @@ public sealed partial class MainWindow : Window
             "Progress.Failure.Source" => _s.Get("Progress.Failure.Source"),
             "Progress.Failure.Verification" => _s.Get("Progress.Failure.Verification"),
             "Progress.Failure.Iso" => _s.Get("Progress.Failure.Iso"),
+            "Progress.Cancel.CleanupFailed" => _s.Get("Progress.Cancel.CleanupFailed"),
             _ => _s.Get("Progress.Failure.Generic"),
         };
         static double Num(JsonObject m, string key)
@@ -1855,7 +1936,33 @@ public sealed partial class MainWindow : Window
             openDiag.IsEnabled = PathExists(diagPath);
             openDocs.IsEnabled = PathExists(docsPath);
             openDocs.Visibility = failed ? Visibility.Visible : Visibility.Collapsed;
+            cancelBuildButton.IsEnabled = _cancelSupported && !_cancelRequested && !finished;
+            cancelBuildButton.Visibility = finished ? Visibility.Collapsed : Visibility.Visible;
         }
+        // Cancel: enabled only with the builder's capability. The builder's own state (Cancelling, Cancelled) is the
+        // only thing that says the build is cancelled; the request text below only says that we are waiting.
+        string? DoCancel()
+        {
+            if (!_cancelSupported || _cancelRequested || finished) return null;
+            try
+            {
+                if (!IsValidCancelPath(_cancelRequestPath)) throw new System.IO.IOException("invalid cancel request path");
+                System.IO.File.WriteAllText(_cancelRequestPath, "cancel requested " + DateTime.UtcNow.ToString("o"));
+            }
+            catch (Exception ex) when (ex is System.IO.IOException || ex is UnauthorizedAccessException || ex is ArgumentException || ex is NotSupportedException)
+            {
+                cancelText.Text = _s.Format("Progress.Cancel.RequestFailed", ex.Message);
+                cancelText.Visibility = Visibility.Visible;
+                return ex.Message;
+            }
+            _cancelRequested = true;
+            cancelText.Text = _s.Get("Progress.Cancel.Waiting") + " " + _s.Get("Progress.Cancel.WaitingNote");
+            cancelText.Visibility = Visibility.Visible;
+            AutomationProperties.SetName(cancelText, cancelText.Text);
+            cancelBuildButton.IsEnabled = false;
+            return null;
+        }
+        _requestCancel = DoCancel;
         void UpdateTime()
         {
             var elapsed = DateTime.UtcNow - started;
@@ -1886,15 +1993,28 @@ public sealed partial class MainWindow : Window
                 bar.IsIndeterminate = !finished;
                 barText.Text = "";
             }
-            if (finished && !failed)
+            bool cancelledDone = finished && state == "Cancelled";
+            if (finished && !failed && !cancelledDone)
             {
                 // Success is shown only for a verified result; unknown or not-run verification is "not verified"
                 bool verified = verification == "Verified" && state == "Succeeded";
                 verifyText.Text = verified ? _s.Get("Progress.Done") + " " + _s.Get("Progress.Verified") : _s.Get("Progress.NotVerified");
                 verifyText.Visibility = Visibility.Visible;
             }
+            if (cancelledDone)
+            {
+                cancelText.Text = _s.Get("Progress.Cancel.Done");
+                cancelText.Visibility = Visibility.Visible;
+            }
+            else if (finished && _cancelRequested)
+            {
+                // The build ended without honouring the request (it finished or failed first)
+                cancelText.Text = _s.Get("Progress.Cancel.TooLate");
+                cancelText.Visibility = Visibility.Visible;
+            }
             if (failed)
             {
+                failCancelNext.Visibility = cancelledFlag ? Visibility.Visible : Visibility.Collapsed;
                 failPanel.Visibility = Visibility.Visible;
                 failStep.Text = _s.Format("Progress.Failure.Step", failedPhase.Length > 0 ? failedPhase : _s.Get("Progress.State.Preparing"));
                 failReason.Text = _s.Format("Progress.Failure.Reason", FailureMessage(failKey));
@@ -1923,6 +2043,18 @@ public sealed partial class MainWindow : Window
         {
             switch ((string?)m["event"])
             {
+                case "hello":
+                    // Capabilities of the builder. No hello (an older builder) or no Cancel flag: Cancel stays disabled.
+                    string cancelPath = InitData.Str(m["CancelRequestPath"]);
+                    bool capCancel = m["Capabilities"] is JsonObject caps && InitData.Bool(caps["Cancel"]);
+                    _cancelSupported = capCancel && IsValidCancelPath(cancelPath);
+                    _cancelRequestPath = _cancelSupported ? cancelPath : "";
+                    if (_cancelSupported)
+                    {
+                        ToolTipService.SetToolTip(cancelBuildButton, _s.Get("Progress.Help.Cancel"));
+                        cancelText.Visibility = Visibility.Collapsed;
+                    }
+                    break;
                 case "state":
                     state = InitData.Str(m["State"]);
                     break;
@@ -1962,14 +2094,18 @@ public sealed partial class MainWindow : Window
                     if (st.Length == 0) st = doneSuccess ? "NotVerified" : "Failed";
                     if (st == "Succeeded" && verification != "Verified") st = "NotVerified";
                     state = st;
-                    if (!doneSuccess && !failed)
+                    cancelledFlag = InitData.Bool(m["Cancelled"]);
+                    // A cancel that finished cleanly is not a failure; one whose cleanup failed arrives as Failed
+                    if (!doneSuccess && !failed && st != "Cancelled")
                     {
                         failed = true;
-                        failKey = "";
+                        failKey = InitData.Str(m["MessageKey"]);
+                        if (failSummary.Length == 0) failSummary = InitData.Str(m["Summary"]);
                         if (diagPath.Length == 0) diagPath = InitData.Str(m["Message"]);
                     }
                     break;
             }
+            if (finished) _buildFinished = true;
             Refresh();
         }
 
@@ -1984,6 +2120,7 @@ public sealed partial class MainWindow : Window
         // The builder closed the pipe: finished (or ended abnormally). A build that never sent
         // 'done' is a failure, not a success: show the generic failure panel and keep the log reachable.
         timer.Stop();
+        _buildFinished = true;
         if (!finished)
         {
             failed = true;

@@ -50,3 +50,17 @@ Before you apply any of these to a machine you care about:
 - **Defender or the WinSxS store was removed:** repair install or a clean reinstall from a stock ISO (or a rebuild with those options off). See the table above.
 - **The build itself failed:** the builder keeps its working directory on error for troubleshooting, and `-ResumeIsoOnly` can rebuild just the ISO from the payload verified by the previous run. See the README parameter table.
 - **Anything else on an installed system:** restore from a restore point or backup if you made one; otherwise reinstall.
+
+## Cancelling and interrupted builds
+
+What is covered and what is not (verified by reading `WinEasebuilder.ps1`; a real cancel during a real build has not been exercised in the tests, which use mocked phases):
+
+| How the build stops | What happens | What you do |
+|---|---|---|
+| **Cancel build** in the window, at a phase boundary | The builder stops before the next phase and runs the normal cleanup (hives unloaded, DISM images unmounted with discard, VHDX detached, ISO dismounted, Defender exclusion removed). It checks the result and reports `Cancelled` (exit code 3) or, if something was left, `Failed` with the list (exit code 1). The work folder and partly built files are kept. | Nothing for `Cancelled`. For a failed cleanup: see below. |
+| Cancel requested during a long step (export, verification, ISO creation) | The step is not interrupted; the cancel waits until it ends, which can take many minutes. | Wait. Do not shut down the PC. |
+| **Ctrl+C in the console** | PowerShell stops the script and the `try/finally` cleanup runs (same cleanup as above). A second Ctrl+C during the cleanup can interrupt it. The window, if open, shows the build as ended/failed, not as cancelled. | If you pressed Ctrl+C twice, or the console says a mount is left, use the recovery below. |
+| **Closing the window** | Asks first: Cancel build, Keep running in console, or Stay. Keep running in console closes only the window; the build continues. | - |
+| **Closing the console window, logoff, shutdown, power loss, killing the process** | No handler runs: nothing is cleaned up. DISM may keep an image mounted, registry hives (`zSOFTWARE`, `zSYSTEM`, ...) may stay loaded, the VHDX may stay attached, and the Defender exclusion for the work folder may remain. | Run the builder again: phase 1 discards DISM mounts of the work folder (`Clear-DismMountConflicts`) and detaches a leftover VHDX. Leftover hives are unloaded when the mount is cleared. To do it by hand: `dism /Get-MountedImageInfo`, then `dism /Unmount-Image /MountDir:<path> /Discard` (or `dism /Cleanup-Wim`); `reg unload HKLM\zSOFTWARE` (and `zSYSTEM`, `zDEFAULT`, `zNTUSER`, `zCOMPONENTS`); `Remove-MpPreference -ExclusionPath <work folder>` in an elevated PowerShell if you want the exclusion gone. |
+
+If a cancel ends as `Failed` ("cleanup did not finish"): read the list in the window or in `build_diagnostics\<id>\build_diagnostic_summary.txt`, run the manual steps above for the items listed, and start the build again (it clears mount leftovers of its own work folder before it begins). Do not delete the work folder while an image is still mounted from it.

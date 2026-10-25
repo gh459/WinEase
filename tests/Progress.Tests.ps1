@@ -180,3 +180,182 @@ Describe "D1 - window and builder wiring (static checks)" {
         $script:Builder | Should Match 'New-WinEaseDoneData[^\r\n]*-PayloadVerified \$script:FinalPayloadVerified -IsoVerified \$script:IsoPayloadVerified'
     }
 }
+
+# D2: safe cancellation (docs\PROGRESS_PROTOCOL.md, docs\KNOWN_ISSUES.md "Cancelling and interrupted builds")
+Describe "D2 - cancel request, phase boundary and result" {
+    BeforeAll {
+        . $script:GuiSessionPath
+        . (Join-Path -Path $script:RepoRoot -ChildPath 'gui\WinEaseWinUiHost.ps1')
+        $script:D2Dir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("wineased2_" + [guid]::NewGuid().ToString('N'))
+        [void](New-Item -ItemType Directory -Path $script:D2Dir -Force)
+    }
+    AfterAll { if ($script:D2Dir -and (Test-Path -LiteralPath $script:D2Dir)) { Remove-Item -LiteralPath $script:D2Dir -Recurse -Force -ErrorAction SilentlyContinue } }
+    BeforeEach {
+        $script:Sw = New-Object System.IO.StringWriter
+        $script:WinEaseGuiProgressChannel = @{ Writer = $script:Sw }
+        $script:WinEaseCancelRequestPath = $null
+    }
+    AfterEach { $script:WinEaseGuiProgressChannel = $null; $script:WinEaseCancelRequestPath = $null }
+
+    function Get-D2Events { @($script:Sw.ToString() -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json }) }
+
+    It "the cancel check is true only when a request exists" {
+        Test-WinEaseCancelRequested | Should Be $false                      # no channel registered
+        $dir = Join-Path $script:D2Dir 'check'
+        [void](New-Item -ItemType Directory -Path $dir -Force)
+        $script:WinEaseCancelRequestPath = Get-WinEaseCancelRequestPath -DiagnosticsDir $dir
+        Test-WinEaseCancelRequested | Should Be $false                      # registered, nothing requested
+        New-Item -ItemType Directory -Path $script:WinEaseCancelRequestPath -Force | Out-Null
+        Test-WinEaseCancelRequested | Should Be $false                      # a folder of that name is not a request
+        Remove-Item -LiteralPath $script:WinEaseCancelRequestPath -Force
+        Set-Content -LiteralPath $script:WinEaseCancelRequestPath -Value 'x'
+        Test-WinEaseCancelRequested | Should Be $true
+    }
+
+    It "registering the channel sends one valid hello event that advertises cancel; without a window nothing is sent or armed" {
+        $dir = Join-Path $script:D2Dir 'hello'
+        Register-WinEaseCancelChannel -DiagnosticsDir $dir
+        $ev = @(Get-D2Events)
+        $ev.Count | Should Be 1
+        $ev[0].op | Should Be 'progress'
+        $ev[0].event | Should Be 'hello'
+        $ev[0].Capabilities.Cancel | Should Be $true
+        $ev[0].CancelRequestPath | Should Be (Join-Path $dir 'cancel.request')
+
+        $script:WinEaseGuiProgressChannel = $null
+        $script:WinEaseCancelRequestPath = $null
+        Register-WinEaseCancelChannel -DiagnosticsDir $dir
+        $script:WinEaseCancelRequestPath | Should BeNullOrEmpty
+        (New-WinEaseHelloData).Capabilities.Cancel | Should Be $false
+    }
+
+    It "cancel states and done event are valid JSON; Cancelled is never a success" {
+        Send-WinEaseGuiState -State 'Cancelling'
+        Send-WinEaseGuiState -State 'Cancelled'
+        $ok = New-WinEaseDoneData -BuildSucceeded $false -Cancelled $true -CleanupProblems @()
+        $ok.State | Should Be 'Cancelled'
+        $ok.CleanupOk | Should Be $true
+        $ok.Cancelled | Should Be $true
+        Close-WinEaseGuiProgress -Success $false -Message 'x' -Extra $ok
+        $ev = @(Get-D2Events)
+        (($ev | Where-Object { $_.event -eq 'state' } | ForEach-Object { $_.State }) -join ',') | Should Be 'Cancelling,Cancelled'
+        $done = $ev | Where-Object { $_.event -eq 'done' } | Select-Object -First 1
+        $done.Success | Should Be $false
+        $done.State | Should Be 'Cancelled'
+        $done.CleanupOk | Should Be $true
+    }
+
+    It "a failed cleanup is Failed, not Cancelled, and carries the details without secrets" {
+        Get-WinEaseFinalProgressState -BuildSucceeded $false -Cancelled $true -CleanupProblems @() | Should Be 'Cancelled'
+        Get-WinEaseFinalProgressState -BuildSucceeded $false -Cancelled $true -CleanupProblems @('DISM mount still present: C:\m') | Should Be 'Failed'
+        $problems = Get-WinEaseCancelCleanupProblems -LoadedHives @('zSOFTWARE') -LingeringMounts @('C:\w\mount token=abc123secret') -VhdxStillAttached $true -IsoStillMounted $true
+        $problems.Count | Should Be 4
+        (Get-WinEaseCancelCleanupProblems).Count | Should Be 0
+        $bad = New-WinEaseDoneData -BuildSucceeded $false -Cancelled $true -CleanupProblems $problems
+        $bad.State | Should Be 'Failed'
+        $bad.CleanupOk | Should Be $false
+        $bad.MessageKey | Should Be 'Progress.Cancel.CleanupFailed'
+        $bad.Summary | Should Match 'zSOFTWARE'
+        ($bad | ConvertTo-Json -Depth 4 -Compress).Contains('abc123secret') | Should Be $false
+    }
+
+    It "the real phase loop stops at the boundary after a request, starts no further phase, and cleanup runs exactly once" {
+        # The loop is taken from the builder source itself, so this tests the shipped code with mocked phases
+        $tokens = $null; $errs = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$tokens, [ref]$errs)
+        $loop = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.ForEachStatementAst] -and $n.Variable.VariablePath.UserPath -eq 'buildPhase' }, $true)
+        $loop | Should Not BeNullOrEmpty
+        $loopBlock = [scriptblock]::Create($loop.Extent.Text)
+
+        $dir = Join-Path $script:D2Dir 'loop'
+        [void](New-Item -ItemType Directory -Path $dir -Force)
+        $reqFile = Get-WinEaseCancelRequestPath -DiagnosticsDir $dir
+        $script:WinEaseCancelRequestPath = $reqFile
+        $d2ran = New-Object System.Collections.ArrayList; $d2entered = New-Object System.Collections.ArrayList; $d2registered = New-Object System.Collections.ArrayList; $d2cleanup = New-Object System.Collections.ArrayList
+        Set-Content -LiteralPath (Join-Path $dir '01-a.ps1') -Value '[void]$d2ran.Add(1)'
+        Set-Content -LiteralPath (Join-Path $dir '02-b.ps1') -Value ('[void]$d2ran.Add(2); Set-Content -LiteralPath "' + $reqFile + '" -Value x')
+        Set-Content -LiteralPath (Join-Path $dir '03-c.ps1') -Value '[void]$d2ran.Add(3)'
+        $buildPhases = @(
+            @{ Number = 1; Name = 'A'; File = '01-a.ps1' }
+            @{ Number = 2; Name = 'B'; File = '02-b.ps1' }
+            @{ Number = 3; Name = 'C'; File = '03-c.ps1' }
+        )
+        $phasesDir = $dir
+        $null = $buildPhases, $phasesDir
+        function Enter-Phase { param($n, $name) $null = $name; [void]$d2entered.Add($n) }
+        function Register-WinEaseBuildFailure { param($ErrorRecord) [void]$d2registered.Add("$($ErrorRecord.Exception.Message)") }
+
+        $cancelled = $false
+        try {
+            try { . $loopBlock }
+            catch { if (Test-WinEaseCancelException -ErrorRecord $_) { $cancelled = $true } else { throw } }
+        } finally { [void]$d2cleanup.Add(1) }
+
+        $cancelled | Should Be $true
+        ($d2ran -join ',') | Should Be '1,2'            # phase 2 ran to its end, phase 3 never started
+        ($d2entered -join ',') | Should Be '1,2'
+        $d2registered.Count | Should Be 0                      # a cancel is not a failure
+        $d2cleanup.Count | Should Be 1
+
+        # No request: every phase runs
+        Remove-Item -LiteralPath $reqFile -Force
+        Set-Content -LiteralPath (Join-Path $dir '02-b.ps1') -Value '[void]$d2ran.Add(2)'
+        $d2ran.Clear()
+        . $loopBlock
+        ($d2ran -join ',') | Should Be '1,2,3'
+    }
+
+    It "another OperationCanceledException from a phase is an ordinary failure, not a cancel" {
+        $plain = New-Object System.OperationCanceledException('phase cancelled itself')
+        Test-WinEaseCancelException -ErrorRecord $plain | Should Be $false
+        Test-WinEaseCancelException -ErrorRecord (New-WinEaseCancelException) | Should Be $true
+    }
+}
+
+Describe "D2 - window and builder wiring (static checks)" {
+    BeforeAll {
+        $script:Cs = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'gui\winui\WinEaseGui\MainWindow.xaml.cs'))
+        $script:Builder = [System.IO.File]::ReadAllText($script:BuilderPath)
+    }
+    It "the window handles the hello event and enables Cancel only when the builder advertises it" {
+        $script:Cs | Should Match 'case "hello":'
+        $script:Cs | Should Match 'm\["Capabilities"\] is JsonObject caps && InitData\.Bool\(caps\["Cancel"\]\)'
+        $script:Cs | Should Match 'var cancelBuildButton = new Button \{[^}]*IsEnabled = false'
+        $script:Cs | Should Match 'cancelBuildButton\.IsEnabled = _cancelSupported && !_cancelRequested && !finished'
+        $script:Cs | Should Match 'Progress\.Cancel\.Unsupported'
+        $script:Cs | Should Match 'ToolTipService\.SetToolTip\(cancelBuildButton'
+    }
+    It "clicking Cancel only waits: Cancelled is shown only from the builder's state/done event" {
+        $script:Cs | Should Match 'Progress\.Cancel\.Waiting'
+        $script:Cs | Should Match 'bool cancelledDone = finished && state == "Cancelled"'
+        # the request path never sets the state to Cancelled/Cancelling itself
+        $script:Cs | Should Not Match 'state = "Cancell'
+    }
+    It "closing the window during a build asks: Cancel build / Keep running in console / Stay" {
+        $script:Cs | Should Match '(?s)if \(!_progressActive \|\| _buildFinished \|\| _allowClose\) return;\s+args\.Cancel = true;'
+        foreach ($k in 'Progress.Close.CancelBuild', 'Progress.Close.KeepRunning', 'Progress.Close.Stay') { $script:Cs.Contains('"' + $k + '"') | Should Be $true }
+        $script:Cs | Should Match 'DefaultButton = ContentDialogButton\.Close'
+    }
+    It "every cancel and close string exists in en and ja" {
+        $en = Get-Content -LiteralPath (Join-Path $script:RepoRoot 'config\ui-strings\en.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $ja = Get-Content -LiteralPath (Join-Path $script:RepoRoot 'config\ui-strings\ja.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $keys = @([regex]::Matches($script:Cs, '"(Progress\.(?:Cancel|Close)\.[A-Za-z.]+|Progress\.Button\.Cancel|Progress\.Help\.Cancel)"') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
+        $keys.Count | Should BeGreaterThan 10
+        foreach ($k in $keys) {
+            $en.PSObject.Properties[$k] | Should Not BeNullOrEmpty
+            $ja.PSObject.Properties[$k] | Should Not BeNullOrEmpty
+            [string]$ja.$k | Should Not Be ([string]$en.$k)
+        }
+    }
+    It "the builder checks for a cancel only between phases, reuses the finally cleanup and exits with a distinct code" {
+        $script:Builder | Should Match '(?s)foreach \(\$buildPhase in \$buildPhases\) \{.{0,400}?if \(Test-WinEaseCancelRequested\) \{ throw \(New-WinEaseCancelException\) \}\s+\$phaseFile'
+        $script:Builder | Should Match 'Register-WinEaseCancelChannel -DiagnosticsDir \$script:DiagDir'
+        $script:Builder | Should Match 'exit \$script:WinEaseCancelExitCode'
+        # the cancel branch of the catch block does not delete anything itself
+        $m = [regex]::Match($script:Builder, '(?s)if \(Test-WinEaseCancelException -ErrorRecord \$_\) \{(.*?)\r?\n  \} else \{')
+        $m.Success | Should Be $true
+        $m.Groups[1].Value | Should Not Match 'Remove-Item|Remove-WinEaseTreeRobust|Delete\('
+        # the done event carries the cancel result
+        $script:Builder | Should Match '-Cancelled \(\[bool\]\$script:BuildCancelled\) -CleanupProblems'
+    }
+}

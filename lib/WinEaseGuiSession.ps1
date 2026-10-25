@@ -177,7 +177,7 @@ function Invoke-WinEaseGuiSession {
 # writes the JSON line. Every event is { op = 'progress'; event = <name>; ... }.
 # ==============================================================================
 
-# 'Cancelling' is reserved for the cancel feature (D2); 'NotVerified' is the final state of a build that
+# 'Cancelling' / 'Cancelled' belong to the cancel feature (D2); 'NotVerified' is the final state of a build that
 # produced output but whose final verification did not complete (never shown as success).
 $script:WinEaseProgressStates = @('Preparing', 'Running', 'Verifying', 'Succeeded', 'NotVerified', 'Failed', 'Cancelling', 'Cancelled')
 
@@ -233,8 +233,9 @@ function Get-WinEaseVerificationState {
 
 # A finished build is 'Succeeded' only when it is verified; otherwise it is 'NotVerified' (or 'Failed').
 function Get-WinEaseFinalProgressState {
-    param([bool]$BuildSucceeded, [string]$Verification = 'NotVerified', [bool]$Cancelled = $false)
-    if ($Cancelled) { return 'Cancelled' }
+    param([bool]$BuildSucceeded, [string]$Verification = 'NotVerified', [bool]$Cancelled = $false, [string[]]$CleanupProblems = @())
+    # A cancel is 'Cancelled' only when the cleanup left nothing behind; a failed cleanup is 'Failed'
+    if ($Cancelled) { if (@($CleanupProblems | Where-Object { $_ }).Count -gt 0) { return 'Failed' } return 'Cancelled' }
     if (-not $BuildSucceeded) { return 'Failed' }
     if ($Verification -eq 'Verified') { return 'Succeeded' }
     return 'NotVerified'
@@ -294,11 +295,14 @@ function New-WinEaseDoneData {
         [string]$ReportPath = '',
         [string]$OutputPath = '',
         [string]$DiagnosticsPath = '',
-        [string]$DocsPath = ''
+        [string]$DocsPath = '',
+        [bool]$Cancelled = $false,
+        [string[]]$CleanupProblems = @()
     )
+    $problems = @($CleanupProblems | Where-Object { $_ })
     $verification = Get-WinEaseVerificationState -PayloadVerified $PayloadVerified -IsoVerified $IsoVerified
     $data = @{
-        State           = (Get-WinEaseFinalProgressState -BuildSucceeded $BuildSucceeded -Verification $verification)
+        State           = (Get-WinEaseFinalProgressState -BuildSucceeded $BuildSucceeded -Verification $verification -Cancelled $Cancelled -CleanupProblems $problems)
         Verification    = $verification
         LogPath         = $LogPath
         ReportPath      = $ReportPath
@@ -309,7 +313,89 @@ function New-WinEaseDoneData {
     if ($Failure) {
         foreach ($k in 'FailedPhase', 'FailedPhaseNumber', 'MessageKey', 'Summary') { if ($Failure.ContainsKey($k)) { $data[$k] = $Failure[$k] } }
     }
+    if ($Cancelled) {
+        # Cancelled is its own result: never a success, and the cleanup result is always reported
+        $data['Cancelled'] = $true
+        $data['CleanupOk'] = ($problems.Count -eq 0)
+        $data['CleanupProblems'] = @($problems | ForEach-Object { Hide-WinEaseSecretText -Text ([string]$_) })
+        if ($problems.Count -gt 0) {
+            $data['MessageKey'] = 'Progress.Cancel.CleanupFailed'
+            $data['Summary'] = (@($data['CleanupProblems']) -join '; ')
+        }
+    }
     return $data
+}
+
+# ==============================================================================
+# Cancel (D2). The window raises a request by creating <diagnostics folder>\cancel.request; the builder
+# advertises that path in the 'hello' event, so a window that never got the event cannot cancel.
+# The builder looks for the file only at phase boundaries (Test-WinEaseCancelRequested), never inside a
+# DISM/WIM call. See docs/PROGRESS_PROTOCOL.md.
+# ==============================================================================
+$script:WinEaseCancelExitCode = 3
+$script:WinEaseCancelRequestPath = $null
+$script:WinEaseCancelFileName = 'cancel.request'
+
+function Get-WinEaseCancelRequestPath {
+    param([Parameter(Mandatory)][string]$DiagnosticsDir)
+    return (Join-Path -Path $DiagnosticsDir -ChildPath $script:WinEaseCancelFileName)
+}
+
+# Data of the 'hello' event: what this builder can do. A window enables Cancel only when Capabilities.Cancel is true
+# AND the path is given; an older builder sends no hello at all.
+function New-WinEaseHelloData {
+    param([string]$CancelRequestPath = '')
+    $canCancel = -not [string]::IsNullOrWhiteSpace($CancelRequestPath)
+    return @{
+        Capabilities      = @{ Cancel = $canCancel }
+        CancelRequestPath = $(if ($canCancel) { $CancelRequestPath } else { '' })
+    }
+}
+
+# Starts listening for a cancel request (only when a window is open to raise it) and tells the window how.
+function Register-WinEaseCancelChannel {
+    param([Parameter(Mandatory)][string]$DiagnosticsDir)
+    if (-not (Get-Command -Name Send-WinEaseGuiProgress -ErrorAction SilentlyContinue)) { return }
+    if (-not $script:WinEaseGuiProgressChannel) { return }
+    $script:WinEaseCancelRequestPath = Get-WinEaseCancelRequestPath -DiagnosticsDir $DiagnosticsDir
+    Send-WinEaseGuiProgress -Event hello -Data (New-WinEaseHelloData -CancelRequestPath $script:WinEaseCancelRequestPath)
+}
+
+# True only when a cancel was requested: the channel is registered and the request file exists.
+function Test-WinEaseCancelRequested {
+    $path = $script:WinEaseCancelRequestPath
+    if ([string]::IsNullOrWhiteSpace($path)) { return $false }
+    try { return [bool](Test-Path -LiteralPath $path -PathType Leaf) } catch { return $false }
+}
+
+# The exception the phase loop throws at a boundary. The marker keeps it apart from any other cancellation
+# exception a phase might throw (that one is an ordinary failure).
+function New-WinEaseCancelException {
+    $ex = New-Object System.OperationCanceledException('Build cancelled at a phase boundary on request.')
+    $ex.Data['WinEaseCancelBoundary'] = $true
+    return $ex
+}
+
+function Test-WinEaseCancelException {
+    param($ErrorRecord)
+    $ex = if ($ErrorRecord -is [System.Management.Automation.ErrorRecord]) { $ErrorRecord.Exception } else { $ErrorRecord }
+    return [bool]($ex -is [System.OperationCanceledException] -and $ex.Data -and $ex.Data['WinEaseCancelBoundary'])
+}
+
+# What the cleanup left behind after a cancel; an empty list means the cleanup is complete.
+function Get-WinEaseCancelCleanupProblems {
+    param(
+        [string[]]$LoadedHives = @(),
+        [string[]]$LingeringMounts = @(),
+        [bool]$VhdxStillAttached = $false,
+        [bool]$IsoStillMounted = $false
+    )
+    $problems = [System.Collections.Generic.List[string]]::new()
+    foreach ($h in @($LoadedHives | Where-Object { $_ })) { $problems.Add("Registry hive still loaded: $h") }
+    foreach ($m in @($LingeringMounts | Where-Object { $_ })) { $problems.Add("DISM mount still present: $m") }
+    if ($VhdxStillAttached) { $problems.Add('The VHDX scratch disk is still attached.') }
+    if ($IsoStillMounted) { $problems.Add('The source ISO is still mounted.') }
+    return ,@($problems.ToArray())
 }
 
 # Convenience senders: no-ops when no window is open (Send-WinEaseGuiProgress is defined by the WinUI host).
