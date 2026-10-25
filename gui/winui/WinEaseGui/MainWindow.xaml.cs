@@ -1154,14 +1154,17 @@ public sealed partial class MainWindow : Window
         var allRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 0, 0, 6) };
         // The help mark next to the label: what the engine choice does is not obvious,
         // so the mark explains it in a tooltip and accessibility properties.
-        var engineHelp = new TextBlock
+        var engineHelp = new Button
         {
-            Text = "?",
+            Content = "?",
             VerticalAlignment = VerticalAlignment.Center,
-            FontSize = 15,
+            Padding = new Thickness(6, 2, 6, 2),
+            MinHeight = 0,
+            MinWidth = 0,
         };
-        ToolTipService.SetToolTip(engineHelp, _s.Get("Debloat.Engine.Help"));
         AutomationProperties.SetName(engineHelp, _s.Get("Debloat.Engine.Help"));
+        ToolTipService.SetToolTip(engineHelp, _s.Get("Debloat.Engine.Help"));
+        engineHelp.Click += async (_, _) => await MessageAsync(_s.Get("Debloat.Engine.All").TrimEnd(':', '：', ' '), _s.Get("Debloat.Engine.Help"));
         allRow.Children.Add(engineHelp);
         allRow.Children.Add(new TextBlock { Text = _s.Get("Debloat.Engine.All"), VerticalAlignment = VerticalAlignment.Center });
         var allCombo = new ComboBox { MinWidth = 140, SelectedIndex = 0 };
