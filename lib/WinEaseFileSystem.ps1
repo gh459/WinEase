@@ -13,6 +13,12 @@ function Assert-WinEaseDirectorySafety {
     if ([string]::IsNullOrWhiteSpace($Path)) {
         throw "Safety guard: Target path cannot be empty."
     }
+    # F1-5: refuse drive-relative ('C:', 'C:foo') and root-relative ('\x') forms BEFORE
+    # GetFullPath resolves them against the current directory of the drive - that resolution
+    # disguises the target as an ordinary directory and bypasses the root/drive guard below.
+    if (-not (Test-WinEaseAbsoluteLocalPath -Path $Path)) {
+        throw "Safety guard: Refusing operation '$Operation' on root or drive directory (not an absolute local path): $Path"
+    }
     $normPath = try { [System.IO.Path]::GetFullPath($Path).TrimEnd('\') } catch {
         throw "Safety guard: Failed to normalize target path: $Path"
     }
@@ -33,18 +39,22 @@ function Assert-WinEaseDirectorySafety {
     $hostProgX86 = if (${env:ProgramFiles(x86)}) { [System.IO.Path]::GetFullPath(${env:ProgramFiles(x86)}).TrimEnd('\') } else { $null }
     $hostUsers = if ($env:SystemDrive) { [System.IO.Path]::GetFullPath("$($env:SystemDrive)\Users").TrimEnd('\') } else { $null }
 
-    # Check if target path is inside the explicitly configured workspace or mount allocation root
+    # Check if target path is inside the explicitly configured workspace or mount allocation root,
+    # and remember which root contains it (used by the reparse-point ancestry check below)
     $isInsideWorkspace = $false
-    if ($script:MountAllocationRoot) {
-        $normAllocRoot = [System.IO.Path]::GetFullPath($script:MountAllocationRoot).TrimEnd('\')
+    $reparseWalkRoot = $null
+    $normAllocRoot = if ($script:MountAllocationRoot) { [System.IO.Path]::GetFullPath($script:MountAllocationRoot).TrimEnd('\') } else { $null }
+    $normBaseRoot = if ($script:BaseWorkDir) { [System.IO.Path]::GetFullPath($script:BaseWorkDir).TrimEnd('\') } else { $null }
+    if ($normAllocRoot) {
         if ($normPath -ieq $normAllocRoot -or $normPath.StartsWith($normAllocRoot + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
             $isInsideWorkspace = $true
+            $reparseWalkRoot = $normAllocRoot
         }
     }
-    if (-not $isInsideWorkspace -and $script:BaseWorkDir) {
-        $normBaseRoot = [System.IO.Path]::GetFullPath($script:BaseWorkDir).TrimEnd('\')
+    if (-not $isInsideWorkspace -and $normBaseRoot) {
         if ($normPath -ieq $normBaseRoot -or $normPath.StartsWith($normBaseRoot + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
             $isInsideWorkspace = $true
+            $reparseWalkRoot = $normBaseRoot
         }
     }
 
@@ -75,6 +85,15 @@ function Assert-WinEaseDirectorySafety {
         }
     }
 
+    # F1-4: the containment checks above are lexical. A junction or symlink BETWEEN the
+    # workspace root and the target can redirect a destructive operation to a directory
+    # outside the workspace even though the target itself is a plain directory. Walk every
+    # existing element between the containing workspace root and the target (the target
+    # itself included) and refuse when any of them is a reparse point.
+    if ($reparseWalkRoot -and (Test-WinEasePathHasReparsePoint -Path $normPath -Root $reparseWalkRoot)) {
+        throw "Safety guard: Target path '$normPath' traverses a reparse point between the workspace root and the target. Refusing operation '$Operation'."
+    }
+
     if ($Operation -eq 'Reset') {
         if ($script:BaseWorkDir) {
             $normBase = [System.IO.Path]::GetFullPath($script:BaseWorkDir).TrimEnd('\')
@@ -84,10 +103,19 @@ function Assert-WinEaseDirectorySafety {
         }
         try {
             $mounted = @(Get-WinEaseMountedImages)
+            # F1-2: mount records can be spelled with 8.3 short names, so compare real long
+            # paths (existing segments expanded, reparse targets substituted) instead of raw
+            # GetFullPath strings. An unresolvable record is a "cannot verify" failure.
+            $normCompare = ConvertTo-WinEaseRealPath -Path $normPath
+            if ($normCompare) { $normCompare = $normCompare.TrimEnd('\') } else { $normCompare = $normPath }
             foreach ($m in $mounted) {
                 if ($m.Path) {
-                    $mNorm = [System.IO.Path]::GetFullPath($m.Path).TrimEnd('\')
-                    if ($normPath -ieq $mNorm -or $normPath.StartsWith($mNorm + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $mNorm.StartsWith($normPath + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $mReal = ConvertTo-WinEaseRealPath -Path $m.Path
+                    if (-not $mReal) {
+                        throw "cannot resolve mount record path '$($m.Path)' to its real long path"
+                    }
+                    $mNorm = $mReal.TrimEnd('\')
+                    if ($normCompare -ieq $mNorm -or $normCompare.StartsWith($mNorm + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $mNorm.StartsWith($normCompare + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
                         throw "Safety guard: Refusing to reset directory '$normPath' which overlaps with active DISM mount '$mNorm' (Status: $($m.MountStatus))"
                     }
                 }
@@ -771,6 +799,15 @@ function Remove-WinEaseTreeRobust {
         $normRoot = try { ConvertTo-WinEaseNormalizedPath -Path $SafetyRoot } catch { [System.IO.Path]::GetFullPath($SafetyRoot).TrimEnd('\') }
         if (($full -ieq $normRoot) -or (-not (Test-WinEasePathWithin -Path $full -Root $normRoot))) {
             Write-Warning "Remove-WinEaseTreeRobust: refusing '$full' (not a strict child of safety root '$normRoot')."
+            return $false
+        }
+        # F1-4: the strict-child check is lexical. A junction between the safety root and the
+        # target's parent would redirect the removal outside the safety root. Walk the existing
+        # ancestors (NOT the target itself - a reparse-point target is legitimately removed as
+        # a link only, below) and refuse when any of them is a reparse point.
+        $parentOfFull = Split-Path -Parent $full
+        if ($parentOfFull -and (Test-WinEasePathHasReparsePoint -Path $parentOfFull -Root $normRoot)) {
+            Write-Warning "Remove-WinEaseTreeRobust: refusing '$full' (a reparse point exists between the safety root and its parent)."
             return $false
         }
     }
