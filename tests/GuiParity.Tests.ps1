@@ -1015,4 +1015,297 @@ Describe "GUI parity (WinUI 3 / WinForms / command line)" {
             ($problems -join "`n") | Should BeNullOrEmpty
         }
     }
+
+    # =========================================================================================
+    # e. layout, keyboard, accessibility and translated texts (PR E1)
+    #    What a test can prove without a rendered window; the rest is in docs\GUI_MANUAL_CHECKLIST.md
+    # =========================================================================================
+    Context "e. WinUI layout, keyboard and accessibility (static checks of the XAML / code-behind)" {
+        BeforeAll {
+            $guiDir = Join-Path $script:RepoRoot 'gui\winui\WinEaseGui'
+            $script:E1Cs = [System.IO.File]::ReadAllText((Join-Path $guiDir 'MainWindow.xaml.cs'))
+            $script:E1XamlText = [System.IO.File]::ReadAllText((Join-Path $guiDir 'MainWindow.xaml'))
+            [xml]$script:E1Xaml = $script:E1XamlText
+            $script:E1XNs = 'http://schemas.microsoft.com/winfx/2006/xaml'
+        }
+
+        It "the window has a minimum size (WM_GETMINMAXINFO), scaled by the DPI and clamped to the work area, and starts at 1200x880" {
+            $script:E1Cs | Should Match 'WM_GETMINMAXINFO'
+            $script:E1Cs | Should Match 'MinWindowWidthDip'
+            $script:E1Cs | Should Match 'GetDpiForWindow\(hwnd\)\s*/\s*96\.0'
+            $script:E1Cs | Should Match 'Math\.Min\(\(int\)\(MinWindowWidthDip \* scale\), area\.Width\)'
+            $script:E1Cs | Should Match 'SizeAndCenter\(1200,\s*880\)'
+            $script:E1Cs | Should Match 'Math\.Min\(\(int\)\(width \* scale\), area\.Width\)'
+        }
+
+        It "the navigation pane collapses on narrow windows (PaneDisplayMode Auto)" {
+            $nav = $script:E1Xaml.SelectSingleNode('//*[local-name()="NavigationView"]')
+            $nav.GetAttribute('PaneDisplayMode') | Should Be 'Auto'
+        }
+
+        It "the command bar wraps instead of clipping: a wrap panel for the buttons, no fixed-size button, status text wraps" {
+            $xml = $script:E1Xaml
+            $area = $xml.SelectSingleNode('//*[@*[local-name()="Name" and .="ButtonArea"]]')
+            $area.LocalName | Should Be 'WrapPanel'
+            foreach ($n in 'PresetDiffButton', 'DependenciesButton', 'StartButton', 'CancelButton') {
+                $b = $xml.SelectSingleNode("//*[@*[local-name()='Name' and .='$n']]")
+                $b.ParentNode.GetAttribute('Name', $script:E1XNs) | Should Be 'ButtonArea'
+                $b.HasAttribute('Width') | Should Be $false
+                $b.HasAttribute('MinWidth') | Should Be $false
+            }
+            foreach ($n in 'EstimateText', 'StatusText') {
+                $t = $xml.SelectSingleNode("//*[@*[local-name()='Name' and .='$n']]")
+                $t.GetAttribute('TextWrapping') | Should Be 'Wrap'
+            }
+            $script:E1Cs | Should Match 'private void CommandBar_SizeChanged'
+        }
+
+        It "no XAML element or code-created text block has a fixed Height that could clip wrapped text" {
+            $fixed = @()
+            foreach ($node in @($script:E1Xaml.SelectNodes('//*[@Height]'))) {
+                # the title bar is a fixed 48 px caption area and a ring / icon is a fixed glyph; text containers must not be
+                if (@('Grid', 'ProgressRing', 'FontIcon') -contains $node.LocalName -and ($node.GetAttribute('Height') -match '^\d+$')) { continue }
+                if ($node.GetAttribute('Height') -in 'Auto', '*') { continue }
+                $fixed += "$($node.LocalName) Height=$($node.GetAttribute('Height'))"
+            }
+            ($fixed -join '; ') | Should BeNullOrEmpty
+            # code: a TextBlock is never created with a fixed Height
+            $script:E1Cs | Should Not Match 'new TextBlock\s*\{[^}]*\bHeight\s*='
+        }
+
+        It "long names, descriptions and warnings wrap (SettingCard, field rows, section headings, issue messages)" {
+            foreach ($helper in 'private static Border SettingCard', 'private static Grid FieldRow', 'private static TextBlock Section') {
+                $i = $script:E1Cs.IndexOf($helper)
+                $i | Should BeGreaterThan 0
+                $script:E1Cs.Substring($i, [Math]::Min(3200, $script:E1Cs.Length - $i)) | Should Match 'TextWrapping\s*=\s*TextWrapping\.Wrap'
+            }
+            $script:E1Cs | Should Match 'PathTip\(source'
+            $script:E1Cs | Should Match '(?s)private static TextBox Box\(.{0,400}PathTip\(t'
+        }
+
+        It "keyboard: Enter starts only when the last input check has no error, Escape cancels, Tab order and access keys are declared" {
+            $script:E1Cs | Should Match 'RootGrid\.KeyDown \+= RootGrid_KeyDown'
+            $script:E1Cs | Should Match 'VirtualKey\.Enter'
+            $script:E1Cs | Should Match '!_issues\.Any\(i => i\.Severity == "Error"\)'
+            $script:E1Cs | Should Match 'VirtualKey\.Escape'
+            # a popup, a dialog or a control that uses the key itself comes first
+            $script:E1Cs | Should Match 'GetOpenPopupsForXamlRoot'
+            $xml = $script:E1Xaml
+            $order = @()
+            foreach ($n in 'DryRunCheck', 'PresetDiffButton', 'DependenciesButton', 'StartButton', 'CancelButton') {
+                $node = $xml.SelectSingleNode("//*[@*[local-name()='Name' and .='$n']]")
+                $node.HasAttribute('TabIndex') | Should Be $true
+                $order += [int]$node.GetAttribute('TabIndex')
+            }
+            (($order | Sort-Object) -join ',') | Should Be ($order -join ',')
+            foreach ($n in 'PresetDiffButton', 'DependenciesButton', 'StartButton', 'CancelButton') {
+                $xml.SelectSingleNode("//*[@*[local-name()='Name' and .='$n']]").HasAttribute('AccessKey') | Should Be $true
+            }
+            # message dialogs close with Enter / Escape (the OK button is the close button)
+            $script:E1Cs | Should Match 'ShowDialogAsync\(title, text, kind, monospace, null, _s\.Get\("Button\.OK"\)\)'
+        }
+
+        It "every named interactive control of the XAML gets an accessible name and help text in code (Describe helper)" {
+            foreach ($n in 'DryRunCheck', 'LanguageCombo', 'PresetDiffButton', 'DependenciesButton', 'StartButton', 'CancelButton', 'BusyRing', 'Nav') {
+                $script:E1Cs | Should Match ('Describe\(' + $n + ',')
+            }
+            foreach ($n in 'PresetDiffButton', 'DependenciesButton', 'StartButton', 'CancelButton', 'DryRunCheck', 'LanguageCombo') {
+                $script:E1Cs | Should Match ('Describe\(' + $n + ',[^;]*_s\.Get\("[A-Za-z.]+\.Help"\)')
+            }
+        }
+
+        It "controls created in code are named: the Btn / Toggle helpers, every Toggle call, and every input control" {
+            $script:E1Cs | Should Match 'AutomationProperties\.SetName\(b, text\.Trim\(\)\)'
+            $script:E1Cs | Should Match 'private static ToggleSwitch Toggle\(bool on, Action<bool> changed, string\? name = null\)'
+            $calls = @($script:E1Cs -split "`r?`n" | Where-Object { $_ -match '\bToggle\(' -and $_ -notmatch 'static ToggleSwitch Toggle' })
+            @($calls).Count | Should BeGreaterThan 3
+            foreach ($c in $calls) { $c | Should Match '\},\s*[A-Za-z_.()]+\);\s*$' }
+            $lines = $script:E1Cs -split "`r?`n"
+            $problems = @()
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                $m = [regex]::Match($lines[$i], '\bvar\s+(?<v>\w+)\s*=\s*new\s+(?<t>ComboBox|AutoSuggestBox|TextBox)\b')
+                if (-not $m.Success) { continue }
+                $v = $m.Groups['v'].Value
+                $window = ($lines[$i..([math]::Min($i + 60, $lines.Count - 1))]) -join "`n"
+                if ($window -notmatch ('SetName\(' + $v + ',') -and $window -notmatch ('FieldRow\([^;]*\b' + $v + '\b')) {
+                    $problems += "line $($i + 1): $($m.Groups['t'].Value) '$v' has no accessible name (SetName / FieldRow)"
+                }
+            }
+            ($problems -join "`n") | Should BeNullOrEmpty
+        }
+
+        It "status text that changes is a live region (estimate, status, preset state)" {
+            foreach ($n in 'EstimateText', 'StatusText') {
+                $node = $script:E1Xaml.SelectSingleNode("//*[@*[local-name()='Name' and .='$n']]")
+                $node.GetAttribute('AutomationProperties.LiveSetting') | Should Be 'Polite'
+            }
+            $script:E1Cs | Should Match 'SetLiveSetting\(_presetStatusText'
+        }
+
+        It "severity is never conveyed by colour alone: icon and word with every warning / error text" {
+            $script:E1Cs | Should Match 'Severity\.Error'
+            $script:E1Cs | Should Match 'u26A0 " \+ _s\.Get\("Severity\.Warning"\)'
+            # the dialog icon has a name that says the severity
+            $script:E1Cs | Should Match 'AutomationProperties\.SetName\(kindIcon, _s\.Get\("Severity\."'
+            # legacy custom scripts are named as such in text
+            $script:E1Cs | Should Match 'CS\.Legacy'
+        }
+
+        It "brushes: no hard-coded colour in XAML or code, code brushes follow the current theme (light / dark / high contrast)" {
+            $script:E1XamlText | Should Not Match '(Foreground|Background|BorderBrush|Fill|Stroke)="#'
+            $script:E1XamlText | Should Not Match '(Foreground|Background|BorderBrush)="(White|Black|Red|Green|Blue|Yellow|Orange|Gray)"'
+            $script:E1Cs | Should Not Match 'Colors\.[A-Z]'
+            $script:E1Cs | Should Not Match 'Color\.FromArgb'
+            $script:E1Cs | Should Not Match 'new SolidColorBrush'
+            $script:E1Cs | Should Match 'ThemeDictionaries'
+            $script:E1Cs | Should Match '"HighContrast"'
+            $script:E1Cs | Should Match 'ActualThemeChanged'
+            # every brush in XAML comes from a ThemeResource
+            foreach ($m in [regex]::Matches($script:E1XamlText, '(?:Foreground|Background|BorderBrush)="(?<v>[^"]*)"')) { $m.Groups['v'].Value | Should Match '^\{ThemeResource ' }
+        }
+
+        It "no user-facing text is a hard-coded literal: Content / Text / Title / Header / Message / ToolTip / AutomationProperties take ui-strings lookups" {
+            # literals without letters are glyphs / punctuation; these identifiers are product or engine names, not language
+            $allow = @('PowerShell', 'Rust')
+            $code = ($script:E1Cs -split "`r?`n" | ForEach-Object { $_ -replace '^\s*//.*$', '' }) -join "`n"
+            $patterns = @(
+                '\b(?:Content|Text|Title|Header|Message|PlaceholderText|PrimaryButtonText|CloseButtonText|SecondaryButtonText)\s*=\s*"(?<l>(?:[^"\\]|\\.)*)"',
+                '(?:SetToolTip|SetName|SetHelpText|SetFullDescription)\([^,()]+,\s*"(?<l>(?:[^"\\]|\\.)*)"\s*\)',
+                '\.Items\.Add\("(?<l>(?:[^"\\]|\\.)*)"\)'
+            )
+            $bad = @()
+            foreach ($p in $patterns) {
+                foreach ($m in [regex]::Matches($code, $p)) {
+                    $lit = $m.Groups['l'].Value
+                    if (($lit -replace '\\u[0-9A-Fa-f]{4}', '') -notmatch '[A-Za-z]') { continue }
+                    if ($allow -contains $lit) { continue }
+                    $line = ($code.Substring(0, $m.Index) -split "`n").Count
+                    $bad += "line ~$line : $($m.Value.Trim())"
+                }
+            }
+            # the XAML: nothing user-visible is typed into the attributes either
+            foreach ($node in @($script:E1Xaml.SelectNodes('//*'))) {
+                foreach ($attr in @($node.Attributes)) {
+                    if (@('Content', 'Text', 'Header', 'Title', 'PlaceholderText', 'ToolTipService.ToolTip', 'AutomationProperties.Name', 'AutomationProperties.HelpText') -notcontains $attr.Name) { continue }
+                    if ($attr.Value -match '[A-Za-z]' -and $attr.Value -notmatch '^\{') { $bad += "XAML $($node.LocalName).$($attr.Name)=$($attr.Value)" }
+                }
+            }
+            ($bad -join "`n") | Should BeNullOrEmpty
+        }
+
+        It "every ui-strings key the code-behind looks up exists in en.json and ja.json (a key ending in '.' or ':' is a prefix)" {
+            $en = Get-WinEaseUiTable -Language 'en'
+            $ja = Get-WinEaseUiTable -Language 'ja'
+            $enKeys = @($en.Keys)
+            $jaKeys = @($ja.Keys)
+            $missing = @()
+            $keys = [regex]::Matches($script:E1Cs, '_s\.(?:Get|Format|Has)\("(?<k>[^"]+)"') | ForEach-Object { $_.Groups['k'].Value } | Sort-Object -Unique
+            foreach ($k in $keys) {
+                if ($k.EndsWith('.') -or $k.EndsWith(':')) {
+                    # dynamic keys (stage names, policies, debloat targets): at least one entry in a language; the code gives a fallback
+                    if (-not (($enKeys + $jaKeys) | Where-Object { $_.StartsWith($k) })) { $missing += "prefix $k" }
+                } else {
+                    if ($enKeys -notcontains $k) { $missing += "en $k" }
+                    if ($jaKeys -notcontains $k) { $missing += "ja $k" }
+                }
+            }
+            ($missing -join '; ') | Should BeNullOrEmpty
+        }
+
+        It "the E1 keys exist in en.json and ja.json and every {n} placeholder of an English text is in the Japanese text (whole-table key parity: context a.)" {
+            $en = Get-WinEaseUiTable -Language 'en'
+            $ja = Get-WinEaseUiTable -Language 'ja'
+            $bad = @()
+            foreach ($k in @('Main.Status.Standalone', 'Main.Busy', 'CS.Stage.Info', 'CS.Count', 'CS.Stage.InImage')) {
+                foreach ($m in [regex]::Matches([string]$en[$k], '\{\d+\}')) {
+                    if (([string]$ja[$k]) -notmatch [regex]::Escape($m.Value)) { $bad += "$k $($m.Value)" }
+                }
+            }
+            ($bad -join ', ') | Should BeNullOrEmpty
+        }
+
+        It "translated labels never change what is sent: stages, on-error and conflict values travel as the identifier (Tag / array), not the label" {
+            $script:E1Cs | Should Match '\(combo\.SelectedItem as ComboBoxItem\)\?\.Tag as string'
+            $script:E1Cs | Should Match '\(onError\.SelectedItem as ComboBoxItem\)\?\.Tag as string'
+            $script:E1Cs | Should Match '_migConflict = ConflictPolicies\[conflict\.SelectedIndex\]'
+            $script:E1Cs | Should Match 'OnErrorValues = \{ "Warn", "Stop", "Ignore" \}'
+        }
+
+        It "a language switch keeps the selections: the init message carries the same Initial settings in en and ja, and the identifiers (stage, on-error, policy) are the same" {
+            $initial = @{ UserName = 'Tester'; ComputerName = 'PC-1'; SplitWIMMode = $true; UseVHDX = $true; PresetKey = 'balanced' }
+            $en = New-WinEaseWinUiInitMessage -Language 'en' -InitialSettings $initial
+            $ja = New-WinEaseWinUiInitMessage -Language 'ja' -InitialSettings $initial
+            ($en.Initial | ConvertTo-Json -Depth 8) | Should Be ($ja.Initial | ConvertTo-Json -Depth 8)
+            $en.Initial.UserName | Should Be 'Tester'
+            (@($en.Presets | ForEach-Object { $_.Key }) -join ',') | Should Be (@($ja.Presets | ForEach-Object { $_.Key }) -join ',')
+            $e = Get-WinEaseUiTable -Language 'en'
+            $j = Get-WinEaseUiTable -Language 'ja'
+            foreach ($id in 'PreBuild', 'OfflineImage', 'FirstLogon', 'UserOnce') { [string]$j["CS.StageName.$id"] | Should Not Be ([string]$e["CS.StageName.$id"]) }
+            foreach ($id in 'Warn', 'Stop', 'Ignore') { [string]$j["CS.OnError.$id"] | Should Not Be ([string]$e["CS.OnError.$id"]) }
+        }
+    }
+
+    Context "e. WinForms layout, keyboard and accessibility" {
+        It "the main window scales by DPI, can be resized, has a minimum size and uses Enter = Start / Escape = Cancel" {
+            $gui = Show-WinEaseGUI -NoShow -UiLanguage en
+            try {
+                $f = $gui.Form
+                $f.AutoScaleMode | Should Be 'Dpi'
+                $f.AutoScaleDimensions.Width | Should Be 96
+                $f.MinimumSize.Width | Should BeGreaterThan 0
+                $f.FormBorderStyle | Should Be 'Sizable'
+                $f.AcceptButton | Should Be $gui.StartButton
+                $f.CancelButton | Should Be $gui.CancelButton
+                $gui.CancelButton.DialogResult | Should Be 'Cancel'
+            } finally { Close-ParityGui $gui }
+        }
+
+        It "the command buttons stay inside the form (anchored right, inside the design width) and in a logical tab order" {
+            $gui = Show-WinEaseGUI -NoShow -UiLanguage ja
+            try {
+                $f = $gui.Form
+                $buttons = @($gui.StartButton, $gui.CancelButton) + @($gui.StartButton.Parent.Controls | Where-Object { $_ -is [System.Windows.Forms.Button] })
+                foreach ($b in $buttons) {
+                    ($b.Right -le $f.ClientSize.Width) | Should Be $true
+                    ($b.Anchor -band [System.Windows.Forms.AnchorStyles]::Right) | Should Be ([int][System.Windows.Forms.AnchorStyles]::Right)
+                }
+                $panel = $gui.StartButton.Parent
+                $panel.AutoScroll | Should Be $true
+                ($gui.DryRun.TabIndex -lt $gui.StartButton.TabIndex) | Should Be $true
+                ($gui.StartButton.TabIndex -lt $gui.CancelButton.TabIndex) | Should Be $true
+                # the estimate line does not run under a button (its own row)
+                $gui.Estimate.Bottom | Should BeLessThan ($gui.StartButton.Top + 1)
+            } finally { Set-WinEaseUiLanguage -Language 'en'; Close-ParityGui $gui }
+        }
+
+        It "every input / button / check box of the main window has an AccessibleName, and tooltips are also the AccessibleDescription" {
+            foreach ($lang in 'en', 'ja') {
+                $gui = Show-WinEaseGUI -NoShow -UiLanguage $lang
+                try {
+                    $missing = New-Object System.Collections.Generic.List[string]
+                    $walk = $null
+                    $walk = {
+                        param($ctl)
+                        foreach ($c in $ctl.Controls) {
+                            if (($c -is [System.Windows.Forms.ButtonBase] -or $c -is [System.Windows.Forms.TextBoxBase] -or $c -is [System.Windows.Forms.ComboBox] -or $c -is [System.Windows.Forms.ListBox]) -and -not $c.AccessibleName) {
+                                $missing.Add("$($c.GetType().Name) '$($c.Text)' at $($c.Left),$($c.Top)")
+                            }
+                            & $walk $c
+                        }
+                    }
+                    & $walk $gui.Form
+                    ($missing -join "`n") | Should BeNullOrEmpty
+                    $gui.StartButton.AccessibleDescription | Should Not BeNullOrEmpty
+                    $gui.Source.AccessibleName | Should Not BeNullOrEmpty
+                } finally { Set-WinEaseUiLanguage -Language 'en'; Close-ParityGui $gui }
+            }
+        }
+
+        It "tab pages scroll instead of cutting content off" {
+            $gui = Show-WinEaseGUI -NoShow -UiLanguage en
+            try {
+                foreach ($tab in $gui.Tabs.TabPages) { $tab.AutoScroll | Should Be $true }
+            } finally { Close-ParityGui $gui }
+        }
+    }
 }

@@ -95,7 +95,12 @@ public sealed partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         SizeAndCenter(1200, 880);
+        InstallMinimumSize();
+        UpdateThemeKey();
+        RootGrid.ActualThemeChanged += RootGrid_ActualThemeChanged;
         AppWindow.Closing += AppWindow_Closing;
+        // Enter = Start (only when the input is valid), Escape = Cancel; see RootGrid_KeyDown
+        RootGrid.KeyDown += RootGrid_KeyDown;
 
         ApplyLanguage();
         _ = RefreshPresetStateAsync();
@@ -162,6 +167,112 @@ public sealed partial class MainWindow : Window
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(IntPtr hwnd);
 
+    // --- Minimum window size ------------------------------------------------------------------------------
+    // WinUI 3 has no MinWidth / MinHeight for a window and the presenter offers none, so the window procedure
+    // answers WM_GETMINMAXINFO. The minimum is in device-independent pixels (scaled with the monitor DPI, so
+    // 150-200% scaling keeps the same layout width) and is clamped to the work area of a small screen.
+    private const int MinWindowWidthDip = 640;
+    private const int MinWindowHeightDip = 560;
+    private const int WM_GETMINMAXINFO = 0x0024;
+    private const int GWLP_WNDPROC = -4;
+    private delegate IntPtr WndProcDelegate(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+    private WndProcDelegate? _wndProc;      // kept in a field: the native side holds only the pointer
+    private IntPtr _oldWndProc = IntPtr.Zero;
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct NativePoint { public int X, Y; }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct MinMaxInfo
+    {
+        public NativePoint Reserved, MaxSize, MaxPosition, MinTrackSize, MaxTrackSize;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern IntPtr SetWindowLongPtr(IntPtr hwnd, int index, WndProcDelegate newProc);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr CallWindowProcW(IntPtr previous, IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    private void InstallMinimumSize()
+    {
+        try
+        {
+            IntPtr hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            _wndProc = MinimumSizeWndProc;
+            _oldWndProc = SetWindowLongPtr(hwnd, GWLP_WNDPROC, _wndProc);
+        }
+        catch
+        {
+            // No minimum size: the window stays usable, only the lower bound is missing
+            _wndProc = null;
+        }
+    }
+
+    private IntPtr MinimumSizeWndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
+    {
+        if (msg == WM_GETMINMAXINFO && lParam != IntPtr.Zero)
+        {
+            try
+            {
+                var info = System.Runtime.InteropServices.Marshal.PtrToStructure<MinMaxInfo>(lParam);
+                double scale = GetDpiForWindow(hwnd) / 96.0;
+                var area = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest).WorkArea;
+                info.MinTrackSize.X = Math.Min((int)(MinWindowWidthDip * scale), area.Width);
+                info.MinTrackSize.Y = Math.Min((int)(MinWindowHeightDip * scale), area.Height);
+                System.Runtime.InteropServices.Marshal.StructureToPtr(info, lParam, false);
+            }
+            catch
+            {
+                // Fall through to the default handling
+            }
+        }
+        return CallWindowProcW(_oldWndProc, hwnd, msg, wParam, lParam);
+    }
+
+    // --- Keyboard: Enter = Start (when valid), Escape = Cancel --------------------------------------------
+    // Controls that use Enter / Escape themselves (buttons, combo boxes, lists, text boxes with several lines) and
+    // any open popup or dialog get the key first; only a key nobody handled reaches this method.
+    private void RootGrid_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Handled || _busy || _resultSent) return;
+        if (Content?.XamlRoot != null && Microsoft.UI.Xaml.Media.VisualTreeHelper.GetOpenPopupsForXamlRoot(Content.XamlRoot).Count > 0) return;
+        var source = e.OriginalSource as DependencyObject;
+        if (e.Key == Windows.System.VirtualKey.Enter)
+        {
+            if (source is Button || source is ComboBox || source is ComboBoxItem || source is NavigationViewItem || source is ToggleSwitch ||
+                source is CheckBox || source is RadioButton || source is ListViewItem) return;
+            if (source is TextBox tb && tb.AcceptsReturn) return;
+            // Start only when the last input check found no error (Start itself checks again and asks to confirm)
+            if (StartButton.IsEnabled && !_issues.Any(i => i.Severity == "Error"))
+            {
+                e.Handled = true;
+                StartButton_Click(StartButton, new RoutedEventArgs());
+            }
+        }
+        else if (e.Key == Windows.System.VirtualKey.Escape)
+        {
+            if (CancelButton.IsEnabled)
+            {
+                e.Handled = true;
+                CancelButton_Click(CancelButton, new RoutedEventArgs());
+            }
+        }
+    }
+
+    // Wide: status and buttons share one row. Narrow (small window or a large display scale): the buttons move
+    // below the status and wrap onto more rows, so no command ever leaves the window.
+    private const double CommandBarWideWidth = 1100;
+    private void CommandBar_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        bool wide = e.NewSize.Width >= CommandBarWideWidth;
+        Grid.SetColumnSpan(StatusArea, wide ? 1 : 2);
+        Grid.SetRow(ButtonArea, wide ? 0 : 1);
+        Grid.SetColumn(ButtonArea, wide ? 1 : 0);
+        Grid.SetColumnSpan(ButtonArea, wide ? 1 : 2);
+        ButtonArea.HorizontalAlignment = HorizontalAlignment.Right;
+    }
+
     // =======================================================================================================
     // Language: every visible text comes from config\ui-strings; switching rebuilds the shell and the page
     // =======================================================================================================
@@ -181,21 +292,30 @@ public sealed partial class MainWindow : Window
         DependenciesButton.Content = _s.Get("Button.CheckDependencies");
         StartButton.Content = _s.Get("Button.StartBuild");
         CancelButton.Content = _s.Get("Button.Cancel");
-        StatusText.Text = _bridge.IsConnected ? "" : "Standalone preview (not connected to WinEasebuilder.ps1)";
+        StatusText.Text = _bridge.IsConnected ? "" : _s.Get("Main.Status.Standalone");
 
-        AutomationProperties.SetName(DryRunCheck, _s.Get("Main.DryRun"));
-        AutomationProperties.SetName(LanguageCombo, LanguageLabel.Text);
-        AutomationProperties.SetName(PresetDiffButton, _s.Get("Button.PresetDiff"));
-        AutomationProperties.SetName(DependenciesButton, _s.Get("Button.CheckDependencies"));
-        AutomationProperties.SetName(StartButton, _s.Get("Button.StartBuild"));
-        AutomationProperties.SetName(CancelButton, _s.Get("Button.Cancel"));
-        AutomationProperties.SetName(BusyRing, "Processing");
-        ToolTipService.SetToolTip(DryRunCheck, _s.Get("Main.DryRun"));
-        ToolTipService.SetToolTip(PresetDiffButton, _s.Get("Button.PresetDiff"));
-        ToolTipService.SetToolTip(DependenciesButton, _s.Get("Button.CheckDependencies"));
-        ToolTipService.SetToolTip(StartButton, _s.Get("Button.StartBuild"));
-        ToolTipService.SetToolTip(CancelButton, _s.Get("Button.Cancel"));
-        ToolTipService.SetToolTip(BusyRing, "Processing");
+        // Name = what it is, HelpText = what it does (also the tooltip). Keyboard shortcuts are shown in the help.
+        void Describe(DependencyObject element, string name, string? help)
+        {
+            AutomationProperties.SetName(element, name);
+            if (!string.IsNullOrEmpty(help))
+            {
+                AutomationProperties.SetHelpText(element, help);
+                ToolTipService.SetToolTip(element, help);
+            }
+            else
+            {
+                ToolTipService.SetToolTip(element, name);
+            }
+        }
+        Describe(DryRunCheck, _s.Get("Main.DryRun"), _s.Get("Main.DryRun.Help"));
+        Describe(LanguageCombo, LanguageLabel.Text, _s.Get("Main.Language.Help"));
+        Describe(PresetDiffButton, _s.Get("Button.PresetDiff"), _s.Get("Button.PresetDiff.Help"));
+        Describe(DependenciesButton, _s.Get("Button.CheckDependencies"), _s.Get("Button.CheckDependencies.Help"));
+        Describe(StartButton, _s.Get("Button.StartBuild"), _s.Get("Button.StartBuild.Help"));
+        Describe(CancelButton, _s.Get("Button.Cancel"), _s.Get("Button.Cancel.Help"));
+        Describe(BusyRing, _s.Get("Main.Busy"), null);
+        Describe(Nav, _s.Get("Main.Nav.Name"), null);
 
         BuildNav();
         UpdateEstimate();
@@ -285,14 +405,81 @@ public sealed partial class MainWindow : Window
     // =======================================================================================================
     // Small control factories (Windows 11 settings-card look)
     // =======================================================================================================
-    private static Brush Res(string key) => (Brush)Application.Current.Resources[key];
+    // Brushes created in code are looked up in the theme dictionary that matches the window's CURRENT theme
+    // (Light / Dark / HighContrast), exactly what {ThemeResource} does in XAML. A plain Application.Resources[key]
+    // lookup would keep the theme the application started with. The page is built again when the theme changes
+    // (RootGrid_ActualThemeChanged), so these brushes follow light, dark and high contrast.
+    private static string _themeKey = "Default";
 
-    private static TextBlock Section(string text) => new()
+    private static Brush Res(string key) => FindThemedBrush(Application.Current.Resources, key) ?? (Brush)Application.Current.Resources[key];
+
+    private static Brush? FindThemedBrush(ResourceDictionary dictionary, string key)
     {
-        Text = text.Trim(),
-        Style = (Style)Application.Current.Resources["BodyStrongTextBlockStyle"],
-        Margin = new Thickness(1, 18, 0, 4),
-    };
+        try
+        {
+            if (dictionary.ThemeDictionaries.TryGetValue(_themeKey, out object? themed) &&
+                themed is ResourceDictionary themeDictionary &&
+                themeDictionary.TryGetValue(key, out object? value) && value is Brush brush)
+            {
+                return brush;
+            }
+            foreach (var merged in dictionary.MergedDictionaries)
+            {
+                var found = FindThemedBrush(merged, key);
+                if (found != null) return found;
+            }
+        }
+        catch
+        {
+            // Fall back to the application-level lookup
+        }
+        return null;
+    }
+
+    private void UpdateThemeKey()
+    {
+        bool highContrast = false;
+        try { highContrast = new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast; } catch { }
+        _themeKey = highContrast ? "HighContrast" : RootGrid.ActualTheme == ElementTheme.Dark ? "Dark" : "Light";
+    }
+
+    private void RootGrid_ActualThemeChanged(FrameworkElement sender, object args)
+    {
+        UpdateThemeKey();
+        if (!_resultSent) ShowPage(_page);
+    }
+
+    private static TextBlock Section(string text)
+    {
+        var t = new TextBlock
+        {
+            Text = text.Trim(),
+            Style = (Style)Application.Current.Resources["BodyStrongTextBlockStyle"],
+            Margin = new Thickness(1, 18, 0, 4),
+            TextWrapping = TextWrapping.Wrap,
+        };
+        AutomationProperties.SetHeadingLevel(t, Microsoft.UI.Xaml.Automation.Peers.AutomationHeadingLevel.Level2);
+        return t;
+    }
+
+    // A row of buttons / small controls that wraps onto more rows instead of leaving the window
+    private static WrapPanel WrapRow(params UIElement[] items)
+    {
+        var w = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 4, HorizontalAlignment = HorizontalAlignment.Left };
+        foreach (var item in items) w.Children.Add(item);
+        return w;
+    }
+
+    // A path / long value is shown wrapped and in full in a tooltip
+    private static void PathTip(FrameworkElement element, Func<string> text)
+    {
+        ToolTipService.SetToolTip(element, null);
+        element.PointerEntered += (_, _) =>
+        {
+            string t = text();
+            ToolTipService.SetToolTip(element, string.IsNullOrWhiteSpace(t) ? null : new ToolTip { Content = new TextBlock { Text = t, TextWrapping = TextWrapping.Wrap, MaxWidth = 480 } });
+        };
+    }
 
     private static Border Card(UIElement content, Thickness? padding = null) => new()
     {
@@ -352,48 +539,89 @@ public sealed partial class MainWindow : Window
         var g = new Grid { ColumnSpacing = 8, Margin = new Thickness(0, 4, 0, 4) };
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(190) });
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        for (int r = 0; r < 3; r++) g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var lbl = new TextBlock { Text = cleanLabel, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
         g.Children.Add(lbl);
         Grid.SetColumn(field, 1);
         g.Children.Add(field);
         AutomationProperties.SetName(field, cleanLabel);
-        int col = 2;
-        foreach (var b in buttons)
+        WrapPanel? btnPanel = null;
+        if (buttons.Length > 0)
         {
-            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            Grid.SetColumn(b, col++);
-            g.Children.Add(b);
+            var wrap = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 4, VerticalAlignment = VerticalAlignment.Center };
+            foreach (var b in buttons) wrap.Children.Add(b);
+            Grid.SetColumn(wrap, 2);
+            g.Children.Add(wrap);
+            btnPanel = wrap;
         }
+        // Narrow (small window, large scale): label above the field, the buttons below it, nothing is cut off.
+        // The layout turns narrow when the field would get less than 160 px; it turns wide again once the row is
+        // as wide as it was missing at that moment (the width of the buttons depends on the language and scale).
+        bool narrow = false;
+        double wideAgainAt = double.MaxValue;
+        void Evaluate()
+        {
+            double width = g.ActualWidth;
+            if (width <= 0) return;
+            bool n = narrow;
+            if (!narrow && field.ActualWidth < 160) { n = true; wideAgainAt = width + (160 - field.ActualWidth) + 4; }
+            else if (narrow && width >= wideAgainAt) n = false;
+            if (n == narrow) return;
+            narrow = n;
+            Grid.SetColumnSpan(lbl, n ? 3 : 1);
+            Grid.SetRow(field, n ? 1 : 0);
+            Grid.SetColumn(field, n ? 0 : 1);
+            Grid.SetColumnSpan(field, n ? 3 : 1);
+            field.Margin = new Thickness(0, n ? 4 : 0, 0, 0);
+            if (btnPanel != null)
+            {
+                Grid.SetRow(btnPanel, n ? 2 : 0);
+                Grid.SetColumn(btnPanel, n ? 0 : 2);
+                Grid.SetColumnSpan(btnPanel, n ? 3 : 1);
+                btnPanel.Margin = new Thickness(0, n ? 4 : 0, 0, 0);
+                btnPanel.HorizontalAlignment = HorizontalAlignment.Left;
+            }
+        }
+        g.SizeChanged += (_, _) => Evaluate();
+        field.SizeChanged += (_, _) => Evaluate();
         return g;
     }
 
     private static Button Btn(string text, RoutedEventHandler click, bool accent = false)
     {
         var b = new Button { Content = text.Trim() };
+        AutomationProperties.SetName(b, text.Trim());
         if (accent) b.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
         b.Click += click;
         return b;
     }
 
+    // Text field; the full value is available as a tooltip because a path can be longer than the box
     private static TextBox Box(string text, Action<string> changed, string? placeholder = null)
     {
-        var t = new TextBox { Text = text, PlaceholderText = placeholder ?? "" };
+        var t = new TextBox { Text = text, PlaceholderText = placeholder ?? "", TextWrapping = TextWrapping.NoWrap };
         t.TextChanged += (_, _) => changed(t.Text);
+        PathTip(t, () => t.Text);
         return t;
     }
 
-    private static ToggleSwitch Toggle(bool on, Action<bool> changed)
+    // Switch without on/off text (the card shows the setting name); the accessible name is set here so a switch
+    // that is not placed in a SettingCard is never nameless. SettingCard sets the same name and the help text.
+    private static ToggleSwitch Toggle(bool on, Action<bool> changed, string? name = null)
     {
         var t = new ToggleSwitch { IsOn = on, MinWidth = 0, OnContent = "", OffContent = "" };
+        if (!string.IsNullOrWhiteSpace(name)) AutomationProperties.SetName(t, name);
         t.Toggled += (_, _) => changed(t.IsOn);
         return t;
     }
 
-    private StackPanel SelectButtons(Action<bool> setAll)
+    private UIElement SelectButtons(Action<bool> setAll)
     {
-        var p = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 0, 0, 4) };
-        p.Children.Add(Btn(_s.Get("Button.SelectAll"), (_, _) => setAll(true)));
-        p.Children.Add(Btn(_s.Get("Button.ClearAll"), (_, _) => setAll(false)));
+        var p = WrapRow(
+            Btn(_s.Get("Button.SelectAll"), (_, _) => setAll(true)),
+            Btn(_s.Get("Button.ClearAll"), (_, _) => setAll(false)));
+        p.Margin = new Thickness(0, 0, 0, 4);
         return p;
     }
 
@@ -441,6 +669,7 @@ public sealed partial class MainWindow : Window
             source.IsSuggestionListOpen = _sources.Count > 0;
         });
         source.TextChanged += (_, _) => ScheduleValidation();
+        PathTip(source, () => source.Text);
         srcPanel.Children.Add(WithMessage("SourceDrive", FieldRow(_s.Get("Media.Label.Source"), source, browseDrive, browseIso, rescan)));
 
         var work = Box(_workDir, v => _workDir = v, _init.DefaultWorkDir);
@@ -503,24 +732,22 @@ public sealed partial class MainWindow : Window
         _presetCombo = preset;
 
         // State line ("<Base> + modified" / "Custom") and the separate "Revert to preset" action
-        _presetStatusText = new TextBlock { TextWrapping = TextWrapping.Wrap, Opacity = 0.8 };
+        _presetStatusText = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = Res("TextFillColorSecondaryBrush") };
         AutomationProperties.SetLiveSetting(_presetStatusText, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
         _revertButton = Btn(_s.Get("Button.RevertPreset"), (_, _) => RevertToPreset());
         ToolTipService.SetToolTip(_revertButton, _s.Get("Button.RevertPreset.Tooltip"));
         AutomationProperties.SetHelpText(_revertButton, _s.Get("Button.RevertPreset.Tooltip"));
         var presetBox = new StackPanel { Spacing = 8 };
         presetBox.Children.Add(preset);
-        var stateRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-        stateRow.Children.Add(_revertButton);
-        stateRow.Children.Add(new Border { VerticalAlignment = VerticalAlignment.Center, Child = _presetStatusText });
-        presetBox.Children.Add(stateRow);
+        presetBox.Children.Add(_revertButton);
+        presetBox.Children.Add(_presetStatusText);
         PageHost.Children.Add(Card(presetBox));
         UpdatePresetStatus();
 
         // Payload format
         PageHost.Children.Add(Section(_s.Get("Media.Group.Payload")));
         var payload = new StackPanel { Spacing = 4 };
-        var radios = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 24 };
+        var radios = new WrapPanel { HorizontalSpacing = 24, VerticalSpacing = 4, HorizontalAlignment = HorizontalAlignment.Left };
         foreach (var (fmt, key) in new[] { ("WIM", "Media.Radio.WIM"), ("ESD", "Media.Radio.ESD"), ("SWM", "Media.Radio.SWM") })
         {
             var rb = new RadioButton { Content = _s.Get(key), GroupName = "payload", Tag = fmt, IsChecked = _payload == fmt };
@@ -725,9 +952,9 @@ public sealed partial class MainWindow : Window
         foreach (var t in list)
         {
             string key = t.Key;
-            var toggle = Toggle(_tweaks.GetValueOrDefault(key, t.Default), v => { _tweaks[key] = v; OnSettingChanged(); });
-            toggles.Add((key, toggle));
             string header = showCategory ? $"{key}  [{t.Category}]" : key;
+            var toggle = Toggle(_tweaks.GetValueOrDefault(key, t.Default), v => { _tweaks[key] = v; OnSettingChanged(); }, header);
+            toggles.Add((key, toggle));
             var card = SettingCard(header, TweakDescription(t), toggle);
             ToolTipService.SetToolTip(card, TweakDescription(t));
             PageHost.Children.Add(card);
@@ -749,7 +976,7 @@ public sealed partial class MainWindow : Window
         foreach (var c in defs)
         {
             string key = c.Key;
-            var toggle = Toggle(_components.GetValueOrDefault(key, c.Default), v => { _components[key] = v; UpdateEstimate(); OnSettingChanged(); });
+            var toggle = Toggle(_components.GetValueOrDefault(key, c.Default), v => { _components[key] = v; UpdateEstimate(); OnSettingChanged(); }, ComponentText(c));
             toggles.Add(toggle);
             var card = SettingCard(ComponentText(c), $"{key} - {ComponentDescription(c)}", toggle);
             ToolTipService.SetToolTip(card, ComponentDescription(c));
@@ -810,25 +1037,35 @@ public sealed partial class MainWindow : Window
     private void AddDebloatList(string title, List<string> items, HashSet<string> selected, string? confirmSelectAll, bool danger)
     {
         var header = Section(title);
-        if (danger) header.Foreground = Res("SystemFillColorCriticalBrush");
+        // Danger is never shown by colour alone: a warning sign and the word before the heading
+        if (danger)
+        {
+            header.Foreground = Res("SystemFillColorCriticalBrush");
+            header.Text = "\u26A0 " + _s.Get("Severity.Warning") + ": " + header.Text;
+        }
         PageHost.Children.Add(header);
         var boxes = new List<CheckBox>();
-        var bar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 0, 0, 4) };
-        bar.Children.Add(Btn(_s.Get("Button.SelectAll"), async (_, _) =>
-        {
-            if (confirmSelectAll != null && !await ConfirmAsync(_s.Get("Msg.Title.Confirm"), confirmSelectAll)) return;
-            foreach (var b in boxes) b.IsChecked = true;
-        }));
-        bar.Children.Add(Btn(_s.Get("Button.ClearAll"), (_, _) => { foreach (var b in boxes) b.IsChecked = false; }));
+        var bar = WrapRow(
+            Btn(_s.Get("Button.SelectAll"), async (_, _) =>
+            {
+                if (confirmSelectAll != null && !await ConfirmAsync(_s.Get("Msg.Title.Confirm"), confirmSelectAll)) return;
+                foreach (var b in boxes) b.IsChecked = true;
+            }),
+            Btn(_s.Get("Button.ClearAll"), (_, _) => { foreach (var b in boxes) b.IsChecked = false; }));
+        bar.Margin = new Thickness(0, 0, 0, 4);
         PageHost.Children.Add(bar);
 
         var panel = new StackPanel { Spacing = 0 };
         foreach (string item in items.Distinct())
         {
             string value = item;
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 0, 0, 2) };
+            // Check box (takes the free width and wraps its text) | engine combo
+            var row = new Grid { ColumnSpacing = 8, Margin = new Thickness(0, 0, 0, 2) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             string translatedItem = _s.Get("Debloat:" + item, item);
-            var cb = new CheckBox { Content = translatedItem, IsChecked = selected.Contains(item), MinWidth = 380 };
+            var cbText = new TextBlock { Text = translatedItem, TextWrapping = TextWrapping.Wrap };
+            var cb = new CheckBox { Content = cbText, IsChecked = selected.Contains(item), MinWidth = 0, HorizontalAlignment = HorizontalAlignment.Stretch };
             AutomationProperties.SetName(cb, translatedItem);
             AutomationProperties.SetHelpText(cb, item);
             cb.Checked += (_, _) => { selected.Add(value); UpdateDebloatEngineState(value); OnSettingChanged(); };
@@ -836,7 +1073,8 @@ public sealed partial class MainWindow : Window
             boxes.Add(cb);
             row.Children.Add(cb);
 
-            var combo = new ComboBox { MinWidth = 120, HorizontalAlignment = HorizontalAlignment.Left };
+            var combo = new ComboBox { MinWidth = 120, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
+            Grid.SetColumn(combo, 1);
             foreach (string eng in DebloatEnginesFor(value)) combo.Items.Add(eng);
             combo.SelectedIndex = 0;
             combo.SelectionChanged += (_, _) => { if (combo.SelectedIndex >= 0) SetDebloatEngine(value, (string)combo.SelectedItem, combo); };
@@ -900,13 +1138,13 @@ public sealed partial class MainWindow : Window
         if (assist != null)
         {
             PageHost.Children.Add(Section(_s.Get("Mig.Group.Assistant")));
-            var toggle = Toggle(_components.GetValueOrDefault(assist.Key, assist.Default), v => { _components[assist.Key] = v; OnSettingChanged(); });
+            var toggle = Toggle(_components.GetValueOrDefault(assist.Key, assist.Default), v => { _components[assist.Key] = v; OnSettingChanged(); }, ComponentText(assist));
             PageHost.Children.Add(SettingCard(ComponentText(assist), ComponentDescription(assist), toggle, "\uE8F1"));
 
             var backupDef = _init.Components.FirstOrDefault(c => c.Key == "IncludeMigrationBackup");
             if (backupDef != null)
             {
-                backupToggle = Toggle(_components.GetValueOrDefault(backupDef.Key, backupDef.Default), v => { _components[backupDef.Key] = v; OnSettingChanged(); });
+                backupToggle = Toggle(_components.GetValueOrDefault(backupDef.Key, backupDef.Default), v => { _components[backupDef.Key] = v; OnSettingChanged(); }, ComponentText(backupDef));
                 backupToggle.IsEnabled = toggle.IsOn;
                 PageHost.Children.Add(SettingCard(ComponentText(backupDef), ComponentDescription(backupDef), backupToggle, "\uE8F1"));
                 toggle.Toggled += (_, _) => { if (backupToggle != null) backupToggle.IsEnabled = toggle.IsOn; };
@@ -927,9 +1165,9 @@ public sealed partial class MainWindow : Window
         secrets.Checked += (_, _) => _migExcludeSecrets = true;
         secrets.Unchecked += (_, _) => _migExcludeSecrets = false;
         backup.Children.Add(secrets);
-        var conflict = new ComboBox { MinWidth = 220 };
+        var conflict = new ComboBox { MinWidth = 220, HorizontalAlignment = HorizontalAlignment.Stretch };
         AutomationProperties.SetName(conflict, _s.Get("Mig.Label.ConflictPolicy").TrimEnd(':', '：', ' '));
-        foreach (string p in ConflictPolicies) conflict.Items.Add(p);
+        foreach (string p in ConflictPolicies) conflict.Items.Add(_s.Get("Mig.Policy." + p, p));
         conflict.SelectedIndex = Math.Max(0, Array.IndexOf(ConflictPolicies, _migConflict));
         conflict.SelectionChanged += (_, _) => { if (conflict.SelectedIndex >= 0) _migConflict = ConflictPolicies[conflict.SelectedIndex]; };
         backup.Children.Add(FieldRow(_s.Get("Mig.Label.ConflictPolicy"), conflict));
@@ -996,26 +1234,40 @@ public sealed partial class MainWindow : Window
         columns.Children.Add(left);
         Grid.SetColumn(right, 1);
         columns.Children.Add(right);
+        // Narrow: the two columns stack
+        columns.SizeChanged += (_, e) =>
+        {
+            bool stack = e.NewSize.Width < 620;
+            columns.ColumnDefinitions[1].Width = stack ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+            Grid.SetColumn(right, stack ? 0 : 1);
+            Grid.SetRow(right, stack ? 1 : 0);
+            columns.RowDefinitions.Clear();
+            if (stack)
+            {
+                columns.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                columns.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            }
+        };
         PageHost.Children.Add(columns);
 
         // Custom files and folders
         PageHost.Children.Add(Section(_s.Get("Mig.Group.Custom")));
         var custom = new StackPanel { Spacing = 6 };
         custom.Children.Add(new TextBlock { Text = _s.Get("Mig.Label.CustomPaths").Trim() });
-        var paths = new TextBox { Text = _migCustomPaths, AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap, MinHeight = 90, FontFamily = new FontFamily("Cascadia Mono, Consolas") };
+        var paths = new TextBox { Text = _migCustomPaths, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 90, FontFamily = new FontFamily("Cascadia Mono, Consolas") };
         AutomationProperties.SetName(paths, _s.Get("Mig.Label.CustomPaths").TrimEnd(':', '：', ' '));
         paths.TextChanged += (_, _) => _migCustomPaths = paths.Text;
         custom.Children.Add(paths);
-        var customButtons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        customButtons.Children.Add(Btn(_s.Get("Mig.Button.BackupCustom"), async (_, _) =>
-        {
-            var a = MigrationArgs();
-            var arr = new JsonArray();
-            foreach (string line in _migCustomPaths.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0)) arr.Add(line);
-            a["Paths"] = arr;
-            await RunAndShowAsync("backupCustom", a);
-        }));
-        customButtons.Children.Add(Btn(_s.Get("Mig.Button.RestoreCustom"), async (_, _) => await RunAndShowAsync("restoreCustom", MigrationArgs())));
+        var customButtons = WrapRow(
+            Btn(_s.Get("Mig.Button.BackupCustom"), async (_, _) =>
+            {
+                var a = MigrationArgs();
+                var arr = new JsonArray();
+                foreach (string line in _migCustomPaths.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0)) arr.Add(line);
+                a["Paths"] = arr;
+                await RunAndShowAsync("backupCustom", a);
+            }),
+            Btn(_s.Get("Mig.Button.RestoreCustom"), async (_, _) => await RunAndShowAsync("restoreCustom", MigrationArgs())));
         custom.Children.Add(customButtons);
         PageHost.Children.Add(Card(custom));
 
@@ -1034,7 +1286,8 @@ public sealed partial class MainWindow : Window
         var errors = InitData.StrList(ext["Errors"]);
         extPanel.Children.Add(new TextBlock
         {
-            Text = errors.Count > 0 ? _s.Format("Mig.Ext.LoadErrors", string.Join("; ", errors)) : _s.Get("Mig.Ext.NoErrors"),
+            // Load errors carry a warning sign and the word, not only the caution colour
+            Text = errors.Count > 0 ? "\u26A0 " + _s.Get("Severity.Warning") + ": " + _s.Format("Mig.Ext.LoadErrors", string.Join("; ", errors)) : _s.Get("Mig.Ext.NoErrors"),
             TextWrapping = TextWrapping.Wrap,
             Foreground = errors.Count > 0 ? Res("SystemFillColorCautionBrush") : Res("TextFillColorSecondaryBrush"),
         });
@@ -1095,6 +1348,7 @@ public sealed partial class MainWindow : Window
     // Page 10: custom scripts (tools\custom-scripts\<Stage>)
     // =======================================================================================================
     private static readonly string[] CustomScriptStages = { "PreBuild", "OfflineImage", "FirstLogon", "UserOnce" };
+    private static readonly string[] OnErrorValues = { "Warn", "Stop", "Ignore" };
     private static readonly string[] CustomScriptExtensions = { ".ps1", ".bat", ".cmd", ".reg" };
     private readonly List<JsonObject> _csScripts = new();
     private string _csStage = "FirstLogon";
@@ -1108,16 +1362,17 @@ public sealed partial class MainWindow : Window
         // Stage selection
         PageHost.Children.Add(Section(_s.Get("CS.Group.Stage")));
         var stagePanel = new StackPanel { Spacing = 6 };
-        var combo = new ComboBox { MinWidth = 220 };
-        foreach (string st in CustomScriptStages) combo.Items.Add(st);
-        combo.SelectedItem = _csStage;
-        var info = new TextBlock { Text = _s.Get("CS.Stage.Info", _csStage), TextWrapping = TextWrapping.Wrap, Foreground = Res("TextFillColorSecondaryBrush") };
+        // The identifier (Tag) goes to the builder; the label is translated
+        var combo = new ComboBox { MinWidth = 220, HorizontalAlignment = HorizontalAlignment.Stretch };
+        foreach (string st in CustomScriptStages) combo.Items.Add(new ComboBoxItem { Content = _s.Get("CS.StageName." + st, st), Tag = st });
+        combo.SelectedIndex = Math.Max(0, Array.IndexOf(CustomScriptStages, _csStage));
+        var info = new TextBlock { Text = StageInfoText(_csStage), TextWrapping = TextWrapping.Wrap, Foreground = Res("TextFillColorSecondaryBrush") };
         var list = new StackPanel { Spacing = 2 };
         combo.SelectionChanged += async (_, _) =>
         {
-            _csStage = (combo.SelectedItem as string) ?? "FirstLogon";
+            _csStage = (combo.SelectedItem as ComboBoxItem)?.Tag as string ?? "FirstLogon";
             _csSelected = -1;
-            info.Text = _s.Get("CS.Stage.Info", _csStage);
+            info.Text = StageInfoText(_csStage);
             await LoadCustomScriptsAsync(list);
         };
         stagePanel.Children.Add(FieldRow(_s.Get("CS.Label.Stage"), combo,
@@ -1134,13 +1389,31 @@ public sealed partial class MainWindow : Window
         _ = LoadCustomScriptsAsync(list);
 
         // Actions
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        actions.Children.Add(Btn(_s.Get("CS.Button.Add"), async (_, _) => await AddCustomScriptsAsync(list)));
-        actions.Children.Add(Btn(_s.Get("CS.Button.Remove"), async (_, _) => await RemoveCustomScriptAsync(list)));
-        actions.Children.Add(Btn(_s.Get("CS.Button.Edit"), async (_, _) => await EditCustomScriptAsync(list)));
-        actions.Children.Add(Btn(_s.Get("CS.Button.Reorder"), async (_, _) => await ReorderCustomScriptAsync(list)));
-        actions.Children.Add(Btn(_s.Get("CS.Button.Preview"), async (_, _) => await RunAndShowAsync("customScriptPreview", null, true)));
+        var actions = WrapRow(
+            Btn(_s.Get("CS.Button.Add"), async (_, _) => await AddCustomScriptsAsync(list)),
+            Btn(_s.Get("CS.Button.Remove"), async (_, _) => await RemoveCustomScriptAsync(list)),
+            Btn(_s.Get("CS.Button.Edit"), async (_, _) => await EditCustomScriptAsync(list)),
+            Btn(_s.Get("CS.Button.Reorder"), async (_, _) => await ReorderCustomScriptAsync(list)),
+            Btn(_s.Get("CS.Button.Preview"), async (_, _) => await RunAndShowAsync("customScriptPreview", null, true)));
         PageHost.Children.Add(Card(actions));
+    }
+
+    // "Stage X: runs as ..., ..." from the stage table of Get-WinEaseCustomScriptStageMap (lib\WinEaseExtensions.ps1)
+    private string StageInfoText(string stage)
+    {
+        string runsAs = stage switch
+        {
+            "FirstLogon" => _s.Get("CS.RunsAs.Admin"),
+            "UserOnce" => _s.Get("CS.RunsAs.User"),
+            _ => _s.Get("CS.RunsAs.Build"),
+        };
+        string where = stage switch
+        {
+            "FirstLogon" => _s.Format("CS.Stage.InImage", "Windows\\Setup\\Scripts\\Custom"),
+            "UserOnce" => _s.Format("CS.Stage.InImage", "Windows\\Setup\\Scripts\\UserCustom"),
+            _ => _s.Get("CS.Stage.BuildOnly"),
+        };
+        return _s.Format("CS.Stage.Info", _s.Get("CS.StageName." + stage, stage), runsAs, where);
     }
 
     // The scripts of the selected stage (the engine runs in the builder process)
@@ -1195,9 +1468,19 @@ public sealed partial class MainWindow : Window
             int index = i;
             bool legacy = InitData.Str(s["Location"]) == "Legacy";
             var row = NewRow();
-            for (int c = 0; c < fields.Length; c++) Cell(row, c, InitData.Str(s[fields[c]]), false, legacy);
+            var summary = new List<string>();
+            for (int c = 0; c < fields.Length; c++)
+            {
+                string value = InitData.Str(s[fields[c]]);
+                if (fields[c] == "OnError") value = _s.Get("CS.OnError." + value, value);
+                // A legacy script is marked in text too, not only by the caution colour
+                if (c == 0 && legacy) value += " (" + _s.Get("CS.Legacy") + ")";
+                Cell(row, c, value, false, legacy);
+                if (c > 0) summary.Add(_s.Get(headers[c]) + ": " + value);
+            }
             var btn = new Button { Content = row, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left };
-            AutomationProperties.SetName(btn, InitData.Str(s["Name"]));
+            AutomationProperties.SetName(btn, InitData.Str(s["Name"]) + (legacy ? " (" + _s.Get("CS.Legacy") + ")" : ""));
+            AutomationProperties.SetHelpText(btn, string.Join(", ", summary));
             btn.Click += (_, _) => { _csSelected = index; Highlight(); };
             buttons.Add(btn);
             host.Children.Add(btn);
@@ -1246,10 +1529,10 @@ public sealed partial class MainWindow : Window
         }
         var order = new TextBox { Text = InitData.Str(sel["Order"]) };
         var condition = new TextBox { Text = InitData.Str(sel["Condition"]) };
-        var onError = new ComboBox { MinWidth = 140 };
-        foreach (string v in new[] { "Warn", "Stop", "Ignore" }) onError.Items.Add(v);
+        var onError = new ComboBox { MinWidth = 140, HorizontalAlignment = HorizontalAlignment.Stretch };
+        foreach (string v in OnErrorValues) onError.Items.Add(new ComboBoxItem { Content = _s.Get("CS.OnError." + v, v), Tag = v });
         string current = InitData.Str(sel["OnError"], "Warn");
-        onError.SelectedItem = onError.Items.Contains(current) ? current : "Warn";
+        onError.SelectedIndex = Math.Max(0, Array.IndexOf(OnErrorValues, current));
         var description = new TextBox { Text = InitData.Str(sel["Description"]) };
         var panel = new StackPanel { Spacing = 8 };
         panel.Children.Add(FieldRow(_s.Get("CS.Dlg.Meta.Order"), order));
@@ -1271,7 +1554,7 @@ public sealed partial class MainWindow : Window
             ["Path"] = InitData.Str(sel["Path"]),
             ["Order"] = order.Text.Trim(),
             ["Condition"] = condition.Text.Trim(),
-            ["OnError"] = (onError.SelectedItem as string) ?? "Warn",
+            ["OnError"] = (onError.SelectedItem as ComboBoxItem)?.Tag as string ?? "Warn",
             ["Description"] = description.Text.Trim(),
         });
         await LoadCustomScriptsAsync(list);
@@ -1377,7 +1660,8 @@ public sealed partial class MainWindow : Window
                 continue;
             }
             bool error = mine.Any(i => i.Severity == "Error");
-            kv.Value.Text = (error ? "⚠ " : "ⓘ ") + string.Join(" ", mine.Select(i => i.Text));
+            // Icon and word before the text: the severity never depends on the colour
+            kv.Value.Text = (error ? "\u26A0 " + _s.Get("Severity.Error") : "\u24D8 " + _s.Get("Severity.Warning")) + ": " + string.Join(" ", mine.Select(i => i.Text));
             kv.Value.Foreground = Res(error ? "SystemFillColorCriticalBrush" : "SystemFillColorCautionBrush");
             kv.Value.Visibility = Visibility.Visible;
         }
@@ -2222,15 +2506,16 @@ public sealed partial class MainWindow : Window
         if (_busy) return;
         var names = new List<(string Id, string Label)> { (CurrentSettingsId, _s.Get("Dlg.PresetDiff.CurrentSettings")) };
         names.AddRange(_init.PresetNames.Select(n => (n, n)));
-        ComboBox Picker(int sel)
+        ComboBox Picker(int sel, string name)
         {
             var c = new ComboBox { MinWidth = 260 };
             foreach (var n in names) c.Items.Add(n.Label);
             c.SelectedIndex = Math.Min(sel, names.Count - 1);
+            AutomationProperties.SetName(c, name);
             return c;
         }
-        var from = Picker(0);
-        var to = Picker(1);
+        var from = Picker(0, _s.Get("Dlg.PresetDiff.From").Trim().TrimEnd(':', '：', ' '));
+        var to = Picker(1, _s.Get("Dlg.PresetDiff.To").Trim().TrimEnd(':', '：', ' '));
         var output = new TextBlock
         {
             FontFamily = new FontFamily("Cascadia Mono, Consolas"),
@@ -2341,7 +2626,8 @@ public sealed partial class MainWindow : Window
 
     private async Task MessageAsync(string title, string text, string kind = "Info", bool monospace = false)
     {
-        await ShowDialogAsync(title, text, kind, monospace, _s.Get("Button.OK"), null);
+        // OK is the close button, so Escape and Enter both dismiss it
+        await ShowDialogAsync(title, text, kind, monospace, null, _s.Get("Button.OK"));
     }
 
     private async Task<bool> ConfirmAsync(string title, string text)
@@ -2349,11 +2635,14 @@ public sealed partial class MainWindow : Window
         return await ShowDialogAsync(title, text, "Warning", false, _s.Get("Button.Yes", "Yes"), _s.Get("Button.No", "No")) == ContentDialogResult.Primary;
     }
 
-    private async Task<ContentDialogResult> ShowDialogAsync(string title, string text, string kind, bool monospace, string primary, string? close)
+    private async Task<ContentDialogResult> ShowDialogAsync(string title, string text, string kind, bool monospace, string? primary, string? close)
     {
         var (glyph, brush) = KindIcons.TryGetValue(kind, out var k) ? k : KindIcons["Info"];
         var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-        header.Children.Add(new FontIcon { Glyph = glyph, Foreground = Res(brush), FontSize = 20 });
+        var kindIcon = new FontIcon { Glyph = glyph, Foreground = Res(brush), FontSize = 20 };
+        // The severity word is read out for screen readers; the icon alone would only show it by shape and colour
+        AutomationProperties.SetName(kindIcon, _s.Get("Severity." + (KindIcons.ContainsKey(kind) ? kind : "Info")));
+        header.Children.Add(kindIcon);
         header.Children.Add(new TextBlock { Text = title, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap });
         var body = new TextBlock { Text = text.Replace("\r\n", "\n"), IsTextSelectionEnabled = true, TextWrapping = monospace ? TextWrapping.NoWrap : TextWrapping.Wrap };
         if (monospace)
@@ -2366,9 +2655,9 @@ public sealed partial class MainWindow : Window
             XamlRoot = Content.XamlRoot,
             Title = header,
             Content = new ScrollViewer { Content = body, MaxHeight = 480, HorizontalScrollBarVisibility = monospace ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled, HorizontalScrollMode = monospace ? ScrollMode.Auto : ScrollMode.Disabled },
-            PrimaryButtonText = primary,
             DefaultButton = close == null ? ContentDialogButton.Primary : ContentDialogButton.Close,
         };
+        if (primary != null) dlg.PrimaryButtonText = primary;
         if (close != null) dlg.CloseButtonText = close;
         if (monospace) dlg.Resources["ContentDialogMaxWidth"] = 900.0;
         return await dlg.ShowAsync();

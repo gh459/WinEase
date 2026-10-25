@@ -72,6 +72,7 @@ function New-WinEaseButton {
     )
     $btn = New-Object System.Windows.Forms.Button
     $btn.Text = $Text
+    $btn.AccessibleName = ($Text -replace '&', '')
     if ($Font) { $btn.Font = $Font }
     $btn.Location = New-Object System.Drawing.Point($X, $Y)
     $btn.Size = New-Object System.Drawing.Size($Width, $Height)
@@ -177,7 +178,13 @@ function New-WinEaseForm {
     )
     $frm = New-Object System.Windows.Forms.Form
     $frm.Text = $Text
-    if ($NoAutoScale) { $frm.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None }
+    if ($NoAutoScale) {
+        $frm.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
+    } else {
+        # Scale by the monitor DPI (design size: 96 dpi) so 125-200% scaling keeps every button inside the form
+        $frm.AutoScaleDimensions = New-Object System.Drawing.SizeF(96, 96)
+        $frm.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi
+    }
     if ($Font) { $frm.Font = $Font }
     if ($ClientSize) { $frm.ClientSize = New-Object System.Drawing.Size($Width, $Height) } else { $frm.Size = New-Object System.Drawing.Size($Width, $Height) }
     $frm.StartPosition = $StartPosition
@@ -220,6 +227,7 @@ function New-WinEaseCheckBox {
     )
     $chk = if ($Radio) { New-Object System.Windows.Forms.RadioButton } else { New-Object System.Windows.Forms.CheckBox }
     $chk.Text = $Text
+    $chk.AccessibleName = ($Text -replace '&', '')
     $chk.Location = New-Object System.Drawing.Point($X, $Y)
     $chk.Size = New-Object System.Drawing.Size($Width, $Height)
     $chk.ForeColor = $script:WinEaseGuiColors.Text
@@ -292,6 +300,8 @@ function New-WinEaseTabPage {
     $tab = New-Object System.Windows.Forms.TabPage
     $tab.Text = $Text
     $tab.BackColor = $BackColor
+    # Content that does not fit (small screen, large scale) scrolls instead of being cut off
+    $tab.AutoScroll = $true
     $TabControl.TabPages.Add($tab)
     return $tab
 }
@@ -725,6 +735,44 @@ function New-WinEaseToggleCheckBox {
     })
     $Parent.Controls.Add($chk)
     return $chk
+}
+
+# Gives every control an AccessibleName (what it is) and an AccessibleDescription (its tooltip), so a screen reader
+# never announces just the control type. The name of an input is the label next to it (left, or directly above);
+# buttons, check boxes, group boxes and labels use their own text. Existing names are kept.
+function Set-WinEaseAccessibleNames {
+    param(
+        [Parameter(Mandatory = $true)][object]$Control,
+        [object]$ToolTip
+    )
+    foreach ($c in @($Control.Controls)) {
+        Set-WinEaseAccessibleNames -Control $c -ToolTip $ToolTip
+        if (-not $c.AccessibleName) {
+            $name = ''
+            if ($c -is [System.Windows.Forms.ButtonBase] -or $c -is [System.Windows.Forms.GroupBox] -or $c -is [System.Windows.Forms.Label] -or $c -is [System.Windows.Forms.TabPage]) {
+                $name = "$($c.Text)"
+            } elseif ($c -is [System.Windows.Forms.TextBoxBase] -or $c -is [System.Windows.Forms.ComboBox] -or $c -is [System.Windows.Forms.ListControl] -or $c -is [System.Windows.Forms.ListBox] -or $c -is [System.Windows.Forms.TabControl]) {
+                $best = $null
+                $bestDistance = [int]::MaxValue
+                foreach ($sib in @($c.Parent.Controls)) {
+                    if ($sib -isnot [System.Windows.Forms.Label] -or -not $sib.Text) { continue }
+                    $sameRow = [Math]::Abs(($sib.Top + $sib.Height / 2) - ($c.Top + $c.Height / 2)) -le 14 -and $sib.Right -le ($c.Left + 4)
+                    $above = $sib.Bottom -le ($c.Top + 4) -and ($c.Top - $sib.Bottom) -lt 32 -and $sib.Left -le $c.Right -and $sib.Right -ge $c.Left
+                    if ($sameRow) { $d = [Math]::Max(0, $c.Left - $sib.Right) } elseif ($above) { $d = 1000 + ($c.Top - $sib.Bottom) } else { continue }
+                    if ($d -lt $bestDistance) { $best = $sib; $bestDistance = $d }
+                }
+                if ($best) { $name = "$($best.Text)" }
+                elseif ($ToolTip -and $ToolTip.GetToolTip($c)) { $name = $ToolTip.GetToolTip($c) }
+                elseif ($c.Parent -is [System.Windows.Forms.GroupBox]) { $name = "$($c.Parent.Text)" }
+            }
+            $name = ($name -replace '&', '').Trim().TrimEnd(':', [char]0xFF1A, ' ')
+            if ($name) { $c.AccessibleName = $name }
+        }
+        if ($ToolTip -and -not $c.AccessibleDescription) {
+            $help = $ToolTip.GetToolTip($c)
+            if ($help) { $c.AccessibleDescription = $help }
+        }
+    }
 }
 
 function Disable-WinEaseMnemonic {
@@ -1952,7 +2000,8 @@ function Initialize-WinEaseGuiContent {
         -ForeColor $script:WinEaseGuiColors.Subtle -Font (New-Object System.Drawing.Font($UiFontName, 8.5)) -Parent $headerPanel)
 
     # Display language selector (switching rebuilds the content with the current settings kept)
-    [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Main.Language') -X 690 -Y 10 -AutoSize -ForeColor $script:WinEaseGuiColors.Muted -Parent $headerPanel)
+    $lblLang = New-WinEaseLabel -Text (Get-WinEaseUiString 'Main.Language') -X 690 -Y 10 -AutoSize -ForeColor $script:WinEaseGuiColors.Muted -Parent $headerPanel
+    $lblLang.Anchor = 'Top, Right'
     $langNames = @($script:WinEaseUiLanguages | ForEach-Object { Get-WinEaseUiString 'Language.Name' -Language $_ -Default $_ })
     $cmbLang = New-WinEaseComboBox -Items $langNames -SelectedIndex ([array]::IndexOf($script:WinEaseUiLanguages, $script:WinEaseUiLanguage)) -DropList `
         -X 690 -Y 30 -Width 160 -BackColor $script:WinEaseGuiColors.Input -ForeColor $script:WinEaseGuiColors.Text -Parent $headerPanel
@@ -1973,23 +2022,28 @@ function Initialize-WinEaseGuiContent {
         })
         $timer.Start()
     })
+    $cmbLang.Anchor = 'Top, Right'
     $Gui.Language = $cmbLang
 
-    # Bottom Button & Estimate Panel
-    $bottomPanel = New-WinEaseButtonBar -Parent $form -Dock Bottom -Height 70 -BackColor $headerBack
-    $Gui.DryRun = New-WinEaseCheckBox -Text (Get-WinEaseUiString 'Main.DryRun') -X 20 -Y 12 -Width 200 -Height 22 -Parent $bottomPanel
-    $Gui.Estimate = New-WinEaseLabel -Text (Get-WinEaseUiString 'Main.Estimate.Initial') -X 20 -Y 38 -Width 380 -Height 20 `
+    # Bottom Button & Estimate Panel. Two rows (Dry Run + estimate, then the buttons), so a long estimate text never
+    # runs under a button; the panel scrolls when the form is narrower than the buttons (small screen).
+    $bottomPanel = New-WinEaseButtonBar -Parent $form -Dock Bottom -Height 106 -BackColor $headerBack
+    $bottomPanel.AutoScroll = $true
+    $bottomPanel.AutoScrollMinSize = New-Object System.Drawing.Size(880, 0)
+    $Gui.DryRun = New-WinEaseCheckBox -Text (Get-WinEaseUiString 'Main.DryRun') -X 20 -Y 8 -Width 300 -Height 22 -Parent $bottomPanel
+    $Gui.Estimate = New-WinEaseLabel -Text (Get-WinEaseUiString 'Main.Estimate.Initial') -X 20 -Y 32 -Width 840 -Height 20 `
         -ForeColor $script:WinEaseGuiColors.Muted -Font (New-Object System.Drawing.Font($UiFontName, 9)) -Parent $bottomPanel
+    $Gui.Estimate.AutoEllipsis = $true
 
-    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.PresetDiff') -X 250 -Y 15 -Width 110 -Height 40 -Font (New-Object System.Drawing.Font($UiFontName, 9)) -Parent $bottomPanel -OnClick {
+    $btnPresetDiff = New-WinEaseButton -Text (Get-WinEaseUiString 'Button.PresetDiff') -X 250 -Y 56 -Width 110 -Height 40 -Font (New-Object System.Drawing.Font($UiFontName, 9)) -Parent $bottomPanel -OnClick {
         $g = $this.FindForm().Tag
         try {
             Show-WinEaseGuiPresetDiff -Gui $g
         } catch {
             Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.PresetDiff.Failed' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'Msg.PresetDiff.Title') -Kind Error
         }
-    })
-    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.CheckDependencies') -X 370 -Y 15 -Width 150 -Height 40 -Font (New-Object System.Drawing.Font($UiFontName, 9)) -Parent $bottomPanel -OnClick {
+    }
+    $btnDependencies = New-WinEaseButton -Text (Get-WinEaseUiString 'Button.CheckDependencies') -X 370 -Y 56 -Width 150 -Height 40 -Font (New-Object System.Drawing.Font($UiFontName, 9)) -Parent $bottomPanel -OnClick {
         $f = $this.FindForm()
         $g = $f.Tag
         try {
@@ -2001,8 +2055,8 @@ function Initialize-WinEaseGuiContent {
         } catch {
             Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.Dependency.Failed' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'Msg.Dependency.Title') -Kind Error
         }
-    })
-    [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Button.StartBuild') -X 530 -Y 15 -Width 210 -Height 40 -BackColor $script:WinEaseGuiColors.Primary `
+    }
+    $btnStart = New-WinEaseButton -Text (Get-WinEaseUiString 'Button.StartBuild') -X 530 -Y 56 -Width 210 -Height 40 -BackColor $script:WinEaseGuiColors.Primary `
         -Font (New-Object System.Drawing.Font($UiFontName, 10, [System.Drawing.FontStyle]::Bold)) -Parent $bottomPanel -OnClick {
         $f = $this.FindForm()
         $g = $f.Tag
@@ -2037,9 +2091,22 @@ function Initialize-WinEaseGuiContent {
             $f.DialogResult = [System.Windows.Forms.DialogResult]::OK
             $f.Close()
         }
-    })
-    $btnCancel = New-WinEaseButton -Text (Get-WinEaseUiString 'Button.Cancel') -X 750 -Y 15 -Width 110 -Height 40 -Font (New-Object System.Drawing.Font($UiFontName, 9.5)) -Parent $bottomPanel
+    }
+    $btnCancel = New-WinEaseButton -Text (Get-WinEaseUiString 'Button.Cancel') -X 750 -Y 56 -Width 110 -Height 40 -Font (New-Object System.Drawing.Font($UiFontName, 9.5)) -Parent $bottomPanel
     $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    # Keyboard: Enter = Start (its handler checks the input first and asks for the final confirmation),
+    # Escape = Cancel. Tab goes Dry Run, Preset Diff, Dependencies, Start, Cancel.
+    $form.AcceptButton = $btnStart
+    $form.CancelButton = $btnCancel
+    $Gui.StartButton = $btnStart
+    $Gui.CancelButton = $btnCancel
+    $Gui.DryRun.TabIndex = 0
+    $btnPresetDiff.TabIndex = 1
+    $btnDependencies.TabIndex = 2
+    $btnStart.TabIndex = 3
+    $btnCancel.TabIndex = 4
+    foreach ($b in @($btnPresetDiff, $btnDependencies, $btnStart, $btnCancel)) { $b.Anchor = 'Top, Right' }
+    $Gui.Estimate.Anchor = 'Top, Left, Right'
 
     # Main Tab Control
     $tabControl = New-WinEaseTabControl -Fill -Font (New-Object System.Drawing.Font($UiFontName, 9)) -Parent $form
@@ -2092,6 +2159,15 @@ function Initialize-WinEaseGuiContent {
         })
     }
     Update-WinEaseGuiEstimate -Gui $Gui
+
+    $form.AccessibleName = Get-WinEaseUiString 'Main.WindowTitle'
+    $toolTip.SetToolTip($btnPresetDiff, (Get-WinEaseUiString 'Button.PresetDiff.Help'))
+    $toolTip.SetToolTip($btnDependencies, (Get-WinEaseUiString 'Button.CheckDependencies.Help'))
+    $toolTip.SetToolTip($btnStart, (Get-WinEaseUiString 'Button.StartBuild.Help'))
+    $toolTip.SetToolTip($btnCancel, (Get-WinEaseUiString 'Button.Cancel.Help'))
+    $toolTip.SetToolTip($Gui.DryRun, (Get-WinEaseUiString 'Main.DryRun.Help'))
+    $toolTip.SetToolTip($cmbLang, (Get-WinEaseUiString 'Main.Language.Help'))
+    Set-WinEaseAccessibleNames -Control $form -ToolTip $toolTip
 
     Disable-WinEaseMnemonic -Control $form
 }
@@ -2214,17 +2290,24 @@ function Show-WinEaseGUI {
         } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
 
+    # Resizable, scaled by the monitor DPI (AutoScaleMode Dpi). The minimum size keeps the command bar inside the
+    # form; on a screen smaller than that the form shrinks to the work area and the bottom bar and tab pages scroll.
     $form = New-WinEaseForm -Text (Get-WinEaseUiString 'Main.WindowTitle') -Width 880 -Height 820 -ClientSize `
-        -NoAutoScale -Font (New-Object System.Drawing.Font($uiFontName, 9)) -StartPosition CenterScreen -FixedDialog -NoMaximize `
+        -Font (New-Object System.Drawing.Font($uiFontName, 9)) -StartPosition CenterScreen `
         -BackColor $script:WinEaseGuiColors.Window -ForeColor $script:WinEaseGuiColors.Text
+    $form.MinimumSize = New-Object System.Drawing.Size(700, 560)
 
-    try {
-        $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-        $frameH = $form.Height - $form.ClientSize.Height
-        if ($form.Height -gt $wa.Height) {
-            $form.ClientSize = New-Object System.Drawing.Size(880, ($wa.Height - $frameH - 10))
-        }
-    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    # Fit the work area (the size is only known in device pixels once the form is scaled, so this runs on Load)
+    $form.Add_Load({
+        try {
+            $wa = [System.Windows.Forms.Screen]::FromControl($this).WorkingArea
+            $this.MinimumSize = New-Object System.Drawing.Size([Math]::Min($this.MinimumSize.Width, $wa.Width), [Math]::Min($this.MinimumSize.Height, $wa.Height))
+            if ($this.Width -gt $wa.Width -or $this.Height -gt $wa.Height) {
+                $this.Size = New-Object System.Drawing.Size([Math]::Min($this.Width, $wa.Width), [Math]::Min($this.Height, $wa.Height))
+                $this.Location = New-Object System.Drawing.Point($wa.Left, $wa.Top)
+            }
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    })
 
     # Shared state for event handlers: they read it back as $this.FindForm().Tag
     $gui = @{
