@@ -88,6 +88,7 @@ Describe "GUI parity (WinUI 3 / WinForms / command line)" {
         # --- both windows ---
         Add-Type -AssemblyName System.Windows.Forms
         . $script:GuiPath
+        . ([scriptblock]::Create($script:GuiNoModalStubs))
         # The WinForms window asks for the consent through this function: scripted, never modal
         $script:ParityConfirmAnswer = $true
         function Confirm-WinEaseGuiAction { param([string]$Message, [string]$Title) $null = $Message; $null = $Title; return [bool]$script:ParityConfirmAnswer }

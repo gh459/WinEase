@@ -852,6 +852,7 @@ Describe "WinEase advanced debloat - the engine choice is explained" -Tags 'slow
         $script:WinEaseDebloatEngines = [ordered]@{}
         foreach ($d in $schema.DebloatEngines) { $script:WinEaseDebloatEngines[[string]$d.Item] = $d }
         . $script:GuiPath
+        . ([scriptblock]::Create($script:GuiNoModalStubs))
         function Confirm-WinEaseGuiAction { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([string]$Message, [string]$Title) $true }
         $gui = Show-WinEaseGUI -NoShow -UiLanguage en -InitialSettings @{ SourceDrive = 'E:\'; TweakSettings = [ordered]@{} }
         try {

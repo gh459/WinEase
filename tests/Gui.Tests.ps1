@@ -953,6 +953,7 @@ Describe "WinEase GUI - smoke test (form built without ShowDialog)" -Tags 'slow'
     function Get-WinEasePreset { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([string]$Name) $null }
 
     . $script:GuiPath
+    . ([scriptblock]::Create($script:GuiNoModalStubs))
     # Never block on the experimental Select All confirmation
     function Confirm-WinEaseGuiAction { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([string]$Message, [string]$Title) $true }
 
@@ -1059,6 +1060,7 @@ Describe "S7 - GUI Tab 8 (Migration & Backup)" -Tags 'slow' {
     function Get-WinEasePreset { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([string]$Name) $null }
     function Test-WinEaseRecoveryReadiness { param($Config) $script:S7CapturedConfig = $Config; [PSCustomObject]@{ ReadinessScore = 1 } }
     . $script:GuiPath
+    . ([scriptblock]::Create($script:GuiNoModalStubs))
     function Get-S7Controls($ctl) { foreach ($c in $ctl.Controls) { $c; Get-S7Controls $c } }
 
     It "Tab 8 has the personal folder checklist and Run Backup passes -FolderMap" {
@@ -1153,6 +1155,7 @@ Describe "S8 - GUI user extensions tab and Preset Diff" -Tags 'slow' {
     function Get-WinEasePreset { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([string]$Name) $null }
     . (Join-Path $script:RepoRoot 'lib\WinEaseExtensions.ps1')
     . $script:GuiPath
+    . ([scriptblock]::Create($script:GuiNoModalStubs))
     function Get-S8Controls($ctl) { foreach ($c in $ctl.Controls) { $c; Get-S8Controls $c } }
 
     It "shows a Gaming user switch on the User Tweaks tab" {
@@ -1355,6 +1358,7 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
     function Get-WinEasePreset { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([string]$Name) $null }
 
     . $script:GuiPath
+    . ([scriptblock]::Create($script:GuiNoModalStubs))
     function Confirm-WinEaseGuiAction { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([string]$Message, [string]$Title) $true }
 
     function Read-UiTable([string]$Lang) {
@@ -1420,11 +1424,16 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
             @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseBuildPlan.ps1')), "'(Plan\.[A-Za-z.]+)'") | ForEach-Object { $_.Groups[1].Value }) +
             @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseInputValidation.ps1')), "'((?:Val|Msg)\.[A-Za-z.]+)'") | ForEach-Object { $_.Groups[1].Value }) +
             @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseGuiSession.ps1')), "'((?:Val|Msg)\.[A-Za-z.]+)'") | ForEach-Object { $_.Groups[1].Value })
+        # A key ending in '.' is a prefix the code completes at run time (_s.Get("CS.OnError." + value)):
+        # it is not a key itself. The table must hold at least one key under it, and those keys count as used.
+        $dynamicPrefixes = @($used | Where-Object { $_.EndsWith('.') } | Select-Object -Unique)
+        $used = @($used | Where-Object { -not $_.EndsWith('.') })
         $used.Count | Should BeGreaterThan 100
         $missing = @($used | Where-Object { $_ -notmatch $script:LangOnlyPrefixes -and -not $en.ContainsKey($_) } | Select-Object -Unique)
+        $missing += @($dynamicPrefixes | Where-Object { $prefix = $_; -not @($en.Keys | Where-Object { $_.StartsWith($prefix) }) })
         ($missing -join ',') | Should Be ''
         # Category.<name> keys are built from the category name at run time
-        $unused = @($en.Keys | Where-Object { $used -notcontains $_ -and $_ -notmatch '^Category\.' })
+        $unused = @($en.Keys | Where-Object { $key = $_; $used -notcontains $key -and $key -notmatch '^Category\.' -and -not @($dynamicPrefixes | Where-Object { $key.StartsWith($_) }) })
         ($unused -join ',') | Should Be ''
     }
 
@@ -1890,6 +1899,7 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
     $script:BuiltInPresets = [ordered]@{ wtest = @{ PayloadFormat = 'ESD'; RemoveDefender = $false; TweakSettings = @{ DisableUAC = $true } } }
     function Get-WinEasePreset { param([string]$Name) if ($Name -eq 'extreme') { $script:BuiltInPresets['wtest'] } else { $null } }
     . $script:GuiPath
+    . ([scriptblock]::Create($script:GuiNoModalStubs))
     $script:WinUiHostPath = Join-Path -Path $script:RepoRoot -ChildPath "gui\WinEaseWinUiHost.ps1"
 
     It "gui\WinEaseWinUiHost.ps1 parses with zero parser errors and is loaded with gui\WinEaseGui.ps1" {
@@ -2205,6 +2215,7 @@ Describe "B1 - preset vs custom state (Get-WinEaseGuiPresetState and the window 
     foreach ($k in $presetFile.Presets.Keys) { $script:BuiltInPresets[[string]$k] = $presetFile.Presets[$k] }
     function Get-WinEasePreset { param([string]$Name) if ($Name -and $script:BuiltInPresets.Contains($Name.Trim().ToLower())) { $script:BuiltInPresets[$Name.Trim().ToLower()] } else { $null } }
     . $script:GuiPath
+    . ([scriptblock]::Create($script:GuiNoModalStubs))
     # Session function with the build-side helpers replaced by recorders
     $sessionAst = [System.Management.Automation.Language.Parser]::ParseInput([System.IO.File]::ReadAllText($script:GuiSessionPath), [ref]$null, [ref]$null)
     foreach ($fn in $sessionAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Apply-WinEaseGuiResult' }, $true)) { . ([scriptblock]::Create($fn.Extent.Text)) }
