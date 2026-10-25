@@ -10,8 +10,9 @@ public sealed record TweakDef(string Key, string Category, bool Default, string 
 public sealed record ComponentDef(string Key, string Text, string Description, bool Default, string Tab, int Order);
 // Debloat* = the Advanced Debloat selection the preset itself defines (none of the built-in presets define any);
 // "Revert to preset" restores it, switching presets leaves the window's selection alone.
+// Label = the display name of a user preset (its ProfileName); the built-ins are localized by the window.
 public sealed record PresetDef(string Key, Dictionary<string, bool> Components, Dictionary<string, bool> Tweaks, string PayloadFormat,
-    List<string> DebloatStandard, List<string> DebloatExperimental, Dictionary<string, string> DebloatEngines);
+    List<string> DebloatStandard, List<string> DebloatExperimental, Dictionary<string, string> DebloatEngines, string Label = "");
 
 // The execution engine of one Advanced Debloat target (config\schema.psd1 -> DebloatEngines)
 public sealed record EngineDef(List<string> Engines, string Default);
@@ -54,7 +55,7 @@ public sealed class InitData
             var presetEngines = new Dictionary<string, string>(StringComparer.Ordinal);
             if (p?["DebloatEngineSelection"] is JsonObject pe) foreach (var kv in pe) presetEngines[kv.Key] = Str(kv.Value);
             Presets.Add(new PresetDef(Str(p?["Key"]), BoolMap(p?["Components"]), BoolMap(p?["Tweaks"]), Str(p?["PayloadFormat"], "WIM"),
-                StrList(p?["AdvancedDebloatStandard"]), StrList(p?["AdvancedDebloatExperimental"]), presetEngines));
+                StrList(p?["AdvancedDebloatStandard"]), StrList(p?["AdvancedDebloatExperimental"]), presetEngines, Str(p?["Label"])));
         }
         PresetNames = StrList(o["PresetNames"]);
         if (PresetNames.Count == 0) PresetNames = Presets.Select(p => p.Key).ToList();

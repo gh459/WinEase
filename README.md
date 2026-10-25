@@ -355,7 +355,7 @@ You can run the builder completely unattended with built-in presets and modular 
 | `-SourceDrive <Drive\|ISO>` | Windows 11 installation media drive letter or path to `.iso` file. Auto-detected and mounted if omitted |
 | `-WorkDir <Path>` | Custom directory for temporary file processing (ideal if C: has < 25 GB free) |
 | `-Index <Number>` | Image index inside `install.wim` to modify (e.g. `1` for Home, `3` for Pro) |
-| `-KeepDefender` / `-RemoveDefender` (`-NoDefender`) | Retains or removes Windows Defender (Default: Remove) |
+| `-KeepDefender` / `-RemoveDefender` (`-NoDefender`) | Retains or removes Windows Defender (Default: Keep) |
 | `-KeepIME` / `-RemoveIME` (`-NoIME`) | Retains or removes Asian language input methods (Default: Keep) |
 | `-KeepFonts` / `-RemoveFonts` (`-NoFonts`) | Retains or removes international and Asian font families |
 | `-KeepDrivers` / `-RemoveDrivers` | Retains or removes printer/scanner drivers in DriverStore |
