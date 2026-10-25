@@ -834,6 +834,9 @@ function Set-WinEaseGuiPreset {
                 if ($pv.PayloadFormat -eq 'ESD') { $Gui.RadESD.Checked = $true }
                 elseif ($pv.PayloadFormat -eq 'SWM') { $Gui.RadSWM.Checked = $true }
                 else { $Gui.RadWIM.Checked = $true }
+                # The preset's VHDX switch is applied like the payload format (the state rules do
+                # not compare it - docs\GUI_PRESET_STATE.md). Every built-in preset carries $false.
+                if ($Gui.VHDX) { $Gui.VHDX.Checked = [bool]$pv.UseVHDX }
                 $script:guiBasePresetKey = $pKey
             }
         }
