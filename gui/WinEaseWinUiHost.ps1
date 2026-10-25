@@ -573,12 +573,12 @@ function Show-WinEaseWinUiGUI {
     return $result
 }
 
-# Builder -> window progress notice ({ op = 'progress'; event = state|phase|log|failure|done; ... }),
+# Builder -> window progress notice ({ op = 'progress'; event = hello|state|phase|log|failure|done; ... }),
 # see docs\PROGRESS_PROTOCOL.md. A window that does not know an event ignores it.
 # A no-op without an open window; a closed window drops the channel and never stops the build.
 function Send-WinEaseGuiProgress {
     param(
-        [Parameter(Mandatory)][ValidateSet('state', 'phase', 'log', 'failure', 'done')][string]$Event,
+        [Parameter(Mandatory)][ValidateSet('hello', 'state', 'phase', 'log', 'failure', 'done')][string]$Event,
         [hashtable]$Data = @{}
     )
     $channel = $script:WinEaseGuiProgressChannel

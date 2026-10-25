@@ -2067,6 +2067,8 @@ $script:VerifiedFinalWimSha256 = $null
 $script:IsoGenerated = $false
 $script:IsoPayloadVerified = $false
 $script:BuildSucceeded = $false
+$script:BuildCancelled = $false
+$script:CancelCleanupProblems = @()
 $isoCreatedSuccessfully = $false
 # Progress protocol: failure data for the 'done' event and the paths the window can open.
 # The output folder is known before phase 18; phase 18 replaces this with the real ISO path.
@@ -2404,8 +2406,13 @@ try {
         @{ Number = 17;  Name = "Locate or Verify oscdimg.exe";                       File = "17-oscdimg.ps1" }
         @{ Number = 18;  Name = "Create Bootable ISO Image";                          File = "18-iso.ps1" }
     )
+    # Cancel (D2): tell the window how to ask for a cancel; the request is looked at only between phases.
+    Register-WinEaseCancelChannel -DiagnosticsDir $script:DiagDir
     Send-WinEaseGuiState -State 'Preparing'
     foreach ($buildPhase in $buildPhases) {
+        # Phase boundary: a requested cancel stops the build before the next phase starts. A running phase (DISM/WIM
+        # call) is never interrupted. The throw goes to the outer handler; the finally block is the cleanup.
+        if (Test-WinEaseCancelRequested) { throw (New-WinEaseCancelException) }
         $phaseFile = Join-Path -Path $phasesDir -ChildPath $buildPhase.File
         $phaseId = [System.IO.Path]::GetFileNameWithoutExtension($buildPhase.File)
         Enter-Phase $buildPhase.Number $buildPhase.Name
@@ -2439,6 +2446,18 @@ try {
     Save-WinEasePhaseTimings
 
 } catch {
+  if (Test-WinEaseCancelException -ErrorRecord $_) {
+    # Cancel at a phase boundary (D2): not a failure. The finally block below runs the normal cleanup
+    # (unmount with discard, unload hives, detach VHDX, dismount ISO, remove the Defender exclusion).
+    $script:BuildSucceeded = $false
+    $isoCreatedSuccessfully = $false
+    $script:BuildCancelled = $true
+    Write-Host ""
+    Write-Host "Cancel requested: stopping before Phase $($script:CurrentPhase + 1). Running cleanup..." -ForegroundColor Yellow
+    Send-WinEaseGuiState -State 'Cancelling'
+    Send-WinEaseGuiLogLine -Text 'Cancel requested: stopping at a safe point and cleaning up.'
+    if ($script:DiagnosticData) { $script:DiagnosticData.FailurePhase = "Cancelled before the next phase (after $($script:CurrentBuildPhase))" }
+  } else {
     # Outer catch block: Reset success flags, record diagnostics, re-throw (Rule 16)
     $script:BuildSucceeded = $false
     $isoCreatedSuccessfully = $false
@@ -2466,6 +2485,7 @@ try {
         Write-Host "Stack Trace: $($_.ScriptStackTrace)" -ForegroundColor DarkGray
     }
     throw
+  }
 } finally {
     Write-Host ""
     Write-Host "Running cleanup and finalizing build lifecycle..." -ForegroundColor Cyan
@@ -2569,6 +2589,27 @@ try {
             Remove-MpPreference -ExclusionPath $baseWorkDir -ErrorAction SilentlyContinue
             $script:DefenderExclusionAdded = $false
         } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
+
+    # 5b. After a cancel: report what the cleanup left behind, so 'Cancelled' is never claimed over a half-cleaned state
+    $script:CancelCleanupProblems = @()
+    if ($script:BuildCancelled) {
+        $lingeringMountList = @()
+        foreach ($mPath in $allTargetMounts) {
+            try {
+                foreach ($am in @(Get-WinEaseMountedImages)) {
+                    $ap = if ($am.Path) { try { ConvertTo-WinEaseNormalizedPath -Path $am.Path } catch { $null } } else { $null }
+                    if ($ap -and ($ap -ieq $mPath)) { $lingeringMountList += $mPath }
+                }
+            } catch { $lingeringMountList += "$mPath (status could not be read)" }
+        }
+        $stillLoadedHives = @(@('zCOMPONENTS', 'zDEFAULT', 'zNTUSER', 'zSOFTWARE', 'zSYSTEM') | Where-Object { Test-Path -LiteralPath "Registry::HKEY_LOCAL_MACHINE\$_" })
+        $script:CancelCleanupProblems = @(Get-WinEaseCancelCleanupProblems -LoadedHives $stillLoadedHives -LingeringMounts $lingeringMountList `
+            -VhdxStillAttached ([bool]$script:IsVhdxMounted) -IsoStillMounted ([bool]$script:MountedIso))
+        if ($script:DiagnosticData) {
+            $script:DiagnosticData['Cancelled'] = $true
+            $script:DiagnosticData['CancelCleanupProblems'] = @($script:CancelCleanupProblems)
+        }
     }
 
     # 6. Disk deletion: ONLY IF ALL SAFETY CONDITIONS MET
@@ -2688,11 +2729,20 @@ try {
         $doneReport = if ($script:BuildSucceeded -and $script:BuildReportPath) { [string]$script:BuildReportPath } elseif ($script:DiagDir) { Join-Path -Path $script:DiagDir -ChildPath 'build_diagnostic_summary.txt' } else { '' }
         $doneData = New-WinEaseDoneData -BuildSucceeded ([bool]$script:BuildSucceeded) -PayloadVerified $script:FinalPayloadVerified -IsoVerified $script:IsoPayloadVerified `
             -Failure $script:BuildFailureData -LogPath $doneLog -ReportPath $doneReport -OutputPath ([string]$script:BuildOutputIsoPath) `
-            -DiagnosticsPath ([string]$script:DiagDir) -DocsPath (Join-Path -Path $scriptDir -ChildPath 'docs\KNOWN_ISSUES.md')
+            -DiagnosticsPath ([string]$script:DiagDir) -DocsPath (Join-Path -Path $scriptDir -ChildPath 'docs\KNOWN_ISSUES.md') `
+            -Cancelled ([bool]$script:BuildCancelled) -CleanupProblems @($script:CancelCleanupProblems)
         Send-WinEaseGuiState -State $doneData.State
         Close-WinEaseGuiProgress -Success ([bool]$script:BuildSucceeded) -Message $(if ($script:BuildSucceeded) { 'WinEase.iso is ready.' } else { "$script:DiagDir" }) -Extra $doneData
     }
-    if ($script:BuildSucceeded) {
+    if ($script:BuildCancelled) {
+        if (@($script:CancelCleanupProblems).Count -eq 0) {
+            Write-Host "Build cancelled. Cleanup completed. Partly built files stay in the work folder (see docs\KNOWN_ISSUES.md)." -ForegroundColor Yellow
+        } else {
+            Write-Host "Build cancelled, but the cleanup did not finish:" -ForegroundColor Red
+            foreach ($cp in $script:CancelCleanupProblems) { Write-Host "  - $cp" -ForegroundColor Red }
+            Write-Host "See docs\KNOWN_ISSUES.md ('Cancelling and interrupted builds') before building again." -ForegroundColor Red
+        }
+    } elseif ($script:BuildSucceeded) {
         Write-Host "Done! WinEase.iso is ready." -ForegroundColor Green
     } else {
         Write-Host "Process ended with errors. Build did not succeed." -ForegroundColor Red
@@ -2703,4 +2753,11 @@ try {
             Write-Host "Please check the logs in $transcriptPath" -ForegroundColor Yellow
         }
     }
+}
+
+# Distinct exit code for a cancelled build (0 = success, 1 = failure, 3 = cancelled and cleaned up).
+# A cancel whose cleanup failed is a failure (1).
+if ($script:BuildCancelled) {
+    if (@($script:CancelCleanupProblems).Count -eq 0) { exit $script:WinEaseCancelExitCode }
+    exit 1
 }
