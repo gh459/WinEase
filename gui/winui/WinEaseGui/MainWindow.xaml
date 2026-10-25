@@ -65,8 +65,8 @@
             SizeChanged="CommandBar_SizeChanged">
             <Grid x:Name="CommandGrid" ColumnSpacing="12" RowSpacing="8">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition x:Name="CommandColStatus" Width="*" />
-                    <ColumnDefinition x:Name="CommandColButtons" Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
