@@ -1,3 +1,6 @@
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '', Justification = 'Variables such as $allTargetMounts are read inside the extracted builder blocks, which the analyzer cannot see')]
+param()
+
 . (Join-Path -Path $PSScriptRoot -ChildPath '_TestCommon.ps1')
 
 # D1: builder -> window progress protocol (docs\PROGRESS_PROTOCOL.md)
@@ -186,6 +189,14 @@ Describe "D2 - cancel request, phase boundary and result" {
     BeforeAll {
         . $script:GuiSessionPath
         . (Join-Path -Path $script:RepoRoot -ChildPath 'gui\WinEaseWinUiHost.ps1')
+        # the finally residue inspection runs the shipped mount-detection code; it needs the
+        # mount helpers and the path normalization of the helper modules to be loaded
+        if (-not (Get-Command -Name Get-WinEaseMountedImages -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot -ChildPath 'lib\WinEaseMount.ps1')
+        }
+        if (-not (Get-Command -Name ConvertTo-WinEaseNormalizedPath -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot -ChildPath 'WinEasehelpers.ps1')
+        }
         $script:D2Dir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("wineased2_" + [guid]::NewGuid().ToString('N'))
         [void](New-Item -ItemType Directory -Path $script:D2Dir -Force)
     }
@@ -310,7 +321,82 @@ Describe "D2 - cancel request, phase boundary and result" {
         Test-WinEaseCancelException -ErrorRecord $plain | Should Be $false
         Test-WinEaseCancelException -ErrorRecord (New-WinEaseCancelException) | Should Be $true
     }
+    It "the finally residue inspection reports hives, DISM mounts, VHDX and ISO left behind" {
+        # G5: the step 5b block of the builder's finally (taken from the source itself) collects what a
+        # cancel left behind: still loaded offline hives, lingering DISM mounts, the attached VHDX and
+        # the mounted source ISO. Executed here with mocked environment state.
+        $tokens = $null; $errs = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$tokens, [ref]$errs)
+        $builderTry = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.TryStatementAst] -and $n.Finally -and $n.Finally.Extent.Text -match 'CancelCleanupProblems' }, $true))
+        $builderTry.Count | Should Be 1
+        $inspection = @($builderTry[0].Finally.FindAll({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and $n.Clauses.Count -gt 0 -and $n.Clauses[0].Item1.Extent.Text -eq '$script:BuildCancelled' -and $n.Extent.Text -match '\bGet-WinEaseCancelCleanupProblems' }, $true))
+        $inspection.Count | Should Be 1
+        $block = [scriptblock]::Create($inspection[0].Extent.Text)
+
+        $allTargetMounts = @('C:\w\mounts\m1', 'C:\w\mounts\m2')
+        $script:BuildCancelled = $true
+        $script:IsVhdxMounted = $true
+        $script:MountedIso = @{ ImagePath = 'C:\iso\source.iso' }
+        $script:DiagnosticData = @{}
+        Mock Get-WinEaseMountedImages { @([PSCustomObject]@{ Path = 'C:\w\mounts\m1'; ImagePath = 'C:\x.wim'; ImageIndex = 1; MountStatus = 'Ok' }) }
+        Mock Test-Path { param($LiteralPath) ("$LiteralPath") -like '*zSOFTWARE' }
+        . $block
+
+        $script:CancelCleanupProblems.Count | Should Be 4
+        (@($script:CancelCleanupProblems | Where-Object { $_ -match 'zSOFTWARE' }).Count) | Should Be 1
+        (@($script:CancelCleanupProblems | Where-Object { $_ -match 'm1' }).Count) | Should Be 1
+        (@($script:CancelCleanupProblems | Where-Object { $_ -match 'VHDX|vhdx' }).Count) | Should Be 1
+        (@($script:CancelCleanupProblems | Where-Object { $_ -match 'ISO|iso' }).Count) | Should Be 1
+        $script:DiagnosticData['Cancelled'] | Should Be $true
+        @($script:DiagnosticData['CancelCleanupProblems']).Count | Should Be 4
+    }
+
+    It "the finally residue inspection reports nothing when the cleanup succeeded" {
+        $tokens = $null; $errs = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$tokens, [ref]$errs)
+        $builderTry = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.TryStatementAst] -and $n.Finally -and $n.Finally.Extent.Text -match 'CancelCleanupProblems' }, $true))
+        $builderTry.Count | Should Be 1
+        $inspection = @($builderTry[0].Finally.FindAll({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and $n.Clauses.Count -gt 0 -and $n.Clauses[0].Item1.Extent.Text -eq '$script:BuildCancelled' -and $n.Extent.Text -match '\bGet-WinEaseCancelCleanupProblems' }, $true))
+        $inspection.Count | Should Be 1
+        $block = [scriptblock]::Create($inspection[0].Extent.Text)
+
+        $allTargetMounts = @('C:\w\mounts\m1')
+        $script:BuildCancelled = $true
+        $script:IsVhdxMounted = $false
+        $script:MountedIso = $null
+        $script:DiagnosticData = @{}
+        Mock Get-WinEaseMountedImages { @() }
+        Mock Test-Path { param($LiteralPath) ("$LiteralPath") -like '*zNO_SUCH_HIVE*' }
+        . $block
+
+        $script:CancelCleanupProblems.Count | Should Be 0
+        $script:DiagnosticData['Cancelled'] | Should Be $true
+    }
+
+    It "the finally residue inspection survives an unreadable mount status (fail soft, still reported)" {
+        $tokens = $null; $errs = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$tokens, [ref]$errs)
+        $builderTry = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.TryStatementAst] -and $n.Finally -and $n.Finally.Extent.Text -match 'CancelCleanupProblems' }, $true))
+        $builderTry.Count | Should Be 1
+        $inspection = @($builderTry[0].Finally.FindAll({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and $n.Clauses.Count -gt 0 -and $n.Clauses[0].Item1.Extent.Text -eq '$script:BuildCancelled' -and $n.Extent.Text -match '\bGet-WinEaseCancelCleanupProblems' }, $true))
+        $inspection.Count | Should Be 1
+        $block = [scriptblock]::Create($inspection[0].Extent.Text)
+
+        $allTargetMounts = @('C:\w\mounts\m1')
+        $script:BuildCancelled = $true
+        $script:IsVhdxMounted = $false
+        $script:MountedIso = $null
+        $script:DiagnosticData = @{}
+        Mock Get-WinEaseMountedImages { throw 'DISM unavailable' }
+        Mock Test-Path { param($LiteralPath) ("$LiteralPath") -like '*zNO_SUCH_HIVE*' }
+        . $block
+
+        $script:CancelCleanupProblems.Count | Should Be 1
+        ($script:CancelCleanupProblems[0]) | Should Match 'status could not be read'
+        ($script:CancelCleanupProblems[0]) | Should Match 'm1'
+    }
 }
+
 
 Describe "D2 - window and builder wiring (static checks)" {
     BeforeAll {

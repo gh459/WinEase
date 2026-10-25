@@ -33,6 +33,12 @@ WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 - New `SECURITY.md` with a checklist to go through before sharing an ISO; `docs/SECURITY_OPTIONS.md` and the README describe the actual behaviour. New tests: `tests/Autologon.Tests.ps1` and a profile section in `tests/WinEase.Regression.Tests.ps1`.
 
 ### Fixed
+- **The cancel report no longer nests the cleanup problems.** The builder stored the result of
+`Get-WinEaseCancelCleanupProblems` through `@(...)`, which kept the comma-protected return value as a
+nested array, so the diagnostics `CancelCleanupProblems` and the done event carried a double-wrapped list
+and the summary showed the items joined by spaces. It is assigned directly now (a flat list). Found while
+testing the finally residue inspection; new tests in `tests\Progress.Tests.ps1` execute the shipped
+inspection block with mocked mount/registry state.
 - **The user password could inject script code.** A password with a `'` broke out of the string literal in the generated OOBE auto-logon helper (and the helper hides parse errors), and the Winlogon `DefaultPassword` went through the `reg.exe` command line. The helper now receives the password as Base64 of its UTF-16LE bytes and decodes it at run time; the build fails if the generated helper does not parse. `DefaultPassword` is written with the .NET registry API (`lib\WinEaseSecrets.ps1`). A dead `net.exe user User ""` replacement that interpolated the password into a regex replacement string was removed, and a `'` in the user name is doubled in the helper. Passwords stay unrestricted. New tests: `tests/Secrets.Tests.ps1`.
 - **Camera, Photos and Snipping Tool/ScreenSketch were listed but not removed.**
   They were only removed through the broad AppX list, so clearing that one switch
