@@ -12,7 +12,7 @@
 
 # UserName / ComputerName are inserted verbatim into autounattend.xml and its embedded scripts, so only these patterns
 # are accepted. WinEasebuilder.ps1 keeps the same literals in its [ValidatePattern] attributes (a parameter attribute
-# cannot call a function); tests assert that the three places agree.
+# cannot call a function); tests assert that both places agree.
 function Get-WinEaseInputPattern {
     param([Parameter(Mandatory = $true)][ValidateSet('UserName', 'ComputerName')][string]$Name)
     if ($Name -eq 'UserName') { return '^[\p{L}\p{N}_][\p{L}\p{N} ._-]{0,19}$' }

@@ -82,6 +82,7 @@ function Confirm-WinEasePhysicalDebloatConsent {
 }
 
 function Apply-WinEaseGuiResult {
+    [CmdletBinding()]
     param(
         $GuiResult
     )

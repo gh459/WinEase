@@ -131,10 +131,11 @@ Describe "Apply-WinEaseGuiResult in lib\WinEaseGuiSession.ps1" {
         $warn = $null
         $r = Apply-WinEaseGuiResult -GuiResult $bad -WarningVariable warn -WarningAction SilentlyContinue
         $r | Should Be $false
-        "$warn" | Should Match 'UserName'
-        "$warn" | Should Match 'ComputerName'
-        "$warn" | Should Match 'WorkDir'
-        "$warn" | Should Match 'InjectDrivers'
+        $warnText = (@($warn) | ForEach-Object { "$($_.Message)" }) -join "`n"
+        $warnText | Should Match 'UserName'
+        $warnText | Should Match 'ComputerName'
+        $warnText | Should Match 'WorkDir'
+        $warnText | Should Match 'InjectDrivers'
         $script:UserName | Should Be "User"
         $script:ComputerName | Should Be "PC"
         $script:WorkDir | Should Be "C:\Work"
@@ -149,6 +150,19 @@ Describe "Apply-WinEaseGuiResult in lib\WinEaseGuiSession.ps1" {
             (Apply-WinEaseGuiResult -GuiResult @{ WorkDir = $script:scriptDir } -WarningAction SilentlyContinue) | Should Be $false
             $script:WorkDir | Should Be "C:\Work"
         } finally { $script:scriptDir = $null }
+    }
+
+    It "refuses a result with an invalid UserName / ComputerName / path and changes no builder variable" {
+        foreach ($bad in @(@{ UserName = 'a"b' }, @{ ComputerName = 'x;calc' }, @{ WorkDir = 'C:\bad|path' }, @{ InjectDrivers = (Join-Path $TestDrive 'nodrivers') }, @{ SourceDrive = (Join-Path $TestDrive 'none.iso') })) {
+            $script:UserName = 'User'; $script:ComputerName = 'PC'; $script:WorkDir = 'C:\Work'
+            $r = Apply-WinEaseGuiResult -GuiResult $bad 3>$null
+            $r | Should Be $false
+            $script:UserName | Should Be 'User'
+            $script:ComputerName | Should Be 'PC'
+            $script:WorkDir | Should Be 'C:\Work'
+        }
+        (Apply-WinEaseGuiResult -GuiResult @{ UserName = 'Tester'; ComputerName = 'PC-1' }) | Should Be $true
+        $script:UserName | Should Be 'Tester'
     }
 
     It "handles null/missing debloat lists and debloat engine selection safely" {
@@ -1003,7 +1017,9 @@ Describe "WinEase GUI - smoke test (form built without ShowDialog)" -Tags 'slow'
     }
 
     It "main window: result hashtable keeps its contract" {
-        $gui = Show-WinEaseGUI -NoShow -InitialSettings @{ SourceDrive = 'E:\'; TweakSettings = [ordered]@{} }
+        $iso = Join-Path $TestDrive 'contract.iso'
+        Set-Content -LiteralPath $iso -Value 'x'
+        $gui = Show-WinEaseGUI -NoShow -InitialSettings @{ SourceDrive = $iso; TweakSettings = [ordered]@{} }
         try {
             Complete-WinEaseGuiResult -Gui $gui -SkipPhysicalDebloatConsent | Should Be $true
             $r = $gui.Result
@@ -1084,7 +1100,9 @@ Describe "S7 - GUI Tab 8 (Migration & Backup)" -Tags 'slow' {
     }
 
     It "IncludeMigrationAssistant lives on Tab 8 and still reaches the result" {
-        $gui = Show-WinEaseGUI -NoShow -InitialSettings @{ SourceDrive = 'E:\'; TweakSettings = [ordered]@{} }
+        $iso = Join-Path $TestDrive 'migration.iso'
+        Set-Content -LiteralPath $iso -Value 'x'
+        $gui = Show-WinEaseGUI -NoShow -InitialSettings @{ SourceDrive = $iso; TweakSettings = [ordered]@{} }
         try {
             $chk = $gui.ComponentCheckboxes['IncludeMigrationAssistant']
             $chk | Should Not BeNullOrEmpty
@@ -1400,7 +1418,8 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
             @(Get-UiKeyUsed (Join-Path $script:RepoRoot "gui\WinEaseWinUiHost.ps1")) + @(Get-UiKeyUsedWinUi) +
             @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseDependencies.ps1')), "'(Dep\.[A-Za-z.]+)'\s+=") | ForEach-Object { $_.Groups[1].Value }) +
             @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseBuildPlan.ps1')), "'(Plan\.[A-Za-z.]+)'") | ForEach-Object { $_.Groups[1].Value }) +
-            @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseInputValidation.ps1')), "'((?:Val|Msg)\.[A-Za-z.]+)'") | ForEach-Object { $_.Groups[1].Value })
+            @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseInputValidation.ps1')), "'((?:Val|Msg)\.[A-Za-z.]+)'") | ForEach-Object { $_.Groups[1].Value }) +
+            @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseGuiSession.ps1')), "'((?:Val|Msg)\.[A-Za-z.]+)'") | ForEach-Object { $_.Groups[1].Value })
         $used.Count | Should BeGreaterThan 100
         $missing = @($used | Where-Object { $_ -notmatch $script:LangOnlyPrefixes -and -not $en.ContainsKey($_) } | Select-Object -Unique)
         ($missing -join ',') | Should Be ''
@@ -1610,7 +1629,9 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
     It "Japanese window: builds without showing, texts are Japanese, Advanced Debloat results stay English" {
         $ja = Read-UiTable 'ja'
         $english = Get-DebloatItemFromSource
-        $gui = Show-WinEaseGUI -NoShow -UiLanguage ja -InitialSettings @{ SourceDrive = 'E:\'; TweakSettings = [ordered]@{} }
+        $iso = Join-Path $TestDrive 'japanese.iso'
+        Set-Content -LiteralPath $iso -Value 'x'
+        $gui = Show-WinEaseGUI -NoShow -UiLanguage ja -InitialSettings @{ SourceDrive = $iso; TweakSettings = [ordered]@{} }
         try {
             $gui.Form.Text | Should Be $ja['Main.WindowTitle']
             $gui.Tabs.TabPages[0].Text | Should Be $ja['Tab.Media']
@@ -1670,7 +1691,9 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
     }
 
     It "the global engine switch sets every target that supports it" {
-        $gui = Show-WinEaseGUI -NoShow -InitialSettings @{ SourceDrive = 'E:\'; TweakSettings = [ordered]@{} }
+        $iso = Join-Path $TestDrive 'engines.iso'
+        Set-Content -LiteralPath $iso -Value 'x'
+        $gui = Show-WinEaseGUI -NoShow -InitialSettings @{ SourceDrive = $iso; TweakSettings = [ordered]@{} }
         try {
             Set-WinEaseDebloatEngineForAll -Grids @($gui.GrdStd, $gui.GrdExp) -Engine 'Rust'
             $dual = @($gui.GrdStd.Rows | Where-Object { @($_.Tag) -like '*Bluetooth*' })[0]
@@ -1904,13 +1927,17 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
     }
 
     It "a window result becomes the Show-WinEaseGUI result hashtable" {
-        $json = '{"Success":true,"SourceDrive":"Z:\\nothing\\here","WorkDir":"","UserName":" Tester ","ComputerName":"","Index":"3","InjectDrivers":"",' +
-            '"PresetKey":"balanced","BasePresetKey":"balanced","DryRun":true,"UseVHDX":false,"ExportESDMode":false,"SplitWIMMode":true,' +
-            '"Components":{"RemoveDefender":true},"TweakSettings":{"DisableUAC":true,"DisableVBS":false},' +
-            '"AdvancedDebloatStandard":["Remove help files [10-20MB]"],"AdvancedDebloatExperimental":[],"PhysicalDebloatConsent":true}'
+        $iso = Join-Path $TestDrive 'winui-result.iso'
+        Set-Content -LiteralPath $iso -Value 'x'
+        $json = [ordered]@{
+            Success = $true; SourceDrive = $iso; WorkDir = ''; UserName = ' Tester '; ComputerName = ''; Index = '3'; InjectDrivers = ''
+            PresetKey = 'balanced'; BasePresetKey = 'balanced'; DryRun = $true; UseVHDX = $false; ExportESDMode = $false; SplitWIMMode = $true
+            Components = @{ RemoveDefender = $true }; TweakSettings = @{ DisableUAC = $true; DisableVBS = $false }
+            AdvancedDebloatStandard = @('Remove help files [10-20MB]'); AdvancedDebloatExperimental = @(); PhysicalDebloatConsent = $true
+        } | ConvertTo-Json -Depth 6 -Compress
         $r = ConvertFrom-WinEaseWinUiResult -Result ($json | ConvertFrom-Json)
         $r.Success | Should Be $true
-        $r.SourceDrive | Should Be 'Z:'
+        $r.SourceDrive | Should Be $iso
         $r.WorkDir | Should Be (Get-WinEaseGuiDefaultWorkDir)
         $r.UserName | Should Be 'Tester'
         $r.ComputerName | Should Be '*'
@@ -2306,6 +2333,10 @@ Describe "B1 - preset vs custom state (Get-WinEaseGuiPresetState and the window 
     }
 
     It "round trip of a modified preset: PresetKey custom, BasePresetKey kept, every value preserved" {
+        $iso = Join-Path $TestDrive 'preset-roundtrip.iso'
+        Set-Content -LiteralPath $iso -Value 'x'
+        $work = Join-Path $TestDrive 'preset-work'
+        New-Item -ItemType Directory -Force -Path $work | Out-Null
         $cur = Get-B1Current 'balanced'
         $tk = @($cur.TweakSettings.Keys)[0]
         $flipped = -not $cur.TweakSettings[$tk]
@@ -2314,7 +2345,7 @@ Describe "B1 - preset vs custom state (Get-WinEaseGuiPresetState and the window 
         $ck = @($cur.Components.Keys)[0]
         $std = @($script:B1StdItem)
         $json = [ordered]@{
-            Success = $true; SourceDrive = 'E:\'; WorkDir = 'D:\w'; UserName = 'Tester'; ComputerName = '*'; Index = '1'; InjectDrivers = ''
+            Success = $true; SourceDrive = $iso; WorkDir = $work; UserName = 'Tester'; ComputerName = '*'; Index = '1'; InjectDrivers = ''
             PresetKey = $st.PresetKey; BasePresetKey = 'balanced'; DryRun = $false; UseVHDX = $false; ExportESDMode = $false; SplitWIMMode = $false
             Components = $cur.Components; TweakSettings = $cur.TweakSettings
             AdvancedDebloatStandard = $std; AdvancedDebloatExperimental = @(); DebloatEngineSelection = @{}; PhysicalDebloatConsent = $true
@@ -2337,10 +2368,15 @@ Describe "B1 - preset vs custom state (Get-WinEaseGuiPresetState and the window 
     }
 
     It "an unmodified result keeps the preset key; Custom without a base is reported as GUI Selection" {
-        $r = ConvertFrom-WinEaseWinUiResult -Result (('{"Success":true,"PresetKey":"balanced","BasePresetKey":"balanced","TweakSettings":{}}') | ConvertFrom-Json)
+        $iso = Join-Path $TestDrive 'preset-key.iso'
+        Set-Content -LiteralPath $iso -Value 'x'
+        $base = [ordered]@{ Success = $true; SourceDrive = $iso; UserName = 'Tester'; PresetKey = 'balanced'; BasePresetKey = 'balanced'; TweakSettings = @{} }
+        $r = ConvertFrom-WinEaseWinUiResult -Result (($base | ConvertTo-Json -Depth 4 -Compress) | ConvertFrom-Json)
         Apply-WinEaseGuiResult -GuiResult $r
         $script:selectedProfile | Should Be 'balanced'
-        $r = ConvertFrom-WinEaseWinUiResult -Result (('{"Success":true,"PresetKey":"Custom","BasePresetKey":null,"TweakSettings":{}}') | ConvertFrom-Json)
+        $base['PresetKey'] = 'Custom'
+        $base['BasePresetKey'] = $null
+        $r = ConvertFrom-WinEaseWinUiResult -Result (($base | ConvertTo-Json -Depth 4 -Compress) | ConvertFrom-Json)
         Apply-WinEaseGuiResult -GuiResult $r
         $script:selectedProfile | Should Be 'GUI Selection'
     }
