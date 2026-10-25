@@ -459,14 +459,10 @@ public sealed partial class MainWindow : Window
     }
 
     // A row of buttons / small controls that wraps onto more rows instead of leaving the window
-    private static VariableSizedWrapGrid WrapRow(params UIElement[] items)
+    private static WrapPanel WrapRow(params UIElement[] items)
     {
-        var w = new VariableSizedWrapGrid { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
-        foreach (var item in items)
-        {
-            if (item is FrameworkElement fe) fe.Margin = new Thickness(0, 2, 8, 2);
-            w.Children.Add(item);
-        }
+        var w = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 4, HorizontalAlignment = HorizontalAlignment.Left };
+        foreach (var item in items) w.Children.Add(item);
         return w;
     }
 
@@ -546,25 +542,28 @@ public sealed partial class MainWindow : Window
         Grid.SetColumn(field, 1);
         g.Children.Add(field);
         AutomationProperties.SetName(field, cleanLabel);
-        VariableSizedWrapGrid? btnPanel = null;
+        WrapPanel? btnPanel = null;
         if (buttons.Length > 0)
         {
-            var wrap = new VariableSizedWrapGrid { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            foreach (var b in buttons)
-            {
-                b.Margin = new Thickness(0, 0, 8, 0);
-                wrap.Children.Add(b);
-            }
+            var wrap = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 4, VerticalAlignment = VerticalAlignment.Center };
+            foreach (var b in buttons) wrap.Children.Add(b);
             Grid.SetColumn(wrap, 2);
             g.Children.Add(wrap);
             btnPanel = wrap;
         }
-        // Narrow (small window, large scale): label above the field, the buttons below it, nothing is cut off
-        bool? narrow = null;
-        g.SizeChanged += (_, e) =>
+        // Narrow (small window, large scale): label above the field, the buttons below it, nothing is cut off.
+        // The layout turns narrow when the field would get less than 160 px; it turns wide again once the row is
+        // as wide as it was missing at that moment (the width of the buttons depends on the language and scale).
+        bool narrow = false;
+        double wideAgainAt = double.MaxValue;
+        void Evaluate()
         {
-            bool n = e.NewSize.Width < 560;
-            if (narrow == n) return;
+            double width = g.ActualWidth;
+            if (width <= 0) return;
+            bool n = narrow;
+            if (!narrow && field.ActualWidth < 160) { n = true; wideAgainAt = width + (160 - field.ActualWidth) + 4; }
+            else if (narrow && width >= wideAgainAt) n = false;
+            if (n == narrow) return;
             narrow = n;
             Grid.SetColumnSpan(lbl, n ? 3 : 1);
             Grid.SetRow(field, n ? 1 : 0);
@@ -579,7 +578,9 @@ public sealed partial class MainWindow : Window
                 btnPanel.Margin = new Thickness(0, n ? 4 : 0, 0, 0);
                 btnPanel.HorizontalAlignment = HorizontalAlignment.Left;
             }
-        };
+        }
+        g.SizeChanged += (_, _) => Evaluate();
+        field.SizeChanged += (_, _) => Evaluate();
         return g;
     }
 
@@ -742,13 +743,12 @@ public sealed partial class MainWindow : Window
         // Payload format
         PageHost.Children.Add(Section(_s.Get("Media.Group.Payload")));
         var payload = new StackPanel { Spacing = 4 };
-        var radios = new VariableSizedWrapGrid { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+        var radios = new WrapPanel { HorizontalSpacing = 24, VerticalSpacing = 4, HorizontalAlignment = HorizontalAlignment.Left };
         foreach (var (fmt, key) in new[] { ("WIM", "Media.Radio.WIM"), ("ESD", "Media.Radio.ESD"), ("SWM", "Media.Radio.SWM") })
         {
             var rb = new RadioButton { Content = _s.Get(key), GroupName = "payload", Tag = fmt, IsChecked = _payload == fmt };
             AutomationProperties.SetName(rb, _s.Get(key));
             rb.Checked += (s, _) => { _payload = (string)((RadioButton)s).Tag; UpdateEstimate(); OnSettingChanged(); };
-            rb.Margin = new Thickness(0, 0, 24, 0);
             radios.Children.Add(rb);
             _payloadRadios.Add(rb);
         }
@@ -2369,15 +2369,16 @@ public sealed partial class MainWindow : Window
         if (_busy) return;
         var names = new List<(string Id, string Label)> { (CurrentSettingsId, _s.Get("Dlg.PresetDiff.CurrentSettings")) };
         names.AddRange(_init.PresetNames.Select(n => (n, n)));
-        ComboBox Picker(int sel)
+        ComboBox Picker(int sel, string name)
         {
             var c = new ComboBox { MinWidth = 260 };
             foreach (var n in names) c.Items.Add(n.Label);
             c.SelectedIndex = Math.Min(sel, names.Count - 1);
+            AutomationProperties.SetName(c, name);
             return c;
         }
-        var from = Picker(0);
-        var to = Picker(1);
+        var from = Picker(0, _s.Get("Dlg.PresetDiff.From").Trim().TrimEnd(':', '：', ' '));
+        var to = Picker(1, _s.Get("Dlg.PresetDiff.To").Trim().TrimEnd(':', '：', ' '));
         var output = new TextBlock
         {
             FontFamily = new FontFamily("Cascadia Mono, Consolas"),
