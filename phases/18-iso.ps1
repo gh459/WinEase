@@ -19,6 +19,8 @@ if ($OutputIsoName) {
     $isoFileName = "WinEase.iso"
 }
 $outputIso = Join-Path -Path $scriptDir -ChildPath $isoFileName
+# Path the progress window can open (it is enabled there only when the file exists)
+$script:BuildOutputIsoPath = $outputIso
 
 # Existing output ISO is protected until new temporary ISO is completely verified (Rule 12)
 
@@ -301,6 +303,7 @@ try {
     # via Exit-Phase + Save-WinEasePhaseTimings immediately after this script returns.)
     Save-WinEasePhaseTimings
     Export-WinEaseHtmlReport -OutputPath $reportPath -BuildInfo $reportData
+    $script:BuildReportPath = $reportPath
     Write-Host "Visual Build Report generated: $reportPath" -ForegroundColor Cyan
 } catch {
     Write-Warning "Could not export visual build report: $_"
