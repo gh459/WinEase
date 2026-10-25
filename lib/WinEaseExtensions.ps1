@@ -282,8 +282,11 @@ function Get-WinEaseCustomScriptMetadata {
         $meta.Sha256 = (Get-FileHash -LiteralPath $ScriptPath -Algorithm SHA256).Hash
     } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     try {
-        $lines = [System.IO.File]::ReadAllLines($ScriptPath) | Select-Object -First 30
-        foreach ($ln in $lines) {
+        # Bolt optimization: Streaming [System.IO.File]::ReadLines lazy-evaluates up to 30 lines
+        # without allocating an entire string array for large files or creating pipeline enumerators.
+        $lineCount = 0
+        foreach ($ln in [System.IO.File]::ReadLines($ScriptPath)) {
+            if (++$lineCount -gt 30) { break }
             if ($ln -match '^\s*(?:#|REM|;)\s*@WinEase-Stage:\s*(.+)$') { $meta.Stage = $matches[1].Trim() }
             elseif ($ln -match '^\s*(?:#|REM|;)\s*@WinEase-Order:\s*(\d+)') { $meta.Order = [int]$matches[1] }
             elseif ($ln -match '^\s*(?:#|REM|;)\s*@WinEase-Condition:\s*(.+)$') { $meta.Condition = $matches[1].Trim() }
@@ -432,7 +435,11 @@ function Test-WinEaseCustomScriptHasHeaderOrder {
     [OutputType([bool])]
     param([Parameter(Mandatory = $true)][string]$Path)
     try {
-        foreach ($ln in @([System.IO.File]::ReadAllLines($Path) | Select-Object -First 30)) {
+        # Bolt optimization: Streaming [System.IO.File]::ReadLines avoids reading the entire file array
+        # into memory and exits immediately when line limit or matching header is reached.
+        $lineCount = 0
+        foreach ($ln in [System.IO.File]::ReadLines($Path)) {
+            if (++$lineCount -gt 30) { break }
             if ($ln -match '^\s*(?:#|REM|;)\s*@WinEase-Order:\s*\d+') { return $true }
         }
     } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
