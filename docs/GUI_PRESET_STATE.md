@@ -29,7 +29,7 @@ Compared, in this order, and only when the window reports the part:
   (the registered default filled in, so an explicit default equals "no entry"). The engine of an item that is
   not selected is ignored, because the build drops it.
 
-Not compared (not preset data): source, work folder, index, drivers, user and computer name, `UseVHDX`, Dry Run,
+Not compared (not preset data): source, work folder, index, drivers, user and computer name, `UseVHDX` (applying a preset does set it, but a hand change there does not make the window modified), Dry Run,
 migration and custom-script settings.
 
 ## Settings the preset does not define
@@ -41,7 +41,7 @@ default engines", and any selected item or non-default engine makes the window M
 
 ## Switching presets vs Revert to preset
 
-- **Choosing a preset** in the combo sets components, tweaks and the payload format. It does **not** touch
+- **Choosing a preset** in the combo sets components, tweaks, the payload format and the VHDX switch (the preset's UseVHDX; every built-in preset carries $false, so this only shows with user presets). It does **not** touch
   the Advanced Debloat selection or engines: they survive the switch exactly as they were (physical deletion
   is never changed by picking a preset). If any are selected, the new state reads "<New preset> + modified".
 - **Revert to preset** resets everything the preset controls to the base preset, **including** the

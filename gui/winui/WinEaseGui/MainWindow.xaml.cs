@@ -56,6 +56,7 @@ public sealed partial class MainWindow : Window
     private sealed record InputIssue(string Field, string Severity, string Text, bool Confirm);
     private string _payload = "WIM";
     private bool _useVhdx;
+    private CheckBox? _vhdxCheck;
     private readonly Dictionary<string, bool> _tweaks = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, bool> _components = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _debloatStd = new();
@@ -761,6 +762,7 @@ public sealed partial class MainWindow : Window
         AutomationProperties.SetName(vhdx, _s.Get("Media.Check.VHDX"));
         vhdx.Checked += (_, _) => _useVhdx = true;
         vhdx.Unchecked += (_, _) => _useVhdx = false;
+        _vhdxCheck = vhdx;
         payload.Children.Add(vhdx);
         PageHost.Children.Add(Card(payload));
     }
@@ -779,6 +781,10 @@ public sealed partial class MainWindow : Window
             foreach (var t in _init.Tweaks) _tweaks[t.Key] = p.Tweaks.TryGetValue(t.Key, out bool v) ? v : t.Default;
             _payload = p.PayloadFormat is "ESD" or "SWM" ? p.PayloadFormat : "WIM";
             foreach (var rb in _payloadRadios) rb.IsChecked = (string)rb.Tag == _payload;
+            // The preset's VHDX switch is applied like the payload format (the state rules do not
+            // compare it - docs\GUI_PRESET_STATE.md). Every built-in preset carries false.
+            _useVhdx = p.UseVHDX;
+            if (_vhdxCheck != null) _vhdxCheck.IsChecked = p.UseVHDX;
             if (includeDebloat)
             {
                 _debloatStd.Clear();

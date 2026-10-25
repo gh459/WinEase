@@ -2243,10 +2243,30 @@ Describe "B1 - preset vs custom state (Get-WinEaseGuiPresetState and the window 
             $v.Key | Should Be $k
             $v.Tweaks.Count | Should Be $script:AllTweakDefs.Count
             @('WIM', 'ESD', 'SWM') -contains $v.PayloadFormat | Should Be $true
+            $v.UseVHDX | Should Be $false
             @($v.AdvancedDebloatStandard).Count | Should Be 0
             @($v.AdvancedDebloatExperimental).Count | Should Be 0
         }
         (Get-WinEaseGuiPresetValues -Name 'no-such-preset') | Should BeNullOrEmpty
+    }
+
+    It "the preset's UseVHDX travels with the values and both windows apply it when the preset is chosen" {
+        # G5: switching presets used to leave the VHDX switch alone (every built-in carries $false,
+        # so it never showed). A preset that sets UseVHDX = $true must reach both windows.
+        $script:BuiltInPresets['vhdx-test'] = @{ UseVHDX = $true; ProfileName = 'VHDX test' }
+        try {
+            $v = Get-WinEaseGuiPresetValues -Name 'vhdx-test'
+            $v.UseVHDX | Should Be $true
+            (Get-WinEaseGuiPresetValues -Name 'balanced').UseVHDX | Should Be $false
+        } finally {
+            $script:BuiltInPresets.Remove('vhdx-test') | Out-Null
+        }
+        $winForms = [System.IO.File]::ReadAllText($script:GuiPath, [System.Text.Encoding]::UTF8)
+        $winForms | Should Match '\$Gui\.VHDX\.Checked = \[bool\]\$pv\.UseVHDX'
+        $winUi = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'gui\winui\WinEaseGui\MainWindow.xaml.cs'), [System.Text.Encoding]::UTF8)
+        $winUi | Should Match '_useVhdx = p\.UseVHDX'
+        $initData = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'gui\winui\WinEaseGui\InitData.cs'), [System.Text.Encoding]::UTF8)
+        $initData | Should Match 'Bool\(p\?\["UseVHDX"\]\)'
     }
 
     It "reports a window that equals its preset as unmodified, for every preset" {
