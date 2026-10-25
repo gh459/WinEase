@@ -80,3 +80,26 @@ function Get-WinEaseRegistryTableText {
             }) -join "`n")
     return ($parts -join "`n")
 }
+
+# Modal dialogs must never open during the automated GUI tests: a real MessageBox blocks the run on
+# any interactive desktop (CI has none, so it hid the problem there). Dot-source this scriptblock right
+# after `. $script:GuiPath`; it replaces the two modal helpers with recording stubs:
+#   . ([scriptblock]::Create($script:GuiNoModalStubs))
+# Show-WinEaseGuiMessage appends { Text; Title; Kind } to $script:GuiTestMessages and answers yes;
+# Confirm-WinEaseGuiAction records the question and returns $script:GuiTestConfirmAnswer (default $true).
+$script:GuiNoModalStubs = @'
+if (-not (Test-Path variable:script:GuiTestMessages)) { $script:GuiTestMessages = New-Object System.Collections.Generic.List[object] }
+if (-not (Test-Path variable:script:GuiTestConfirmAnswer)) { $script:GuiTestConfirmAnswer = $true }
+function Show-WinEaseGuiMessage {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+    param([string]$Text, [string]$Title, [string]$Kind = 'Info', [switch]$YesNo)
+    $script:GuiTestMessages.Add([pscustomobject]@{ Text = $Text; Title = $Title; Kind = $Kind })
+    return $true
+}
+function Confirm-WinEaseGuiAction {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+    param([string]$Message, [string]$Title)
+    $script:GuiTestMessages.Add([pscustomobject]@{ Text = $Message; Title = $Title; Kind = 'Confirm' })
+    return [bool]$script:GuiTestConfirmAnswer
+}
+'@
