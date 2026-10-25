@@ -373,6 +373,12 @@ function Get-WinEaseGuiPresetValues {
     }
     $fmt = "$($pObj.PayloadFormat)".ToUpper()
     if ($fmt -notin @('ESD', 'SWM')) { $fmt = 'WIM' }
+    # The VHDX switch is preset data for the APPLICATION (both windows set the checkbox when a
+    # preset is applied) even though the state comparison excludes it (a hand change there does
+    # not make the window "modified" - see docs\GUI_PRESET_STATE.md). Every built-in preset
+    # carries UseVHDX = $false, so this only shows with user presets.
+    $useVhdx = $false
+    if ($pObj.Contains('UseVHDX')) { $useVhdx = [bool]$pObj['UseVHDX'] }
     $std = @(); $exp = @(); $engines = [ordered]@{}
     if ($pObj.Contains('AdvancedDebloatStandard') -and $pObj['AdvancedDebloatStandard']) { $std = @($pObj['AdvancedDebloatStandard'] | ForEach-Object { "$_" }) }
     if ($pObj.Contains('AdvancedDebloatExperimental') -and $pObj['AdvancedDebloatExperimental']) { $exp = @($pObj['AdvancedDebloatExperimental'] | ForEach-Object { "$_" }) }
@@ -384,6 +390,7 @@ function Get-WinEaseGuiPresetValues {
         Components                  = $components
         Tweaks                      = $tweaks
         PayloadFormat               = $fmt
+        UseVHDX                     = $useVhdx
         AdvancedDebloatStandard     = $std
         AdvancedDebloatExperimental = $exp
         DebloatEngineSelection      = $engines
