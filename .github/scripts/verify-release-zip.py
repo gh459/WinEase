@@ -58,6 +58,7 @@ REQUIRED = [
     "lib/WinEaseDependencies.ps1",
     "lib/WinEaseGuiSession.ps1",
     "lib/WinEaseBuildPlan.ps1",
+    "lib/WinEaseInputValidation.ps1",
     "lib/WinEaseRegistry.ps1",
     "lib/WinEaseGuiCore.ps1",
     "lib/WinEasePlugins.ps1",

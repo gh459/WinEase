@@ -16,6 +16,9 @@ if (-not (Get-Command -Name Get-WinEaseUiString -ErrorAction SilentlyContinue)) 
 # The build-plan request (final confirmation) needs lib\WinEaseBuildPlan.ps1 (the builder loads it too)
 $winUiBuildPlan = Join-Path -Path (Split-Path -Parent $PSScriptRoot) -ChildPath 'lib\WinEaseBuildPlan.ps1'
 if (-not (Get-Command -Name Get-WinEaseBuildPlan -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $winUiBuildPlan)) { . $winUiBuildPlan }
+# The input check (Start, field changes, the result) needs lib\WinEaseInputValidation.ps1 (the builder loads it too)
+$winUiInputValidation = Join-Path -Path (Split-Path -Parent $PSScriptRoot) -ChildPath 'lib\WinEaseInputValidation.ps1'
+if (-not (Get-Command -Name Test-WinEaseBuildInputs -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $winUiInputValidation)) { . $winUiInputValidation }
 # The custom-script requests need the user extensibility engine (the builder loads it too)
 $winUiExtensions = Join-Path -Path (Split-Path -Parent $PSScriptRoot) -ChildPath 'lib\WinEaseExtensions.ps1'
 if (-not (Get-Command -Name Add-WinEaseCustomScript -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $winUiExtensions)) { . $winUiExtensions }
@@ -191,9 +194,17 @@ function Invoke-WinEaseWinUiRequest {
         'buildPlan' {
             # Final confirmation: the plan of the settings the window would send now (Config = the window's result object)
             # Recomputed on every request, never cached. Rules: Get-WinEaseBuildPlan (lib\WinEaseBuildPlan.ps1)
-            $plan = Get-WinEaseBuildPlan -Result (ConvertFrom-WinEaseWinUiResult -Result $a.Config)
+            $plan = Get-WinEaseBuildPlan -Result (ConvertFrom-WinEaseWinUiResult -Result $a.Config -SkipValidation)
             $view = Get-WinEaseBuildPlanView -Plan $plan
             return @{ Data = @{ Plan = $plan; View = $view } }
+        }
+        'validate' {
+            # Input check of the media fields (Config = the window's result object). -Strict: the window needs a source;
+            # the window shows each issue next to its control. Same function as ConvertFrom-WinEaseWinUiResult / Apply-WinEaseGuiResult.
+            $res = ConvertFrom-WinEaseWinUiResult -Result $a.Config -SkipValidation
+            $issues = @(Test-WinEaseGuiResultInputs -Result $res -OutputDir (Get-WinEaseGuiOutputDir) -Strict -CheckDiskSpace:([bool]$a.Disk))
+            $rows = @($issues | ForEach-Object { @{ Field = "$($_.Field)"; Severity = "$($_.Severity)"; MessageKey = "$($_.MessageKey)"; Text = (Get-WinEaseInputIssueText -Issue $_); Confirm = [bool]$_.Confirm } })
+            return @{ Data = @{ Issues = $rows; HasError = (Test-WinEaseInputHasError -Issues $issues) } }
         }
         'presetState' {
             # Is the window still the base preset? Rules: Get-WinEaseGuiPresetState (lib\WinEaseGuiCore.ps1)
@@ -436,8 +447,16 @@ function Invoke-WinEaseWinUiRequest {
 }
 
 # Window result -> the hashtable Show-WinEaseGUI returns (Success, SourceDrive, TweakSettings, ...)
+# Folder the builder writes the ISO to (the builder's own folder: WinEasebuilder.ps1 $scriptDir; the plan uses the same one)
+function Get-WinEaseGuiOutputDir {
+    if ($script:scriptDir) { return $script:scriptDir }
+    if ($script:WinEaseGuiRepoRoot) { return $script:WinEaseGuiRepoRoot }
+    return (Get-Location).Path
+}
+
+# -SkipValidation: no input check (the build plan and the live validation request convert half-edited values)
 function ConvertFrom-WinEaseWinUiResult {
-    param($Result)
+    param($Result, [switch]$SkipValidation)
     # A request argument is a hashtable already (ConvertTo-WinEaseHashtable would turn it into a list of entries)
     $r = if ($Result -is [System.Collections.IDictionary]) { $Result } else { ConvertTo-WinEaseHashtable $Result }
     if (-not $r -or -not $r.Success) { return @{ Success = $false } }
@@ -465,6 +484,15 @@ function ConvertFrom-WinEaseWinUiResult {
         foreach ($k in $r.DebloatEngineSelection.Keys) { $engines[[string]$k] = [string]$r.DebloatEngineSelection[$k] }
     }
     $out.DebloatEngineSelection = $engines
+    # The window is not the trust boundary: the same input check the window ran (lib\WinEaseInputValidation.ps1) runs on what
+    # arrived. A refused result is Success = $false with the reason; the builder never sees its values.
+    if (-not $SkipValidation) {
+        if (-not (Get-Command -Name Test-WinEaseGuiResultInputs -ErrorAction SilentlyContinue)) { throw 'Test-WinEaseGuiResultInputs is not loaded (lib\WinEaseInputValidation.ps1).' }
+        $inputIssues = @(Test-WinEaseGuiResultInputs -Result $out -OutputDir (Get-WinEaseGuiOutputDir) -Strict -SkipWriteProbe:([bool]$out.DryRun))
+        if (Test-WinEaseInputHasError -Issues $inputIssues) {
+            return @{ Success = $false; Reason = (Format-WinEaseInputIssues -Issues @($inputIssues | Where-Object { $_.Severity -eq 'Error' })); Issues = $inputIssues }
+        }
+    }
     return $out
 }
 
@@ -545,11 +573,12 @@ function Show-WinEaseWinUiGUI {
     return $result
 }
 
-# Builder -> window progress notice ({ op = 'progress'; event = phase|log|done; ... }).
+# Builder -> window progress notice ({ op = 'progress'; event = state|phase|log|failure|done; ... }),
+# see docs\PROGRESS_PROTOCOL.md. A window that does not know an event ignores it.
 # A no-op without an open window; a closed window drops the channel and never stops the build.
 function Send-WinEaseGuiProgress {
     param(
-        [Parameter(Mandatory)][ValidateSet('phase', 'log', 'done')][string]$Event,
+        [Parameter(Mandatory)][ValidateSet('state', 'phase', 'log', 'failure', 'done')][string]$Event,
         [hashtable]$Data = @{}
     )
     $channel = $script:WinEaseGuiProgressChannel
@@ -565,9 +594,11 @@ function Send-WinEaseGuiProgress {
 }
 
 function Close-WinEaseGuiProgress {
-    param([bool]$Success, [string]$Message = '')
+    param([bool]$Success, [string]$Message = '', [hashtable]$Extra = @{})
     if (-not $script:WinEaseGuiProgressChannel) { return }
-    Send-WinEaseGuiProgress -Event done -Data @{ Success = $Success; Message = $Message }
+    $done = @{ Success = $Success; Message = $Message }
+    foreach ($k in $Extra.Keys) { $done[$k] = $Extra[$k] }
+    Send-WinEaseGuiProgress -Event done -Data $done
     $channel = $script:WinEaseGuiProgressChannel
     $script:WinEaseGuiProgressChannel = $null
     try { $channel.Writer.Dispose() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }

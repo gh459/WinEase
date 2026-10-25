@@ -177,11 +177,12 @@ Describe "GUI parity (WinUI 3 / WinForms / command line)" {
             return @($lines | Sort-Object)
         }
 
-        # What the WinUI 3 window (MainWindow.xaml.cs ResultObject) sends: JSON that goes through the real conversion
+        # What the WinUI 3 window (MainWindow.xaml.cs ResultObject) sends: JSON that goes through the real conversion.
+        # -SkipValidation only for tests of the mapping itself (C2 has its own refusal tests).
         function ConvertTo-ParityWinUiResult {
-            param([hashtable]$Window)
+            param([hashtable]$Window, [switch]$SkipValidation)
             $json = $Window | ConvertTo-Json -Depth 8 -Compress
-            return (ConvertFrom-WinEaseWinUiResult -Result ($json | ConvertFrom-Json))
+            return (ConvertFrom-WinEaseWinUiResult -Result ($json | ConvertFrom-Json) -SkipValidation:$SkipValidation)
         }
 
         # The init message the window gets, round-tripped through JSON like the real pipe
@@ -251,13 +252,23 @@ Describe "GUI parity (WinUI 3 / WinForms / command line)" {
         ([ordered]@{ ProfileName = 'parity-fixture'; Version = '2.1'; Settings = $fxSettings } | ConvertTo-Json -Depth 6) |
             Set-Content -LiteralPath $script:FixtureProfilePath -Encoding UTF8
 
+        # C2: both windows run the shared input check on Start and on the WinUI result, so the fixture paths must exist
+        $parityTemp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("winease_parity_" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $parityTemp | Out-Null
+        $script:ParityTemp = $parityTemp
+        $parityIso = Join-Path $parityTemp 'win11.iso'
+        Set-Content -LiteralPath $parityIso -Value 'x'
+        $parityWork = Join-Path $parityTemp 'work'
+        $parityDrivers = Join-Path $parityTemp 'drivers'
+        New-Item -ItemType Directory -Force -Path $parityWork, $parityDrivers | Out-Null
         $script:Fx = @{
-            SourceDrive = 'Q:\'; WorkDir = 'D:\WinEaseParity'; Index = '2'; InjectDrivers = 'D:\Drivers'; UserName = 'Tester 1'; ComputerName = 'WIN-PARITY'
+            SourceDrive = $parityIso; WorkDir = $parityWork; Index = '2'; InjectDrivers = $parityDrivers; UserName = 'Tester 1'; ComputerName = 'WIN-PARITY'
         }
     }
 
     AfterAll {
         if ($script:FixtureProfilePath -and (Test-Path -LiteralPath $script:FixtureProfilePath)) { Remove-Item -LiteralPath $script:FixtureProfilePath -Force -ErrorAction SilentlyContinue }
+        if ($script:ParityTemp -and (Test-Path -LiteralPath $script:ParityTemp)) { Remove-Item -LiteralPath $script:ParityTemp -Recurse -Force -ErrorAction SilentlyContinue }
         [System.Windows.Forms.Application]::Exit()
     }
 
@@ -707,8 +718,8 @@ Describe "GUI parity (WinUI 3 / WinForms / command line)" {
         }
 
         It "WinForms and WinUI report DryRun as a boolean the same way" {
-            (ConvertTo-ParityWinUiResult @{ Success = $true; DryRun = $true }).DryRun | Should Be $true
-            (ConvertTo-ParityWinUiResult @{ Success = $true }).DryRun | Should Be $false
+            (ConvertTo-ParityWinUiResult @{ Success = $true; DryRun = $true } -SkipValidation).DryRun | Should Be $true
+            (ConvertTo-ParityWinUiResult @{ Success = $true } -SkipValidation).DryRun | Should Be $false
         }
 
         It "the builder exits before the build lifecycle and before every phase when isDryRunMode is set - also after the GUI" {
@@ -769,7 +780,7 @@ Describe "GUI parity (WinUI 3 / WinForms / command line)" {
         }
 
         It "a window result cannot open the gate through any key other than PhysicalDebloatConsent" {
-            $r = ConvertTo-ParityWinUiResult @{ Success = $true; AllowPhysicalDebloat = $true; DryRun = $false }
+            $r = ConvertTo-ParityWinUiResult @{ Success = $true; AllowPhysicalDebloat = $true; DryRun = $false } -SkipValidation
             $r.ContainsKey('AllowPhysicalDebloat') | Should Be $false
             $r.PhysicalDebloatConsent | Should Be $false
             $script:ParityConsentAnswer = [System.Windows.Forms.DialogResult]::No
@@ -778,7 +789,7 @@ Describe "GUI parity (WinUI 3 / WinForms / command line)" {
         }
 
         It "WinForms: declining the consent clears the selections in the result, accepting keeps them" {
-            $gui = Show-WinEaseGUI -NoShow -UiLanguage en -InitialSettings @{ SourceDrive = 'Q:\'; AdvancedDebloatStandard = $script:FixtureStd; AdvancedDebloatExperimental = $script:FixtureExp }
+            $gui = Show-WinEaseGUI -NoShow -UiLanguage en -InitialSettings @{ SourceDrive = $script:Fx.SourceDrive; WorkDir = $script:Fx.WorkDir; Index = $script:Fx.Index; AdvancedDebloatStandard = $script:FixtureStd; AdvancedDebloatExperimental = $script:FixtureExp }
             try {
                 $script:ParityConfirmAnswer = $false
                 [void](Complete-WinEaseGuiResult -Gui $gui)
@@ -835,20 +846,24 @@ Describe "GUI parity (WinUI 3 / WinForms / command line)" {
         BeforeAll {
             $script:PatUser = [regex]::Match([System.IO.File]::ReadAllText($script:BuilderPath), "\[ValidatePattern\('(?<p>[^']*\\p\{L\}[^']*)'\)\]\s*\[string\]\`$UserName").Groups['p'].Value
             $script:PatComputer = [regex]::Match([System.IO.File]::ReadAllText($script:BuilderPath), "\[ValidatePattern\('(?<p>[^']*\\\*[^']*)'\)\]\s*\[string\]\`$ComputerName").Groups['p'].Value
-            $script:GuiV = Show-WinEaseGUI -NoShow -UiLanguage en -InitialSettings @{ SourceDrive = 'Q:\' }
+            $script:GuiV = Show-WinEaseGUI -NoShow -UiLanguage en -InitialSettings @{ SourceDrive = $script:Fx.SourceDrive; WorkDir = $script:Fx.WorkDir; Index = $script:Fx.Index; UserName = 'Tester'; ComputerName = '*' }
         }
         AfterAll { Close-ParityGui $script:GuiV }
         BeforeEach { $script:ParityMessages = @() }
 
-        It "the UserName / ComputerName patterns are the same in the builder, the WinForms window and the WinUI window" {
+        It "the UserName / ComputerName patterns live once in the shared input check and equal the builder's [ValidatePattern]" {
             $script:PatUser | Should Not BeNullOrEmpty
             $script:PatComputer | Should Not BeNullOrEmpty
+            $lib = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseInputValidation.ps1'))
+            $lib.Contains("'" + $script:PatUser + "'") | Should Be $true
+            $lib.Contains("'" + $script:PatComputer + "'") | Should Be $true
+            # The windows no longer carry their own copy: they ask the shared check through the validate request.
             $ps = [System.IO.File]::ReadAllText($script:GuiPath)
             $cs = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'gui\winui\WinEaseGui\MainWindow.xaml.cs'))
-            $ps.Contains("'" + $script:PatUser + "'") | Should Be $true
-            $ps.Contains("'" + $script:PatComputer + "'") | Should Be $true
-            $cs.Contains('@"' + $script:PatUser + '"') | Should Be $true
-            $cs.Contains('@"' + $script:PatComputer + '"') | Should Be $true
+            $ps.Contains("'" + $script:PatUser + "'") | Should Be $false
+            $ps.Contains("'" + $script:PatComputer + "'") | Should Be $false
+            $cs.Contains('@"' + $script:PatUser + '"') | Should Be $false
+            $cs.Contains('@"' + $script:PatComputer + '"') | Should Be $false
         }
 
         It "the patterns accept ordinary names and refuse characters that would break autounattend.xml" {
@@ -905,14 +920,18 @@ Describe "GUI parity (WinUI 3 / WinForms / command line)" {
             }
         }
 
-        It "the session bridge refuses an invalid user name / computer name coming from the WinUI 3 window" -Pending {
-            # GAP (not fixed here: tests only). WinUI 3 validates these two values only in C# (MainWindow.xaml.cs StartButton_Click).
-            # The PowerShell side - ConvertFrom-WinEaseWinUiResult and Apply-WinEaseGuiResult - copies UserName / ComputerName
-            # into $script:UserName / $script:ComputerName without any re-validation, while the command line has [ValidatePattern]
-            # on both and the values are inserted verbatim into autounattend.xml (see the comment at the parameters in
-            # WinEasebuilder.ps1). A message that does not come from the shipped window (or a window bug) bypasses the check.
-            $r = ConvertTo-ParityWinUiResult @{ Success = $true; UserName = 'a"b'; ComputerName = 'x;calc' }
+        It "the session bridge refuses an invalid user name / computer name coming from the WinUI 3 window" {
+            # The window is not the trust boundary: ConvertFrom-WinEaseWinUiResult runs the same shared input check and
+            # returns Success = $false with the reason, so a message that does not come from the shipped window (or a
+            # window bug) never reaches $script:UserName / $script:ComputerName.
+            $iso = Join-Path $TestDrive 'parity-bridge.iso'
+            Set-Content -LiteralPath $iso -Value 'x'
+            $r = ConvertTo-ParityWinUiResult @{ Success = $true; SourceDrive = $iso; WorkDir = $script:Fx.WorkDir; Index = '2'; UserName = 'a"b'; ComputerName = 'x;calc' }
             $r.Success | Should Be $false
+            $r.Reason | Should Match 'UserName'
+            $r.Reason | Should Match 'ComputerName'
+            $ok = ConvertTo-ParityWinUiResult @{ Success = $true; SourceDrive = $iso; WorkDir = $script:Fx.WorkDir; Index = '2'; UserName = 'Tester'; ComputerName = 'PC-1' }
+            $ok.Success | Should Be $true
         }
     }
 

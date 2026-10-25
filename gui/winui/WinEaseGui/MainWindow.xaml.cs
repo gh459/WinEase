@@ -48,6 +48,12 @@ public sealed partial class MainWindow : Window
     private TextBlock? _presetStatusText;
     private Button? _revertButton;
     private DispatcherTimer? _presetStateTimer;
+    // Input check (PowerShell: Test-WinEaseBuildInputs): the issue of each media field is shown under its control
+    private readonly Dictionary<string, TextBlock> _fieldMsgs = new();
+    private List<InputIssue> _issues = new();
+    private DispatcherTimer? _validateTimer;
+    private bool _validating;
+    private sealed record InputIssue(string Field, string Severity, string Text, bool Confirm);
     private string _payload = "WIM";
     private bool _useVhdx;
     private readonly Dictionary<string, bool> _tweaks = new(StringComparer.OrdinalIgnoreCase);
@@ -394,6 +400,7 @@ public sealed partial class MainWindow : Window
     {
         PageTitle.Text = CleanTabText(_s.Get("Tab.Media"));
         SetSubtitle(_s.Get("Main.Subtitle"));
+        _fieldMsgs.Clear();
 
         // Source media
         PageHost.Children.Add(Section(_s.Get("Media.Group.Source")));
@@ -429,34 +436,41 @@ public sealed partial class MainWindow : Window
             source.ItemsSource = _sources;
             source.IsSuggestionListOpen = _sources.Count > 0;
         });
-        srcPanel.Children.Add(FieldRow(_s.Get("Media.Label.Source"), source, browseDrive, browseIso, rescan));
+        source.TextChanged += (_, _) => ScheduleValidation();
+        srcPanel.Children.Add(WithMessage("SourceDrive", FieldRow(_s.Get("Media.Label.Source"), source, browseDrive, browseIso, rescan)));
 
         var work = Box(_workDir, v => _workDir = v, _init.DefaultWorkDir);
-        srcPanel.Children.Add(FieldRow(_s.Get("Media.Label.Workspace"), work, Btn(_s.Get("Button.BrowseFolder"), async (_, _) =>
+        work.TextChanged += (_, _) => ScheduleValidation();
+        srcPanel.Children.Add(WithMessage("WorkDir", FieldRow(_s.Get("Media.Label.Workspace"), work, Btn(_s.Get("Button.BrowseFolder"), async (_, _) =>
         {
             string? p = await PickFolderAsync();
             if (p != null) work.Text = p;
-        })));
+        }))));
 
         var index = Box(_index, v => _index = v);
         index.HorizontalAlignment = HorizontalAlignment.Left;
         index.Width = 120;
-        srcPanel.Children.Add(FieldRow(_s.Get("Media.Label.Index"), index));
+        index.TextChanged += (_, _) => ScheduleValidation();
+        srcPanel.Children.Add(WithMessage("Index", FieldRow(_s.Get("Media.Label.Index"), index)));
 
         var drivers = Box(_drivers, v => _drivers = v);
-        srcPanel.Children.Add(FieldRow(_s.Get("Media.Label.Drivers"), drivers, Btn(_s.Get("Button.Browse"), async (_, _) =>
+        drivers.TextChanged += (_, _) => ScheduleValidation();
+        srcPanel.Children.Add(WithMessage("InjectDrivers", FieldRow(_s.Get("Media.Label.Drivers"), drivers, Btn(_s.Get("Button.Browse"), async (_, _) =>
         {
             string? p = await PickFolderAsync();
             if (p != null) drivers.Text = p;
-        })));
+        }))));
 
         var user = Box(_userName, v => _userName = v);
         user.MaxLength = 20;
-        srcPanel.Children.Add(FieldRow(_s.Get("Media.Label.UserName"), user));
+        user.TextChanged += (_, _) => ScheduleValidation();
+        srcPanel.Children.Add(WithMessage("UserName", FieldRow(_s.Get("Media.Label.UserName"), user)));
         var computer = Box(_computerName, v => _computerName = v);
         computer.MaxLength = 15;
-        srcPanel.Children.Add(FieldRow(_s.Get("Media.Label.ComputerName"), computer));
+        computer.TextChanged += (_, _) => ScheduleValidation();
+        srcPanel.Children.Add(WithMessage("ComputerName", FieldRow(_s.Get("Media.Label.ComputerName"), computer)));
         PageHost.Children.Add(Card(srcPanel));
+        ShowIssues();
 
         // Preset
         PageHost.Children.Add(Section(_s.Get("Media.Group.Preset")));
@@ -1330,6 +1344,84 @@ public sealed partial class MainWindow : Window
         return a;
     }
 
+    // Row + a message line under it for -field (issues of OutputDir / disk space are shown at the workspace)
+    private UIElement WithMessage(string field, FrameworkElement row)
+    {
+        var msg = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = Visibility.Collapsed,
+            Margin = new Thickness(198, 0, 0, 4),
+            Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
+        };
+        _fieldMsgs[field] = msg;
+        var sp = new StackPanel();
+        sp.Children.Add(row);
+        sp.Children.Add(msg);
+        return sp;
+    }
+
+    private void ShowIssues()
+    {
+        foreach (var kv in _fieldMsgs)
+        {
+            var mine = _issues.Where(i => i.Field == kv.Key || (kv.Key == "WorkDir" && i.Field == "OutputDir")).ToList();
+            if (mine.Count == 0)
+            {
+                kv.Value.Text = "";
+                kv.Value.Visibility = Visibility.Collapsed;
+                continue;
+            }
+            bool error = mine.Any(i => i.Severity == "Error");
+            kv.Value.Text = (error ? "⚠ " : "ⓘ ") + string.Join(" ", mine.Select(i => i.Text));
+            kv.Value.Foreground = Res(error ? "SystemFillColorCriticalBrush" : "SystemFillColorCautionBrush");
+            kv.Value.Visibility = Visibility.Visible;
+        }
+    }
+
+    // Debounced re-check while the user types or a picker fills a box
+    private void ScheduleValidation()
+    {
+        _validateTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _validateTimer.Tick -= ValidateTimer_Tick;
+        _validateTimer.Tick += ValidateTimer_Tick;
+        _validateTimer.Stop();
+        _validateTimer.Start();
+    }
+
+    private async void ValidateTimer_Tick(object? sender, object e)
+    {
+        _validateTimer?.Stop();
+        if (_busy || _validating || _resultSent) return;
+        var issues = await ValidateAsync(withDisk: false);
+        if (issues == null) return;
+        _issues = issues;
+        ShowIssues();
+    }
+
+    // Test-WinEaseBuildInputs through the host; null when the host could not answer
+    private async Task<List<InputIssue>?> ValidateAsync(bool withDisk)
+    {
+        _validating = true;
+        try
+        {
+            var reply = await _bridge.RequestAsync("validate", _s.Language, new JsonObject { ["Config"] = ResultObject(false), ["Disk"] = withDisk });
+            if (!InitData.Bool(reply["ok"])) return null;
+            var list = new List<InputIssue>();
+            foreach (var i in InitData.Arr(reply["Data"]?["Issues"]))
+                list.Add(new InputIssue(InitData.Str(i?["Field"]), InitData.Str(i?["Severity"]), InitData.Str(i?["Text"]), InitData.Bool(i?["Confirm"])));
+            return list;
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            _validating = false;
+        }
+    }
+
     private JsonObject ResultObject(bool consent)
     {
         var components = new JsonObject();
@@ -1383,24 +1475,25 @@ public sealed partial class MainWindow : Window
     private async void StartButton_Click(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
-        // Same checks as Complete-WinEaseGuiResult
-        if (_source.Trim().Length == 0)
+        // Same input check as Complete-WinEaseGuiResult, the session bridge and the builder (PowerShell: Test-WinEaseBuildInputs).
+        // An Error blocks Start and is shown under its control; never fail open when the check cannot run.
+        var issues = await ValidateAsync(withDisk: true);
+        if (issues == null)
         {
-            await MessageAsync(_s.Get("Msg.SourceRequired.Title"), _s.Get("Msg.SourceRequired.Text"), "Warning");
+            await MessageAsync(_s.Get("Val.Title"), _s.Format("Msg.Error", _s.Get("Plan.Value.Unknown")), "Error");
             return;
         }
-        if (!Regex.IsMatch(_userName.Trim(), @"^[\p{L}\p{N}_][\p{L}\p{N} ._-]{0,19}$"))
+        _issues = issues;
+        ShowIssues();
+        var errors = issues.Where(i => i.Severity == "Error").ToList();
+        if (errors.Count > 0)
         {
-            await MessageAsync(_s.Get("Msg.InvalidUserName.Title"), _s.Get("Msg.InvalidUserName.Text"), "Warning");
+            var mediaItem = Nav.MenuItems.OfType<NavigationViewItem>().FirstOrDefault(i => i.Tag as string == "media");
+            if (mediaItem != null && _page != "media") Nav.SelectedItem = mediaItem;
+            await MessageAsync(_s.Get("Val.Title"), string.Join("\n", errors.Select(i => i.Text)), "Warning");
             return;
         }
-        string computer = _computerName.Trim().Length == 0 ? "*" : _computerName.Trim();
-        if (!Regex.IsMatch(computer, @"^(\*|[A-Za-z0-9][A-Za-z0-9-]{0,14})$"))
-        {
-            await MessageAsync(_s.Get("Msg.InvalidComputerName.Title"), _s.Get("Msg.InvalidComputerName.Text"), "Warning");
-            return;
-        }
-
+        if (issues.Any(i => i.Confirm) && !await ConfirmAsync(_s.Get("Val.Title"), _s.Get("Val.Index.Confirm"))) return;
         // Dependency / feature-impact pre-check
         var dep = await RunAsync("dependencies", new JsonObject { ["Config"] = DraftConfig() }, quiet: true);
         if (dep == null || !InitData.Bool(dep["ok"]))
@@ -1571,29 +1664,198 @@ public sealed partial class MainWindow : Window
     // =======================================================================================================
     // Build progress (progress lines from the builder after the result was sent)
     // =======================================================================================================
+    // Data files the progress window may open with the shell; programs and scripts are never launched from here.
+    private static readonly string[] OpenableExtensions = { ".log", ".txt", ".html", ".htm", ".json", ".md" };
+    private const int MaxLogLines = 500;
+
+    private static bool PathExists(string? path) =>
+        !string.IsNullOrWhiteSpace(path) && System.IO.Path.IsPathRooted(path) && (System.IO.File.Exists(path) || System.IO.Directory.Exists(path));
+
+    // The folder that holds the output file (or the folder itself); null when the folder does not exist.
+    // The file itself does not have to exist yet: after an early failure the output folder is still useful.
+    private static string? FolderOf(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !System.IO.Path.IsPathRooted(path)) return null;
+        string? folder = System.IO.Directory.Exists(path) ? path : System.IO.Path.GetDirectoryName(path);
+        return !string.IsNullOrEmpty(folder) && System.IO.Directory.Exists(folder) ? folder : null;
+    }
+
+    // Opens an existing folder or data file with the shell. The path is the FileName of a ProcessStartInfo with
+    // UseShellExecute; it is never part of a command line, and only the data file types above are opened.
+    private static bool TryOpenPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !System.IO.Path.IsPathRooted(path)) return false;
+        try
+        {
+            if (!System.IO.Directory.Exists(path))
+            {
+                if (!System.IO.File.Exists(path)) return false;
+                if (!OpenableExtensions.Contains(System.IO.Path.GetExtension(path), StringComparer.OrdinalIgnoreCase)) return false;
+            }
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = path, UseShellExecute = true });
+            return true;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception || ex is System.IO.IOException || ex is InvalidOperationException || ex is UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    // Builder events (docs\PROGRESS_PROTOCOL.md): state, phase, log, failure, done. An event this window does not
+    // know is ignored, so an older builder and a newer builder both work.
     private async Task ShowProgressViewAsync()
     {
+        var bodyStrong = (Style)Application.Current.Resources["BodyStrongTextBlockStyle"];
+        var caption = (Style)Application.Current.Resources["CaptionTextBlockStyle"];
         var title = new TextBlock { Text = _s.Get("Progress.Title"), Style = (Style)Application.Current.Resources["TitleTextBlockStyle"] };
-        var phaseText = new TextBlock { Text = _s.Get("Progress.Starting"), Style = (Style)Application.Current.Resources["BodyStrongTextBlockStyle"], TextWrapping = TextWrapping.Wrap };
+        var stateText = new TextBlock { Style = bodyStrong, TextWrapping = TextWrapping.Wrap };
+        var stepText = new TextBlock { Text = _s.Get("Progress.Starting"), TextWrapping = TextWrapping.Wrap };
         var bar = new ProgressBar { Minimum = 0, Maximum = 100, Value = 0, IsIndeterminate = true };
-        var timeText = new TextBlock { Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"] };
+        var barText = new TextBlock { Style = caption };
+        var timeText = new TextBlock { Style = caption };
+        var verifyText = new TextBlock { TextWrapping = TextWrapping.Wrap, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Visibility = Visibility.Collapsed };
         var hint = new TextBlock { Text = _s.Get("Progress.Hint"), TextWrapping = TextWrapping.Wrap, Opacity = 0.7 };
+
+        // Failure panel: failed step, reason, details without secrets, log location and the next actions
+        var failTitle = new TextBlock { Text = _s.Get("Progress.Failure.Title"), Style = bodyStrong };
+        var failStep = new TextBlock { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
+        var failReason = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        var failDetail = new TextBlock { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, Opacity = 0.85 };
+        var failLog = new TextBlock { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
+        var failNext = new StackPanel { Spacing = 2 };
+        failNext.Children.Add(new TextBlock { Text = _s.Get("Progress.Failure.NextHeading"), Style = bodyStrong, Margin = new Thickness(0, 6, 0, 0) });
+        foreach (string nextText in new[] { _s.Get("Progress.Failure.Next.Log"), _s.Get("Progress.Failure.Next.Diag"), _s.Get("Progress.Failure.Next.Retry"), _s.Get("Progress.Failure.Next.Docs") })
+            failNext.Children.Add(new TextBlock { Text = "• " + nextText, TextWrapping = TextWrapping.Wrap });
+        var failPanel = new StackPanel { Spacing = 4, Visibility = Visibility.Collapsed };
+        failPanel.Children.Add(failTitle);
+        failPanel.Children.Add(failStep);
+        failPanel.Children.Add(failReason);
+        failPanel.Children.Add(failDetail);
+        failPanel.Children.Add(failLog);
+        failPanel.Children.Add(failNext);
+
+        // Bounded log pane: the newest MaxLogLines lines, scrolled to the end
+        var logLines = new System.Collections.ObjectModel.ObservableCollection<string>();
+        var logHeading = new TextBlock { Text = _s.Get("Progress.Log.Heading"), Style = caption };
+        var logView = new ListView
+        {
+            ItemsSource = logLines,
+            SelectionMode = ListViewSelectionMode.None,
+            MaxHeight = 220,
+            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
+            FontSize = 12,
+        };
+
+        string logPath = "", reportPath = "", outputPath = "", diagPath = "", docsPath = "";
+        Button MakeButton(string text, string help, Action onClick, bool visible = true)
+        {
+            var b = new Button { Content = text, IsEnabled = false, Visibility = visible ? Visibility.Visible : Visibility.Collapsed };
+            b.Click += (_, _) => onClick();
+            AutomationProperties.SetName(b, text);
+            AutomationProperties.SetHelpText(b, help);
+            return b;
+        }
+        var openLog = MakeButton(_s.Get("Progress.Button.OpenLog"), _s.Get("Progress.Help.OpenLog"), () => TryOpenPath(logPath));
+        var openReport = MakeButton(_s.Get("Progress.Button.OpenReport"), _s.Get("Progress.Help.OpenReport"), () => TryOpenPath(reportPath));
+        var openOutput = MakeButton(_s.Get("Progress.Button.OpenOutput"), _s.Get("Progress.Help.OpenOutput"), () => TryOpenPath(FolderOf(outputPath)));
+        var openDiag = MakeButton(_s.Get("Progress.Button.OpenDiag"), _s.Get("Progress.Help.OpenDiag"), () => TryOpenPath(diagPath));
+        var openDocs = MakeButton(_s.Get("Progress.Button.OpenDocs"), _s.Get("Progress.Help.OpenDocs"), () => TryOpenPath(docsPath), visible: false);
         var closeButton = new Button { Content = _s.Get("Progress.Close"), IsEnabled = false, HorizontalAlignment = HorizontalAlignment.Right };
         closeButton.Click += (_, _) => Close();
+        var buttons = new VariableSizedWrapGrid { Orientation = Orientation.Horizontal, ItemWidth = double.NaN, ItemHeight = double.NaN };
+        foreach (var b in new[] { openLog, openReport, openOutput, openDiag, openDocs })
+        {
+            b.Margin = new Thickness(0, 0, 8, 8);
+            buttons.Children.Add(b);
+        }
 
-        var panel = new StackPanel { Spacing = 12, Padding = new Thickness(32, 64, 32, 32), MaxWidth = 900, VerticalAlignment = VerticalAlignment.Center };
+        // Accessibility: every control has a name and a help text; text that changes mirrors its text in the name
+        AutomationProperties.SetName(title, _s.Get("Progress.Title"));
+        AutomationProperties.SetHelpText(stateText, _s.Get("Progress.Help.State"));
+        AutomationProperties.SetLiveSetting(stateText, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+        AutomationProperties.SetHelpText(stepText, _s.Get("Progress.Help.Bar"));
+        AutomationProperties.SetName(bar, _s.Get("Progress.Help.Bar"));
+        AutomationProperties.SetHelpText(bar, _s.Get("Progress.Help.Bar"));
+        AutomationProperties.SetName(barText, _s.Get("Progress.Help.Bar"));
+        AutomationProperties.SetHelpText(barText, _s.Get("Progress.Help.Bar"));
+        AutomationProperties.SetHelpText(timeText, _s.Get("Progress.Help.Time"));
+        AutomationProperties.SetHelpText(verifyText, _s.Get("Progress.Help.State"));
+        AutomationProperties.SetLiveSetting(verifyText, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+        AutomationProperties.SetName(failPanel, _s.Get("Progress.Failure.Title"));
+        AutomationProperties.SetHelpText(failPanel, _s.Get("Progress.Failure.NextHeading"));
+        AutomationProperties.SetName(logView, _s.Get("Progress.Log.Heading"));
+        AutomationProperties.SetHelpText(logView, _s.Get("Progress.Help.Log"));
+        AutomationProperties.SetName(logHeading, _s.Get("Progress.Log.Heading"));
+        AutomationProperties.SetName(hint, _s.Get("Progress.Hint"));
+        AutomationProperties.SetName(closeButton, _s.Get("Progress.Close"));
+        AutomationProperties.SetHelpText(closeButton, _s.Get("Progress.Help.Close"));
+        foreach (var failText in new[] { failStep, failReason, failDetail, failLog })
+            AutomationProperties.SetHelpText(failText, _s.Get("Progress.Failure.Title"));
+        var dynamicTexts = new[] { stateText, stepText, barText, timeText, verifyText, failStep, failReason, failDetail, failLog };
+
+        var panel = new StackPanel { Spacing = 10, Padding = new Thickness(32, 48, 32, 32), MaxWidth = 900, VerticalAlignment = VerticalAlignment.Center };
         panel.Children.Add(title);
-        panel.Children.Add(phaseText);
+        panel.Children.Add(stateText);
+        panel.Children.Add(stepText);
         panel.Children.Add(bar);
+        panel.Children.Add(barText);
         panel.Children.Add(timeText);
+        panel.Children.Add(verifyText);
+        panel.Children.Add(failPanel);
+        panel.Children.Add(logHeading);
+        panel.Children.Add(logView);
         panel.Children.Add(hint);
+        panel.Children.Add(buttons);
         panel.Children.Add(closeButton);
-        Content = new Grid { Children = { panel } };
+        Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
 
         var started = DateTime.UtcNow;
         double estimate = 0;
-        int phase = 0, total = 0;
-        bool finished = false;
+        double phase = 0, total = 0;
+        string phaseName = "", state = "Preparing", verification = "";
+        string failedPhase = "", failKey = "", failSummary = "";
+        bool finished = false, doneSuccess = false, failed = false;
+
+        string StateLabel(string st) => st switch
+        {
+            "Preparing" => _s.Get("Progress.State.Preparing"),
+            "Running" => _s.Get("Progress.State.Running"),
+            "Verifying" => _s.Get("Progress.State.Verifying"),
+            "Succeeded" => _s.Get("Progress.State.Succeeded"),
+            "NotVerified" => _s.Get("Progress.State.NotVerified"),
+            "Failed" => _s.Get("Progress.State.Failed"),
+            "Cancelling" => _s.Get("Progress.State.Cancelling"),
+            "Cancelled" => _s.Get("Progress.State.Cancelled"),
+            _ => st,
+        };
+        // Only the known message keys are translated; anything else falls back to the generic text
+        string FailureMessage(string key) => key switch
+        {
+            "Progress.Failure.Source" => _s.Get("Progress.Failure.Source"),
+            "Progress.Failure.Verification" => _s.Get("Progress.Failure.Verification"),
+            "Progress.Failure.Iso" => _s.Get("Progress.Failure.Iso"),
+            _ => _s.Get("Progress.Failure.Generic"),
+        };
+        static double Num(JsonObject m, string key)
+        {
+            try { return m[key] == null ? double.NaN : (double)m[key]!; }
+            catch (Exception ex) when (ex is FormatException || ex is InvalidOperationException) { return double.NaN; }
+        }
+        static string PathOf(JsonObject m, string key, string current)
+        {
+            string v = InitData.Str(m[key]);
+            return v.Length > 0 ? v : current;
+        }
+
+        void UpdateButtons()
+        {
+            openLog.IsEnabled = PathExists(logPath);
+            openReport.IsEnabled = PathExists(reportPath);
+            openOutput.IsEnabled = FolderOf(outputPath) != null;
+            openDiag.IsEnabled = PathExists(diagPath);
+            openDocs.IsEnabled = PathExists(docsPath);
+            openDocs.Visibility = failed ? Visibility.Visible : Visibility.Collapsed;
+        }
         void UpdateTime()
         {
             var elapsed = DateTime.UtcNow - started;
@@ -1604,45 +1866,136 @@ public sealed partial class MainWindow : Window
                 text += "  " + _s.Format("Progress.Remaining", Math.Max(1, (int)Math.Ceiling(remain / 60)));
             }
             timeText.Text = text;
+            UpdateButtons();
         }
+        void Refresh()
+        {
+            stateText.Text = _s.Format("Progress.State", StateLabel(state));
+            if (total > 0)
+            {
+                // A step count: the bar is determinate only because it really is phase-based, and it says so
+                double done = finished && doneSuccess && state == "Succeeded" ? total : Math.Max(0, Math.Min(phase - 1, total));
+                bar.IsIndeterminate = false;
+                bar.Maximum = total;
+                bar.Value = done;
+                barText.Text = _s.Format("Progress.StepsBar", (int)done, (int)total);
+                stepText.Text = _s.Format("Progress.Step", (int)phase, (int)total) + (phaseName.Length > 0 ? " - " + phaseName : "");
+            }
+            else
+            {
+                bar.IsIndeterminate = !finished;
+                barText.Text = "";
+            }
+            if (finished && !failed)
+            {
+                // Success is shown only for a verified result; unknown or not-run verification is "not verified"
+                bool verified = verification == "Verified" && state == "Succeeded";
+                verifyText.Text = verified ? _s.Get("Progress.Done") + " " + _s.Get("Progress.Verified") : _s.Get("Progress.NotVerified");
+                verifyText.Visibility = Visibility.Visible;
+            }
+            if (failed)
+            {
+                failPanel.Visibility = Visibility.Visible;
+                failStep.Text = _s.Format("Progress.Failure.Step", failedPhase.Length > 0 ? failedPhase : _s.Get("Progress.State.Preparing"));
+                failReason.Text = _s.Format("Progress.Failure.Reason", FailureMessage(failKey));
+                failDetail.Text = failSummary.Length > 0 ? _s.Format("Progress.Failure.Detail", failSummary) : "";
+                failDetail.Visibility = failSummary.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+                failLog.Text = logPath.Length > 0 ? _s.Format("Progress.Failure.LogAt", logPath) : "";
+                failLog.Visibility = logPath.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            }
+            foreach (var t in dynamicTexts) AutomationProperties.SetName(t, t.Text);
+            UpdateTime();
+        }
+        void AddLogLine(string text)
+        {
+            if (text.Length > 500) text = text[..500] + "...";
+            logLines.Add(text);
+            while (logLines.Count > MaxLogLines) logLines.RemoveAt(0);
+            logView.ScrollIntoView(logLines[^1]);
+        }
+
         var timer = new Microsoft.UI.Xaml.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         timer.Tick += (_, _) => UpdateTime();
         timer.Start();
-        UpdateTime();
+        Refresh();
 
-        await _bridge.ListenProgressAsync(m =>
+        void Handle(JsonObject m)
         {
             switch ((string?)m["event"])
             {
+                case "state":
+                    state = InitData.Str(m["State"]);
+                    break;
                 case "phase":
-                    phase = (int?)m["Phase"] ?? phase;
-                    total = (int?)m["Total"] ?? total;
-                    if (m["EstimatedSeconds"] != null) estimate = (double)m["EstimatedSeconds"]!;
-                    if (total > 0)
-                    {
-                        bar.IsIndeterminate = false;
-                        bar.Value = Math.Max(0, phase - 1) * 100.0 / total;
-                    }
-                    phaseText.Text = $"[{phase}/{total}] {InitData.Str(m["Name"])}";
+                    double p = Num(m, "Phase"), t = Num(m, "Total");
+                    if (!double.IsNaN(p)) phase = p;
+                    if (!double.IsNaN(t)) total = t;
+                    if (m["EstimatedSeconds"] != null && !double.IsNaN(Num(m, "EstimatedSeconds"))) estimate = Num(m, "EstimatedSeconds");
+                    phaseName = InitData.Str(m["Name"]);
+                    break;
+                case "log":
+                    AddLogLine(InitData.Str(m["Text"]));
+                    break;
+                case "failure":
+                    failed = true;
+                    state = "Failed";
+                    failedPhase = InitData.Str(m["FailedPhase"]);
+                    failKey = InitData.Str(m["MessageKey"]);
+                    failSummary = InitData.Str(m["Summary"]);
+                    logPath = PathOf(m, "LogPath", logPath);
+                    reportPath = PathOf(m, "ReportPath", reportPath);
+                    outputPath = PathOf(m, "OutputPath", outputPath);
+                    diagPath = PathOf(m, "DiagnosticsPath", diagPath);
+                    docsPath = PathOf(m, "DocsPath", docsPath);
                     break;
                 case "done":
                     finished = true;
-                    bar.IsIndeterminate = false;
-                    bool ok = InitData.Bool(m["Success"]);
-                    bar.Value = ok ? 100 : bar.Value;
-                    phaseText.Text = ok ? _s.Get("Progress.Done") : _s.Format("Progress.Failed", InitData.Str(m["Message"]));
+                    doneSuccess = InitData.Bool(m["Success"]);
+                    verification = InitData.Str(m["Verification"]);
+                    logPath = PathOf(m, "LogPath", logPath);
+                    reportPath = PathOf(m, "ReportPath", reportPath);
+                    outputPath = PathOf(m, "OutputPath", outputPath);
+                    diagPath = PathOf(m, "DiagnosticsPath", diagPath);
+                    docsPath = PathOf(m, "DocsPath", docsPath);
+                    string st = InitData.Str(m["State"]);
+                    // An old builder sends no State or Verification: that is never shown as a verified success
+                    if (st.Length == 0) st = doneSuccess ? "NotVerified" : "Failed";
+                    if (st == "Succeeded" && verification != "Verified") st = "NotVerified";
+                    state = st;
+                    if (!doneSuccess && !failed)
+                    {
+                        failed = true;
+                        failKey = "";
+                        if (diagPath.Length == 0) diagPath = InitData.Str(m["Message"]);
+                    }
                     break;
             }
-            UpdateTime();
+            Refresh();
+        }
+
+        // Events are read asynchronously and the continuation runs on the UI thread; the guard keeps every
+        // control update on the dispatcher even if that ever changes, and nothing here waits on the builder.
+        await _bridge.ListenProgressAsync(m =>
+        {
+            if (DispatcherQueue.HasThreadAccess) Handle(m);
+            else DispatcherQueue.TryEnqueue(() => Handle(m));
         });
 
-        // The builder closed the pipe: finished (or ended abnormally)
+        // The builder closed the pipe: finished (or ended abnormally). A build that never sent
+        // 'done' is a failure, not a success: show the generic failure panel and keep the log reachable.
         timer.Stop();
         if (!finished)
         {
+            failed = true;
+            state = "Failed";
+            failedPhase = phaseName;
+            failKey = "";
+            Refresh();
             bar.IsIndeterminate = false;
-            phaseText.Text = _s.Get("Progress.Ended");
+            stateText.Text = _s.Get("Progress.Ended") + " " + _s.Get("Progress.Failure.Generic");
+            AutomationProperties.SetName(stateText, stateText.Text);
         }
+        UpdateButtons();
         closeButton.IsEnabled = true;
     }
 
