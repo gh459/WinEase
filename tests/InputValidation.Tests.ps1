@@ -237,6 +237,9 @@ Describe "C2 - the command line runs the same check (WinEasebuilder.ps1 -DryRun)
 
     function Invoke-C2Builder {
         param([string[]]$Arguments)
+        # The builder reports a refused input on stderr. Under -ErrorAction Stop (the CI step sets it) Windows PowerShell 5.1 turns
+        # each stderr line of a native command with 2>&1 into a terminating error, so the refusal text never reaches the test.
+        $ErrorActionPreference = 'Continue'
         $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script:BuilderPath -DryRun -NonInteractive @Arguments 2>&1 | Out-String
         return @{ Exit = $LASTEXITCODE; Text = $out }
     }
