@@ -1,4 +1,4 @@
-﻿# WinEaseGuiCore.ps1 - UI-independent GUI logic shared by the windows and the Migration Assistant
+# WinEaseGuiCore.ps1 - UI-independent GUI logic shared by the windows and the Migration Assistant
 # Dot-sourced by gui\WinEaseGui.ps1 (WinForms window), gui\WinEaseWinUiHost.ps1 (WinUI 3 host) and
 # tools\migrator\WinEase-Migrator.ps1. Function and variable definitions only; it loads no
 # WinForms/Drawing assembly, so the WinUI 3 host can use it without the classic window.
