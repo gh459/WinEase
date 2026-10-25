@@ -146,18 +146,85 @@ Describe "Test-IsSafePathToDelete" {
             Test-IsSafePathToDelete -Path '..\..\..\..\..\..\..\..' | Should Be $false
         } finally { Pop-Location }
     }
-    It "refuses a path under a junction that points into a protected directory (lexical check does not resolve links)" -Pending {
-        # FINDING F1-1: Test-IsSafePathToDelete uses GetFullPath only. <tmp>\junc -> %windir% makes
-        # <tmp>\junc\System32 evaluate as safe. Callers (Test-CanSafelyDeleteDirectory) must not rely
-        # on this predicate alone for link safety. Pending: documents desired behavior, current code returns $true.
+    It "refuses a path under a junction that points into a protected directory (real-path judgement)" {
+        # FINDING F1-1 (fixed): the check used to be lexical only, so <tmp>\junc\System32 with
+        # junc -> %windir% evaluated as safe. The real path (reparse targets resolved on the
+        # existing ancestors) is now judged with the same protected-root rules; a real path that
+        # cannot be determined refuses (fail closed).
         $root = New-FsTestRoot
         Initialize-FsTestState
         try {
             $junc = Join-Path $root 'junc'
             New-FsTestJunction -Link $junc -Target ([System.Environment]::GetFolderPath('Windows'))
             Test-IsSafePathToDelete -Path (Join-Path $junc 'System32') | Should Be $false
+            Test-IsSafePathToDelete -Path (Join-Path $junc 'System32\would-be') | Should Be $false
         } finally { Remove-FsTestRoot -Root $root }
     }
+    It "allows a path under a junction that points into an ordinary (unprotected) directory" {
+        $root = New-FsTestRoot
+        Initialize-FsTestState
+        try {
+            $realDir = Join-Path $root 'real'
+            [System.IO.Directory]::CreateDirectory($realDir) | Out-Null
+            $junc = Join-Path $root 'junc'
+            New-FsTestJunction -Link $junc -Target $realDir
+            Test-IsSafePathToDelete -Path (Join-Path $junc 'work') | Should Be $true
+        } finally { Remove-FsTestRoot -Root $root }
+    }
+}
+
+Describe "ConvertTo-WinEaseRealPath" {
+    BeforeEach { Initialize-FsTestState }
+
+    It "returns null for empty, relative, drive-relative and root-relative paths" {
+        ConvertTo-WinEaseRealPath -Path '' | Should Be $null
+        ConvertTo-WinEaseRealPath -Path ' ' | Should Be $null
+        ConvertTo-WinEaseRealPath -Path 'relative\dir' | Should Be $null
+        ConvertTo-WinEaseRealPath -Path 'C:foo' | Should Be $null
+        ConvertTo-WinEaseRealPath -Path '\foo' | Should Be $null
+    }
+    It "returns the lexical path when nothing on it exists" {
+        $t = New-FsTestRoot
+        try {
+            $p = Join-Path $t 'no\such\dir'
+            ConvertTo-WinEaseRealPath -Path $p | Should Be ([System.IO.Path]::GetFullPath($p))
+        } finally { Remove-FsTestRoot -Root $t }
+    }
+    It "returns the long form for an existing plain directory" {
+        $t = New-FsTestRoot
+        try {
+            $p = Join-Path $t 'real'
+            [System.IO.Directory]::CreateDirectory($p) | Out-Null
+            ConvertTo-WinEaseRealPath -Path $p | Should Be ([System.IO.Path]::GetFullPath($p))
+            ConvertTo-WinEaseRealPath -Path ($p + '\') | Should Be ([System.IO.Path]::GetFullPath($p))
+        } finally { Remove-FsTestRoot -Root $t }
+    }
+    It "resolves a junction and paths below it to the junction target" {
+        $t = New-FsTestRoot
+        try {
+            $realDir = Join-Path $t 'real'
+            [System.IO.Directory]::CreateDirectory((Join-Path $realDir 'sub')) | Out-Null
+            $junc = Join-Path $t 'junc'
+            New-FsTestJunction -Link $junc -Target $realDir
+            ConvertTo-WinEaseRealPath -Path $junc | Should Be ([System.IO.Path]::GetFullPath($realDir))
+            ConvertTo-WinEaseRealPath -Path (Join-Path $junc 'sub') | Should Be ([System.IO.Path]::GetFullPath((Join-Path $realDir 'sub')))
+            # non-existing tail below the junction is appended to the resolved target
+            ConvertTo-WinEaseRealPath -Path (Join-Path $junc 'sub\new') | Should Be ([System.IO.Path]::GetFullPath((Join-Path $realDir 'sub\new')))
+        } finally { Remove-FsTestRoot -Root $t }
+    }
+    It "appends non-existing segments lexically after an existing prefix" {
+        $t = New-FsTestRoot
+        try {
+            $p = Join-Path $t 'real'
+            [System.IO.Directory]::CreateDirectory($p) | Out-Null
+            $expected = [System.IO.Path]::GetFullPath((Join-Path $p 'a\b\c'))
+            ConvertTo-WinEaseRealPath -Path (Join-Path $p 'a\b\c') | Should Be $expected
+        } finally { Remove-FsTestRoot -Root $t }
+    }
+    # 8.3 expansion of real short names cannot be tested here: creating 8.3 names is disabled
+    # on this volume (and on the CI runner). The call sites are tested with a mocked
+    # ConvertTo-WinEaseRealPath instead (the F1-2 tests in the Test-WinEaseMountPathInWorkspace
+    # and Assert-WinEaseDirectorySafety Describes); behaviour with REAL 8.3 names is unverified.
 }
 
 Describe "Test-WinEasePathHasReparsePoint" {
@@ -261,6 +328,25 @@ Describe "Test-WinEaseMountPathInWorkspace" {
         $script:BaseWorkDir = $null
         $script:MountAllocationRoot = $null
         Test-WinEaseMountPathInWorkspace -Path (Join-Path $script:Alloc 'mount_1') | Should Be $false
+    }
+    It "accepts a path spelled with a simulated 8.3 short name (mocked expansion; real 8.3 names unverified)" {
+        # FINDING F1-2 (fixed via mock): the expansion lives in ConvertTo-WinEaseRealPath, mocked
+        # here because 8.3 name creation is disabled on this volume - behaviour with REAL 8.3
+        # names is NOT verified. The mock substitutes BASELO~1 with the long directory name,
+        # like an actual 8.3 expansion would.
+        $script:BaseWorkDir = Join-Path $script:T 'base\baselongname'
+        [System.IO.Directory]::CreateDirectory($script:BaseWorkDir) | Out-Null
+        $script:MountAllocationRoot = Join-Path $script:BaseWorkDir 'mounts'
+        [System.IO.Directory]::CreateDirectory($script:MountAllocationRoot) | Out-Null
+        $shortSpelled = Join-Path $script:T 'base\BASELO~1\mounts\mount_s'
+        Mock ConvertTo-WinEaseRealPath {
+            param($Path)
+            if ($Path -and ($Path -like '*BASELO~1*')) { return ($Path -replace 'BASELO~1', 'baselongname') }
+            return $Path
+        }
+        Test-WinEaseMountPathInWorkspace -Path $shortSpelled | Should Be $true
+        # a spelling the mock cannot map to a workspace directory stays outside (fail closed)
+        Test-WinEaseMountPathInWorkspace -Path (Join-Path $script:T 'base\OTHERX~1\mount_s') | Should Be $false
     }
 }
 
@@ -369,18 +455,59 @@ Describe "Assert-WinEaseDirectorySafety" {
         $script:DismMountDir = $null
         { Assert-WinEaseDirectorySafety -Path (Join-Path $script:MountAllocationRoot 'other') -Operation 'RemoveOfflineContent' } | Should Throw 'DismMountDir'
     }
-    It "refuses the drive-relative target 'C:' regardless of the current directory" -Pending {
-        # FINDING F1-5: 'C:' is drive-RELATIVE; GetFullPath resolves it to the current directory of drive C,
-        # so the root/drive guard (checked after normalization) never sees a drive root, and the target
-        # becomes whatever the cwd is. Desired: refuse. Pending: current behavior depends on the cwd.
+    It "refuses the drive-relative targets 'C:' and 'C:foo' regardless of the current directory" {
+        # FINDING F1-5 (fixed): 'C:' is drive-RELATIVE; GetFullPath resolved it to the current
+        # directory of drive C, so the root/drive guard (checked after normalization) never saw
+        # a drive root. Drive-relative and root-relative forms are now refused before
+        # normalization via the absolute-local-path check.
         [System.IO.Directory]::CreateDirectory($script:BaseWorkDir) | Out-Null
         Push-Location -LiteralPath $script:BaseWorkDir
-        try { { Assert-WinEaseDirectorySafety -Path ([System.IO.Path]::GetPathRoot($script:BaseWorkDir).Substring(0, 2)) -Operation 'Reset' } | Should Throw 'root or drive' } finally { Pop-Location }
+        try {
+            $drive = [System.IO.Path]::GetPathRoot($script:BaseWorkDir).Substring(0, 2)
+            foreach ($p in @($drive, ($drive + 'foo'))) {
+                { Assert-WinEaseDirectorySafety -Path $p -Operation 'Reset' } | Should Throw 'root or drive'
+            }
+        } finally { Pop-Location }
     }
-    It "refuses Reset when a mount is reported under a different 8.3 short spelling of the same directory" -Pending {
-        # FINDING F1-2 (code review only; not reproduced because 8.3 names are disabled on the dev machine):
-        # the overlap check compares GetFullPath() strings, which do not expand 8.3 names, so a long-name
-        # target and a short-name mount record would not match. Pending: needs a volume with 8.3 names enabled.
+    It "matches a mount record spelled with a simulated 8.3 short name (mocked expansion; real 8.3 names unverified)" {
+        # FINDING F1-2 (fixed via mock): the overlap comparison used raw GetFullPath strings, so a
+        # short-spelled mount record did not match the long-form target. Both sides are now
+        # resolved through ConvertTo-WinEaseRealPath, which is mocked here because 8.3 name
+        # creation is disabled on this volume - behaviour with REAL 8.3 names is NOT verified.
+        [System.IO.Directory]::CreateDirectory($script:BaseWorkDir) | Out-Null
+        $longMount = Join-Path $script:MountAllocationRoot 'mount_shortname'
+        [System.IO.Directory]::CreateDirectory($longMount) | Out-Null
+        $shortSpelled = Join-Path $script:MountAllocationRoot 'MOUNT_~1'
+        Mock ConvertTo-WinEaseRealPath {
+            param($Path)
+            if ($Path -and ($Path -like '*MOUNT_~1*')) { return ($Path -replace 'MOUNT_~1', 'mount_shortname') }
+            return $Path
+        }
+        $global:FsMockPath = $shortSpelled
+        Mock Get-WinEaseMountedImages { @([PSCustomObject]@{ Path = $global:FsMockPath; ImagePath = 'C:\x.wim'; ImageIndex = 1; MountStatus = 'Ok' }) }
+        { Assert-WinEaseDirectorySafety -Path $longMount -Operation 'Reset' } | Should Throw 'active DISM mount'
+    }
+    It "fails closed when the mount record path cannot be resolved to a real long path" {
+        [System.IO.Directory]::CreateDirectory($script:BaseWorkDir) | Out-Null
+        $target = Join-Path $script:MountAllocationRoot 'mount_x'
+        [System.IO.Directory]::CreateDirectory($target) | Out-Null
+        $global:FsMockPath = Join-Path $script:MountAllocationRoot 'NOTABS~1'
+        Mock ConvertTo-WinEaseRealPath {
+            param($Path)
+            if ($Path -and ($Path -like '*NOTABS~1*')) { return $null }
+            return $Path
+        }
+        Mock Get-WinEaseMountedImages { @([PSCustomObject]@{ Path = $global:FsMockPath; ImagePath = 'C:\x.wim'; ImageIndex = 1; MountStatus = 'Ok' }) }
+        { Assert-WinEaseDirectorySafety -Path $target -Operation 'Reset' } | Should Throw 'Cannot verify'
+    }
+    It "refuses Reset of a target whose parent is a junction pointing outside the workspace (F1-4)" {
+        # FINDING F1-4: the reparse-point ancestry walk (Assert level) must see the junction
+        # between the workspace root and the target, not only the target itself.
+        $outside = Join-Path $script:T 'outside'
+        [System.IO.Directory]::CreateDirectory($outside) | Out-Null
+        $junc = Join-Path $script:MountAllocationRoot 'junc'
+        New-FsTestJunction -Link $junc -Target $outside
+        { Assert-WinEaseDirectorySafety -Path (Join-Path $junc 'sub') -Operation 'Reset' } | Should Throw 'reparse point'
     }
 }
 
@@ -497,11 +624,11 @@ Describe "Reset-DirectoryWithRobocopy" -Tags 'slow' {
         }
     }
 
-    It "refuses to reset a directory reached through a junction PARENT (content outside the allowed root must survive)" -Pending {
-        # FINDING F1-4: Assert-WinEaseDirectorySafety and Reset-DirectoryWithRobocopy only check that the
-        # reset root itself is not a reparse point. <alloc>\junc -> <outside>; resetting <alloc>\junc\sub
-        # passes the guard (the leaf is a normal directory) and empties <outside>\sub. Desired: refuse.
-        # Pending: documents desired behavior; current code empties the external directory.
+    It "refuses to reset a directory reached through a junction PARENT (content outside the allowed root must survive)" {
+        # FINDING F1-4 (fixed): the reparse-point check used to inspect only the reset root itself.
+        # It now walks every existing ancestor between the workspace root and the target (target
+        # included), so resetting <alloc>\junc\sub with junc -> <outside> is refused before any
+        # destructive step runs.
         $junc = Join-Path $script:MountAllocationRoot 'junc'
         New-FsTestJunction -Link $junc -Target $script:Outside
         { Reset-DirectoryWithRobocopy -Path (Join-Path $junc 'sub') -Retries 1 } | Should Throw
