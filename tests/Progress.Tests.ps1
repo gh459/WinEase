@@ -271,37 +271,38 @@ Describe "D2 - cancel request, phase boundary and result" {
         [void](New-Item -ItemType Directory -Path $dir -Force)
         $reqFile = Get-WinEaseCancelRequestPath -DiagnosticsDir $dir
         $script:WinEaseCancelRequestPath = $reqFile
-        $global:D2Ran = @(); $global:D2Entered = @(); $global:D2Registered = 0; $global:D2Cleanup = 0
-        Set-Content -LiteralPath (Join-Path $dir '01-a.ps1') -Value '$global:D2Ran += 1'
-        Set-Content -LiteralPath (Join-Path $dir '02-b.ps1') -Value ('$global:D2Ran += 2; Set-Content -LiteralPath "' + $reqFile + '" -Value x')
-        Set-Content -LiteralPath (Join-Path $dir '03-c.ps1') -Value '$global:D2Ran += 3'
+        $d2ran = New-Object System.Collections.ArrayList; $d2entered = New-Object System.Collections.ArrayList; $d2registered = New-Object System.Collections.ArrayList; $d2cleanup = New-Object System.Collections.ArrayList
+        Set-Content -LiteralPath (Join-Path $dir '01-a.ps1') -Value '[void]$d2ran.Add(1)'
+        Set-Content -LiteralPath (Join-Path $dir '02-b.ps1') -Value ('[void]$d2ran.Add(2); Set-Content -LiteralPath "' + $reqFile + '" -Value x')
+        Set-Content -LiteralPath (Join-Path $dir '03-c.ps1') -Value '[void]$d2ran.Add(3)'
         $buildPhases = @(
             @{ Number = 1; Name = 'A'; File = '01-a.ps1' }
             @{ Number = 2; Name = 'B'; File = '02-b.ps1' }
             @{ Number = 3; Name = 'C'; File = '03-c.ps1' }
         )
         $phasesDir = $dir
-        function Enter-Phase { param($n, $name) $global:D2Entered += $n }
-        function Register-WinEaseBuildFailure { param($ErrorRecord) $global:D2Registered++ }
+        $null = $buildPhases, $phasesDir
+        function Enter-Phase { param($n, $name) $null = $name; [void]$d2entered.Add($n) }
+        function Register-WinEaseBuildFailure { param($ErrorRecord) [void]$d2registered.Add("$($ErrorRecord.Exception.Message)") }
 
         $cancelled = $false
         try {
             try { . $loopBlock }
             catch { if (Test-WinEaseCancelException -ErrorRecord $_) { $cancelled = $true } else { throw } }
-        } finally { $global:D2Cleanup++ }
+        } finally { [void]$d2cleanup.Add(1) }
 
         $cancelled | Should Be $true
-        ($global:D2Ran -join ',') | Should Be '1,2'            # phase 2 ran to its end, phase 3 never started
-        ($global:D2Entered -join ',') | Should Be '1,2'
-        $global:D2Registered | Should Be 0                      # a cancel is not a failure
-        $global:D2Cleanup | Should Be 1
+        ($d2ran -join ',') | Should Be '1,2'            # phase 2 ran to its end, phase 3 never started
+        ($d2entered -join ',') | Should Be '1,2'
+        $d2registered.Count | Should Be 0                      # a cancel is not a failure
+        $d2cleanup.Count | Should Be 1
 
         # No request: every phase runs
         Remove-Item -LiteralPath $reqFile -Force
-        Set-Content -LiteralPath (Join-Path $dir '02-b.ps1') -Value '$global:D2Ran += 2'
-        $global:D2Ran = @()
+        Set-Content -LiteralPath (Join-Path $dir '02-b.ps1') -Value '[void]$d2ran.Add(2)'
+        $d2ran.Clear()
         . $loopBlock
-        ($global:D2Ran -join ',') | Should Be '1,2,3'
+        ($d2ran -join ',') | Should Be '1,2,3'
     }
 
     It "another OperationCanceledException from a phase is an ordinary failure, not a cancel" {

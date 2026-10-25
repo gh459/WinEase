@@ -1782,6 +1782,7 @@ public sealed partial class MainWindow : Window
         var cancelBuildButton = new Button { Content = _s.Get("Progress.Button.Cancel"), IsEnabled = false, HorizontalAlignment = HorizontalAlignment.Left };
         var cancelText = new TextBlock { Text = _s.Get("Progress.Cancel.Unsupported"), TextWrapping = TextWrapping.Wrap, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
         ToolTipService.SetToolTip(cancelBuildButton, _s.Get("Progress.Cancel.Unsupported"));
+        cancelBuildButton.Click += (_, _) => _requestCancel?.Invoke();
 
         // Failure panel: failed step, reason, details without secrets, log location and the next actions
         var failTitle = new TextBlock { Text = _s.Get("Progress.Failure.Title"), Style = bodyStrong };
@@ -1962,7 +1963,6 @@ public sealed partial class MainWindow : Window
             return null;
         }
         _requestCancel = DoCancel;
-        cancelBuildButton.Click += (_, _) => DoCancel();
         void UpdateTime()
         {
             var elapsed = DateTime.UtcNow - started;
