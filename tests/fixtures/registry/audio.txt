@@ -291,11 +291,11 @@ ADD	HKLM\zDEFAULT\Control Panel\Desktop	MenuShowDelay	REG_SZ	0
 ADD	HKLM\zSOFTWARE\Classes\*\shell\runas	(default)	REG_SZ	Take Ownership
 ADD	HKLM\zSOFTWARE\Classes\*\shell\runas	HasLUAShield	REG_SZ	""
 ADD	HKLM\zSOFTWARE\Classes\*\shell\runas	NoWorkingDirectory	REG_SZ	""
-ADD	HKLM\zSOFTWARE\Classes\*\shell\runas\command	(default)	REG_SZ	powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f $p; icacls.exe $p /grant administrators:F }" "%1"
+ADD	HKLM\zSOFTWARE\Classes\*\shell\runas\command	(default)	REG_SZ	powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f "$p"; icacls.exe "$p" /grant administrators:F }" "%1"
 ADD	HKLM\zSOFTWARE\Classes\Directory\shell\runas	(default)	REG_SZ	Take Ownership
 ADD	HKLM\zSOFTWARE\Classes\Directory\shell\runas	HasLUAShield	REG_SZ	""
 ADD	HKLM\zSOFTWARE\Classes\Directory\shell\runas	NoWorkingDirectory	REG_SZ	""
-ADD	HKLM\zSOFTWARE\Classes\Directory\shell\runas\command	(default)	REG_SZ	powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f $p /r /d y; icacls.exe $p /grant administrators:F /t }" "%1"
+ADD	HKLM\zSOFTWARE\Classes\Directory\shell\runas\command	(default)	REG_SZ	powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f "$p" /r /d y; icacls.exe "$p" /grant administrators:F /t }" "%1"
 ADD	HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas	(default)	REG_SZ	Open Command Prompt as Administrator
 ADD	HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas	HasLUAShield	REG_SZ	""
 ADD	HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas\command	(default)	REG_SZ	PowerShell -windowstyle hidden -Command \"Start-Process cmd.exe -ArgumentList '/s,/k,pushd,\"%V\"' -Verb RunAs\"

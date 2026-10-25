@@ -369,11 +369,11 @@ if (Test-TweakEnabled 'TakeOwnershipContextMenu' $true) {
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\*\shell\runas" -DefaultValue -Type REG_SZ -Data "Take Ownership"
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\*\shell\runas" -Name "HasLUAShield" -Type REG_SZ -Data '""'
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\*\shell\runas" -Name "NoWorkingDirectory" -Type REG_SZ -Data '""'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\*\shell\runas\command" -DefaultValue -Type REG_SZ -Data 'powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f $p; icacls.exe $p /grant administrators:F }" "%1"'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\*\shell\runas\command" -DefaultValue -Type REG_SZ -Data 'powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f "$p"; icacls.exe "$p" /grant administrators:F }" "%1"'
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\shell\runas" -DefaultValue -Type REG_SZ -Data "Take Ownership"
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\shell\runas" -Name "HasLUAShield" -Type REG_SZ -Data '""'
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\shell\runas" -Name "NoWorkingDirectory" -Type REG_SZ -Data '""'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\shell\runas\command" -DefaultValue -Type REG_SZ -Data 'powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f $p /r /d y; icacls.exe $p /grant administrators:F /t }" "%1"'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\shell\runas\command" -DefaultValue -Type REG_SZ -Data 'powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f "$p" /r /d y; icacls.exe "$p" /grant administrators:F /t }" "%1"'
 }
 
 if (Test-TweakEnabled 'CmdAsAdminContextMenu' $true) {
