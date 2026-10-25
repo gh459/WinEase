@@ -370,7 +370,10 @@ param(
     [switch]$OptimizeVisualEffects,
     [switch]$CleanContextMenus,
 
-    # 26. Granular Tweak Settings Object / Hashtable
+    # 26. Template acquisition safety (P1-01)
+    [switch]$AllowTemplateDownload,
+
+    # 27. Granular Tweak Settings Object / Hashtable
     [object]$TweakSettings
 )
 
@@ -475,6 +478,9 @@ Write-Host ""
 
 # 1. Early Simulation & Diagnostic Mode Resolution (P0-02)
 $isDryRunMode = $DryRun -or ($PSBoundParameters.ContainsKey('WhatIf') -and $PSBoundParameters['WhatIf'])
+
+# P1-01: Template download opt-in gate for Phase 11 (11-unattend.ps1)
+$script:AllowTemplateDownload = [bool]$AllowTemplateDownload
 
 # E1: Physical debloat opt-in gate for Phase 9.5 (09-physical-debloat.ps1). Set from the CLI
 # switch here; an interactive GUI session can additionally grant it via a consent dialog.
@@ -2609,6 +2615,35 @@ try {
         if ($script:DiagnosticData) {
             $script:DiagnosticData['Cancelled'] = $true
             $script:DiagnosticData['CancelCleanupProblems'] = @($script:CancelCleanupProblems)
+        }
+    }
+
+    # 5c. P1-02: Check for cleanup residues and generate explicit remediation commands on failure or cancel
+    if ($script:BuildCancelled -or -not $script:BuildSucceeded) {
+        $lingeringMountListAll = @()
+        foreach ($mPath in $allTargetMounts) {
+            try {
+                foreach ($am in @(Get-WinEaseMountedImages)) {
+                    $ap = if ($am.Path) { try { ConvertTo-WinEaseNormalizedPath -Path $am.Path } catch { $null } } else { $null }
+                    if ($ap -and ($ap -ieq $mPath)) { $lingeringMountListAll += $mPath }
+                }
+            } catch { $lingeringMountListAll += "$mPath (status could not be read)" }
+        }
+        $stillLoadedHivesAll = @(@('zCOMPONENTS', 'zDEFAULT', 'zNTUSER', 'zSOFTWARE', 'zSYSTEM') | Where-Object { Test-Path -LiteralPath "Registry::HKEY_LOCAL_MACHINE\$_" })
+        if (Get-Command -Name Get-WinEaseCleanupRemediation -ErrorAction SilentlyContinue) {
+            $cleanupRemediations = Get-WinEaseCleanupRemediation -LoadedHives $stillLoadedHivesAll -LingeringMounts $lingeringMountListAll `
+                -VhdxStillAttached ([bool]$script:IsVhdxMounted) -VhdxPath "$vhdxPath" `
+                -IsoStillMounted ([bool]$script:MountedIso) -IsoPath $(if ($script:MountedIso) { "$($script:MountedIso.ImagePath)" } else { '' })
+            if ($script:DiagnosticData) {
+                $script:DiagnosticData['CleanupRemediations'] = @($cleanupRemediations)
+            }
+            if ($cleanupRemediations.Count -gt 0) {
+                Write-Host ""
+                Write-Host "Leftover resources detected. Remediation commands:" -ForegroundColor Yellow
+                foreach ($rem in $cleanupRemediations) {
+                    Write-Host "  - [$($rem.Type)] $($rem.Target): $($rem.Remediation)" -ForegroundColor White
+                }
+            }
         }
     }
 

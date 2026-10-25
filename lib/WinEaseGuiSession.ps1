@@ -398,6 +398,51 @@ function Get-WinEaseCancelCleanupProblems {
     return ,@($problems.ToArray())
 }
 
+# Remediation instructions for leftover build artifacts (P1-02)
+function Get-WinEaseCleanupRemediation {
+    param(
+        [string[]]$LoadedHives = @(),
+        [string[]]$LingeringMounts = @(),
+        [bool]$VhdxStillAttached = $false,
+        [string]$VhdxPath = '',
+        [bool]$IsoStillMounted = $false,
+        [string]$IsoPath = ''
+    )
+    $remediations = [System.Collections.Generic.List[PSCustomObject]]::new()
+    foreach ($h in @($LoadedHives | Where-Object { $_ })) {
+        $remediations.Add([PSCustomObject]@{
+            Type        = 'RegistryHive'
+            Target      = $h
+            Remediation = "reg.exe unload `"HKLM\$h`""
+        })
+    }
+    foreach ($m in @($LingeringMounts | Where-Object { $_ })) {
+        $mClean = ($m -split '\s+\(')[0]
+        $remediations.Add([PSCustomObject]@{
+            Type        = 'DismMount'
+            Target      = $mClean
+            Remediation = "dism.exe /Unmount-Image /MountDir:`"$mClean`" /Discard"
+        })
+    }
+    if ($VhdxStillAttached) {
+        $vTarget = if ($VhdxPath) { $VhdxPath } else { '(attached VHDX scratch)' }
+        $remediations.Add([PSCustomObject]@{
+            Type        = 'VhdxDisk'
+            Target      = $vTarget
+            Remediation = "echo select vdisk file=`"$vTarget`"`r`ndetach vdisk | diskpart.exe"
+        })
+    }
+    if ($IsoStillMounted) {
+        $iTarget = if ($IsoPath) { $IsoPath } else { '(mounted source ISO)' }
+        $remediations.Add([PSCustomObject]@{
+            Type        = 'SourceIso'
+            Target      = $iTarget
+            Remediation = "Dismount-DiskImage -ImagePath `"$iTarget`""
+        })
+    }
+    return ,@($remediations.ToArray())
+}
+
 # Convenience senders: no-ops when no window is open (Send-WinEaseGuiProgress is defined by the WinUI host).
 function Send-WinEaseGuiState {
     param([Parameter(Mandatory)][string]$State)

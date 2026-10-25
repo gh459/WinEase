@@ -33,7 +33,9 @@ function Invoke-WinEaseResumeIsoBuild {
     }
     # 1.5. Validate workspace integrity via Test-WinEaseResumeIntegrity
     Write-Host "Verifying workspace structural integrity for resume..." -ForegroundColor Cyan
-    $integrity = Test-WinEaseResumeIntegrity -WorkspaceDir $resumeWorkDir -IsIsoOnly
+    $expectedArch = if (Get-Variable -Name 'architecture' -Scope Script -ErrorAction SilentlyContinue) { "$script:architecture" } else { '' }
+    $expectedEd = if (Get-Variable -Name 'targetEditionName' -Scope Script -ErrorAction SilentlyContinue) { "$script:targetEditionName" } else { '' }
+    $integrity = Test-WinEaseResumeIntegrity -WorkspaceDir $resumeWorkDir -IsIsoOnly -ExpectedArchitecture $expectedArch -ExpectedEdition $expectedEd
     if (-not $integrity.IsValid) {
         throw "ResumeIsoOnly integrity check failed:`n - " + ($integrity.Errors -join "`n - ")
     }

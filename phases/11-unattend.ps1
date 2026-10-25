@@ -44,27 +44,103 @@ if (-not (Get-Command -Name Test-TweakEnabled -ErrorAction SilentlyContinue)) {
 }
 
 
-# 11. Copy autounattend.xml with Architecture Support & Self-healing (Resolves Issues #3, #18, #21, #2, #8, #20)
+# Helper function to validate autounattend.xml XML structure and required elements
+if (-not (Get-Command -Name Test-WinEaseUnattendXmlStructure -ErrorAction SilentlyContinue)) {
+    function Test-WinEaseUnattendXmlStructure {
+        param(
+            [Parameter(Mandatory=$true)]
+            [xml]$XmlDocument
+        )
+        if (-not $XmlDocument.DocumentElement -or $XmlDocument.DocumentElement.LocalName -ne 'unattend') {
+            throw "Validation failed: autounattend.xml root element must be <unattend>."
+        }
+        $ns = $XmlDocument.DocumentElement.NamespaceURI
+        $nsMgr = New-Object System.Xml.XmlNamespaceManager($XmlDocument.NameTable)
+        if ($ns) { $nsMgr.AddNamespace("u", $ns) }
+
+        $settingsNodes = if ($ns) { $XmlDocument.SelectNodes("//u:settings", $nsMgr) } else { $XmlDocument.SelectNodes("//settings") }
+        if (-not $settingsNodes -or $settingsNodes.Count -eq 0) {
+            throw "Validation failed: autounattend.xml contains no <settings> passes."
+        }
+
+        $compNodes = if ($ns) { $XmlDocument.SelectNodes("//u:component", $nsMgr) } else { $XmlDocument.SelectNodes("//component") }
+        if (-not $compNodes -or $compNodes.Count -eq 0) {
+            throw "Validation failed: autounattend.xml contains no <component> nodes."
+        }
+
+        $fileNodes = $XmlDocument.SelectNodes("//*[local-name()='Extensions']/*[local-name()='File']")
+        if (-not $fileNodes -or $fileNodes.Count -eq 0) {
+            throw "Validation failed: autounattend.xml contains no embedded script <File> nodes in Extensions block."
+        }
+        $filePaths = @($fileNodes | ForEach-Object { $_.GetAttribute('path') })
+        $requiredScripts = @('Winhancements.ps1', 'Specialize.ps1', 'UserOnce.ps1', 'DefaultUser.ps1', 'FirstLogon.ps1')
+        foreach ($req in $requiredScripts) {
+            $found = $false
+            foreach ($fp in $filePaths) {
+                if ($fp -like "*\$req" -or $fp -like "*/$req") { $found = $true; break }
+            }
+            if (-not $found) {
+                throw "Validation failed: autounattend.xml is missing required embedded script: $req"
+            }
+        }
+        return $true
+    }
+}
+
+# 11. Copy autounattend.xml with Architecture Support & Verified Source Handling (P1-01)
 Write-Host "Configuring autounattend.xml for target architecture ($architecture)..." -ForegroundColor Green
 $unattendSource = Join-Path -Path $scriptDir -ChildPath "autounattend.xml"
 
-# Self-healing if autounattend.xml was not downloaded with script
+$allowDownload = $false
+if ($PSBoundParameters -and $PSBoundParameters.ContainsKey('AllowTemplateDownload')) {
+    $allowDownload = [bool]$PSBoundParameters['AllowTemplateDownload']
+} elseif ($null -ne (Get-Variable -Name 'AllowTemplateDownload' -Scope Script -ErrorAction SilentlyContinue)) {
+    $allowDownload = [bool]$script:AllowTemplateDownload
+} elseif (Test-Path -Path 'variable:AllowTemplateDownload') {
+    $allowDownload = [bool]$AllowTemplateDownload
+}
+
+# Pinned commit and expected SHA-256 for autounattend.xml reproducibility
+$pinnedCommit = "177f3631d3b172611e9c0d38a3d9a6e310b7467c"
+$expectedSha256 = "C21459A21AB1FB10D4B01F52D829529CBAAE2B212A88FFB533A6FC85B94A6397"
+
+# Verified template acquisition if autounattend.xml was not found locally
 if (-not (Test-Path -LiteralPath $unattendSource)) {
-    Write-Host "autounattend.xml not found locally. Attempting to download from repository..." -ForegroundColor Yellow
-    $unattendUrl = "https://raw.githubusercontent.com/gh459/WinEase/main/autounattend.xml"
+    if (-not $allowDownload) {
+        throw "Required template autounattend.xml not found locally at '$unattendSource'. To allow pinned network download with SHA-256 and structure verification, re-run with -AllowTemplateDownload."
+    }
+
+    Write-Host "autounattend.xml not found locally. -AllowTemplateDownload specified: attempting pinned download from repository..." -ForegroundColor Yellow
+    $unattendUrl = "https://raw.githubusercontent.com/gh459/WinEase/$pinnedCommit/autounattend.xml"
+    $tempDownload = Join-Path -Path $env:TEMP -ChildPath "WinEase_autounattend_$([System.IO.Path]::GetRandomFileName()).xml"
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -Uri $unattendUrl -OutFile $unattendSource -UseBasicParsing -ErrorAction Stop
-        Write-Host "Successfully downloaded autounattend.xml." -ForegroundColor Green
-    } catch {
-        $fallbackUrl = "https://raw.githubusercontent.com/ntdevlabs/nano11/main/autounattend.xml"
-        try {
-            Invoke-WebRequest -Uri $fallbackUrl -OutFile $unattendSource -UseBasicParsing -ErrorAction Stop
-            Write-Host "Successfully downloaded autounattend.xml from upstream." -ForegroundColor Green
-        } catch {
-            Write-Host "Warning: Could not retrieve autounattend.xml automatically." -ForegroundColor Yellow
+        Invoke-WebRequest -Uri $unattendUrl -OutFile $tempDownload -UseBasicParsing -ErrorAction Stop
+
+        # 1. SHA-256 Hash verification
+        $downloadHash = (Get-FileHash -LiteralPath $tempDownload -Algorithm SHA256).Hash
+        if ($downloadHash -ne $expectedSha256) {
+            throw "SHA-256 hash mismatch for downloaded autounattend.xml (got $downloadHash, expected $expectedSha256)."
         }
+
+        # 2. Structural & embedded scripts verification
+        $downloadContent = [System.IO.File]::ReadAllText($tempDownload, [System.Text.Encoding]::UTF8)
+        $testDoc = [xml]$downloadContent
+        [void](Test-WinEaseUnattendXmlStructure -XmlDocument $testDoc)
+
+        # 3. Verified: promote to local template location
+        Move-Item -LiteralPath $tempDownload -Destination $unattendSource -Force
+        Write-Host "Successfully downloaded and verified autounattend.xml (SHA-256: $downloadHash)." -ForegroundColor Green
+    } catch {
+        if (Test-Path -LiteralPath $tempDownload) {
+            Remove-Item -LiteralPath $tempDownload -Force -ErrorAction SilentlyContinue
+        }
+        throw "Failed to safely retrieve and verify autounattend.xml: $($_.Exception.Message)"
     }
+}
+
+if (-not (Test-Path -LiteralPath $unattendSource)) {
+    throw "Required template autounattend.xml is missing. Cannot proceed with Phase 11."
 }
 
 if (Test-Path -LiteralPath $unattendSource) {

@@ -2309,6 +2309,16 @@ Describe "B1 - preset vs custom state (Get-WinEaseGuiPresetState and the window 
         foreach ($k in $bv.Components.Keys) { $flat[$k] = $bv.Components[$k] }
         $expected = if ($bv.PayloadFormat -eq 'ESD') { 0 } else { 1 }
         @((Get-WinEaseGuiPresetState -BasePresetKey 'balanced' -Current $flat).DifferingKeys).Count | Should Be $expected
+
+        # UseVHDX is compared: toggling it makes the state Modified (P1-05)
+        $curVhdx = Get-B1Current 'balanced'
+        $curVhdx['UseVHDX'] = $true  # balanced base carries UseVHDX = $false
+        $stVhdx = Get-WinEaseGuiPresetState -BasePresetKey 'balanced' -Current $curVhdx
+        $stVhdx.IsModified | Should Be $true
+        @($stVhdx.DifferingKeys) -contains 'UseVHDX' | Should Be $true
+        # and back
+        $curVhdx['UseVHDX'] = $false
+        (Get-WinEaseGuiPresetState -BasePresetKey 'balanced' -Current $curVhdx).IsModified | Should Be $false
     }
 
     It "settings the preset does not name are not compared; parts the caller does not report are not compared" {

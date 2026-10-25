@@ -1,10 +1,10 @@
-# nano11 settings - the single source of truth for every tweak and component setting.
+# WinEase settings - the single source of truth for every tweak and component setting.
 #
-# nano11builder.ps1 derives from this file:
+# WinEasebuilder.ps1 derives from this file:
 #   Tweaks     -> $script:AllTweakDefs (GUI tabs 2-5, -TweakSettings, profile keys),
 #                 $script:TweakKeyAliases (Aliases), $script:TweakVariableMap (Variable)
-#   Components -> $script:Nano11ProfileKeys (profile key order), Apply-ProfileSettings,
-#                 Get-Nano11CurrentConfig, the CLI switch block, the GUI "Services & Apps"
+#   Components -> $script:WinEaseProfileKeys (profile key order), Apply-ProfileSettings,
+#                 Get-WinEaseCurrentConfig, the CLI switch block, the GUI "Services & Apps"
 #                 tab (Gui) and the GUI session hand-off
 #   CliBindings -> the paired Keep/Remove-style CLI switches (see the section comment)
 #
@@ -15,12 +15,12 @@
 #   Description  GUI checkbox text and tooltip
 #   Aliases      legacy key names still accepted from profiles and -TweakSettings (optional)
 #   Variable     phases read this script variable instead of Test-TweakEnabled '<Key>' (optional)
-#   CliSwitch    $true when nano11builder.ps1 has a [switch] parameter named <Key> (optional)
+#   CliSwitch    $true when WinEasebuilder.ps1 has a [switch] parameter named <Key> (optional)
 #
 # Component fields:
 #   Key          setting name used in profiles, presets and the GUI
 #   Variable     script variable the build reads (empty for Type = Special)
-#   Type         Bool | String | Special (Special keys are handled by hand in nano11builder.ps1)
+#   Type         Bool | String | Special (Special keys are handled by hand in WinEasebuilder.ps1)
 #   Default      value Apply-ProfileSettings uses when a profile omits the key
 #                (omitted = Apply-ProfileSettings leaves the variable alone)
 #   CliSwitch    $true when a [switch] parameter named <Key> sets the variable directly (optional)
@@ -33,14 +33,14 @@
         @{ Key = 'BypassNetworkRequirement'; Category = 'Security'; Default = $true; Description = 'Bypass mandatory OOBE internet connection requirement'; CliSwitch = $true }
         @{ Key = 'BypassNRO'; Category = 'Security'; Default = $true; Description = 'Enable BypassNRO registry policy for local account creation'; CliSwitch = $true }
         @{ Key = 'BypassActivationRestrictions'; Category = 'Security'; Default = $true; Description = 'Unlock personalization, suppress watermarks and licensing nags'; Variable = 'bypassActivationRestrictions'; CliSwitch = $true }
-        @{ Key = 'DisableUAC'; Category = 'Security'; Default = $false; Description = 'Disable User Account Control (UAC) consent prompts'; CliSwitch = $true }
+        @{ Key = 'DisableUAC'; Category = 'Security'; Default = $false; Description = 'Disable User Account Control (UAC) prompts (runs all processes with full admin rights; high security risk)'; CliSwitch = $true }
         @{ Key = 'DisableSmartScreen'; Category = 'Security'; Default = $false; Description = 'Disable SmartScreen filter for apps and downloads'; CliSwitch = $true }
         @{ Key = 'DisableVBS'; Category = 'Security'; Default = $false; Description = 'Disable Virtualization-Based Security (VBS / Core Isolation)'; CliSwitch = $true }
         @{ Key = 'DisableWPBT'; Category = 'Security'; Default = $false; Description = 'Disable Windows Platform Binary Table (OEM backdoor prevention)'; CliSwitch = $true }
         @{ Key = 'HardenSystemSecurity'; Category = 'Security'; Default = $false; Description = 'Harden LSA, NTLM, anonymous access, AutoRun and PowerShell logging (Harden-Windows-Security subset)'; CliSwitch = $true }
         @{ Key = 'PreventDeviceEncryption'; Category = 'Security'; Default = $false; Description = 'Prevent automatic BitLocker device encryption on OOBE'; CliSwitch = $true }
-        @{ Key = 'DisableCPUMitigations'; Category = 'Security'; Default = $false; Description = 'Disable Spectre/Meltdown CPU mitigations for raw throughput'; Variable = 'disableCPUMitigations'; CliSwitch = $true }
-        @{ Key = 'ConfigureWinlogon'; Category = 'Security'; Default = $false; Description = 'Allow blank-password local logon and pre-configure the Winlogon auto-logon account'; CliSwitch = $true }
+        @{ Key = 'DisableCPUMitigations'; Category = 'Security'; Default = $false; Description = 'Disable Spectre/Meltdown CPU speculative execution mitigations (exposes system to side channels; performance gain is unverified)'; Variable = 'disableCPUMitigations'; CliSwitch = $true }
+        @{ Key = 'ConfigureWinlogon'; Category = 'Security'; Default = $false; Description = 'Allow blank-password local logon and pre-configure auto-logon (ISO keeps unattended password in autounattend.xml)'; CliSwitch = $true }
         @{ Key = 'EnableScripts'; Category = 'Security'; Default = $true; Description = 'Relax the PowerShell script execution policy to RemoteSigned'; CliSwitch = $true }
 
         # Privacy
@@ -242,7 +242,7 @@
         @{ Key = 'RemoveScreenSketchApp'; Variable = 'removeScreenSketchApp'; Type = 'Bool'; Default = $true; CliSwitch = $true; Gui = @{ Order = 26; Text = 'Remove Screen Sketch / Snipping Tool app'; Description = 'Remove the Microsoft.ScreenSketch AppX package (works independently of the bloatware list)'; Default = $true } }
     )
 
-    # CLI switch pairs nano11builder.ps1 applies in this order. For each entry the first
+    # CLI switch pairs WinEasebuilder.ps1 applies in this order. For each entry the first
     # Switches group with a bound switch wins: the variable gets that switch's value
     # (negated when Invert), the Also variables are overridden, and Tag is recorded as
     # set from the command line. Names may include parameter aliases for readability;

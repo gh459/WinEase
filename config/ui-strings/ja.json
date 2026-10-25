@@ -1,4 +1,4 @@
-﻿{
+{
   "Button.Browse": "参照...",
   "Button.BrowseDrive": "ドライブを参照...",
   "Button.BrowseFolder": "フォルダーを参照...",
@@ -379,7 +379,7 @@
   "Tweak.BypassNRO.Description": "ローカルアカウントを作成できるよう、BypassNRO のレジストリポリシーを有効にします",
   "Tweak.CleanContextMenus.Description": "右クリックメニューの「共有」「アクセスを許可する」「デバイスにキャスト」を非表示にします",
   "Tweak.CmdAsAdminContextMenu.Description": "右クリックメニューに「管理者としてコマンド プロンプトを開く」を追加します",
-  "Tweak.ConfigureWinlogon.Description": "空パスワードでのローカルログオンを許可し、自動ログオン用アカウントを事前に設定します",
+  "Tweak.ConfigureWinlogon.Description": "空パスワードでのローカルログオンを許可し、自動ログオン用アカウントを事前に設定します（ISO内のautounattend.xmlには平文パスワードが残ります。初回ログオンで削除されるのはインストール先ローカルの複製のみです）",
   "Tweak.DisableAccessibilityTools.Description": "オンスクリーンキーボード、ナレーター、拡大鏡の起動をブロックします (IFEO)",
   "Tweak.DisableActivityHistory.Description": "ユーザーアクティビティの追跡と同期を無効にします",
   "Tweak.DisableAdvertisingId.Description": "ターゲット広告用の広告 ID を無効にします",
@@ -390,7 +390,7 @@
   "Tweak.DisableComputerRestore.Description": "セットアップ後にシステムドライブのシステム復元を無効にします",
   "Tweak.DisableCopilot.Description": "Windows Copilot (AI) の統合を無効にします",
   "Tweak.DisableCortana.Description": "デジタルアシスタント Cortana を無効にします",
-  "Tweak.DisableCPUMitigations.Description": "処理速度を優先して、Spectre / Meltdown の CPU 緩和策を無効にします",
+  "Tweak.DisableCPUMitigations.Description": "Spectre / Meltdown の CPU 投機的実行緩和策を無効にします（サイドチャネル攻撃の脆弱性に晒されます。性能向上は未保証であり環境依存です）",
   "Tweak.DisableCrossDevice.Description": "Cross Device Experience Host (スマートフォン連携) を無効にします",
   "Tweak.DisableDefenderSecurityCenter.Description": "セキュリティセンターのシステムトレイ通知を非表示にします",
   "Tweak.DisableDeliveryOptimization.Description": "Delivery Optimization の P2P アップロードを無効にします",
@@ -411,7 +411,7 @@
   "Tweak.DisableSuperfetch.Description": "NVMe/SSD 向けに SysMain (Superfetch) サービスを無効にします",
   "Tweak.DisableTelemetryAndDiagnostics.Description": "テレメトリを 0 (Security) に設定し、DiagTrack サービスを停止します",
   "Tweak.DisableTimeline.Description": "Windows のタイムライン機能を無効にします",
-  "Tweak.DisableUAC.Description": "ユーザーアカウント制御 (UAC) の確認プロンプトを無効にします",
+  "Tweak.DisableUAC.Description": "ユーザーアカウント制御 (UAC) の確認プロンプトを無効にします（全プロセスが完全な管理者権限で動作し重大なセキュリティリスクとなります。性能向上を保証するものではありません）",
   "Tweak.DisableUSBSuspend.Description": "USB のセレクティブサスペンド (選択的な電源停止) を無効にします",
   "Tweak.DisableVBS.Description": "仮想化ベースのセキュリティ (VBS / コア分離) を無効にします",
   "Tweak.DisableWebSearch.Description": "スタートメニューでの Bing Web 検索を無効にします",

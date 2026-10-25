@@ -25,11 +25,12 @@ Compared, in this order, and only when the window reports the part:
 - **Tweaks.** Every tweak is compared. A tweak the preset does not name means its schema default (that is
   what applying the preset sets).
 - **Payload format** (WIM / ESD / SWM).
+- **UseVHDX** (fast VHDX scratch disk toggle).
 - **Advanced Debloat items** (Standard and Experimental, as sets) and the **engine** of every selected item
   (the registered default filled in, so an explicit default equals "no entry"). The engine of an item that is
   not selected is ignored, because the build drops it.
 
-Not compared (not preset data): source, work folder, index, drivers, user and computer name, `UseVHDX` (applying a preset does set it, but a hand change there does not make the window modified), Dry Run,
+Not compared (not preset data): source, work folder, index, drivers, user and computer name, Dry Run,
 migration and custom-script settings.
 
 ## Settings the preset does not define

@@ -768,8 +768,8 @@ public sealed partial class MainWindow : Window
         payload.Children.Add(radios);
         var vhdx = new CheckBox { Content = _s.Get("Media.Check.VHDX"), IsChecked = _useVhdx };
         AutomationProperties.SetName(vhdx, _s.Get("Media.Check.VHDX"));
-        vhdx.Checked += (_, _) => _useVhdx = true;
-        vhdx.Unchecked += (_, _) => _useVhdx = false;
+        vhdx.Checked += (_, _) => { _useVhdx = true; OnSettingChanged(); };
+        vhdx.Unchecked += (_, _) => { _useVhdx = false; OnSettingChanged(); };
         _vhdxCheck = vhdx;
         payload.Children.Add(vhdx);
         PageHost.Children.Add(Card(payload));
@@ -983,6 +983,7 @@ public sealed partial class MainWindow : Window
             ["Components"] = components,
             ["TweakSettings"] = tweaks,
             ["PayloadFormat"] = _payload,
+            ["UseVHDX"] = _useVhdx,
             ["AdvancedDebloatStandard"] = ToArray(_init.DebloatStandard.Where(_debloatStd.Contains)),
             ["AdvancedDebloatExperimental"] = ToArray(_init.DebloatExperimental.Where(_debloatExp.Contains).Distinct()),
             ["DebloatEngineSelection"] = DebloatEngineSelectionObject(),

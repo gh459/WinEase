@@ -92,13 +92,13 @@ The goal of WinEase is to automate the creation of a streamlined Windows 11 imag
   - **Build Integrity & Safe Cleanup**: Validates output ISO existence and size (> 1 MB), captures `oscdimg` exit codes, displays SHA256 checksums, and preserves the working directory upon error for troubleshooting.
 - **⚡ Advanced Performance, Latency & Registry Optimization**:
   - **Integrated eclean & AtlasOS Optimization & Disk Cleaner**:
-    - *Fault Tolerant Heap (FTH) Disabled*: Eliminates crash mitigation throttling and CPU overhead for games and intensive applications.
+    - *Fault Tolerant Heap (FTH) Disabled*: Disables FTH, intended to eliminate crash mitigation throttling and CPU overhead for games and intensive applications (not benchmarked by this project).
     - *Program Compatibility Assistant (PCA) Suppressed*: Disables PCA engine, inventory, and telemetry policies (`DisablePCA`, `DisableEngine`, `DisableInventory`, `AITEnable`).
     - *UCPD & Background Driver Pruning*: Disables Universal Consent Privacy Driver (`UCPD`) to prevent Windows from reverting user customizations, along with `GpuEnergyDrv`, `diagnosticshub`, `OneSyncSvc`, and `TrkWks`.
     - *Delivery Optimization (P2P Upload) Disabled*: Sets `DODownloadMode = 0` to prevent Windows from seeding update files to external peers.
     - *Fast Startup (Hiberboot) Disabled*: Eliminates hibernated state disk wear, dual-boot partition locks, and ensures clean cold-boot kernel state.
     - *Automated Disk Cleanup (Cleaner Logic)*: Integrates `VolumeCaches` preset configuration with `cleanmgr.exe /sagerun:64` and automatic purge of user/system Temp, CrashDumps, Minidumps, and Windows Event logs.
-  - **Integrated optimizerDuck & sparkle**: Applies system latency and responsiveness optimizations, including `Win32PrioritySeparation` quantum boost (0x26), Multimedia Class Scheduler Service (MMCSS) gaming priority & GPU scheduling, and network throttling index disabling.
+  - **Integrated optimizerDuck & sparkle**: Configures responsiveness settings intended to prioritize foreground tasks and gaming (not measured by this project), including `Win32PrioritySeparation` quantum tuning (0x26), Multimedia Class Scheduler Service (MMCSS) scheduling, and network throttling index disabling.
   - **Integrated Revo Registry Cleaner Tuner**: Full integration of all 6 optimization categories:
     - *Explorer*: Auto-complete URL/path suggestions, show drive letters first, disable info tips.
     - *Desktop & Start Menu*: Reduce hover delay times, enable classic Alt+Tab, kill hung apps faster (`WaitToKillAppTimeout = 2000`).
@@ -150,7 +150,7 @@ The goal of WinEase is to automate the creation of a streamlined Windows 11 imag
 - **⚡ Unattended Setup Fixed & Streamlined (Issues #3, #21)**:
   - Injects `autounattend.xml` directly into the **ISO root directory**, ensuring Windows Setup detects unattended configuration out-of-the-box.
   - Removed dummy product key to eliminate "Invalid Product Key" stops during setup.
-  - **Self-Healing**: If `autounattend.xml` is missing locally, it will automatically download it from GitHub.
+  - **Template Verification & Pinning (P1-01)**: Verifies local `autounattend.xml` structure and required embedded setup scripts. If missing locally, the build fails safely by default. Explicit download requires `-AllowTemplateDownload`, which retrieves a fixed, commit-pinned template with mandatory SHA-256 and XML schema verification.
 - **🗜️ Ultra-Compact Footprint via CompactOS (Issue #22)**:
   - Automatically enables `compact.exe /CompactOS:always` on first logon, intended to reduce installed disk space; the resulting size depends on the source image and options and is not guaranteed.
 - **🎨 Shell & Icon Refresh (Issue #19)**:
@@ -158,7 +158,7 @@ The goal of WinEase is to automate the creation of a streamlined Windows 11 imag
 - **📱 ARM64 & Apple Silicon Support (Issues #2, #8, #20)**:
   - Dynamic architecture detection (`amd64` / `arm64`).
   - Automatically adjusts `autounattend.xml` processor architecture and generates UEFI-compliant boot records for ARM64 (Parallels Desktop, VMware Fusion, UTM).
-  - ARM64 builds use UEFI-only bootdata (no BIOS boot sector) and the ADK arm64 `oscdimg.exe` candidate paths. Requires an ARM64 Windows 11 source ISO; verification on real ARM64 hardware/VM is recommended.
+  - ARM64 builds use UEFI-only bootdata (no BIOS boot sector) and the ADK arm64 `oscdimg.exe` candidate paths. Requires an ARM64 Windows 11 source ISO; note that physical/VM installation verification on ARM64 remains **unverified** (see [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md)).
 - **🚀 Canary 28020+ & Legacy Hardware Setup Bypass (Issue #29)**:
   - Automatically neutralizes `sources\appraiserres.dll` alongside offline registry `LabConfig` tweaks, allowing installation on unsupported CPUs, TPM 1.2/none, and older motherboards (e.g. Intel 6-series H67, 2nd-7th gen Core).
 - **📄 MIT License Included (Issue #14)**:
