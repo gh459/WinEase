@@ -2604,8 +2604,8 @@ try {
             } catch { $lingeringMountList += "$mPath (status could not be read)" }
         }
         $stillLoadedHives = @(@('zCOMPONENTS', 'zDEFAULT', 'zNTUSER', 'zSOFTWARE', 'zSYSTEM') | Where-Object { Test-Path -LiteralPath "Registry::HKEY_LOCAL_MACHINE\$_" })
-        $script:CancelCleanupProblems = @(Get-WinEaseCancelCleanupProblems -LoadedHives $stillLoadedHives -LingeringMounts $lingeringMountList `
-            -VhdxStillAttached ([bool]$script:IsVhdxMounted) -IsoStillMounted ([bool]$script:MountedIso))
+        $script:CancelCleanupProblems = Get-WinEaseCancelCleanupProblems -LoadedHives $stillLoadedHives -LingeringMounts $lingeringMountList `
+            -VhdxStillAttached ([bool]$script:IsVhdxMounted) -IsoStillMounted ([bool]$script:MountedIso)
         if ($script:DiagnosticData) {
             $script:DiagnosticData['Cancelled'] = $true
             $script:DiagnosticData['CancelCleanupProblems'] = @($script:CancelCleanupProblems)
