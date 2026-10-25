@@ -170,3 +170,160 @@ function Invoke-WinEaseGuiSession {
 
     return [bool](Apply-WinEaseGuiResult -GuiResult $guiResult)
 }
+
+# ==============================================================================
+# Build progress protocol (builder -> window). Documented in docs/PROGRESS_PROTOCOL.md.
+# Pure functions: they build the event data; gui\WinEaseWinUiHost.ps1 (Send-WinEaseGuiProgress)
+# writes the JSON line. Every event is { op = 'progress'; event = <name>; ... }.
+# ==============================================================================
+
+# 'Cancelling' is reserved for the cancel feature (D2); 'NotVerified' is the final state of a build that
+# produced output but whose final verification did not complete (never shown as success).
+$script:WinEaseProgressStates = @('Preparing', 'Running', 'Verifying', 'Succeeded', 'NotVerified', 'Failed', 'Cancelling', 'Cancelled')
+
+# Masks secrets in text that is sent to the window or written to a log: the known secret values (the
+# configured account password is always included), unattend password elements, key=value / -Param value
+# forms for password, token, secret and API key, and Bearer tokens.
+function Hide-WinEaseSecretText {
+    param(
+        [AllowNull()][AllowEmptyString()][string]$Text,
+        [string[]]$Secrets = @()
+    )
+    if ([string]::IsNullOrEmpty($Text)) { return '' }
+    $mask = '********'
+    $known = @($Secrets)
+    if ($script:UserPassword) { $known += [string]$script:UserPassword }
+    $out = $Text
+    # Longest first, so a secret that contains another one is masked completely. Do not use
+    # Sort-Object -Unique here: it de-duplicates by the sort property (Length), which would drop
+    # a different secret of the same length. Replacing the same value twice is harmless.
+    foreach ($s in @($known | Where-Object { -not [string]::IsNullOrEmpty($_) } | Sort-Object -Property Length -Descending)) {
+        $out = $out.Replace($s, $mask)
+    }
+    $out = [regex]::Replace($out, '(?i)(Bearer\s+)[A-Za-z0-9._~+/=-]+', "`${1}$mask")
+    $out = [regex]::Replace($out, '(?is)(<(?:Administrator)?Password\b[^>]*>\s*<Value>)[^<]*(</Value>)', "`${1}$mask`${2}")
+    $out = [regex]::Replace($out, '(?i)(-(?:UserPassword|Password|Token|ApiKey|Secret)(?:\s+|:))("[^"]*"|''[^'']*''|\S+)', "`${1}$mask")
+    $out = [regex]::Replace($out, '(?i)((?<![A-Za-z0-9])(?:user_?password|administrator_?password|password|passwd|pwd|token|secret|api[_-]?key|authorization)\b["'']?\s*[=:]\s*)("[^"]*"|''[^'']*''|[^\s,;]+)', "`${1}$mask")
+    return $out
+}
+
+# One short line without secrets for an exception: "TypeName: first line of the message".
+function Get-WinEaseExceptionSummary {
+    param(
+        [Parameter(Mandatory)]$ErrorRecord,
+        [string[]]$Secrets = @(),
+        [int]$MaxLength = 300
+    )
+    $ex = if ($ErrorRecord -is [System.Management.Automation.ErrorRecord]) { $ErrorRecord.Exception } else { $ErrorRecord }
+    $typeName = if ($ex) { $ex.GetType().Name } else { 'Error' }
+    $msg = if ($ex -and $ex.Message) { [string]$ex.Message } else { "$ErrorRecord" }
+    $first = (($msg -split "[\r\n]+") | Where-Object { $_.Trim() } | Select-Object -First 1)
+    $text = Hide-WinEaseSecretText -Text "${typeName}: $first" -Secrets $Secrets
+    if ($text.Length -gt $MaxLength) { $text = $text.Substring(0, $MaxLength) + '...' }
+    return $text
+}
+
+# 'Verified' only when both the deep apply of install.wim (phase 15) and the ISO payload hash check
+# (phase 18) really passed. Anything else - false, null, not run - is 'NotVerified'.
+function Get-WinEaseVerificationState {
+    param($PayloadVerified = $null, $IsoVerified = $null)
+    if (($PayloadVerified -is [bool]) -and $PayloadVerified -and ($IsoVerified -is [bool]) -and $IsoVerified) { return 'Verified' }
+    return 'NotVerified'
+}
+
+# A finished build is 'Succeeded' only when it is verified; otherwise it is 'NotVerified' (or 'Failed').
+function Get-WinEaseFinalProgressState {
+    param([bool]$BuildSucceeded, [string]$Verification = 'NotVerified', [bool]$Cancelled = $false)
+    if ($Cancelled) { return 'Cancelled' }
+    if (-not $BuildSucceeded) { return 'Failed' }
+    if ($Verification -eq 'Verified') { return 'Succeeded' }
+    return 'NotVerified'
+}
+
+# Short message key (a ui-strings key) for the failed phase; the window shows the translated text.
+function Get-WinEaseFailureMessageKey {
+    param([double]$PhaseNumber = 0)
+    if ($PhaseNumber -ge 1 -and $PhaseNumber -le 3) { return 'Progress.Failure.Source' }
+    if ($PhaseNumber -eq 15) { return 'Progress.Failure.Verification' }
+    if ($PhaseNumber -ge 16 -and $PhaseNumber -le 18) { return 'Progress.Failure.Iso' }
+    return 'Progress.Failure.Generic'
+}
+
+function New-WinEaseProgressStateData {
+    param([Parameter(Mandatory)][string]$State)
+    if ($script:WinEaseProgressStates -notcontains $State) { throw "Unknown progress state '$State'" }
+    return @{ State = $State }
+}
+
+# Data of the 'failure' event. Nothing here carries a secret: the summary is masked, the paths are paths.
+function New-WinEaseFailureData {
+    param(
+        [Parameter(Mandatory)]$ErrorRecord,
+        [string]$FailedPhase = '',
+        [double]$FailedPhaseNumber = 0,
+        [string]$LogPath = '',
+        [string]$ReportPath = '',
+        [string]$OutputPath = '',
+        [string]$DiagnosticsPath = '',
+        [string]$DocsPath = '',
+        [string[]]$Secrets = @()
+    )
+    return @{
+        State             = 'Failed'
+        FailedPhase       = $FailedPhase
+        FailedPhaseNumber = $FailedPhaseNumber
+        MessageKey        = (Get-WinEaseFailureMessageKey -PhaseNumber $FailedPhaseNumber)
+        Summary           = (Get-WinEaseExceptionSummary -ErrorRecord $ErrorRecord -Secrets $Secrets)
+        LogPath           = $LogPath
+        ReportPath        = $ReportPath
+        OutputPath        = $OutputPath
+        DiagnosticsPath   = $DiagnosticsPath
+        DocsPath          = $DocsPath
+    }
+}
+
+# Extra data of the final 'done' event. Success keeps its old meaning (the builder finished without an
+# error); State and Verification are what a window must show.
+function New-WinEaseDoneData {
+    param(
+        [bool]$BuildSucceeded,
+        $PayloadVerified = $null,
+        $IsoVerified = $null,
+        [hashtable]$Failure = $null,
+        [string]$LogPath = '',
+        [string]$ReportPath = '',
+        [string]$OutputPath = '',
+        [string]$DiagnosticsPath = '',
+        [string]$DocsPath = ''
+    )
+    $verification = Get-WinEaseVerificationState -PayloadVerified $PayloadVerified -IsoVerified $IsoVerified
+    $data = @{
+        State           = (Get-WinEaseFinalProgressState -BuildSucceeded $BuildSucceeded -Verification $verification)
+        Verification    = $verification
+        LogPath         = $LogPath
+        ReportPath      = $ReportPath
+        OutputPath      = $OutputPath
+        DiagnosticsPath = $DiagnosticsPath
+        DocsPath        = $DocsPath
+    }
+    if ($Failure) {
+        foreach ($k in 'FailedPhase', 'FailedPhaseNumber', 'MessageKey', 'Summary') { if ($Failure.ContainsKey($k)) { $data[$k] = $Failure[$k] } }
+    }
+    return $data
+}
+
+# Convenience senders: no-ops when no window is open (Send-WinEaseGuiProgress is defined by the WinUI host).
+function Send-WinEaseGuiState {
+    param([Parameter(Mandatory)][string]$State)
+    if (-not (Get-Command -Name Send-WinEaseGuiProgress -ErrorAction SilentlyContinue)) { return }
+    Send-WinEaseGuiProgress -Event state -Data (New-WinEaseProgressStateData -State $State)
+}
+
+# A log line for the window: one line, secrets masked, bounded length.
+function Send-WinEaseGuiLogLine {
+    param([AllowEmptyString()][string]$Text)
+    if (-not (Get-Command -Name Send-WinEaseGuiProgress -ErrorAction SilentlyContinue)) { return }
+    $line = (Hide-WinEaseSecretText -Text $Text) -replace '[\r\n]+', ' '
+    if ($line.Length -gt 500) { $line = $line.Substring(0, 500) + '...' }
+    Send-WinEaseGuiProgress -Event log -Data @{ Text = $line }
+}

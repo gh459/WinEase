@@ -828,11 +828,55 @@ function Enter-Phase {
             $script:ProgressEstimateSent = $true
         }
         Send-WinEaseGuiProgress -Event phase -Data $progress
+        # Phase 15 is the payload verification; everything else is plain running
+        Send-WinEaseGuiState -State $(if ($PhaseNumber -eq 15) { 'Verifying' } else { 'Running' })
+        Send-WinEaseGuiLogLine -Text "[$PhaseNumber/$($script:TotalPhases)] $PhaseName"
     }
     Write-Host ""
     Write-Host "=========================================================" -ForegroundColor Cyan
     Write-Host " [$PhaseNumber/$($script:TotalPhases)] $PhaseName" -ForegroundColor Cyan
     Write-Host "=========================================================" -ForegroundColor Cyan
+}
+
+# Records a build failure once: exception and phase go to <diagnostics>\build_errors.log (secrets masked),
+# the failure data is kept for the final 'done' event, and an open window gets the 'failure' event at once.
+# A failure that cannot be recorded is reported as a warning, never swallowed silently.
+function Register-WinEaseBuildFailure {
+    param([Parameter(Mandatory)]$ErrorRecord)
+    if ($script:BuildFailureData) { return }
+    $phaseNumber = [double]$script:CurrentPhase
+    $phaseLabel = if ($script:CurrentBuildPhase) { [string]$script:CurrentBuildPhase } else { 'Preparing' }
+    $diagDir = if ($script:DiagDir) { [string]$script:DiagDir } else { '' }
+    $errorLog = if ($diagDir) { Join-Path -Path $diagDir -ChildPath 'build_errors.log' } else { '' }
+    $summary = Get-WinEaseExceptionSummary -ErrorRecord $ErrorRecord
+    if ($errorLog) {
+        try {
+            if (-not (Test-Path -LiteralPath $diagDir)) { $null = New-Item -ItemType Directory -Path $diagDir -Force }
+            $ex = if ($ErrorRecord -is [System.Management.Automation.ErrorRecord]) { $ErrorRecord.Exception } else { $ErrorRecord }
+            $stack = if ($ErrorRecord -is [System.Management.Automation.ErrorRecord]) { "$($ErrorRecord.ScriptStackTrace)" } else { '' }
+            $entry = @(
+                "=== Build failure $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ===",
+                "Phase:     $phaseLabel",
+                "Exception: $($ex.GetType().FullName)",
+                "Message:   $(Hide-WinEaseSecretText -Text ([string]$ex.Message))",
+                "Stack:",
+                (Hide-WinEaseSecretText -Text $stack),
+                ''
+            ) -join "`r`n"
+            [System.IO.File]::AppendAllText($errorLog, $entry, [System.Text.Encoding]::UTF8)
+        } catch {
+            Write-Warning "Could not write the build error log '$errorLog': $($_.Exception.Message)"
+        }
+    }
+    $logPath = if ($transcriptPath) { [string]$transcriptPath } else { $errorLog }
+    $summaryFile = if ($diagDir) { Join-Path -Path $diagDir -ChildPath 'build_diagnostic_summary.txt' } else { '' }
+    $script:BuildFailureData = New-WinEaseFailureData -ErrorRecord $ErrorRecord -FailedPhase $phaseLabel -FailedPhaseNumber $phaseNumber `
+        -LogPath $logPath -ReportPath $summaryFile -OutputPath ([string]$script:BuildOutputIsoPath) -DiagnosticsPath $diagDir `
+        -DocsPath (Join-Path -Path $scriptDir -ChildPath 'docs\KNOWN_ISSUES.md')
+    if (Get-Command -Name Send-WinEaseGuiProgress -ErrorAction SilentlyContinue) {
+        Send-WinEaseGuiProgress -Event failure -Data $script:BuildFailureData
+        Send-WinEaseGuiLogLine -Text "FAILED in ${phaseLabel}: $summary"
+    }
 }
 
 function Exit-Phase {
@@ -2024,6 +2068,16 @@ $script:IsoGenerated = $false
 $script:IsoPayloadVerified = $false
 $script:BuildSucceeded = $false
 $isoCreatedSuccessfully = $false
+# Progress protocol: failure data for the 'done' event and the paths the window can open.
+# The output folder is known before phase 18; phase 18 replaces this with the real ISO path.
+$script:BuildFailureData = $null
+$script:BuildOutputIsoPath = if ($OutputIsoName) {
+    $plannedIsoName = if ($OutputIsoName.EndsWith('.iso', [System.StringComparison]::OrdinalIgnoreCase)) { $OutputIsoName } else { "$OutputIsoName.iso" }
+    Join-Path -Path $scriptDir -ChildPath $plannedIsoName
+} else {
+    Join-Path -Path $scriptDir -ChildPath 'WinEase.iso'
+}
+$script:BuildReportPath = ''
 
 $script:MountOpened = $false
 $script:HivesLoaded = $false
@@ -2350,24 +2404,32 @@ try {
         @{ Number = 17;  Name = "Locate or Verify oscdimg.exe";                       File = "17-oscdimg.ps1" }
         @{ Number = 18;  Name = "Create Bootable ISO Image";                          File = "18-iso.ps1" }
     )
+    Send-WinEaseGuiState -State 'Preparing'
     foreach ($buildPhase in $buildPhases) {
         $phaseFile = Join-Path -Path $phasesDir -ChildPath $buildPhase.File
         $phaseId = [System.IO.Path]::GetFileNameWithoutExtension($buildPhase.File)
         Enter-Phase $buildPhase.Number $buildPhase.Name
-        if (-not (Test-Path -LiteralPath $phaseFile)) {
-            # Only the optional physical debloat phase may be absent.
-            if ($buildPhase.Number -eq 9.5) {
-                Write-Host "  [Phase 9.5] $($buildPhase.File) not found. Skipping." -ForegroundColor DarkGray
-                continue
+        try {
+            if (-not (Test-Path -LiteralPath $phaseFile)) {
+                # Only the optional physical debloat phase may be absent.
+                if ($buildPhase.Number -eq 9.5) {
+                    Write-Host "  [Phase 9.5] $($buildPhase.File) not found. Skipping." -ForegroundColor DarkGray
+                    continue
+                }
+                throw "Phase script not found: $phaseFile"
             }
-            throw "Phase script not found: $phaseFile"
-        }
-        if (Get-Command -Name Invoke-WinEasePluginHook -ErrorAction SilentlyContinue) {
-            Invoke-WinEasePluginHook -Phase $phaseId -Stage Before -DryRun:$isDryRunMode
-        }
-        . $phaseFile
-        if (Get-Command -Name Invoke-WinEasePluginHook -ErrorAction SilentlyContinue) {
-            Invoke-WinEasePluginHook -Phase $phaseId -Stage After -DryRun:$isDryRunMode
+            if (Get-Command -Name Invoke-WinEasePluginHook -ErrorAction SilentlyContinue) {
+                Invoke-WinEasePluginHook -Phase $phaseId -Stage Before -DryRun:$isDryRunMode
+            }
+            . $phaseFile
+            if (Get-Command -Name Invoke-WinEasePluginHook -ErrorAction SilentlyContinue) {
+                Invoke-WinEasePluginHook -Phase $phaseId -Stage After -DryRun:$isDryRunMode
+            }
+        } catch {
+            # Record the exception and the phase (secrets masked), tell the window, then let the outer
+            # handler run the normal failure path: the error is never swallowed.
+            Register-WinEaseBuildFailure -ErrorRecord $_
+            throw
         }
     }
     # F3: close out the final phase and persist the complete timings table. No
@@ -2380,13 +2442,14 @@ try {
     # Outer catch block: Reset success flags, record diagnostics, re-throw (Rule 16)
     $script:BuildSucceeded = $false
     $isoCreatedSuccessfully = $false
+    Register-WinEaseBuildFailure -ErrorRecord $_
     if ($script:DiagnosticData) {
         $script:DiagnosticData.BuildSucceeded = $false
-        $script:DiagnosticData.FailureMessage = "$_"
+        $script:DiagnosticData.FailureMessage = Hide-WinEaseSecretText -Text "$_"
         if ($_.InvocationInfo -and $_.InvocationInfo.PositionMessage) {
-            $script:DiagnosticData.FailureStackTrace = "$($_.InvocationInfo.PositionMessage)`n$($_.ScriptStackTrace)"
+            $script:DiagnosticData.FailureStackTrace = Hide-WinEaseSecretText -Text "$($_.InvocationInfo.PositionMessage)`n$($_.ScriptStackTrace)"
         } else {
-            $script:DiagnosticData.FailureStackTrace = "$($_.ScriptStackTrace)"
+            $script:DiagnosticData.FailureStackTrace = Hide-WinEaseSecretText -Text "$($_.ScriptStackTrace)"
         }
         Write-WinEaseDiagnosticReport "Build failed with exception"
     }
@@ -2395,7 +2458,7 @@ try {
     Write-Host "=========================================================" -ForegroundColor Red
     Write-Host "   WinEase BUILD FAILED!                                  " -ForegroundColor Red
     Write-Host "=========================================================" -ForegroundColor Red
-    Write-Host "Build failed with unhandled exception: $_" -ForegroundColor Red
+    Write-Host "Build failed with unhandled exception: $(Hide-WinEaseSecretText -Text "$_")" -ForegroundColor Red
     if ($_.InvocationInfo -and $_.InvocationInfo.PositionMessage) {
         Write-Host "Exception location: $($_.InvocationInfo.PositionMessage)" -ForegroundColor Red
     }
@@ -2619,7 +2682,15 @@ try {
     }
 
     if (Get-Command -Name Close-WinEaseGuiProgress -ErrorAction SilentlyContinue) {
-        Close-WinEaseGuiProgress -Success ([bool]$script:BuildSucceeded) -Message $(if ($script:BuildSucceeded) { 'WinEase.iso is ready.' } else { "$script:DiagDir" })
+        # Success is reported as verified only when phase 15 (deep apply) AND phase 18 (ISO payload hash)
+        # really passed; an existing ISO file alone is not a result.
+        $doneLog = if ($transcriptPath) { [string]$transcriptPath } elseif ($script:BuildFailureData) { [string]$script:BuildFailureData.LogPath } else { '' }
+        $doneReport = if ($script:BuildSucceeded -and $script:BuildReportPath) { [string]$script:BuildReportPath } elseif ($script:DiagDir) { Join-Path -Path $script:DiagDir -ChildPath 'build_diagnostic_summary.txt' } else { '' }
+        $doneData = New-WinEaseDoneData -BuildSucceeded ([bool]$script:BuildSucceeded) -PayloadVerified $script:FinalPayloadVerified -IsoVerified $script:IsoPayloadVerified `
+            -Failure $script:BuildFailureData -LogPath $doneLog -ReportPath $doneReport -OutputPath ([string]$script:BuildOutputIsoPath) `
+            -DiagnosticsPath ([string]$script:DiagDir) -DocsPath (Join-Path -Path $scriptDir -ChildPath 'docs\KNOWN_ISSUES.md')
+        Send-WinEaseGuiState -State $doneData.State
+        Close-WinEaseGuiProgress -Success ([bool]$script:BuildSucceeded) -Message $(if ($script:BuildSucceeded) { 'WinEase.iso is ready.' } else { "$script:DiagDir" }) -Extra $doneData
     }
     if ($script:BuildSucceeded) {
         Write-Host "Done! WinEase.iso is ready." -ForegroundColor Green

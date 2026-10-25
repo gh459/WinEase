@@ -573,11 +573,12 @@ function Show-WinEaseWinUiGUI {
     return $result
 }
 
-# Builder -> window progress notice ({ op = 'progress'; event = phase|log|done; ... }).
+# Builder -> window progress notice ({ op = 'progress'; event = state|phase|log|failure|done; ... }),
+# see docs\PROGRESS_PROTOCOL.md. A window that does not know an event ignores it.
 # A no-op without an open window; a closed window drops the channel and never stops the build.
 function Send-WinEaseGuiProgress {
     param(
-        [Parameter(Mandatory)][ValidateSet('phase', 'log', 'done')][string]$Event,
+        [Parameter(Mandatory)][ValidateSet('state', 'phase', 'log', 'failure', 'done')][string]$Event,
         [hashtable]$Data = @{}
     )
     $channel = $script:WinEaseGuiProgressChannel
@@ -593,9 +594,11 @@ function Send-WinEaseGuiProgress {
 }
 
 function Close-WinEaseGuiProgress {
-    param([bool]$Success, [string]$Message = '')
+    param([bool]$Success, [string]$Message = '', [hashtable]$Extra = @{})
     if (-not $script:WinEaseGuiProgressChannel) { return }
-    Send-WinEaseGuiProgress -Event done -Data @{ Success = $Success; Message = $Message }
+    $done = @{ Success = $Success; Message = $Message }
+    foreach ($k in $Extra.Keys) { $done[$k] = $Extra[$k] }
+    Send-WinEaseGuiProgress -Event done -Data $done
     $channel = $script:WinEaseGuiProgressChannel
     $script:WinEaseGuiProgressChannel = $null
     try { $channel.Writer.Dispose() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
