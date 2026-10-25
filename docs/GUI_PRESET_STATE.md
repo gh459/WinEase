@@ -49,10 +49,33 @@ default engines", and any selected item or non-default engine makes the window M
   next to the combo in both windows.
 - Picking "Custom" applies nothing; the values stay and the state is Custom until a preset is chosen.
 
-## Not implemented: Save as preset
+## Save as preset
 
-User presets live in `config/user/user-tweaks.psd1` (`UserPresets`, loaded by `Import-WinEaseUserExtensions`
-over the base preset named in `BasePreset`). The GUI does not write that file: it is hand-edited and
-comment-heavy, and the preset list of both windows is fixed (it is read at start-up), so a saved preset could
-not be chosen without a restart. `Get-WinEaseGuiPresetState` returns the differing keys with preset and
-current values, which is the input such a feature needs.
+Both windows save the current settings as a **user preset**: the "Save as preset…" button next to
+"Revert to preset" asks for a name (and an optional description), then calls
+`Save-WinEaseGuiUserPreset` in `lib/WinEaseGuiCore.ps1` - the one shared function; the windows
+never write the file themselves.
+
+- **The file.** One preset per file under `config\user\presets\<key>.psd1` (the key is the
+  trimmed, lower-case name). `user-tweaks.psd1` is never rewritten; the loader
+  (`Import-WinEaseUserExtensions`) reads the folder like the `UserPresets` entries of
+  `user-tweaks.psd1`, so a hand-written preset and a saved one behave the same. The file stores
+  only preset data: every Gui component, every tweak, the payload format and the Advanced Debloat
+  selection with its engines. Secrets (the schema marks `UserPassword` `Secret = $true`) and paths
+  (source, work folder, drivers) are never stored.
+- **The name.** 1-40 characters: letters (any script, so Japanese names work), digits, spaces,
+  `-` and `_`. A built-in preset name and the reserved names `custom` / `none` are refused.
+  Saving over an existing user preset asks first (WinForms: `Confirm-WinEaseGuiAction`, WinUI: a
+  confirm dialog triggered by the `SavePreset.Reason.Exists` reason).
+- **The write.** `Write-WinEaseTextFileAtomic` (UTF-8 with BOM, so Japanese survives the way
+  `Import-PowerShellDataFile` reads it). After the write the file is read back through the same
+  loader and `Get-WinEaseGuiPresetValues` must return exactly the saved values; only then does
+  the window report success, so a half-written or mis-parsed file never claims "saved".
+- **After the save.** Both windows rebuild their preset list without a restart
+  (`Update-WinEaseGuiUserPresets` re-reads the folder; the WinUI window gets the refreshed list
+  with the `savePreset` reply / a `presets` request), select the new preset and show its state as
+  "<new preset> (unmodified)" - the values are by definition what the preset holds.
+
+User presets appear in the preset combo after the built-in six (labelled with their `ProfileName`)
+and before "Custom"; the "Preset Diff" dialog lists them too, and the CLI accepts their key like
+any preset name.

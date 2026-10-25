@@ -876,6 +876,101 @@ function Restore-WinEaseGuiBasePreset {
     return $true
 }
 
+# The label of a preset in the combo: the built-in six come from ui-strings, a user preset shows
+# its ProfileName (the key as the fallback).
+function Get-WinEaseGuiPresetLabel {
+    param([string]$Key)
+    $builtin = @{
+        'extreme'   = 'Media.Preset.Extreme'
+        'balanced'  = 'Media.Preset.Balanced'
+        'fat32'     = 'Media.Preset.Fat32'
+        'handheld'  = 'Media.Preset.Handheld'
+        'vm'        = 'Media.Preset.VM'
+        'audio'     = 'Media.Preset.Audio'
+    }
+    $clean = "$Key".Trim().ToLower()
+    if ($builtin.Contains($clean)) { return (Get-WinEaseUiString $builtin[$clean]) }
+    foreach ($u in @(Get-WinEaseGuiUserPresetChoices)) {
+        if ($u.Key -eq $clean) { return $u.Label }
+    }
+    return $Key
+}
+
+# Rebuild the preset combo without a restart: the built-in six, then every user preset
+# (Update-WinEaseGuiUserPresets re-reads user-tweaks.psd1 and config\user\presets), then Custom.
+# The current selection is restored; the caller selects the saved preset after a successful save.
+function Update-WinEaseGuiPresetList {
+    param([hashtable]$Gui)
+    if (-not $Gui.Preset) { return }
+    $selectedKey = $null
+    if ($Gui.Preset.SelectedIndex -ge 0 -and $Gui.Preset.SelectedIndex -lt $Gui.PresetKeyMap.Count) {
+        $selectedKey = "$($Gui.PresetKeyMap[$Gui.Preset.SelectedIndex])"
+    }
+    $newMap = @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')
+    $script:updatingPreset = $true
+    try {
+        $Gui.Preset.Items.Clear()
+        foreach ($k in $newMap) { [void]$Gui.Preset.Items.Add((Get-WinEaseGuiPresetLabel -Key $k)) }
+        foreach ($u in @(Update-WinEaseGuiUserPresets)) {
+            [void]$Gui.Preset.Items.Add($u.Label)
+            $newMap += $u.Key
+        }
+        [void]$Gui.Preset.Items.Add((Get-WinEaseUiString 'Media.Preset.Custom'))
+        $Gui.PresetKeyMap = $newMap
+        $idx = if ($selectedKey) { [array]::IndexOf($newMap, $selectedKey) } else { -1 }
+        $Gui.Preset.SelectedIndex = if ($idx -ge 0) { $idx } else { $newMap.Count }
+    } finally { $script:updatingPreset = $false }
+}
+
+# The flow behind "Save as preset": the name/description dialog, the overwrite confirmation and
+# the success / failure message. The values come from the window's draft; the rules (name,
+# collisions, atomic write, read-back) are Save-WinEaseGuiUserPreset in lib\WinEaseGuiCore.ps1,
+# shared with the WinUI window. The dialog is only opened from the button, never in tests.
+function Show-WinEaseGuiSavePresetDialog {
+    param([hashtable]$Gui)
+    $dlg = New-WinEaseForm -Text (Get-WinEaseUiString 'Dlg.SavePreset.Title') -Width 470 -Height 250 -ClientSize -FixedDialog -NoMaximize -NoMinimize -ForeColor ([System.Drawing.Color]::White)
+    try {
+        [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Dlg.SavePreset.Name') -X 15 -Y 22 -Width 420 -Height 20 -Parent $dlg)
+        $nameBox = New-WinEaseTextBox -X 15 -Y 44 -Width 420 -Height 26 -Parent $dlg
+        $nameBox.MaxLength = 40
+        [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Dlg.SavePreset.Description') -X 15 -Y 82 -Width 420 -Height 20 -Parent $dlg)
+        $descBox = New-WinEaseTextBox -X 15 -Y 104 -Width 420 -Height 26 -Parent $dlg
+        $descBox.MaxLength = 200
+        $dlg.Tag = @{ Gui = $Gui; Name = $nameBox; Description = $descBox }
+        $dlg.AcceptButton = $null
+        $btnSave = New-WinEaseButton -Text (Get-WinEaseUiString 'Dlg.SavePreset.Save') -X 120 -Y 160 -Width 150 -Height 32 -Parent $dlg
+        $btnSave.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $dlg.AcceptButton = $btnSave
+        $btnCancel = New-WinEaseButton -Text (Get-WinEaseUiString 'Button.Cancel') -X 285 -Y 160 -Width 150 -Height 32 -Parent $dlg
+        $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $dlg.CancelButton = $btnCancel
+        if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+        $name = $nameBox.Text.Trim()
+        $description = $descBox.Text.Trim()
+        if (-not $name) {
+            Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'SavePreset.Reason.InvalidName') -Title (Get-WinEaseUiString 'Dlg.SavePreset.Title') -Kind Error
+            return
+        }
+        $fmt = if ($Gui.RadESD -and $Gui.RadESD.Checked) { 'ESD' } elseif ($Gui.RadSWM -and $Gui.RadSWM.Checked) { 'SWM' } else { 'WIM' }
+        $res = Save-WinEaseGuiUserPreset -Name $name -Description $description -Current (Get-WinEaseGuiDraftConfig -Gui $Gui) -PayloadFormat $fmt
+        if (-not $res.Saved -and $res.ReasonKey -eq 'SavePreset.Reason.Exists') {
+            if (-not (Confirm-WinEaseGuiAction -Message (Get-WinEaseUiString 'Dlg.SavePreset.Overwrite' -Format $name) -Title (Get-WinEaseUiString 'Dlg.SavePreset.Title'))) { return }
+            $res = Save-WinEaseGuiUserPreset -Name $name -Description $description -Current (Get-WinEaseGuiDraftConfig -Gui $Gui) -PayloadFormat $fmt -Overwrite
+        }
+        if (-not $res.Saved) {
+            $reason = if ($res.ReasonKey) { (Get-WinEaseUiString $res.ReasonKey) } else { (Get-WinEaseUiString 'Msg.SavePreset.Error' -Format $res.Error) }
+            Show-WinEaseGuiMessage -Text $reason -Title (Get-WinEaseUiString 'Dlg.SavePreset.Title') -Kind Error
+            return
+        }
+        Update-WinEaseGuiPresetList -Gui $Gui
+        $idx = [array]::IndexOf(@($Gui.PresetKeyMap), $res.Key)
+        $script:updatingPreset = $true
+        try { if ($idx -ge 0) { $Gui.Preset.SelectedIndex = $idx } } finally { $script:updatingPreset = $false }
+        $script:guiBasePresetKey = $res.Key
+        Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.SavePreset.Success' -Format $name) -Title (Get-WinEaseUiString 'Dlg.SavePreset.Title') -Kind Info
+    } finally { $dlg.Dispose() }
+}
+
 # Read-only, scrollable text dialog (MessageBox truncates long results)
 function Show-WinEaseGuiTextDialog {
     param([string]$Title, [string]$Text, [System.Windows.Forms.IWin32Window]$Owner)
@@ -1202,7 +1297,7 @@ function New-WinEaseMediaTab {
     # Preset Group
     $grpPreset = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'Media.Group.Preset') -X 15 -Y 320 -Width 835 -Height 75 -Parent $tabMedia
 
-    $cmbPreset = New-WinEaseComboBox -DropList -X 15 -Y 28 -Width 610 -BackColor $script:WinEaseGuiColors.Input -ForeColor ([System.Drawing.Color]::White) -Parent $grpPreset -Items @(
+    $cmbPreset = New-WinEaseComboBox -DropList -X 15 -Y 28 -Width 470 -BackColor $script:WinEaseGuiColors.Input -ForeColor ([System.Drawing.Color]::White) -Parent $grpPreset -Items @(
         (Get-WinEaseUiString 'Media.Preset.Extreme'),
         (Get-WinEaseUiString 'Media.Preset.Balanced'),
         (Get-WinEaseUiString 'Media.Preset.Fat32'),
@@ -1214,13 +1309,21 @@ function New-WinEaseMediaTab {
     $gui.Preset = $cmbPreset
     # Revert to preset: every preset-controlled value (and the Advanced Debloat selection) back to the base preset
     $revertTip = New-Object System.Windows.Forms.ToolTip
-    $btnRevert = New-WinEaseButton -Text (Get-WinEaseUiString 'Button.RevertPreset') -X 635 -Y 26 -Width 185 -Height 28 -Parent $grpPreset -OnClick {
+    $btnRevert = New-WinEaseButton -Text (Get-WinEaseUiString 'Button.RevertPreset') -X 495 -Y 26 -Width 160 -Height 28 -Parent $grpPreset -OnClick {
         $g = $this.FindForm().Tag
         if (-not (Restore-WinEaseGuiBasePreset -Gui $g)) {
             Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.RevertPreset.NoBase') -Title (Get-WinEaseUiString 'Button.RevertPreset') -Kind Info
         }
     }
     $revertTip.SetToolTip($btnRevert, (Get-WinEaseUiString 'Button.RevertPreset.Tooltip'))
+    # Save as preset: the current window settings become a user preset (config\user\presets\<key>.psd1),
+    # the combo rebuilds without a restart. Shared rules: Save-WinEaseGuiUserPreset (lib\WinEaseGuiCore.ps1).
+    $saveTip = New-Object System.Windows.Forms.ToolTip
+    $btnSavePreset = New-WinEaseButton -Text (Get-WinEaseUiString 'Button.SavePreset') -X 663 -Y 26 -Width 157 -Height 28 -Parent $grpPreset -OnClick {
+        $g = $this.FindForm().Tag
+        Show-WinEaseGuiSavePresetDialog -Gui $g
+    }
+    $saveTip.SetToolTip($btnSavePreset, (Get-WinEaseUiString 'Button.SavePreset.Tooltip'))
 
     # Payload Format Group
     $grpPayload = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'Media.Group.Payload') -X 15 -Y 405 -Width 835 -Height 95 -Parent $tabMedia

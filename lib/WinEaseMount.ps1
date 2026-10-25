@@ -328,19 +328,33 @@ function Test-WinEaseMountPathInWorkspace {
         [string]$Path
     )
     if (-not $Path) { return $false }
-    $normP = try { ConvertTo-WinEaseNormalizedPath -Path $Path } catch { $null }
-    if (-not $normP) { return $false }
+    # F1-2: compare real long paths - a mount record can be spelled with 8.3 short names,
+    # which plain GetFullPath normalization does not expand reliably. An unresolvable path
+    # is treated as outside the workspace (fail closed).
+    $normP = $null
+    $realP = ConvertTo-WinEaseRealPath -Path $Path
+    if ($realP) {
+        $normP = $realP.TrimEnd('\')
+    } else {
+        return $false
+    }
 
     if ($script:MountAllocationRoot) {
-        $normAllocRoot = ConvertTo-WinEaseNormalizedPath -Path $script:MountAllocationRoot
-        if (Test-WinEasePathWithin -Path $normP -Root $normAllocRoot) {
+        $normAllocRoot = ConvertTo-WinEaseRealPath -Path $script:MountAllocationRoot
+        if (-not $normAllocRoot) {
+            $normAllocRoot = try { ConvertTo-WinEaseNormalizedPath -Path $script:MountAllocationRoot } catch { $null }
+        }
+        if ($normAllocRoot -and (Test-WinEasePathWithin -Path $normP -Root $normAllocRoot)) {
             return $true
         }
     }
     $wsRef = if ($script:BaseWorkDir) { $script:BaseWorkDir } elseif ($baseWorkDir) { $baseWorkDir } elseif ($workingDir) { $workingDir } else { $null }
     if ($wsRef) {
-        $normWorking = ConvertTo-WinEaseNormalizedPath -Path $wsRef
-        if (Test-WinEasePathWithin -Path $normP -Root $normWorking) {
+        $normWorking = ConvertTo-WinEaseRealPath -Path $wsRef
+        if (-not $normWorking) {
+            $normWorking = try { ConvertTo-WinEaseNormalizedPath -Path $wsRef } catch { $null }
+        }
+        if ($normWorking -and (Test-WinEasePathWithin -Path $normP -Root $normWorking)) {
             return $true
         }
     }

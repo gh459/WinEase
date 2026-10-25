@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
@@ -20,10 +20,12 @@ namespace WinEaseGui;
 public sealed partial class MainWindow : Window
 {
     private static readonly string[] BuiltinTweakCategories = { "Security", "Privacy", "Performance", "UI" };
-    private static readonly string[] PresetLabelKeys =
+    // The built-in presets by key with the ui-strings key of their label; user presets (config\user\presets)
+    // come after them in _init.Presets and show the ProfileName they were saved with.
+    private static readonly (string Key, string LabelKey)[] BuiltinPresetLabels =
     {
-        "Media.Preset.Extreme", "Media.Preset.Balanced", "Media.Preset.Fat32", "Media.Preset.Handheld",
-        "Media.Preset.VM", "Media.Preset.Audio", "Media.Preset.Custom",
+        ("extreme", "Media.Preset.Extreme"), ("balanced", "Media.Preset.Balanced"), ("fat32", "Media.Preset.Fat32"),
+        ("handheld", "Media.Preset.Handheld"), ("vm", "Media.Preset.VM"), ("audio", "Media.Preset.Audio"),
     };
     private static readonly string[] MigrationFolders = { "Documents", "Desktop", "Pictures", "Videos", "Downloads" };
     private static readonly string[] ConflictPolicies = { "BackupExisting", "Skip", "OverwriteIfNewer", "Overwrite" };
@@ -47,6 +49,7 @@ public sealed partial class MainWindow : Window
     private ComboBox? _presetCombo;
     private TextBlock? _presetStatusText;
     private Button? _revertButton;
+    private Button? _savePresetButton;
     private DispatcherTimer? _presetStateTimer;
     // Input check (PowerShell: Test-WinEaseBuildInputs): the issue of each media field is shown under its control
     private readonly Dictionary<string, TextBlock> _fieldMsgs = new();
@@ -143,7 +146,7 @@ public sealed partial class MainWindow : Window
         int idx = _init.Presets.FindIndex(p => p.Key == presetKey);
         // No preset was chosen yet: start on the safe "balanced" preset (index 1); every debloat
         // target then runs on the safe PowerShell engine. An explicit preset is never overridden.
-        if (idx < 0) idx = presetKey.Length > 0 ? PresetLabelKeys.Length - 1 : 1;
+        if (idx < 0) idx = presetKey.Length > 0 ? _init.Presets.Count : 1;
         _presetIndex = idx;
         _basePresetKey = idx < _init.Presets.Count ? _init.Presets[idx].Key : null;
     }
@@ -710,7 +713,8 @@ public sealed partial class MainWindow : Window
         PageHost.Children.Add(Section(_s.Get("Media.Group.Preset")));
         var preset = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
         AutomationProperties.SetName(preset, _s.Get("Media.Group.Preset").Trim());
-        foreach (string k in PresetLabelKeys) preset.Items.Add(_s.Get(k));
+        foreach (var p in _init.Presets) preset.Items.Add(PresetDisplayLabel(p));
+        preset.Items.Add(_s.Get("Media.Preset.Custom"));
         _applyingPreset = true;
         preset.SelectedIndex = _presetIndex;
         _applyingPreset = false;
@@ -732,15 +736,19 @@ public sealed partial class MainWindow : Window
         };
         _presetCombo = preset;
 
-        // State line ("<Base> + modified" / "Custom") and the separate "Revert to preset" action
+        // State line ("<Base> + modified" / "Custom"), "Revert to preset" and "Save as preset"
         _presetStatusText = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = Res("TextFillColorSecondaryBrush") };
         AutomationProperties.SetLiveSetting(_presetStatusText, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
         _revertButton = Btn(_s.Get("Button.RevertPreset"), (_, _) => RevertToPreset());
         ToolTipService.SetToolTip(_revertButton, _s.Get("Button.RevertPreset.Tooltip"));
         AutomationProperties.SetHelpText(_revertButton, _s.Get("Button.RevertPreset.Tooltip"));
+        _savePresetButton = Btn(_s.Get("Button.SavePreset"), async (_, _) => await SaveAsPresetAsync());
+        ToolTipService.SetToolTip(_savePresetButton, _s.Get("Button.SavePreset.Tooltip"));
+        AutomationProperties.SetHelpText(_savePresetButton, _s.Get("Button.SavePreset.Tooltip"));
         var presetBox = new StackPanel { Spacing = 8 };
         presetBox.Children.Add(preset);
         presetBox.Children.Add(_revertButton);
+        presetBox.Children.Add(_savePresetButton);
         presetBox.Children.Add(_presetStatusText);
         PageHost.Children.Add(Card(presetBox));
         UpdatePresetStatus();
@@ -820,6 +828,132 @@ public sealed partial class MainWindow : Window
         ApplyPreset(_init.Presets[idx], includeDebloat: true);
     }
 
+    // =======================================================================================================
+    // "Save as preset": the current settings become a user preset (config\user\presets\<key>.psd1).
+    // The rules (name validation, built-in collision, atomic write, read-back) run in the host
+    // through Save-WinEaseGuiUserPreset (lib\WinEaseGuiCore.ps1), shared with the WinForms window.
+    // An existing preset is confirmed here (ReasonKey 'SavePreset.Reason.Exists'); a success
+    // refreshes the combo and selects the new preset, whose state then reads "(unmodified)".
+    // =======================================================================================================
+    private async Task SaveAsPresetAsync()
+    {
+        if (_busy || _applyingPreset) return;
+        var (name, description, ok) = await ShowSavePresetDialogAsync();
+        if (!ok) return;
+        await SendSavePresetAsync(name, description, overwrite: false, askWhenExists: true);
+    }
+
+    private async Task<(string Name, string Description, bool Ok)> ShowSavePresetDialogAsync()
+    {
+        var name = new TextBox { MaxLength = 40 };
+        AutomationProperties.SetName(name, _s.Get("Dlg.SavePreset.Name").Trim());
+        var description = new TextBox { MaxLength = 200 };
+        AutomationProperties.SetName(description, _s.Get("Dlg.SavePreset.Description").Trim());
+        var panel = new StackPanel { Spacing = 8 };
+        panel.Children.Add(new TextBlock { Text = _s.Get("Dlg.SavePreset.Name") });
+        panel.Children.Add(name);
+        panel.Children.Add(new TextBlock { Text = _s.Get("Dlg.SavePreset.Description") });
+        panel.Children.Add(description);
+        var dlg = new ContentDialog
+        {
+            XamlRoot = Content.XamlRoot,
+            Title = _s.Get("Dlg.SavePreset.Title"),
+            Content = panel,
+            PrimaryButtonText = _s.Get("Dlg.SavePreset.Save"),
+            CloseButtonText = _s.Get("Button.Cancel"),
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return ("", "", false);
+        return (name.Text.Trim(), description.Text.Trim(), name.Text.Trim().Length > 0);
+    }
+
+    private async Task SendSavePresetAsync(string name, string description, bool overwrite, bool askWhenExists)
+    {
+        var reply = await RunAsync("savePreset", new JsonObject
+        {
+            ["Name"] = name,
+            ["Description"] = description,
+            ["Overwrite"] = overwrite,
+            ["Config"] = PresetStateConfig(),
+        });
+        if (reply == null) return;
+        var data = reply["Data"] as JsonObject;
+        if (InitData.Bool(reply["ok"]) && data != null && InitData.Bool(data["Success"]))
+        {
+            ReplacePresets(data["Presets"]);
+            SelectPresetKey(InitData.Str(data["Key"]));
+            await MessageAsync(_s.Get("Dlg.SavePreset.Title"), InitData.Str(data["Text"], _s.Format("Msg.SavePreset.Success", name)), "Info");
+            return;
+        }
+        string reason = InitData.Str(data?["ReasonKey"]);
+        if (reason == "SavePreset.Reason.Exists" && askWhenExists)
+        {
+            if (await ConfirmAsync(_s.Get("Dlg.SavePreset.Title"), _s.Format("Dlg.SavePreset.Overwrite", name)))
+            {
+                await SendSavePresetAsync(name, description, overwrite: true, askWhenExists: false);
+            }
+            return;
+        }
+        string text = InitData.Str(data?["Text"]);
+        if (text.Length == 0) text = _s.Get("SavePreset.Reason.Write");
+        await MessageAsync(_s.Get("Dlg.SavePreset.Title"), _s.Format("Msg.SavePreset.Error", text), "Error");
+    }
+
+    // The refreshed preset list (init layout: built-ins first, then the user presets) replaces
+    // _init.Presets; the combo is rebuilt with the Custom entry still last.
+    private void ReplacePresets(JsonNode? presets)
+    {
+        var parsed = new List<PresetDef>();
+        foreach (var p in InitData.Arr(presets))
+        {
+            if (p == null) continue;
+            var engines = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (p["DebloatEngineSelection"] is JsonObject pe) foreach (var kv in pe) engines[kv.Key] = InitData.Str(kv.Value);
+            parsed.Add(new PresetDef(InitData.Str(p["Key"]), InitData.BoolMap(p["Components"]), InitData.BoolMap(p["Tweaks"]),
+                InitData.Str(p["PayloadFormat"], "WIM"), InitData.StrList(p["AdvancedDebloatStandard"]),
+                InitData.StrList(p["AdvancedDebloatExperimental"]), engines, InitData.Str(p["Label"])));
+        }
+        if (parsed.Count == 0) return;
+        _init.Presets.Clear();
+        _init.Presets.AddRange(parsed);
+        // the Preset Diff picker works from PresetNames: a just-saved preset joins without a restart
+        foreach (var p in parsed)
+        {
+            if (!_init.PresetNames.Contains(p.Key)) _init.PresetNames.Add(p.Key);
+        }
+        if (_presetCombo != null)
+        {
+            _applyingPreset = true;
+            try
+            {
+                _presetCombo.Items.Clear();
+                foreach (var p in _init.Presets) _presetCombo.Items.Add(PresetDisplayLabel(p));
+                _presetCombo.Items.Add(_s.Get("Media.Preset.Custom"));
+                _presetCombo.SelectedIndex = _presetIndex <= _init.Presets.Count && _presetIndex >= 0 ? _presetIndex : _init.Presets.Count;
+            }
+            finally { _applyingPreset = false; }
+        }
+        UpdatePresetStatus();
+    }
+
+    // Select a (usually just saved) preset in the combo and make it the base preset: its values
+    // equal what the window shows, so the state line reads "<new preset> (unmodified)".
+    private void SelectPresetKey(string key)
+    {
+        int idx = _init.Presets.FindIndex(p => p.Key == key);
+        if (idx < 0) return;
+        _forcedCustom = false;
+        _presetIndex = idx;
+        if (_presetCombo != null)
+        {
+            _applyingPreset = true;
+            try { _presetCombo.SelectedIndex = idx; } finally { _applyingPreset = false; }
+        }
+        _basePresetKey = key;
+        UpdatePresetStatus();
+        _ = RefreshPresetStateAsync();
+    }
+
     // Any control change: ask the shared rules again (debounced, so "Select all" is one request)
     private void OnSettingChanged()
     {
@@ -893,9 +1027,21 @@ public sealed partial class MainWindow : Window
     // The label of a preset without its parenthesised description
     private string PresetShortLabel(int index)
     {
-        string label = _s.Get(PresetLabelKeys[index]);
+        if (index < 0 || index >= _init.Presets.Count) return "";
+        string label = PresetDisplayLabel(_init.Presets[index]);
         int p = label.IndexOf(" (", StringComparison.Ordinal);
         return p > 0 ? label.Substring(0, p) : label;
+    }
+
+    // Built-in presets show their localized label; a user preset shows the ProfileName it was
+    // saved with (the host sends it as Label, the key as the fallback)
+    private string PresetDisplayLabel(PresetDef p)
+    {
+        foreach (var b in BuiltinPresetLabels)
+        {
+            if (b.Key == p.Key) return _s.Get(b.LabelKey);
+        }
+        return string.IsNullOrEmpty(p.Label) ? p.Key : p.Label;
     }
 
     private bool IsCustomResult => _basePresetKey == null || _forcedCustom || _presetModified;
@@ -2122,10 +2268,9 @@ public sealed partial class MainWindow : Window
         var openDocs = MakeButton(_s.Get("Progress.Button.OpenDocs"), _s.Get("Progress.Help.OpenDocs"), () => TryOpenPath(docsPath), visible: false);
         var closeButton = new Button { Content = _s.Get("Progress.Close"), IsEnabled = false, HorizontalAlignment = HorizontalAlignment.Right };
         closeButton.Click += (_, _) => Close();
-        var buttons = new VariableSizedWrapGrid { Orientation = Orientation.Horizontal, ItemWidth = double.NaN, ItemHeight = double.NaN };
+        var buttons = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 8, HorizontalAlignment = HorizontalAlignment.Left };
         foreach (var b in new[] { openLog, openReport, openOutput, openDiag, openDocs })
         {
-            b.Margin = new Thickness(0, 0, 8, 8);
             buttons.Children.Add(b);
         }
 

@@ -1,4 +1,4 @@
-# Helpers.Tests.ps1 - shared helpers, path safety, ACL, DISM and logging
+﻿# Helpers.Tests.ps1 - shared helpers, path safety, ACL, DISM and logging
 # Run with:  Invoke-Pester -Path .\tests\Helpers.Tests.ps1
 # Requires:  Pester 3.4 on Windows PowerShell 5.1
 # Split from the former tests\WinEase.Tests.ps1 in R1. Shared setup is in _TestCommon.ps1.
@@ -135,6 +135,43 @@ Describe "WinEase builder - robust tree removal (long paths + image ACLs)" -Tags
 
         (Remove-WinEaseTreeRobust -Path $target -SafetyRoot $root) | Should Be $true
         (Test-Path -LiteralPath (Join-Path $canary "canary.txt")) | Should Be $true
+        if (Test-Path -LiteralPath $root) { & cmd.exe /c "rd /s /q `"$root`"" > $null 2>&1 }
+        if (Test-Path -LiteralPath $canary) { & cmd.exe /c "rd /s /q `"$canary`"" > $null 2>&1 }
+    }
+
+    It "removes a reparse-point TARGET as a link only (canary survives)" {
+        # Locks in the legitimate case: the target itself may be a junction and only the link
+        # is removed. The F1-4 ancestry guard below deliberately excludes the target itself.
+        $root = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_robust_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($root) | Out-Null
+        $canary = ($root + '_canary')
+        [System.IO.Directory]::CreateDirectory($canary) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $canary "canary.txt"), 'precious')
+        $link = Join-Path $root 'linked'
+        & cmd.exe /c "mklink /J `"$link`" `"$canary`"" > $null 2>&1
+
+        (Remove-WinEaseTreeRobust -Path $link -SafetyRoot $root) | Should Be $true
+        (Test-Path -LiteralPath $link) | Should Be $false
+        (Test-Path -LiteralPath (Join-Path $canary "canary.txt")) | Should Be $true
+        if (Test-Path -LiteralPath $root) { & cmd.exe /c "rd /s /q `"$root`"" > $null 2>&1 }
+        if (Test-Path -LiteralPath $canary) { & cmd.exe /c "rd /s /q `"$canary`"" > $null 2>&1 }
+    }
+
+    It "refuses a target reached through a junction between the safety root and its parent (canary survives)" {
+        # FINDING F1-4 at the Remove-WinEaseTreeRobust entry: the strict-child check is lexical,
+        # so <root>\junc\sub passed it. The ancestry walk now refuses before anything is touched.
+        $root = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_robust_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($root) | Out-Null
+        $canary = ($root + '_canary')
+        [System.IO.Directory]::CreateDirectory($canary) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $canary "canary.txt"), 'precious')
+        $junc = Join-Path $root 'junc'
+        & cmd.exe /c "mklink /J `"$junc`" `"$canary`"" > $null 2>&1
+
+        (Remove-WinEaseTreeRobust -Path (Join-Path $junc 'sub') -SafetyRoot $root) | Should Be $false
+        (Test-Path -LiteralPath (Join-Path $canary "canary.txt")) | Should Be $true
+        # remove the junction before cleanup so nothing can follow it
+        [System.IO.Directory]::Delete($junc, $false)
         if (Test-Path -LiteralPath $root) { & cmd.exe /c "rd /s /q `"$root`"" > $null 2>&1 }
         if (Test-Path -LiteralPath $canary) { & cmd.exe /c "rd /s /q `"$canary`"" > $null 2>&1 }
     }
@@ -1771,7 +1808,8 @@ Describe "WinEase helpers - split module layout (R2)" {
         # 42 functions moved out of WinEasehelpers.ps1 plus the 7 functions that
         # already lived in lib\WinEaseFileSystem.ps1; B2 added 7 dependency display helpers
         # (Get-WinEaseDependencyStringDefaults/String/Field/View/Review, New-...Result, Format-...ItemLine).
-        $functions.Count | Should Be 56
+        # G1 added ConvertTo-WinEaseRealPath and Test-WinEaseProtectedLexicalPath (path safety).
+        $functions.Count | Should Be 58
         $duplicates = @($functions | Group-Object Name | Where-Object Count -gt 1)
         $duplicates.Count | Should Be 0
         @($ast.FindAll({

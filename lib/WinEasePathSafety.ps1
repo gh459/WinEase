@@ -131,6 +131,68 @@ function Test-WinEaseAbsoluteLocalPath {
     return $false
 }
 
+# Resolves the REAL file-system path of an absolute path. Every existing element between the
+# drive root and the path is inspected while walking downward: 8.3 short names are expanded to
+# the long form and reparse-point targets (junctions, symlinks) are substituted. Segments below
+# the first non-existing element are appended lexically ('..' segments are already collapsed by
+# GetFullPath). Returns $null when the path is not an absolute local path, cannot be normalized,
+# or a reparse point's target cannot be read - callers that decide on this must treat $null as
+# "cannot prove safe" and fail closed.
+# Kept as a single function so tests can mock it: 8.3 names cannot be created on the CI runner,
+# so short-name spellings are simulated through the mock (real 8.3 behaviour is unverified).
+function ConvertTo-WinEaseRealPath {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Path
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+    $clean = $Path.Replace('/', '\')
+    if (-not (Test-WinEaseAbsoluteLocalPath -Path $clean)) { return $null }
+    try {
+        $full = [System.IO.Path]::GetFullPath($clean)
+    } catch {
+        Write-Verbose "ConvertTo-WinEaseRealPath: GetFullPath failed: $($_.Exception.Message)"
+        return $null
+    }
+    $root = [System.IO.Path]::GetPathRoot($full)
+    if ([string]::IsNullOrEmpty($root)) { return $null }
+    $current = $root.TrimEnd('\')
+    $rest = $full.Substring($root.Length).TrimStart('\')
+    $segments = @(); if ($rest) { $segments = @($rest -split '\\') }
+    for ($i = 0; $i -lt $segments.Count; $i++) {
+        $candidate = $current + '\' + $segments[$i]
+        $item = $null
+        try { $item = Get-Item -LiteralPath $candidate -Force -ErrorAction Stop } catch { Write-Verbose "ConvertTo-WinEaseRealPath: '$candidate' not inspectable: $($_.Exception.Message)" }
+        if (-not $item) {
+            # Element does not exist (or cannot be inspected): everything below is lexical.
+            $remaining = for ($j = $i; $j -lt $segments.Count; $j++) { $segments[$j] }
+            $current = $current + '\' + ($remaining -join '\')
+            break
+        }
+        if (-not [string]::IsNullOrEmpty($item.FullName)) { $current = $item.FullName.TrimEnd('\') }
+        else { $current = $candidate }
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            $target = $null
+            try { $target = @($item.Target) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1 } catch { Write-Verbose "ConvertTo-WinEaseRealPath: Target of '$candidate' unreadable: $($_.Exception.Message)" }
+            if ([string]::IsNullOrWhiteSpace($target)) {
+                Write-Verbose "ConvertTo-WinEaseRealPath: cannot resolve the target of reparse point '$candidate'."
+                return $null
+            }
+            $target = $target.Replace('/', '\')
+            if (-not ([System.IO.Path]::IsPathRooted($target))) {
+                # Relative link target: resolve against the link's parent.
+                try { $target = [System.IO.Path]::GetFullPath($current + '\' + $target) } catch { return $null }
+            }
+            try { $target = [System.IO.Path]::GetFullPath($target) } catch { return $null }
+            $current = $target.TrimEnd('\')
+        }
+    }
+    return $current
+}
+
 # True when one of the existing elements between Root and Path is a symbolic link, a
 # junction or another reparse point. A write through such a link can land outside of
 # the allowed root, so the restore refuses the path instead of following it.
@@ -321,63 +383,89 @@ function Test-IsNtfsVolume {
     }
 }
 
+# Private helper for Test-IsSafePathToDelete: purely lexical judgement over an already
+# normalized path (no reparse-point resolution). True when the path is a drive root, a UNC
+# share root, part of the user profile, a protected OS directory, or the repository script
+# directory (or an ancestor/descendant of any of these).
+function Test-WinEaseProtectedLexicalPath {
+    param([string]$Path)
+    $full = $Path
+    # 1. Drive roots (C:, D:\, etc.)
+    if ([string]::IsNullOrWhiteSpace($full) -or $full.Length -le 3 -or $full -match '^[A-Za-z]:$') { return $true }
+
+    # 2. Reject UNC roots (\\server\share)
+    if ($full -match '^\\\\[^\\]+\\[^\\]+$') { return $true }
+
+    # 3. User profile and users root
+    $systemProfile = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::UserProfile)
+    if ($systemProfile) {
+        $normUser = [System.IO.Path]::GetFullPath($systemProfile).TrimEnd('\', '/')
+        if ($full -ieq $normUser -or $normUser.StartsWith($full + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    if ($env:SystemDrive) {
+        $hostUsers = [System.IO.Path]::GetFullPath("$($env:SystemDrive)\Users").TrimEnd('\', '/')
+        if ($full -ieq $hostUsers -or $hostUsers.StartsWith($full + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+
+    # 4. Critical OS and program files directories
+    $protectedRoots = @(
+        [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::Windows),
+        [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ProgramFiles),
+        [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::CommonProgramFiles),
+        [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::CommonApplicationData)
+    )
+    if (${env:ProgramFiles(x86)}) {
+        $protectedRoots += ${env:ProgramFiles(x86)}
+    }
+    foreach ($pr in $protectedRoots) {
+        if ([string]::IsNullOrWhiteSpace($pr)) { continue }
+        $normPr = [System.IO.Path]::GetFullPath($pr).TrimEnd('\', '/')
+        if ($full -ieq $normPr -or $full.StartsWith($normPr + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $normPr.StartsWith($full + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+
+    # 5. Repository script directory itself, any subfolder inside it, or any ancestor of it
+    $refScriptDir = if ($scriptDir) { $scriptDir } elseif ($script:WinEaseHelperRoot) {
+        $script:WinEaseHelperRoot
+    } elseif ($PSScriptRoot) {
+        Split-Path -Parent $PSScriptRoot
+    } else {
+        $null
+    }
+    if ($refScriptDir) {
+        $normScript = [System.IO.Path]::GetFullPath($refScriptDir).TrimEnd('\', '/')
+        if ($full -ieq $normScript -or $full.StartsWith($normScript + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $normScript.StartsWith($full + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 function Test-IsSafePathToDelete {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
     try {
         $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
-        # 1. Drive roots (C:, D:\, etc.)
-        if ($full.Length -le 3 -or $full -match '^[A-Za-z]:$') { return $false }
+        if (Test-WinEaseProtectedLexicalPath -Path $full) { return $false }
 
-        # 2. Reject UNC roots (\\server\share)
-        if ($full -match '^\\\\[^\\]+\\[^\\]+$') { return $false }
-
-        # 3. User profile and users root
-        $systemProfile = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::UserProfile)
-        if ($systemProfile) {
-            $normUser = [System.IO.Path]::GetFullPath($systemProfile).TrimEnd('\', '/')
-            if ($full -ieq $normUser -or $normUser.StartsWith($full + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
-                return $false
-            }
-        }
-        if ($env:SystemDrive) {
-            $hostUsers = [System.IO.Path]::GetFullPath("$($env:SystemDrive)\Users").TrimEnd('\', '/')
-            if ($full -ieq $hostUsers -or $hostUsers.StartsWith($full + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
-                return $false
-            }
-        }
-
-        # 4. Critical OS and program files directories
-        $protectedRoots = @(
-            [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::Windows),
-            [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ProgramFiles),
-            [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::CommonProgramFiles),
-            [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::CommonApplicationData)
-        )
-        if (${env:ProgramFiles(x86)}) {
-            $protectedRoots += ${env:ProgramFiles(x86)}
-        }
-        foreach ($pr in $protectedRoots) {
-            if ([string]::IsNullOrWhiteSpace($pr)) { continue }
-            $normPr = [System.IO.Path]::GetFullPath($pr).TrimEnd('\', '/')
-            if ($full -ieq $normPr -or $full.StartsWith($normPr + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $normPr.StartsWith($full + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
-                return $false
-            }
-        }
-
-        # 5. Repository script directory itself, any subfolder inside it, or any ancestor of it
-        $refScriptDir = if ($scriptDir) { $scriptDir } elseif ($script:WinEaseHelperRoot) {
-            $script:WinEaseHelperRoot
-        } elseif ($PSScriptRoot) {
-            Split-Path -Parent $PSScriptRoot
-        } else {
-            $null
-        }
-        if ($refScriptDir) {
-            $normScript = [System.IO.Path]::GetFullPath($refScriptDir).TrimEnd('\', '/')
-            if ($full -ieq $normScript -or $full.StartsWith($normScript + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $normScript.StartsWith($full + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
-                return $false
-            }
+        # The lexical judgement cannot see through junctions or symlinks: "<tmp>\junc\System32"
+        # with junc -> %windir% is lexically safe but really inside the protected Windows
+        # directory. Resolve the real path (existing ancestors are 8.3-expanded and reparse
+        # targets substituted) and apply the same judgement to it - refuse when EITHER the
+        # lexical or the real path names something protected. A real path that cannot be
+        # determined is refused (fail closed). Non-existing tail segments keep the lexical
+        # judgement, so plain "would-be" directories behave as before.
+        $real = ConvertTo-WinEaseRealPath -Path $full
+        if ([string]::IsNullOrWhiteSpace($real)) { return $false }
+        $realNorm = $real.TrimEnd('\', '/')
+        if (-not $realNorm.Equals($full, [System.StringComparison]::OrdinalIgnoreCase)) {
+            if (Test-WinEaseProtectedLexicalPath -Path $realNorm) { return $false }
         }
 
         return $true

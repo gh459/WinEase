@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -11,8 +11,9 @@ public sealed record ComponentDef(string Key, string Text, string Description, b
 // Debloat* = the Advanced Debloat selection the preset itself defines (none of the built-in presets define any);
 // "Revert to preset" restores it, switching presets leaves the window's selection alone.
 // UseVHDX is applied when a preset is applied, but the state rules do not compare it (docs\GUI_PRESET_STATE.md).
+// Label = the display name of a user preset (its ProfileName); the built-ins are localized by the window.
 public sealed record PresetDef(string Key, Dictionary<string, bool> Components, Dictionary<string, bool> Tweaks, string PayloadFormat, bool UseVHDX,
-    List<string> DebloatStandard, List<string> DebloatExperimental, Dictionary<string, string> DebloatEngines);
+    List<string> DebloatStandard, List<string> DebloatExperimental, Dictionary<string, string> DebloatEngines, string Label = "");
 
 // The execution engine of one Advanced Debloat target (config\schema.psd1 -> DebloatEngines)
 public sealed record EngineDef(List<string> Engines, string Default);
@@ -54,8 +55,8 @@ public sealed class InitData
         {
             var presetEngines = new Dictionary<string, string>(StringComparer.Ordinal);
             if (p?["DebloatEngineSelection"] is JsonObject pe) foreach (var kv in pe) presetEngines[kv.Key] = Str(kv.Value);
-            Presets.Add(new PresetDef(Str(p?["Key"]), BoolMap(p?["Components"]), BoolMap(p?["Tweaks"]), Str(p?["PayloadFormat"], "WIM"), Bool(p?["UseVHDX"]),
-                StrList(p?["AdvancedDebloatStandard"]), StrList(p?["AdvancedDebloatExperimental"]), presetEngines));
+            Presets.Add(new PresetDef(Str(p?["Key"]), BoolMap(p?["Components"]), BoolMap(p?["Tweaks"]), Str(p?["PayloadFormat"], "WIM"), Bool(p?["UseVHDX"]), 
+                StrList(p?["AdvancedDebloatStandard"]), StrList(p?["AdvancedDebloatExperimental"]), presetEngines, Str(p?["Label"])));
         }
         PresetNames = StrList(o["PresetNames"]);
         if (PresetNames.Count == 0) PresetNames = Presets.Select(p => p.Key).ToList();
