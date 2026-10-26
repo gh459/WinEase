@@ -2620,14 +2620,14 @@ try {
 
     # 5c. P1-02: Check for cleanup residues and generate explicit remediation commands on failure or cancel
     if ($script:BuildCancelled -or -not $script:BuildSucceeded) {
-        $lingeringMountListAll = @()
+        $lingeringMountListAll = [System.Collections.Generic.List[string]]::new()
         foreach ($mPath in $allTargetMounts) {
             try {
                 foreach ($am in @(Get-WinEaseMountedImages)) {
                     $ap = if ($am.Path) { try { ConvertTo-WinEaseNormalizedPath -Path $am.Path } catch { $null } } else { $null }
-                    if ($ap -and ($ap -ieq $mPath)) { $lingeringMountListAll += $mPath }
+                    if ($ap -and ($ap -ieq $mPath)) { $lingeringMountListAll.Add($mPath) }
                 }
-            } catch { $lingeringMountListAll += "$mPath (status could not be read)" }
+            } catch { $lingeringMountListAll.Add("$mPath (status could not be read)") }
         }
         $stillLoadedHivesAll = @(@('zCOMPONENTS', 'zDEFAULT', 'zNTUSER', 'zSOFTWARE', 'zSYSTEM') | Where-Object { Test-Path -LiteralPath "Registry::HKEY_LOCAL_MACHINE\$_" })
         if (Get-Command -Name Get-WinEaseCleanupRemediation -ErrorAction SilentlyContinue) {
