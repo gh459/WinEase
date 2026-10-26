@@ -1784,6 +1784,20 @@ Describe "WinEase structured logger (lib/WinEaseLogger.ps1)" {
         $script:WinEaseLogWarningCount | Should Be 0
         $script:WinEaseLogErrorCount | Should Be 0
     }
+
+    It "redacts secrets, product keys, and API tokens via Redact-WinEaseSecret and New-WinEaseLogMessage" {
+        $redacted1 = Redact-WinEaseSecret -Text "Set password: SecretPassword123!"
+        $redacted1 | Should Be "Set password: [REDACTED]"
+
+        $redacted2 = Redact-WinEaseSecret -Text "License Key: VK7JG-NPHTM-C97JM-9MPGT-3V66T"
+        $redacted2 | Should Be "License Key: [REDACTED]"
+
+        $redacted3 = Redact-WinEaseSecret -Text "Serial VK7JG-NPHTM-C97JM-9MPGT-3V66T"
+        $redacted3 | Should Be "Serial XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"
+
+        $entry = New-WinEaseLogMessage -Message "Using api_key = my_secret_token_abc123"
+        $entry.Message | Should Be "Using api_key: [REDACTED]"
+    }
 }
 
 Describe "WinEase helpers - split module layout (R2)" {
