@@ -330,6 +330,21 @@ namespace @@NS@@ {
             [void](Import-WinEasePlugins -RepoRoot $script:RepoRoot -BuiltinLockPath (Join-Path $script:PluginWork 'empty-builtin.lock.psd1') -BuiltinDir (Join-Path $script:PluginWork 'emptybuiltin'))
             @(Get-WinEasePluginContributions -Kind Registry).Count | Should Be 0
         }
+        It "returns unique appx patterns via Get-WinEasePluginAppxPatterns" {
+            $script:WinEasePlugins = [System.Collections.Generic.List[object]]::new()
+            $mockInstance = [PSCustomObject]@{
+                GetAppxRemovals = { return @('PackageA.*', 'PackageB.*') }
+                AppliesTo       = { return $true }
+            }
+            $script:WinEasePlugins.Add([PSCustomObject]@{
+                Id          = 'MockPlugin'
+                Instance    = $mockInstance
+                Description = [PSCustomObject]@{ MinBuild = 0; MaxBuild = 0 }
+            })
+            $patterns = Get-WinEasePluginAppxPatterns
+            $patterns -contains 'PackageA.*' | Should Be $true
+            $patterns -contains 'PackageB.*' | Should Be $true
+        }
     }
 
     Context "Lock files, self test and user registration" {
