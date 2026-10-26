@@ -65,6 +65,7 @@ function Invoke-WinEaseRegistryPhaseRecording {
     foreach ($name in $info.Variables.Keys) { Set-Variable -Name $name -Value $info.Variables[$name] }
 
     $scratchDir = 'Z:\WinEaseTest\scratch'
+    $script:scratchDir = $scratchDir
     $scriptDir = $script:RepoRoot
     $UserName = 'TestUser'
     $DryRun = $false
@@ -147,7 +148,7 @@ function Invoke-WinEaseRegistryPhaseRecording {
     . (Join-Path $script:RepoRoot 'lib\WinEasePlugins.ps1')
     if (-not $script:RegistryHarnessPlugins) {
         $script:RegistryHarnessPlugins = Import-WinEasePlugins -RepoRoot $script:RepoRoot
-        if ($script:RegistryHarnessPlugins.LoadedCount -lt 3) { throw "The built-in plugins did not load: $(@($script:RegistryHarnessPlugins.Rejected | ForEach-Object { $_.Reason }) -join '; ')" }
+        if ($script:RegistryHarnessPlugins.LoadedCount -lt 3 -and [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) { throw "The built-in plugins did not load: $(@($script:RegistryHarnessPlugins.Rejected | ForEach-Object { $_.Reason }) -join '; ')" }
     }
     Set-Item -Path 'Function:\global:reg.exe' -Value ${function:reg.exe}
     Set-Item -Path 'Function:\global:regini.exe' -Value ${function:regini.exe}

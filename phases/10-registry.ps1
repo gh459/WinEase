@@ -1,6 +1,8 @@
 # Phase 10: Registry Hive Loading, Hardware Bypasses & Granular Tweaks
 # Dot-sourced by the main orchestrator (WinEasebuilder.ps1)
 
+if (-not $scratchDir -and $script:scratchDir) { $scratchDir = $script:scratchDir }
+
 Write-Host "Loading offline registry hives..." -ForegroundColor Cyan
 $systemHive    = "$scratchDir\Windows\System32\config\SYSTEM"
 $softwareHive  = "$scratchDir\Windows\System32\config\SOFTWARE"
@@ -662,7 +664,8 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
         '\Registry\Machine\zSYSTEM\ControlSet001\Services\SgrmAgent [1 17]',
         '\Registry\Machine\zSOFTWARE\Microsoft\Windows Defender\Features [1 17]'
     )
-    $reginiFile = Join-Path -Path $env:TEMP -ChildPath "WinEase_regini_$([System.IO.Path]::GetRandomFileName()).txt"
+    $tempDir = if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() }
+    $reginiFile = Join-Path -Path $tempDir -ChildPath "WinEase_regini_$([System.IO.Path]::GetRandomFileName()).txt"
     [System.IO.File]::WriteAllLines($reginiFile, $reginiLines, [System.Text.Encoding]::ASCII)
     & regini.exe $reginiFile > $null 2>&1
     Remove-Item -LiteralPath $reginiFile -Force -ErrorAction SilentlyContinue
@@ -739,7 +742,7 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
         "$scratchDir\Windows\SystemApps",
         "$scratchDir\ProgramData\Microsoft\Windows\AppRepository\Packages"
     )) {
-        if (Test-Path -LiteralPath $secGlobRoot) {
+        if ($scratchDir -and (Test-Path -LiteralPath $secGlobRoot)) {
             Get-ChildItem -LiteralPath $secGlobRoot -Force -ErrorAction SilentlyContinue |
                 Where-Object { $_.Name -match 'SecHealthUI' } |
                 ForEach-Object { [void](Remove-WinEaseTreeRobust -Path $_.FullName -SafetyRoot $scratchDir) }
@@ -765,7 +768,7 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
         "$scratchDir\Windows\System32\Tasks\Microsoft\Windows\SecurityCenter",
         "$scratchDir\Windows\System32\Tasks\Microsoft\Windows\Windows Security"
     )) {
-        if (Test-Path -LiteralPath $taskFolder) {
+        if ($scratchDir -and (Test-Path -LiteralPath $taskFolder)) {
             [void](Remove-WinEaseTreeRobust -Path $taskFolder -SafetyRoot $scratchDir)
         }
     }

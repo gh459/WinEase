@@ -842,7 +842,7 @@ Describe "WinEase advanced debloat - the engine choice is explained" -Tags 'slow
         $winuiText | Should Match 'ToolTipService\.SetToolTip\(engineHelp'
     }
 
-    It "the help mark of the classic window shows the explanation on hover" {
+    It "the help mark of the classic window shows the explanation on hover" -Skip:(-not ('System.Windows.Forms.Form' -as [type])) {
         $schema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
         $script:AllTweakDefs = [ordered]@{}
         foreach ($td in $schema.Tweaks) { $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description } }

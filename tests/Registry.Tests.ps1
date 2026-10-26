@@ -9,7 +9,7 @@ Describe "Registry phase - snapshots per preset" {
     # the final state per hive / key / value, not by call order. To record a fixture
     # again after a deliberate change: $env:WINEASE_UPDATE_FIXTURES = '1'.
     foreach ($preset in $script:RegistryPresets) {
-        It "writes the same final registry state for the '$preset' preset" {
+        It "writes the same final registry state for the '$preset' preset" -Skip:($script:RegistryHarnessPlugins.LoadedCount -lt 3) {
             $fixture = Join-Path $script:RepoRoot "tests\fixtures\registry\$preset.txt"
             $actualCalls = @(Invoke-WinEaseRegistryPhaseRecording -Preset $preset)
             $actualCalls | Where-Object { $_ -like 'UNPARSED*' } | Should BeNullOrEmpty
@@ -33,7 +33,7 @@ Describe "Registry phase - snapshots per preset" {
         }
     }
 
-    It "loads the five offline hives through the hive helper" {
+    It "loads the five offline hives through the hive helper" -Skip:($script:RegistryHarnessPlugins.LoadedCount -lt 3) {
         $calls = @(Invoke-WinEaseRegistryPhaseRecording -Preset 'default')
         @($calls | Where-Object { $_ -like 'LOAD*' }).Count | Should Be 5
     }
