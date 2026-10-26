@@ -35,6 +35,38 @@ function Get-WinEaseCommandNames {
     return @($cmds | ForEach-Object { $_.GetCommandName() })
 }
 
+Describe "ConvertTo-WinEaseSecretBase64 and ConvertFrom-WinEaseSecretBase64" {
+    foreach ($pw in $script:SecretCases) {
+        $label = ($pw -replace '[^\x20-\x7E]', '?')
+        It "converts password [$label] to base64 and back accurately" {
+            $b64 = ConvertTo-WinEaseSecretBase64 -Value $pw
+            $b64 | Should Not BeNullOrEmpty
+            $decoded = ConvertFrom-WinEaseSecretBase64 -Value $b64
+            $decoded | Should BeExactly $pw
+        }
+
+        It "encodes password [$label] using UTF-16LE bytes in Base64" {
+            $expected = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($pw))
+            $actual = ConvertTo-WinEaseSecretBase64 -Value $pw
+            $actual | Should BeExactly $expected
+        }
+    }
+
+    It "returns an empty string when value is null or empty" {
+        (ConvertTo-WinEaseSecretBase64 -Value $null) | Should BeExactly ''
+        (ConvertTo-WinEaseSecretBase64 -Value '') | Should BeExactly ''
+        (ConvertFrom-WinEaseSecretBase64 -Value $null) | Should BeExactly ''
+        (ConvertFrom-WinEaseSecretBase64 -Value '') | Should BeExactly ''
+    }
+
+    It "preserves whitespace-only strings" {
+        $ws = "   `t`n  "
+        $b64 = ConvertTo-WinEaseSecretBase64 -Value $ws
+        $b64 | Should Not BeNullOrEmpty
+        (ConvertFrom-WinEaseSecretBase64 -Value $b64) | Should BeExactly $ws
+    }
+}
+
 Describe "Secrets - OOBE auto-logon helper" {
     $template = Get-WinEaseTestTemplate
     $templateCommands = Get-WinEaseCommandNames -Source $template
