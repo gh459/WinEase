@@ -41,11 +41,14 @@ if ($SourceDrive) {
 # Helper: Scan for healthy Windows 11 ISO files on local storage and auto-mount if needed
 function Find-AndMountHealthyWindowsIso {
     $searchPaths = @("E:\", "D:\", (Split-Path -Parent $PSScriptRoot), $env:USERPROFILE)
-    $candidateIsos = @()
+    $candidateIsos = [System.Collections.Generic.List[System.IO.FileInfo]]::new()
     foreach ($p in $searchPaths) {
         if (-not (Test-Path -LiteralPath $p)) { continue }
-        $candidateIsos += Get-ChildItem -Path $p -Filter "*.iso" -File -ErrorAction SilentlyContinue |
+        $foundIsos = Get-ChildItem -Path $p -Filter "*.iso" -File -ErrorAction SilentlyContinue |
             Where-Object { $_.Length -gt 4GB -and ($_.Name -like "*26300*" -or $_.Name -like "*Win11*" -or $_.Name -like "*Windows11*") -and $_.Name -notlike "*WinEase*" }
+        foreach ($iso in $foundIsos) {
+            $candidateIsos.Add($iso)
+        }
     }
     # Sort: Prioritize 26300 (26H2) official ISO first, then by size
     $sortedIsos = $candidateIsos | Sort-Object { if ($_.Name -like "*26300*") { 0 } else { 1 } }, Length -Descending
