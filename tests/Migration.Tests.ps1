@@ -301,6 +301,258 @@ Describe "Migration rules backup/restore (tools/migrator/WinEaseMigration.ps1)" 
     }
 }
 
+Describe "Invoke-WinEaseMigrationRulesRestore" -Tags 'slow' {
+    BeforeAll {
+        if (-not (Get-Command -Name Test-WinEasePathWithin -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot -ChildPath "WinEasehelpers.ps1")
+        }
+        if (-not (Get-Command -Name Invoke-WinEaseMigrationRulesRestore -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot -ChildPath "tools\migrator\WinEaseMigration.ps1")
+        }
+        if (-not [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) {
+            Mock Resolve-WinEaseRestoreTarget {
+                param($Path, $AllowedRoots)
+                foreach ($r in $AllowedRoots) {
+                    if ($Path -and $r -and $Path.StartsWith($r, [System.StringComparison]::OrdinalIgnoreCase)) {
+                        return [PSCustomObject]@{ IsSafe = $true; Path = $Path; Reason = '' }
+                    }
+                }
+                return [PSCustomObject]@{ IsSafe = $false; Path = $null; Reason = 'outside allowed locations' }
+            }
+        }
+    }
+
+    It "reports failure when backup directory for a rule does not exist" {
+        $bk = Join-Path $TestDrive 'bk-norestore'
+        New-Item -ItemType Directory -Force -Path $bk | Out-Null
+        $r = Invoke-WinEaseMigrationRulesRestore -RuleIds @('MissingBackupRule') -BackupRoot $bk
+        $r.RestoredFiles | Should Be 0
+        @($r.FailedFiles).Count | Should Be 1
+        $r.FailedFiles[0].Rule | Should Be 'MissingBackupRule'
+        $r.FailedFiles[0].Error | Should Be 'Backup not found'
+    }
+
+    It "reports failure when rule definition is missing in loaded rules" {
+        $bk = Join-Path $TestDrive 'bk-norule'
+        $ruleDir = Join-Path $bk 'rules\UnknownRule'
+        New-Item -ItemType Directory -Force -Path $ruleDir | Out-Null
+        $customRules = [PSCustomObject]@{ GameRules = @(); AppConfigRules = @(); CustomPathRules = @(); SecretPatterns = @(); Errors = @() }
+        $r = Invoke-WinEaseMigrationRulesRestore -RuleIds @('UnknownRule') -BackupRoot $bk -Rules $customRules
+        $r.RestoredFiles | Should Be 0
+        @($r.FailedFiles).Count | Should Be 1
+        $r.FailedFiles[0].Rule | Should Be 'UnknownRule'
+        $r.FailedFiles[0].Error | Should Match 'Rule not found'
+    }
+
+    It "skips rule when process is running and ForceRunningProcess is omitted" {
+        $bk = Join-Path $TestDrive 'bk-proc'
+        $ruleDir = Join-Path $bk 'rules\ProcRule'
+        New-Item -ItemType Directory -Force -Path $ruleDir | Out-Null
+        $customRules = [PSCustomObject]@{
+            GameRules      = @()
+            AppConfigRules = @(@{ Id = 'ProcRule'; Name = 'Proc App'; ProcessNames = @('test-app-proc'); SourcePaths = @() })
+            CustomPathRules= @()
+            SecretPatterns = @(); Errors = @()
+        }
+        Mock Get-Process { [PSCustomObject]@{ Name = 'test-app-proc' } } -ParameterFilter { $Name -eq 'test-app-proc' }
+        $r = Invoke-WinEaseMigrationRulesRestore -RuleIds @('ProcRule') -BackupRoot $bk -Rules $customRules
+        $r.SkippedFiles | Should Be 1
+        @($r.FailedFiles).Count | Should Be 1
+        $r.FailedFiles[0].Error | Should Match 'Application running'
+
+        # When ForceRunningProcess is passed, process check is bypassed
+        $rForce = Invoke-WinEaseMigrationRulesRestore -RuleIds @('ProcRule') -BackupRoot $bk -Rules $customRules -ForceRunningProcess
+        $rForce.SkippedFiles | Should Be 0
+    }
+
+    It "restores single-file source rule directly to destination file" {
+        $destDir = Join-Path $TestDrive 'singlefile-target'
+        New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+        $destFile = Join-Path $destDir 'settings.ini'
+
+        $bk = Join-Path $TestDrive 'bk-singlefile'
+        $ruleDir = Join-Path $bk 'rules\SingleFileRule'
+        New-Item -ItemType Directory -Force -Path $ruleDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $ruleDir 'settings.ini') -Value 'key=value'
+
+        $ruleManifest = [PSCustomObject]@{
+            Id          = 'SingleFileRule'
+            SourcePaths = @($destFile)
+            Entries     = @(
+                [PSCustomObject]@{ RelativePath = 'settings.ini'; SourcePath = $destFile; IsFileSource = $true }
+            )
+        }
+        $ruleManifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $ruleDir 'rule-manifest.json') -Encoding UTF8
+
+        $customRules = [PSCustomObject]@{
+            GameRules      = @()
+            AppConfigRules = @(@{ Id = 'SingleFileRule'; Name = 'Single File'; SourcePaths = @($destFile) })
+            CustomPathRules= @()
+            SecretPatterns = @(); Errors = @()
+        }
+
+        $r = Invoke-WinEaseMigrationRulesRestore -RuleIds @('SingleFileRule') -BackupRoot $bk -Rules $customRules
+        $r.RestoredFiles | Should Be 1
+        @($r.FailedFiles).Count | Should Be 0
+        Test-Path -LiteralPath $destFile | Should Be $true
+        (Get-Content -LiteralPath $destFile -Raw).Trim() | Should Be 'key=value'
+    }
+
+    It "reports error when a file recorded in the rule manifest is missing from backup" {
+        $destDir = Join-Path $TestDrive 'missingfile-target'
+        New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+
+        $bk = Join-Path $TestDrive 'bk-missingfile'
+        $ruleDir = Join-Path $bk 'rules\MissingFileRule'
+        New-Item -ItemType Directory -Force -Path $ruleDir | Out-Null
+
+        $ruleManifest = [PSCustomObject]@{
+            Id          = 'MissingFileRule'
+            SourcePaths = @($destDir)
+            Entries     = @(
+                [PSCustomObject]@{ RelativePath = 'ghost.dat'; SourcePath = $destDir }
+            )
+        }
+        $ruleManifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $ruleDir 'rule-manifest.json') -Encoding UTF8
+
+        $customRules = [PSCustomObject]@{
+            GameRules      = @()
+            AppConfigRules = @(@{ Id = 'MissingFileRule'; Name = 'Missing File'; SourcePaths = @($destDir) })
+            CustomPathRules= @()
+            SecretPatterns = @(); Errors = @()
+        }
+
+        $r = Invoke-WinEaseMigrationRulesRestore -RuleIds @('MissingFileRule') -BackupRoot $bk -Rules $customRules
+        $r.RestoredFiles | Should Be 0
+        @($r.FailedFiles).Count | Should Be 1
+        $r.FailedFiles[0].Path | Should Be 'ghost.dat'
+        $r.FailedFiles[0].Error | Should Be 'Backup file missing'
+    }
+
+    It "refuses to restore rule file if target path falls outside allowed source paths" {
+        $allowedDir = Join-Path $TestDrive 'allowed-root'
+        $outsideDir = Join-Path $TestDrive 'outside-root'
+        New-Item -ItemType Directory -Force -Path $allowedDir, $outsideDir | Out-Null
+
+        $bk = Join-Path $TestDrive 'bk-refused'
+        $ruleDir = Join-Path $bk 'rules\RefusedRule'
+        New-Item -ItemType Directory -Force -Path $ruleDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $ruleDir 'data.txt') -Value 'evil'
+
+        $ruleManifest = [PSCustomObject]@{
+            Id          = 'RefusedRule'
+            SourcePaths = @($allowedDir)
+            Entries     = @(
+                [PSCustomObject]@{ RelativePath = 'data.txt'; SourcePath = $outsideDir }
+            )
+        }
+        $ruleManifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $ruleDir 'rule-manifest.json') -Encoding UTF8
+
+        $customRules = [PSCustomObject]@{
+            GameRules      = @()
+            AppConfigRules = @(@{ Id = 'RefusedRule'; Name = 'Refused Rule'; SourcePaths = @($allowedDir) })
+            CustomPathRules= @()
+            SecretPatterns = @(); Errors = @()
+        }
+
+        $r = Invoke-WinEaseMigrationRulesRestore -RuleIds @('RefusedRule') -BackupRoot $bk -Rules $customRules
+        $r.RestoredFiles | Should Be 0
+        @($r.FailedFiles).Count | Should Be 1
+        $r.FailedFiles[0].Error | Should Match 'Refused'
+        Test-Path (Join-Path $outsideDir 'data.txt') | Should Be $false
+    }
+
+    It "respects conflict policies when restoring rule files" {
+        $targetDir = Join-Path $TestDrive 'conflict-rule-target'
+        New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+        $destFile = Join-Path $targetDir 'config.txt'
+        Set-Content -LiteralPath $destFile -Value 'original'
+
+        $bk = Join-Path $TestDrive 'bk-conflict-rule'
+        $ruleDir = Join-Path $bk 'rules\ConflictRule'
+        New-Item -ItemType Directory -Force -Path $ruleDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $ruleDir 'config.txt') -Value 'restored'
+
+        $ruleManifest = [PSCustomObject]@{
+            Id          = 'ConflictRule'
+            SourcePaths = @($targetDir)
+            Entries     = @(
+                [PSCustomObject]@{ RelativePath = 'config.txt'; SourcePath = $targetDir }
+            )
+        }
+        $ruleManifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $ruleDir 'rule-manifest.json') -Encoding UTF8
+
+        $customRules = [PSCustomObject]@{
+            GameRules      = @()
+            AppConfigRules = @(@{ Id = 'ConflictRule'; Name = 'Conflict Rule'; SourcePaths = @($targetDir) })
+            CustomPathRules= @()
+            SecretPatterns = @(); Errors = @()
+        }
+
+        # 1. Skip policy
+        $rSkip = Invoke-WinEaseMigrationRulesRestore -RuleIds @('ConflictRule') -BackupRoot $bk -Rules $customRules -ConflictPolicy Skip
+        $rSkip.SkippedFiles | Should Be 1
+        (Get-Content -LiteralPath $destFile -Raw).Trim() | Should Be 'original'
+
+        # 2. BackupExisting policy
+        $rBak = Invoke-WinEaseMigrationRulesRestore -RuleIds @('ConflictRule') -BackupRoot $bk -Rules $customRules -ConflictPolicy BackupExisting
+        $rBak.RestoredFiles | Should Be 1
+        (Get-Content -LiteralPath $destFile -Raw).Trim() | Should Be 'restored'
+        Test-Path -LiteralPath "$destFile.WinEase.bak" | Should Be $true
+        (Get-Content -LiteralPath "$destFile.WinEase.bak" -Raw).Trim() | Should Be 'original'
+
+        # 3. Overwrite policy
+        Set-Content -LiteralPath $destFile -Value 'modified'
+        $rOver = Invoke-WinEaseMigrationRulesRestore -RuleIds @('ConflictRule') -BackupRoot $bk -Rules $customRules -ConflictPolicy Overwrite
+        $rOver.RestoredFiles | Should Be 1
+        (Get-Content -LiteralPath $destFile -Raw).Trim() | Should Be 'restored'
+    }
+
+    It "restores rule files in legacy backup without rule-manifest.json" {
+        $targetDir = Join-Path $TestDrive 'legacy-rule-target'
+        New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+
+        $bk = Join-Path $TestDrive 'bk-legacy-rule'
+        $ruleDir = Join-Path $bk 'rules\LegacyRule'
+        New-Item -ItemType Directory -Force -Path $ruleDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $ruleDir 'legacy.cfg') -Value 'legacy_data'
+
+        $customRules = [PSCustomObject]@{
+            GameRules      = @()
+            AppConfigRules = @(@{ Id = 'LegacyRule'; Name = 'Legacy Rule'; SourcePaths = @($targetDir) })
+            CustomPathRules= @()
+            SecretPatterns = @(); Errors = @()
+        }
+
+        $r = Invoke-WinEaseMigrationRulesRestore -RuleIds @('LegacyRule') -BackupRoot $bk -Rules $customRules
+        $r.RestoredFiles | Should Be 1
+        @($r.FailedFiles).Count | Should Be 0
+        Test-Path (Join-Path $targetDir 'legacy.cfg') | Should Be $true
+        (Get-Content (Join-Path $targetDir 'legacy.cfg') -Raw).Trim() | Should Be 'legacy_data'
+    }
+
+    It "reports failure when registry import fails during rule restore" {
+        $bk = Join-Path $TestDrive 'bk-reg-fail'
+        $ruleDir = Join-Path $bk 'rules\RegFailRule'
+        New-Item -ItemType Directory -Force -Path $ruleDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $ruleDir 'test.reg') -Value 'Windows Registry Editor Version 5.00'
+
+        $customRules = [PSCustomObject]@{
+            GameRules      = @()
+            AppConfigRules = @(@{ Id = 'RegFailRule'; Name = 'Reg Fail Rule'; SourcePaths = @() })
+            CustomPathRules= @()
+            SecretPatterns = @(); Errors = @()
+        }
+
+        Mock Invoke-WinEaseRegExe { return $false }
+        $r = Invoke-WinEaseMigrationRulesRestore -RuleIds @('RegFailRule') -BackupRoot $bk -Rules $customRules
+        $r.RestoredFiles | Should Be 0
+        @($r.FailedFiles).Count | Should Be 1
+        $r.FailedFiles[0].Path | Should Be 'test.reg'
+        $r.FailedFiles[0].Error | Should Match 'Registry import failed'
+    }
+}
+
 Describe "S4 builder hooks (ComparePreset / PreBuild / OfflineImage)" {
     BeforeAll { }
     $s4Root = Split-Path -Parent $PSScriptRoot
