@@ -458,12 +458,14 @@ Describe "WinEase builder - Enter-Phase progress tracking and checkpoints" {
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$tokens, [ref]$errors)
         $fnAst = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Enter-Phase' }, $true))[0]
         $script:EnterPhaseFnText = $fnAst.Extent.Text
+        $taskFnAst = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Add-WinEaseBuildTask' }, $true))[0]
+        $script:AddBuildTaskFnText = $taskFnAst.Extent.Text
     }
 
     BeforeEach {
         $script:SavedCheckpoints = [System.Collections.ArrayList]::new()
-        $script:EnterPhaseProbe = New-Module -Name 'WinEaseEnterPhaseProbe' -ArgumentList $script:EnterPhaseFnText -ScriptBlock {
-            param($FnText)
+        $script:EnterPhaseProbe = New-Module -Name 'WinEaseEnterPhaseProbe' -ArgumentList $script:EnterPhaseFnText, $script:AddBuildTaskFnText -ScriptBlock {
+            param($FnText, $TaskFnText)
             $script:CurrentPhase = 0
             $script:TotalPhases = 18
             $script:PhaseTimings = [ordered]@{}
@@ -472,6 +474,7 @@ Describe "WinEase builder - Enter-Phase progress tracking and checkpoints" {
             $script:BaseWorkDir = $null
             $script:CurrentBuildPhase = $null
             $script:DiagnosticData = $null
+            $script:WinEaseBuildTasks = $null
             $script:CheckpointLog = [System.Collections.ArrayList]::new()
 
             function Save-WinEaseCheckpoint {
@@ -479,9 +482,10 @@ Describe "WinEase builder - Enter-Phase progress tracking and checkpoints" {
                 [void]$script:CheckpointLog.Add($CompletedPhase)
             }
 
+            . ([scriptblock]::Create($TaskFnText))
             . ([scriptblock]::Create($FnText))
 
-            Export-ModuleMember -Function 'Enter-Phase' -Variable 'CurrentPhase', 'TotalPhases', 'PhaseTimings', 'PhaseStopwatch', 'ResumeMode', 'BaseWorkDir', 'CurrentBuildPhase', 'DiagnosticData', 'CheckpointLog'
+            Export-ModuleMember -Function 'Enter-Phase', 'Add-WinEaseBuildTask' -Variable 'CurrentPhase', 'TotalPhases', 'PhaseTimings', 'PhaseStopwatch', 'ResumeMode', 'BaseWorkDir', 'CurrentBuildPhase', 'DiagnosticData', 'WinEaseBuildTasks', 'CheckpointLog'
         }
         Import-Module $script:EnterPhaseProbe -Force
     }
@@ -614,5 +618,53 @@ Describe "WinEase builder - ConvertTo-WinEaseCliArgument" {
 
     It "serializes `$null value as parameter with empty string" {
         ConvertTo-WinEaseCliArgument -Name "SourceDrive" -Value $null | Should Be "-SourceDrive ''"
+    }
+}
+
+Describe "WinEase builder - Add-WinEaseBuildTask" {
+    BeforeAll {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcNode = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Add-WinEaseBuildTask'
+        }, $true)
+        $script:AddBuildTaskFnText = $funcNode.Extent.Text
+    }
+
+    BeforeEach {
+        $script:AddBuildTaskProbe = New-Module -Name 'WinEaseAddBuildTaskProbe' -ArgumentList $script:AddBuildTaskFnText -ScriptBlock {
+            param($FnText)
+            $script:WinEaseBuildTasks = $null
+            . ([scriptblock]::Create($FnText))
+            Export-ModuleMember -Function 'Add-WinEaseBuildTask' -Variable 'WinEaseBuildTasks'
+        }
+        Import-Module $script:AddBuildTaskProbe -Force
+    }
+
+    AfterEach {
+        Remove-Module $script:AddBuildTaskProbe -Force -ErrorAction SilentlyContinue
+    }
+
+    It "initializes WinEaseBuildTasks collection and adds task name" {
+        & $script:AddBuildTaskProbe {
+            $script:WinEaseBuildTasks | Should Be $null
+            Add-WinEaseBuildTask -TaskName "Environment Validation"
+            $script:WinEaseBuildTasks | Should Not Be $null
+            $script:WinEaseBuildTasks.Count | Should Be 1
+            $script:WinEaseBuildTasks[0] | Should Be "Environment Validation"
+        }
+    }
+
+    It "catches internal collection exception gracefully without throwing" {
+        & $script:AddBuildTaskProbe {
+            $failingTasks = [pscustomobject]@{}
+            $failingTasks | Add-Member -MemberType ScriptMethod -Name Add -Value { throw "Collection mutation failed" }
+            $script:WinEaseBuildTasks = $failingTasks
+
+            { Add-WinEaseBuildTask -TaskName "Failing Task" } | Should Not Throw
+        }
     }
 }

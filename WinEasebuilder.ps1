@@ -802,11 +802,29 @@ $script:TotalPhases = 18
 $script:PhaseTimings = [ordered]@{}
 $script:PhaseStopwatch = $null
 
+function Add-WinEaseBuildTask {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TaskName
+    )
+    if ($null -eq $script:WinEaseBuildTasks) {
+        $script:WinEaseBuildTasks = [System.Collections.Generic.List[string]]::new()
+    }
+    try {
+        [void]$script:WinEaseBuildTasks.Add($TaskName)
+    } catch {
+        Write-Verbose "Failed to register build task: $($_.Exception.Message)"
+    }
+}
+
 function Enter-Phase {
     param(
         [int]$PhaseNumber,
         [string]$PhaseName
     )
+    if (Get-Command -Name Add-WinEaseBuildTask -ErrorAction SilentlyContinue) {
+        Add-WinEaseBuildTask -TaskName $PhaseName
+    }
     # F2: persist a checkpoint for the phase that just completed (foundation for -ResumeFromPhase)
     if ($script:CurrentPhase -gt 0 -and -not $script:ResumeMode -and $script:BaseWorkDir) {
         Save-WinEaseCheckpoint -CompletedPhase $script:CurrentPhase
