@@ -742,7 +742,15 @@ function Invoke-WinEaseRegExe {
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $output = & reg.exe @ArgumentList 2>&1
+        $resolvedArgs = @()
+        foreach ($arg in $ArgumentList) {
+            $a = [string]$arg
+            if ($ExecutionContext -and $ExecutionContext.SessionState -and $ExecutionContext.SessionState.Path -and (Test-Path -LiteralPath $a -ErrorAction SilentlyContinue)) {
+                try { $a = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($a) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+            }
+            $resolvedArgs += $a
+        }
+        $output = & reg.exe @resolvedArgs 2>&1
         $exit = $LASTEXITCODE
         $stderrText = (@($output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$($_.Exception.Message)" }) -join ' ').Trim()
     } finally {
@@ -784,11 +792,6 @@ function Invoke-WinEaseMigrationRulesBackup {
     $backedUp = @()
     $notices = @()
     if (-not (Test-Path -LiteralPath $BackupRoot)) { New-Item -ItemType Directory -Force -Path $BackupRoot | Out-Null }
-    try {
-        if (Get-Command Resolve-Path -ErrorAction SilentlyContinue) {
-            $BackupRoot = (Resolve-Path -LiteralPath $BackupRoot -ErrorAction Stop).ProviderPath
-        }
-    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     foreach ($rid in $RuleIds) {
         $rule = $allRules | Where-Object { $_.Id -eq $rid } | Select-Object -First 1
         if (-not $rule) { $failed += [PSCustomObject]@{ Rule = $rid; Error = 'Rule not found' }; continue }
@@ -945,11 +948,6 @@ function Invoke-WinEaseMigrationRulesRestore {
     $restored = 0
     $skipped = 0
     $failed = @()
-    try {
-        if ((Test-Path -LiteralPath $BackupRoot) -and (Get-Command Resolve-Path -ErrorAction SilentlyContinue)) {
-            $BackupRoot = (Resolve-Path -LiteralPath $BackupRoot -ErrorAction Stop).ProviderPath
-        }
-    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     foreach ($rid in $RuleIds) {
         $rule = $allRules | Where-Object { $_.Id -eq $rid } | Select-Object -First 1
         $ruleBackupDir = Join-Path -Path $BackupRoot -ChildPath "rules\$rid"
