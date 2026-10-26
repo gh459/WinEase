@@ -739,12 +739,23 @@ function Invoke-WinEaseRegExe {
         [string[]]$ArgumentList,
         [string]$KeyForError = ''
     )
+    if ('Microsoft.Win32.Registry' -as [type]) {
+        try {
+            [Microsoft.Win32.Registry]::CurrentUser.Flush()
+            [Microsoft.Win32.Registry]::LocalMachine.Flush()
+        } catch { Write-Verbose "Ignored registry flush: $($_.Exception.Message)" }
+    }
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $output = & reg.exe @ArgumentList 2>&1
+        $global:LASTEXITCODE = 0
+        $regCmd = if (Get-Command 'reg.exe' -ErrorAction SilentlyContinue) { 'reg.exe' } elseif (Test-Path "$env:SystemRoot\System32\reg.exe") { "$env:SystemRoot\System32\reg.exe" } else { 'reg.exe' }
+        $output = & $regCmd @ArgumentList 2>&1
         $exit = $LASTEXITCODE
         $stderrText = (@($output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$($_.Exception.Message)" }) -join ' ').Trim()
+    } catch {
+        Write-Verbose "Invoke-WinEaseRegExe exception: $($_.Exception.Message)"
+        return $false
     } finally {
         $ErrorActionPreference = $prevEap
     }
@@ -874,11 +885,12 @@ function Invoke-WinEaseMigrationRulesBackup {
         if ($rule.RegistryPaths) {
             foreach ($rp in $rule.RegistryPaths) {
                 $regKey = ([string]$rp).Trim() -replace '^([A-Za-z0-9]+):', '$1'
-                if ($regKey -match '^(?i)HKCU\\') { $regKey = $regKey -replace '^(?i)HKCU\\', 'HKEY_CURRENT_USER\' }
-                elseif ($regKey -match '^(?i)HKLM\\') { $regKey = $regKey -replace '^(?i)HKLM\\', 'HKEY_LOCAL_MACHINE\' }
-                elseif ($regKey -match '^(?i)HKCR\\') { $regKey = $regKey -replace '^(?i)HKCR\\', 'HKEY_CLASSES_ROOT\' }
-                elseif ($regKey -match '^(?i)HKU\\') { $regKey = $regKey -replace '^(?i)HKU\\', 'HKEY_USERS\' }
-                elseif ($regKey -match '^(?i)HKCC\\') { $regKey = $regKey -replace '^(?i)HKCC\\', 'HKEY_CURRENT_CONFIG\' }
+                if ($regKey -match '^(?i)HKCU(\\|$)' -or $regKey -match '^(?i)HKEY_CURRENT_USER(\\|$)') {
+                    $regKey = $regKey -replace '^(?i)HKCU(\\|$)', 'HKCU\' -replace '^(?i)HKEY_CURRENT_USER(\\|$)', 'HKCU\'
+                } elseif ($regKey -match '^(?i)HKLM(\\|$)' -or $regKey -match '^(?i)HKEY_LOCAL_MACHINE(\\|$)') {
+                    $regKey = $regKey -replace '^(?i)HKLM(\\|$)', 'HKLM\' -replace '^(?i)HKEY_LOCAL_MACHINE(\\|$)', 'HKLM\'
+                }
+                $regKey = $regKey.TrimEnd('\')
                 $regName = ($regKey -replace '[\\/:*?"<>|\s]', '_')
                 if (-not $regName) { $regName = 'registry' }
                 $regFile = Join-Path -Path $ruleBackupDir -ChildPath ($regName + '.reg')
@@ -908,12 +920,12 @@ function Invoke-WinEaseMigrationRulesBackup {
                     SourcePaths   = @($existingSources)
                     RegistryKeys  = @(@($rule.RegistryPaths) | Where-Object { $_ } | ForEach-Object {
                         $k = ([string]$_).Trim() -replace '^([A-Za-z0-9]+):', '$1'
-                        if ($k -match '^(?i)HKCU\\') { $k = $k -replace '^(?i)HKCU\\', 'HKEY_CURRENT_USER\' }
-                        elseif ($k -match '^(?i)HKLM\\') { $k = $k -replace '^(?i)HKLM\\', 'HKEY_LOCAL_MACHINE\' }
-                        elseif ($k -match '^(?i)HKCR\\') { $k = $k -replace '^(?i)HKCR\\', 'HKEY_CLASSES_ROOT\' }
-                        elseif ($k -match '^(?i)HKU\\') { $k = $k -replace '^(?i)HKU\\', 'HKEY_USERS\' }
-                        elseif ($k -match '^(?i)HKCC\\') { $k = $k -replace '^(?i)HKCC\\', 'HKEY_CURRENT_CONFIG\' }
-                        $k
+                        if ($k -match '^(?i)HKCU(\\|$)' -or $k -match '^(?i)HKEY_CURRENT_USER(\\|$)') {
+                            $k = $k -replace '^(?i)HKCU(\\|$)', 'HKCU\' -replace '^(?i)HKEY_CURRENT_USER(\\|$)', 'HKCU\'
+                        } elseif ($k -match '^(?i)HKLM(\\|$)' -or $k -match '^(?i)HKEY_LOCAL_MACHINE(\\|$)') {
+                            $k = $k -replace '^(?i)HKLM(\\|$)', 'HKLM\' -replace '^(?i)HKEY_LOCAL_MACHINE(\\|$)', 'HKLM\'
+                        }
+                        $k.TrimEnd('\')
                     })
                     Entries       = @($ruleEntries)
                 }
