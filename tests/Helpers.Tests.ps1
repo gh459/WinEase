@@ -1922,7 +1922,12 @@ Describe "WinEase WIM - Get-WinEaseWimFileFingerprint" {
         $tempWork = Join-Path ([System.IO.Path]::GetTempPath()) ("wim_fp_fail_" + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $tempWork -Force | Out-Null
         try {
-            Mock Export-WinEaseWimFile { return $false }
+            Mock Export-WinEaseWimFile {
+                param($Destination)
+                $parent = Split-Path -Path $Destination -Parent
+                if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+                return $false
+            }
             $res = Get-WinEaseWimFileFingerprint -WimPath "C:\test.wim" -Index 1 -ImagePath "Windows\System32\cmd.exe" -WorkDir $tempWork
             $res | Should Be $null
         } finally {
