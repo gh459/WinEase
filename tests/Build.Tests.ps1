@@ -560,6 +560,18 @@ Describe "WinEase builder - Enter-Phase progress tracking and checkpoints" {
             $script:CurrentPhase | Should Be 10
         }
     }
+
+    It "keeps Phase 9.5 distinct from Phase 10 in the phase number and the timings table" {
+        & $script:EnterPhaseProbe {
+            $script:BaseWorkDir = "/tmp/winease-work"
+            $script:ResumeMode = $false
+            Enter-Phase -PhaseNumber 9.5 -PhaseName "Physical Debloat" -Step 10
+            $script:CurrentPhase | Should Be 9.5
+            Enter-Phase -PhaseNumber 10 -PhaseName "Registry" -Step 11
+            $script:PhaseTimings.Contains('Phase 9.5') | Should Be $true
+            $script:CheckpointLog[-1] | Should Be 9
+        }
+    }
 }
 
 Describe "WinEase builder - ConvertTo-WinEaseCliArgument" {

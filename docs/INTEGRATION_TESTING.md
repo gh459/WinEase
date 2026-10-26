@@ -60,7 +60,7 @@ A release candidate or configuration is deemed **Verified** if and only if it sa
    - **Extended Matrix Gate:** `extreme`, `none`, and `vm` presets; Japanese environment (`ja-JP` keyboard/IME); Windows 11 Pro and Home editions.
    - **Isolation Policy:** Experimental physical debloat (`-AllowPhysicalDebloat`) and deep component store pruning (`-ForceWinSxSCleanup`) are quarantined from standard integration suites and tested only on isolated disposable runs.
 2. **Success Assertions (All mandatory):**
-   - **Full ISO Generation:** Builder completes all 18 phases, passes Phase 15 deep-apply verification and Phase 18 ISO payload hash verification.
+   - **Full ISO Generation:** Builder completes all 19 phases (18 numbered, plus the optional Phase 9.5 Physical Debloat), passes Phase 15 deep-apply verification and Phase 18 ISO payload hash verification.
    - **Unattended VM Boot & Setup:** Gen2 VM boots, processes unattended setup passes (`windowsPE`, `specialize`, `oobeSystem`) without manual intervention.
    - **First Logon Execution:** System reaches desktop, executes `FirstLogon.ps1`, and produces the completion signal `C:\ProgramData\WinEase\firstlogon.done` with zero `firstlogon_script.failed` triggers.
    - **Residue & Teardown Zero-Tolerance:** Host teardown destroys the VM, unmounts all DISM images, unloads temporary registry hives (`z*`), detaches VHDX scratch drives, and deletes the work folder. `dism /Get-MountedImageInfo` must remain clean.

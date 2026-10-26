@@ -798,18 +798,22 @@ function Export-WinEaseProfile {
 
 # Phase Progress & Telemetry Tracking
 $script:CurrentPhase = 0
-$script:TotalPhases = 18
+$script:TotalPhases = 19   # replaced by $buildPhases.Count when the phase loop starts
 $script:PhaseTimings = [ordered]@{}
 $script:PhaseStopwatch = $null
 
 function Enter-Phase {
     param(
-        [int]$PhaseNumber,
-        [string]$PhaseName
+        # [double]: the optional Physical Debloat phase is numbered 9.5; an [int] cast would fold it into 10.
+        [double]$PhaseNumber,
+        [string]$PhaseName,
+        # Position in the phase list (1..total) shown to the user; defaults to the phase number.
+        [int]$Step = 0
     )
+    if ($Step -le 0) { $Step = [int][math]::Ceiling($PhaseNumber) }
     # F2: persist a checkpoint for the phase that just completed (foundation for -ResumeFromPhase)
     if ($script:CurrentPhase -gt 0 -and -not $script:ResumeMode -and $script:BaseWorkDir) {
-        Save-WinEaseCheckpoint -CompletedPhase $script:CurrentPhase
+        Save-WinEaseCheckpoint -CompletedPhase ([int][math]::Floor($script:CurrentPhase))
     }
     if ($script:PhaseStopwatch -and $script:CurrentPhase -gt 0) {
         $script:PhaseStopwatch.Stop()
@@ -822,10 +826,10 @@ function Enter-Phase {
         $script:DiagnosticData.FailurePhase = $script:CurrentBuildPhase
     }
     $script:PhaseStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-    $phaseTitle = "WinEase [$PhaseNumber/$($script:TotalPhases)] $PhaseName"
+    $phaseTitle = "WinEase [$Step/$($script:TotalPhases)] $PhaseName"
     try { $host.UI.RawUI.WindowTitle = $phaseTitle } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     if (Get-Command -Name Send-WinEaseGuiProgress -ErrorAction SilentlyContinue) {
-        $progress = @{ Phase = $PhaseNumber; Total = $script:TotalPhases; Name = $PhaseName }
+        $progress = @{ Phase = $Step; Total = $script:TotalPhases; Name = $PhaseName }
         if (-not $script:ProgressEstimateSent) {
             try {
                 $est = Get-WinEaseLastRunTotalSeconds -TimingsPath (Join-Path -Path $logDir -ChildPath 'last_phase_timings.json')
@@ -836,11 +840,11 @@ function Enter-Phase {
         Send-WinEaseGuiProgress -Event phase -Data $progress
         # Phase 15 is the payload verification; everything else is plain running
         Send-WinEaseGuiState -State $(if ($PhaseNumber -eq 15) { 'Verifying' } else { 'Running' })
-        Send-WinEaseGuiLogLine -Text "[$PhaseNumber/$($script:TotalPhases)] $PhaseName"
+        Send-WinEaseGuiLogLine -Text "[$Step/$($script:TotalPhases)] $PhaseName"
     }
     Write-Host ""
     Write-Host "=========================================================" -ForegroundColor Cyan
-    Write-Host " [$PhaseNumber/$($script:TotalPhases)] $PhaseName" -ForegroundColor Cyan
+    Write-Host " [$Step/$($script:TotalPhases)] $PhaseName" -ForegroundColor Cyan
     Write-Host "=========================================================" -ForegroundColor Cyan
 }
 
@@ -2159,7 +2163,7 @@ function Write-WinEaseDiagnosticReport {
             "Timestamp:                $($script:DiagnosticData.Timestamp)",
             "Builder Script SHA256:    $($script:DiagnosticData.BuilderScriptSha256)",
             "Overall Build Status:     $(if ($script:DiagnosticData.BuildSucceeded) { 'SUCCESS' } else { 'FAILED' })",
-            "Failure Phase:            $($script:DiagnosticData.FailurePhase)",
+            "Failure Phase:            $(if ($script:DiagnosticData.BuildSucceeded) { '-' } else { $script:DiagnosticData.FailurePhase })",
             "Failure Message:          $($script:DiagnosticData.FailureMessage)",
             "---------------------------------------------------------",
             "DISM Path:                $($script:DiagnosticData.DismPath)",
@@ -2415,13 +2419,16 @@ try {
     # Cancel (D2): tell the window how to ask for a cancel; the request is looked at only between phases.
     Register-WinEaseCancelChannel -DiagnosticsDir $script:DiagDir
     Send-WinEaseGuiState -State 'Preparing'
+    $script:TotalPhases = $buildPhases.Count
+    $phaseStep = 0
     foreach ($buildPhase in $buildPhases) {
+        $phaseStep++
         # Phase boundary: a requested cancel stops the build before the next phase starts. A running phase (DISM/WIM
         # call) is never interrupted. The throw goes to the outer handler; the finally block is the cleanup.
         if (Test-WinEaseCancelRequested) { throw (New-WinEaseCancelException) }
         $phaseFile = Join-Path -Path $phasesDir -ChildPath $buildPhase.File
         $phaseId = [System.IO.Path]::GetFileNameWithoutExtension($buildPhase.File)
-        Enter-Phase $buildPhase.Number $buildPhase.Name
+        Enter-Phase $buildPhase.Number $buildPhase.Name -Step $phaseStep
         try {
             if (-not (Test-Path -LiteralPath $phaseFile)) {
                 # Only the optional physical debloat phase may be absent.

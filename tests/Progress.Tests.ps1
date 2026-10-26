@@ -293,7 +293,7 @@ Describe "D2 - cancel request, phase boundary and result" {
         )
         $phasesDir = $dir
         $null = $buildPhases, $phasesDir
-        function Enter-Phase { param($n, $name) $null = $name; [void]$d2entered.Add($n) }
+        function Enter-Phase { param($n, $name, $Step) $null = $name, $Step; [void]$d2entered.Add($n) }
         function Register-WinEaseBuildFailure { param($ErrorRecord) [void]$d2registered.Add("$($ErrorRecord.Exception.Message)") }
 
         $cancelled = $false
