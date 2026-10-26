@@ -1543,24 +1543,91 @@ Describe "User Extensibility Engine (lib/WinEaseExtensions.ps1)" {
         } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "Move-WinEaseCustomScriptOrder renames the file and Remove-WinEaseCustomScript refuses paths outside the repository" {
-        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cs_mv_" + [Guid]::NewGuid().ToString('N'))
+    It "Move-WinEaseCustomScriptOrder renames files with different prefixes, formats order numbers, and preserves extension" {
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cs_mv_hp_" + [Guid]::NewGuid().ToString('N'))
+        try {
+            New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+
+            # 1. Standard dash numeric prefix
+            $f1 = Join-Path $tmp '01-testscript.ps1'
+            Set-Content -LiteralPath $f1 -Value "# test" -Encoding UTF8
+            $mv1 = Move-WinEaseCustomScriptOrder -Path $f1 -NewOrder 10
+            $mv1.Changed | Should Be $true
+            $mv1.Name | Should Be '10-testscript.ps1'
+            (Test-Path -LiteralPath $mv1.Path) | Should Be $true
+            (Test-Path -LiteralPath $f1) | Should Be $false
+
+            # 2. File without numeric prefix
+            $f2 = Join-Path $tmp 'unprefixed.cmd'
+            Set-Content -LiteralPath $f2 -Value "@echo off" -Encoding ASCII
+            $mv2 = Move-WinEaseCustomScriptOrder -Path $f2 -NewOrder 5
+            $mv2.Changed | Should Be $true
+            $mv2.Name | Should Be '05-unprefixed.cmd'
+            (Test-Path -LiteralPath $mv2.Path) | Should Be $true
+            (Test-Path -LiteralPath $f2) | Should Be $false
+
+            # 3. Underscore delimiter prefix
+            $f3 = Join-Path $tmp '02_underscored.bat'
+            Set-Content -LiteralPath $f3 -Value "REM test" -Encoding ASCII
+            $mv3 = Move-WinEaseCustomScriptOrder -Path $f3 -NewOrder 7
+            $mv3.Changed | Should Be $true
+            $mv3.Name | Should Be '07-underscored.bat'
+            (Test-Path -LiteralPath $mv3.Path) | Should Be $true
+
+            # 4. Order 0 formatting
+            $mv4 = Move-WinEaseCustomScriptOrder -Path $mv3.Path -NewOrder 0
+            $mv4.Name | Should Be '00-underscored.bat'
+            (Test-Path -LiteralPath $mv4.Path) | Should Be $true
+
+            # 5. Order >= 100 formatting (3-digit)
+            $mv5 = Move-WinEaseCustomScriptOrder -Path $mv4.Path -NewOrder 100
+            $mv5.Name | Should Be '100-underscored.bat'
+            (Test-Path -LiteralPath $mv5.Path) | Should Be $true
+        } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "Move-WinEaseCustomScriptOrder handles no-op and throws errors for invalid inputs and collisions" {
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cs_mv_err_" + [Guid]::NewGuid().ToString('N'))
+        try {
+            New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+
+            $f1 = Join-Path $tmp '05-script.ps1'
+            Set-Content -LiteralPath $f1 -Value "# content" -Encoding UTF8
+
+            # 1. No-op (moving to same order)
+            $noop = Move-WinEaseCustomScriptOrder -Path $f1 -NewOrder 5
+            $noop.Changed | Should Be $false
+            $noop.Name | Should Be '05-script.ps1'
+            $noop.Path | Should Be $f1
+            (Test-Path -LiteralPath $f1) | Should Be $true
+
+            # 2. Non-existent file
+            $nonExistent = Join-Path $tmp 'nonexistent.ps1'
+            { Move-WinEaseCustomScriptOrder -Path $nonExistent -NewOrder 3 } | Should Throw "Script not found: '$nonExistent'."
+
+            # 3. Negative order
+            { Move-WinEaseCustomScriptOrder -Path $f1 -NewOrder -1 } | Should Throw 'The new order must not be negative.'
+
+            # 4. Name collision
+            $f2 = Join-Path $tmp '09-script.ps1'
+            Set-Content -LiteralPath $f2 -Value "# collision content" -Encoding UTF8
+            { Move-WinEaseCustomScriptOrder -Path $f1 -NewOrder 9 } | Should Throw "A script named '09-script.ps1' already exists."
+        } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "Remove-WinEaseCustomScript refuses paths outside the repository and removes valid scripts" {
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cs_rm_" + [Guid]::NewGuid().ToString('N'))
         $repo = Join-Path $tmp 'repo'
         New-Item -ItemType Directory -Force -Path (Join-Path $repo 'tools\custom-scripts\FirstLogon') | Out-Null
         try {
-            $src = Join-Path $tmp 'move.ps1'
-            Set-Content -LiteralPath $src -Value "Write-Host 'move'" -Encoding UTF8
+            $src = Join-Path $tmp 'remove.ps1'
+            Set-Content -LiteralPath $src -Value "Write-Host 'remove'" -Encoding UTF8
             $res = Add-WinEaseCustomScript -RepoRoot $repo -Stage FirstLogon -Paths @($src)
             $path = @($res.Added)[0].Path
-            $mv = Move-WinEaseCustomScriptOrder -Path $path -NewOrder 9
-            $mv.Changed | Should Be $true
-            $mv.Name | Should Be '09-move.ps1'
-            (Test-Path -LiteralPath $mv.Path) | Should Be $true
-            (Test-Path -LiteralPath $path) | Should Be $false
             { Remove-WinEaseCustomScript -RepoRoot $repo -Stage FirstLogon -Path $src } | Should Throw
-            $rm = Remove-WinEaseCustomScript -RepoRoot $repo -Stage FirstLogon -Path $mv.Path
-            $rm.Removed | Should Be '09-move.ps1'
-            (Test-Path -LiteralPath $mv.Path) | Should Be $false
+            $rm = Remove-WinEaseCustomScript -RepoRoot $repo -Stage FirstLogon -Path $path
+            $rm.Removed | Should Be '01-remove.ps1'
+            (Test-Path -LiteralPath $path) | Should Be $false
         } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
