@@ -63,7 +63,6 @@ function Get-WinEaseRelativePath {
     $candidates.Add($BasePath)
     try { $candidates.Add((Get-Item -LiteralPath $BasePath -Force -ErrorAction Stop).FullName) } catch { Write-Verbose "Get-WinEaseRelativePath: Get-Item failed: $($_.Exception.Message)" }
     try { $candidates.Add((Resolve-Path -LiteralPath $BasePath -ErrorAction Stop).ProviderPath) } catch { Write-Verbose "Get-WinEaseRelativePath: Resolve-Path failed: $($_.Exception.Message)" }
-    $sep = [System.IO.Path]::DirectorySeparatorChar
     foreach ($candidate in $candidates) {
         $base = $candidate.TrimEnd('\', '/')
 # --- Restore path validation (shared by the PC migration engine) -------------------
