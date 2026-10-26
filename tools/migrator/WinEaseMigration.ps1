@@ -727,6 +727,19 @@ function Restore-WinEaseUserData {
     return [PSCustomObject]@{ RestoredFiles = $restored; SkippedFiles = $skipped; FailedFiles = $failed }
 }
 
+function ConvertTo-WinEaseFullRegistryKey {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([string]$Key)
+    if ([string]::IsNullOrWhiteSpace($Key)) { return '' }
+    $k = $Key.Trim() -replace '^([A-Za-z0-9]+):', '$1'
+    return $k -replace '^HKCU(\\|$)', 'HKEY_CURRENT_USER$1' `
+              -replace '^HKLM(\\|$)', 'HKEY_LOCAL_MACHINE$1' `
+              -replace '^HKCR(\\|$)', 'HKEY_CLASSES_ROOT$1' `
+              -replace '^HKU(\\|$)', 'HKEY_USERS$1' `
+              -replace '^HKCC(\\|$)', 'HKEY_CURRENT_CONFIG$1'
+}
+
 # Invoke-WinEaseRegExe: runs reg.exe and reports success without letting its stderr
 # output throw: under $ErrorActionPreference = 'Stop' the 2>&1 redirection turns every
 # stderr line (including "The operation completed successfully.") into a terminating
@@ -867,13 +880,11 @@ function Invoke-WinEaseMigrationRulesBackup {
             }
         }
         # RegistryPaths
-        # reg.exe does not understand the PowerShell PSDrive spelling (HKCU:\...): the
-        # colon makes it abort with "invalid key name". Export with the plain root name
-        # (HKCU\...) and check the exit code so a failed export is reported instead of
-        # silently producing a rule with no backup.
+        # reg.exe export does not accept PSDrive notation (HKCU:\...) or abbreviated
+        # hive names (HKCU\): export requires full hive names (HKEY_CURRENT_USER\...).
         if ($rule.RegistryPaths) {
             foreach ($rp in $rule.RegistryPaths) {
-                $regKey = ([string]$rp).Trim() -replace '^([A-Za-z0-9]+):', '$1'
+                $regKey = ConvertTo-WinEaseFullRegistryKey -Key [string]$rp
                 $regName = ($regKey -replace '[\\/:*?"<>|\s]', '_')
                 if (-not $regName) { $regName = 'registry' }
                 $regFile = Join-Path -Path $ruleBackupDir -ChildPath ($regName + '.reg')
@@ -901,7 +912,7 @@ function Invoke-WinEaseMigrationRulesBackup {
                     Id            = $rid
                     Created       = (Get-Date).ToString('o')
                     SourcePaths   = @($existingSources)
-                    RegistryKeys  = @(@($rule.RegistryPaths) | Where-Object { $_ } | ForEach-Object { ([string]$_).Trim() -replace '^([A-Za-z0-9]+):', '$1' })
+                    RegistryKeys  = @(@($rule.RegistryPaths) | Where-Object { $_ } | ForEach-Object { ConvertTo-WinEaseFullRegistryKey -Key [string]$_ })
                     Entries       = @($ruleEntries)
                 }
                 $ruleManifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path -Path $ruleBackupDir -ChildPath 'rule-manifest.json') -Encoding UTF8
