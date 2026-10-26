@@ -358,8 +358,10 @@ Write-Host "   SHA256: $sha256" -ForegroundColor Green
 Write-Host "=========================================================" -ForegroundColor Green
 Write-Host ""
 
-# GUI completion dialog
-if ($GUI -and $script:BuildSucceeded -and (Test-Path -LiteralPath $outputIso)) {
+# Legacy GUI completion dialog. It blocks the builder, so it must never run while the WinUI progress window
+# is attached: that window would stay on "Running" until the dialog was answered. The WinUI window reports
+# completion itself and has an "open output folder" button.
+if ($GUI -and -not $script:WinEaseGuiProgressChannel -and $script:BuildSucceeded -and (Test-Path -LiteralPath $outputIso)) {
     $isoLenGB = [math]::Round((Get-Item -LiteralPath $outputIso).Length / 1GB, 2)
     $elapsedSec = if ($buildStopwatch) { [math]::Round($buildStopwatch.Elapsed.TotalSeconds, 1) } else { 0 }
     $elapsedStr = if ($elapsedSec -gt 0) { "$elapsedSec 秒" } else { "完了" }

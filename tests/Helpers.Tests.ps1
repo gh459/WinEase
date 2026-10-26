@@ -1068,16 +1068,11 @@ Describe "WinEase helpers - ConvertTo-WinEaseComparablePath" {
         $verboseMsg | Should Match '^Ignored:'
     }
 
-    It "falls back to un-resolved path and handles exceptions when Get-Item throws for non-existent paths" -Skip:(-not $isWinPlatform) {
+    It "falls back to the un-resolved path for non-existent paths (no exception is thrown)" -Skip:(-not $isWinPlatform) {
         $nonExistentPath = "C:/non_existent_directory_win_ease_xyz/sub/"
-        $verboseMsg = $null
-        $res = ConvertTo-WinEaseComparablePath -Path $nonExistentPath -Verbose 4>&1 | ForEach-Object {
-            if ($_ -is [System.Management.Automation.VerboseRecord]) { $verboseMsg = $_.Message }
-            else { $_ }
-        }
+        $res = ConvertTo-WinEaseComparablePath -Path $nonExistentPath
         $expected = [System.IO.Path]::GetFullPath("C:\non_existent_directory_win_ease_xyz\sub").TrimEnd('\')
         $res | Should Be $expected
-        $verboseMsg | Should Match '^Ignored:'
     }
 
     It "resolves existing filesystem item FullName when path exists on disk" -Skip:(-not $isWinPlatform) {

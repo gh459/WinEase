@@ -26,9 +26,16 @@ namespace WinEase.Launcher
                 return 1;
             }
 
-            // Build the WinUI 3 window once (needs the .NET SDK). Without it the builder shows the classic window.
+            // Build the WinUI 3 window when it is missing or older than its sources (needs the .NET SDK).
+            // Without it the builder shows the classic window.
             string winUiExe = Path.Combine(baseDir, "gui", "winui", "bin", "WinEaseGui.exe");
-            if (LauncherLogic.ShouldBuildWinUi(File.Exists(winUiExe), DotnetOnPath()))
+            string winUiSources = Path.Combine(baseDir, "gui", "winui", "WinEaseGui");
+            bool winUiExists = File.Exists(winUiExe);
+            DateTime? winUiExeUtc = winUiExists ? File.GetLastWriteTimeUtc(winUiExe) : (DateTime?)null;
+            DateTime? newestSourceUtc = LauncherLogic.NewestSourceWriteTimeUtc(winUiSources,
+                Directory.Exists, (dir, pattern, option) => Directory.Exists(dir) ? Directory.EnumerateFiles(dir, pattern, option).ToArray() : new string[0],
+                File.GetLastWriteTimeUtc);
+            if (LauncherLogic.ShouldBuildWinUi(winUiExists, DotnetOnPath(), winUiExeUtc, newestSourceUtc))
             {
                 // Result ignored on purpose: a failed build only means the classic window is used.
                 RunHidden(LauncherLogic.BuildWinUiArguments(Path.Combine(baseDir, "gui", "winui", "build.ps1")), baseDir);

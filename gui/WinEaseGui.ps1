@@ -368,6 +368,21 @@ function Set-WinEaseChecked {
     }
 }
 
+# Opens a file with its associated application. A file type nobody is associated with
+# (no browser or Markdown viewer registered) must not crash a button handler: fall back
+# to showing the file in Explorer. Returns $true when the file itself was opened.
+function Open-WinEaseFileSafe {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    try {
+        Start-Process -FilePath $Path -ErrorAction Stop
+        return $true
+    } catch {
+        Write-Verbose "Open-WinEaseFileSafe: $($_.Exception.Message)"
+        try { Start-Process -FilePath 'explorer.exe' -ArgumentList "/select,`"$Path`"" -ErrorAction Stop } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        return $false
+    }
+}
+
 # OK-only message box; -Kind picks the icon (Info | Warning | Error)
 function Show-WinEaseGuiMessage {
     param(
@@ -1675,7 +1690,7 @@ function New-WinEaseMigrationExtensionsGroup {
         $guide = Join-Path $script:WinEaseGuiRepoRoot "docs\EXTENSIBILITY_GUIDE.md"
         try {
             if (-not (Test-Path -LiteralPath $guide)) { throw (Get-WinEaseUiString 'Mig.Guide.NotFound' -Format $guide) }
-            Start-Process -FilePath $guide
+            [void](Open-WinEaseFileSafe -Path $guide)
         } catch {
             Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'Mig.Guide.Title') -Kind Error
         }
@@ -1757,8 +1772,8 @@ function New-WinEaseMigrationTab {
 
     # Left: personal data folders + migration rules
     $grpRules = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'Mig.Group.Rules') -Width 410 -Height 420 -Parent $flowMig
-    $folderNames = @('Documents', 'Desktop', 'Pictures', 'Videos', 'Downloads')
-    $gui.MigFolders = New-WinEaseCheckedList -Items $folderNames -Selected @('Documents', 'Desktop', 'Pictures') -X 10 -Y 20 -Width 390 -Height 100 -Parent $grpRules
+    $folderNames = @('Documents', 'Desktop', 'Pictures', 'Videos', 'Music', 'Downloads', 'Saved Games')
+    $gui.MigFolders = New-WinEaseCheckedList -Items $folderNames -Selected @('Documents', 'Desktop', 'Pictures') -X 10 -Y 20 -Width 390 -Height 104 -Parent $grpRules
     [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Mig.Label.Rules') -X 10 -Y 126 -Width 390 -Height 18 -Parent $grpRules)
     $clbMig = New-WinEaseCheckedList -Items @() -X 10 -Y 146 -Width 390 -Height 264 -Parent $grpRules
     # Rules are filled in the first time this tab is opened (the migration engine is not loaded before that)

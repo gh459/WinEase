@@ -168,6 +168,25 @@ Describe "Migration engine S3 (tools/migrator/WinEaseMigration.ps1)" -Tags 'slow
         $html | Should Match '&lt;script&gt;'
     }
 
+    It "A second backup into the same root keeps the folders the first one recorded" {
+        $docs = Join-Path $TestDrive 'merge\Docs'
+        $pics = Join-Path $TestDrive 'merge\Pics'
+        $bk = Join-Path $TestDrive 'bk-merge'
+        New-Item -ItemType Directory -Force -Path $docs, $pics | Out-Null
+        Set-Content (Join-Path $docs 'a.txt') 'a'
+        Set-Content (Join-Path $pics 'p.txt') 'p'
+        Start-WinEaseMigrationBackup -FolderMap @{ 'Documents' = $docs } -BackupRoot $bk -OfflineTestMode | Out-Null
+        Start-WinEaseMigrationBackup -FolderMap @{ 'Pictures' = $pics } -BackupRoot $bk -OfflineTestMode | Out-Null
+        $mf = Get-Content (Join-Path $bk 'migration-manifest.json') -Raw | ConvertFrom-Json
+        @($mf.Folders | ForEach-Object { $_.Category } | Sort-Object) -join ',' | Should Be 'Documents,Pictures'
+        @($mf.Entries).Count | Should Be 2
+        # Backing up the same folder again replaces its entries instead of duplicating them
+        Start-WinEaseMigrationBackup -FolderMap @{ 'Documents' = $docs } -BackupRoot $bk -OfflineTestMode | Out-Null
+        $mf = Get-Content (Join-Path $bk 'migration-manifest.json') -Raw | ConvertFrom-Json
+        @($mf.Folders).Count | Should Be 2
+        @($mf.Entries).Count | Should Be 2
+    }
+
     It "Backup-WinEaseUserData and Backup-WinEaseCustomPaths reject a BackupRoot inside the source" {
         $src = Join-Path $TestDrive 'guard\Docs'
         New-Item -ItemType Directory -Force -Path $src | Out-Null
@@ -187,6 +206,98 @@ Describe "Migration engine S3 (tools/migrator/WinEaseMigration.ps1)" -Tags 'slow
         $r = Invoke-WinEaseMigrationRulesBackup -RuleIds @($rule.Id) -BackupRoot (Join-Path $TestDrive 'bk-rules') -ForceRunningProcess
         @($r.CloudSaveNotices).Count | Should Be 1
         $r.CloudSaveNotices[0].RuleId | Should Be $rule.Id
+    }
+}
+
+# --- S3b: rules backup/restore fixes (reg.exe syntax, manifest-based restore, skip reporting) ---
+Describe "Migration rules backup/restore (tools/migrator/WinEaseMigration.ps1)" -Tags 'slow' {
+    BeforeAll {
+        if (-not (Get-Command -Name Test-WinEasePathWithin -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot -ChildPath "WinEasehelpers.ps1")
+        }
+        if (-not (Get-Command -Name Invoke-WinEaseMigrationRulesBackup -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot -ChildPath "tools\migrator\WinEaseMigration.ps1")
+        }
+    }
+
+    It "exports a rule registry key written in PSDrive spelling (HKCU:\...) and restores it" {
+        $key = 'HKCU:\Software\WinEaseMigrationTest'
+        New-Item -Path $key -Force | Out-Null
+        Set-ItemProperty -Path $key -Name Probe -Value 'backup'
+        $rules = [PSCustomObject]@{
+            GameRules      = @()
+            AppConfigRules = @(@{ Id = 'RegProbe'; Name = 'Registry probe'; Category = 'AppConfig'; RegistryPaths = @($key); SourcePaths = @(); ExcludePatterns = @(); ProcessNames = @(); ExcludeSecrets = $true })
+            CustomPathRules= @()
+            SecretPatterns = @()
+            Errors         = @()
+        }
+        $bk = Join-Path $TestDrive 'bk-reg'
+        $r = Invoke-WinEaseMigrationRulesBackup -RuleIds @('RegProbe') -BackupRoot $bk -Rules $rules -ForceRunningProcess
+        @($r.FailedFiles).Count | Should Be 0
+        $r.RegistryExports | Should Be 1
+        $regFile = Get-ChildItem -LiteralPath (Join-Path $bk 'rules\RegProbe') -Filter '*.reg' | Select-Object -First 1
+        $regFile | Should Not BeNullOrEmpty
+        Remove-Item $key -Recurse -Force
+        $rr = Invoke-WinEaseMigrationRulesRestore -RuleIds @('RegProbe') -BackupRoot $bk -Rules $rules -ForceRunningProcess
+        @($rr.FailedFiles).Count | Should Be 0
+        (Get-ItemProperty -Path $key -Name Probe).Probe | Should Be 'backup'
+        Remove-Item $key -Recurse -Force
+    }
+
+    It "restores every file of a multi-source rule to its own source location" {
+        $ms = Join-Path $TestDrive 'ms'
+        New-Item -ItemType Directory -Force -Path (Join-Path $ms 'saves\world') | Out-Null
+        'save' | Set-Content (Join-Path $ms 'saves\world\level.dat')
+        'opts' | Set-Content (Join-Path $ms 'options.txt')
+        $rules = [PSCustomObject]@{
+            GameRules      = @()
+            AppConfigRules = @(@{ Id = 'MultiProbe'; Name = 'Multi-source probe'; Category = 'AppConfig'; SourcePaths = @((Join-Path $ms 'saves'), (Join-Path $ms 'options.txt')); ExcludePatterns = @(); ProcessNames = @(); ExcludeSecrets = $true })
+            CustomPathRules= @()
+            SecretPatterns = @()
+            Errors         = @()
+        }
+        $bk = Join-Path $TestDrive 'bk-multi'
+        Invoke-WinEaseMigrationRulesBackup -RuleIds @('MultiProbe') -BackupRoot $bk -Rules $rules -ForceRunningProcess | Out-Null
+        Test-Path (Join-Path $bk 'rules\MultiProbe\rule-manifest.json') | Should Be $true
+        Remove-Item (Join-Path $ms 'saves') -Recurse -Force
+        Remove-Item (Join-Path $ms 'options.txt') -Force
+        $rr = Invoke-WinEaseMigrationRulesRestore -RuleIds @('MultiProbe') -BackupRoot $bk -Rules $rules -ForceRunningProcess
+        @($rr.FailedFiles).Count | Should Be 0
+        $rr.RestoredFiles | Should Be 2
+        Test-Path (Join-Path $ms 'saves\world\level.dat') | Should Be $true
+        Test-Path (Join-Path $ms 'saves\world\level.dat') -PathType Leaf | Should Be $true
+        Test-Path (Join-Path $ms 'options.txt') -PathType Leaf | Should Be $true
+        (Get-Content (Join-Path $ms 'options.txt') -Raw).Trim() | Should Be 'opts'
+        # nothing ended up below the first source path
+        Test-Path (Join-Path $ms 'saves\options.txt') | Should Be $false
+        Test-Path (Join-Path $ms 'saves\saves') | Should Be $false
+    }
+
+    It "skips a rule whose process is running and reports the reason" {
+        $rules = [PSCustomObject]@{
+            GameRules      = @()
+            AppConfigRules = @(@{ Id = 'RunningProbe'; Name = 'Running probe'; Category = 'AppConfig'; SourcePaths = @(); RegistryPaths = @(); ExcludePatterns = @(); ProcessNames = @('winease-fake-proc'); ExcludeSecrets = $true })
+            CustomPathRules= @()
+            SecretPatterns = @()
+            Errors         = @()
+        }
+        Mock Get-Process { [PSCustomObject]@{ Name = 'winease-fake-proc' } } -ParameterFilter { $Name -eq 'winease-fake-proc' }
+        $bk = Join-Path $TestDrive 'bk-running'
+        $r = Invoke-WinEaseMigrationRulesBackup -RuleIds @('RunningProbe') -BackupRoot $bk -Rules $rules
+        @($r.BackedUpRules).Count | Should Be 0
+        @(@($r.SkipReasons) | Where-Object { $_.Item -eq 'RunningProbe' }).Count | Should Be 1
+        (@($r.SkipReasons) | Where-Object { $_.Item -eq 'RunningProbe' }).Reason | Should Match 'Application running'
+    }
+
+    It "copies and hashes in one pass and preserves the timestamp" {
+        $src = Join-Path $TestDrive 'copyhash\file.txt'
+        $dest = Join-Path $TestDrive 'copyhash\out\file.txt'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $src), (Split-Path -Parent $dest) | Out-Null
+        'payload' | Set-Content $src
+        $item = Get-Item $src
+        $hash = Copy-WinEaseMigrationFileWithHash -SourcePath $src -DestPath $dest -SourceTimestamp $item.LastWriteTimeUtc
+        $hash | Should Be (Get-FileHash $dest -Algorithm SHA256).Hash
+        (Get-Item $dest).LastWriteTimeUtc | Should Be $item.LastWriteTimeUtc
     }
 }
 
