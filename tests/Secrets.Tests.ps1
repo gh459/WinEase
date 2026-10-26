@@ -182,3 +182,28 @@ Describe "Secrets - registry (Winlogon DefaultPassword)" {
         [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8) | Should Match "'WinEaseSecrets\.ps1'"
     }
 }
+
+Describe "ConvertFrom-WinEaseSecretBase64" {
+    It "returns an empty string when input is null" {
+        (ConvertFrom-WinEaseSecretBase64 -Value $null) | Should BeExactly ''
+    }
+
+    It "returns an empty string when input is an empty string" {
+        (ConvertFrom-WinEaseSecretBase64 -Value '') | Should BeExactly ''
+    }
+
+    It "decodes a known Base64 string to expected plain text" {
+        # "Hello, World!" in UTF-16LE is Base64 encoded as 'AEgAZQBsAGwAbwAsACAAVwBvAHIAbABkACEA'
+        $b64 = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes('Hello, World!'))
+        (ConvertFrom-WinEaseSecretBase64 -Value $b64) | Should BeExactly 'Hello, World!'
+    }
+
+    foreach ($pw in $script:SecretCases) {
+        $label = ($pw -replace '[^\x20-\x7E]', '?')
+        It "correctly decodes Base64-encoded string for secret case [$label]" {
+            $encoded = ConvertTo-WinEaseSecretBase64 -Value $pw
+            $decoded = ConvertFrom-WinEaseSecretBase64 -Value $encoded
+            $decoded | Should BeExactly $pw
+        }
+    }
+}
