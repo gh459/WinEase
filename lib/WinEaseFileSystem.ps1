@@ -773,6 +773,137 @@ function Repair-WinEaseDeniedAcl {
 #         purge may ever run while a link could remain (visible or hidden).
 #   Fallback: (opt-in) Reset-DirectoryWithRobocopy for locked trees / loaded hives
 # Returns $true when the path no longer exists.
+# Safety check helper for Remove-WinEaseTreeRobust
+function Test-WinEaseTreeRemovalSafety {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [string]$SafetyRoot
+    )
+    if ($Path -match '^[A-Za-z]:$') {
+        Write-Warning "Remove-WinEaseTreeRobust: refusing to remove drive root '$Path'."
+        return $false
+    }
+    if ($SafetyRoot) {
+        $normRoot = try { ConvertTo-WinEaseNormalizedPath -Path $SafetyRoot } catch { [System.IO.Path]::GetFullPath($SafetyRoot).TrimEnd('\') }
+        if (($Path -ieq $normRoot) -or (-not (Test-WinEasePathWithin -Path $Path -Root $normRoot))) {
+            Write-Warning "Remove-WinEaseTreeRobust: refusing '$Path' (not a strict child of safety root '$normRoot')."
+            return $false
+        }
+        $parentOfFull = Split-Path -Parent $Path
+        if ($parentOfFull -and (Test-WinEasePathHasReparsePoint -Path $parentOfFull -Root $normRoot)) {
+            Write-Warning "Remove-WinEaseTreeRobust: refusing '$Path' (a reparse point exists between the safety root and its parent)."
+            return $false
+        }
+    }
+    return $true
+}
+
+# ACL repair helper for Remove-WinEaseTreeRobust
+function Invoke-WinEaseTreeAclRepairPass {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string[]]$DeniedPaths,
+        [Parameter(Mandatory=$true)][System.Collections.Generic.Dictionary[string,string]]$RepairFailures
+    )
+    foreach ($deniedPath in $DeniedPaths) {
+        if (-not (Test-WinEasePathExistsSafe -Path $deniedPath)) { continue }
+        $repairError = Repair-WinEaseDeniedAcl -Path $deniedPath
+        if ($repairError) {
+            if (-not $RepairFailures.ContainsKey($deniedPath)) { $RepairFailures[$deniedPath] = $repairError }
+            Write-Verbose "Remove-WinEaseTreeRobust: ACL repair failed for '$deniedPath': $repairError"
+        }
+    }
+}
+
+# Reparse point prune helper for Remove-WinEaseTreeRobust
+function Invoke-WinEaseTreeReparsePrunePass {
+    [CmdletBinding()]
+    [OutputType([int])]
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [Parameter(Mandatory=$true)][System.Collections.Generic.List[string]]$EnumDenied,
+        [Parameter(Mandatory=$true)][System.Collections.Generic.List[string]]$LinkFailedParents,
+        [Parameter(Mandatory=$true)][ref]$LinkDeleteFailed
+    )
+    $prunedLinks = 0
+    $LinkDeleteFailed.Value = $false
+    $queue = [System.Collections.Generic.Queue[string]]::new()
+    $queue.Enqueue($Path)
+
+    while ($queue.Count -gt 0) {
+        $curr = $queue.Dequeue()
+        $walkErr = $null
+        $children = @(Get-ChildItem -LiteralPath $curr -Force -ErrorAction SilentlyContinue -ErrorVariable walkErr)
+        if ($null -ne $walkErr -and @($walkErr).Count -gt 0) { $EnumDenied.Add($curr); continue }
+        foreach ($child in $children) {
+            if ($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                try {
+                    if ($child.PSIsContainer) { [System.IO.Directory]::Delete($child.FullName, $false) }
+                    else { [System.IO.File]::Delete($child.FullName) }
+                    $prunedLinks++
+                } catch {
+                    Write-Warning "Remove-WinEaseTreeRobust: could not prune reparse point '$($child.FullName)': $_"
+                    $LinkDeleteFailed.Value = $true
+                    $linkParent = [System.IO.Path]::GetDirectoryName($child.FullName)
+                    if ($linkParent -and -not $LinkFailedParents.Contains($linkParent)) { $LinkFailedParents.Add($linkParent) }
+                }
+            } elseif ($child.PSIsContainer) {
+                $queue.Enqueue($child.FullName)
+            }
+        }
+    }
+    return $prunedLinks
+}
+
+# Heavy reset fallback helper for Remove-WinEaseTreeRobust
+function Invoke-WinEaseTreeLockedFallback {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [bool]$LinkDeleteFailed,
+        [Parameter(Mandatory=$true)][System.Diagnostics.Stopwatch]$Sw
+    )
+    if (Get-Command -Name Reset-DirectoryWithRobocopy -ErrorAction SilentlyContinue) {
+        try { Reset-DirectoryWithRobocopy -Path $Path -Retries 2 } catch { Write-Warning "Remove-WinEaseTreeRobust: heavy reset failed for '$Path': $(($_ -split "`n")[0])" }
+        if (Test-Path -LiteralPath $Path) {
+            if (-not $LinkDeleteFailed) { & cmd.exe /c "rd /s /q `"$Path`"" > $null 2>&1 }
+            else { try { [System.IO.Directory]::Delete($Path, $false) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" } }
+        }
+        if (-not (Test-Path -LiteralPath $Path)) {
+            Write-Verbose "Remove-WinEaseTreeRobust: '$Path' removed via tier 3 in $([math]::Round($Sw.Elapsed.TotalSeconds,1))s."
+            return $true
+        }
+    } else {
+        Write-Warning "Remove-WinEaseTreeRobust: Reset-DirectoryWithRobocopy not available; heavy fallback skipped for '$Path'."
+    }
+    return $false
+}
+
+# Robust directory removal (long paths + image ACLs) - lifecycle cleanup fix
+# WHY: PowerShell 5.1 Remove-Item fails with ACCESS DENIED on expanded Windows
+# images (files owned by TrustedInstaller with Administrators granted RX only)
+# and -ErrorAction SilentlyContinue turns that into a silent, invisible leak.
+# cmd "rd /s /q" fails on the same ACLs too. robocopy /MIR /B (backup mode,
+# SeBackupPrivilege) deletes them regardless of the DACL.
+# Reparse points are pruned first on purpose: applied-image junctions such as
+# 'Users\All Users' -> C:\ProgramData point at HOST paths, so nothing may ever
+# recurse through them.
+#   Pass: tolerant reparse prune -> [robocopy /MIR /XJ /B only when the tree is proven
+#         link-free] -> rd /s /q, retried up to 4x; unreadable directories receive a
+#         NON-recursive, in-process ACL repair between passes (take ownership +
+#         inheritable Administrators grant via Set-Acl, see Repair-WinEaseDeniedAcl).
+#         The previous takeown/icacls repair was a SILENT NO-OP: current Windows 11
+#         takeown rejects "/d y" without "/r" (argv validation, exit 1) and icacls
+#         reports "Access is denied" while still exiting 0 - and both stderr streams
+#         were discarded ("> $null 2>&1"), which is what leaked the 17.2 GB tree.
+#         VERIFIED HAZARDS: takeown /r and icacls /T traverse junctions, and robocopy /MIR
+#         purges THROUGH junctions even with /XJ - so no recursive ACL grant and no mirror
+#         purge may ever run while a link could remain (visible or hidden).
+#   Fallback: (opt-in) Reset-DirectoryWithRobocopy for locked trees / loaded hives
+# Returns $true when the path no longer exists.
 function Remove-WinEaseTreeRobust {
     param(
         [Parameter(Mandatory=$true)][string]$Path,
@@ -790,26 +921,8 @@ function Remove-WinEaseTreeRobust {
 
     $full = try { ConvertTo-WinEaseNormalizedPath -Path $Path } catch { [System.IO.Path]::GetFullPath($Path).TrimEnd('\') }
 
-    # Safety guards: never operate on a drive root, and (when given) only on a strict child of SafetyRoot
-    if ($full -match '^[A-Za-z]:$') {
-        Write-Warning "Remove-WinEaseTreeRobust: refusing to remove drive root '$full'."
+    if (-not (Test-WinEaseTreeRemovalSafety -Path $full -SafetyRoot $SafetyRoot)) {
         return $false
-    }
-    if ($SafetyRoot) {
-        $normRoot = try { ConvertTo-WinEaseNormalizedPath -Path $SafetyRoot } catch { [System.IO.Path]::GetFullPath($SafetyRoot).TrimEnd('\') }
-        if (($full -ieq $normRoot) -or (-not (Test-WinEasePathWithin -Path $full -Root $normRoot))) {
-            Write-Warning "Remove-WinEaseTreeRobust: refusing '$full' (not a strict child of safety root '$normRoot')."
-            return $false
-        }
-        # F1-4: the strict-child check is lexical. A junction between the safety root and the
-        # target's parent would redirect the removal outside the safety root. Walk the existing
-        # ancestors (NOT the target itself - a reparse-point target is legitimately removed as
-        # a link only, below) and refuse when any of them is a reparse point.
-        $parentOfFull = Split-Path -Parent $full
-        if ($parentOfFull -and (Test-WinEasePathHasReparsePoint -Path $parentOfFull -Root $normRoot)) {
-            Write-Warning "Remove-WinEaseTreeRobust: refusing '$full' (a reparse point exists between the safety root and its parent)."
-            return $false
-        }
     }
 
     if (-not (Test-Path -LiteralPath $full)) { return $true }
@@ -842,61 +955,19 @@ function Remove-WinEaseTreeRobust {
     try {
         for ($iteration = 1; $iteration -le 4; $iteration++) {
             # --- Repair ACLs on directories the previous pass could not read, plus the parents
-            # --- of links the previous pass could not delete (all non-recursive on the target;
-            # --- the (OI)(CI) grant then propagates inside this tree only) ---
+            # --- of links the previous pass could not delete ---
             if ($iteration -ge 2) {
-                foreach ($deniedPath in (@($enumDenied) + @($linkFailedParents) + @($full))) {
-                    if (-not (Test-WinEasePathExistsSafe -Path $deniedPath)) { continue }
-                    # Inheritable grant repairs the whole subtree in one pass and makes child
-                    # links deletable; ACL propagation is verified NOT to cross junctions (a
-                    # link target keeps its own ACLs). Children with protected ACLs are picked
-                    # up by the next iteration. Failures are recorded (first error per path)
-                    # and surfaced in the final warning instead of being swallowed.
-                    $repairError = Repair-WinEaseDeniedAcl -Path $deniedPath
-                    if ($repairError) {
-                        if (-not $repairFailures.ContainsKey($deniedPath)) { $repairFailures[$deniedPath] = $repairError }
-                        Write-Verbose "Remove-WinEaseTreeRobust: ACL repair failed for '$deniedPath': $repairError"
-                    }
-                }
+                Invoke-WinEaseTreeAclRepairPass -DeniedPaths (@($enumDenied) + @($linkFailedParents) + @($full)) -RepairFailures $repairFailures
                 $enumDenied.Clear()
                 $linkFailedParents.Clear()
             }
 
             # --- Prune visible reparse points (unreadable subdirs are recorded, not fatal) ---
-            $prunedLinks = 0
-            $linkDeleteFailed = $false
-            $queue = [System.Collections.Generic.Queue[string]]::new()
-            $queue.Enqueue($full)
-            while ($queue.Count -gt 0) {
-                $curr = $queue.Dequeue()
-                # Enumeration failures are expected for not-yet-repaired protected dirs; capture
-                # them via -ErrorVariable instead of try/catch so the transcript stays clean.
-                $walkErr = $null
-                $children = @(Get-ChildItem -LiteralPath $curr -Force -ErrorAction SilentlyContinue -ErrorVariable walkErr)
-                if ($null -ne $walkErr -and @($walkErr).Count -gt 0) { $enumDenied.Add($curr); continue }
-                foreach ($child in $children) {
-                    if ($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-                        try {
-                            if ($child.PSIsContainer) { [System.IO.Directory]::Delete($child.FullName, $false) }
-                            else { [System.IO.File]::Delete($child.FullName) }
-                            $prunedLinks++
-                        } catch {
-                            Write-Warning "Remove-WinEaseTreeRobust: could not prune reparse point '$($child.FullName)': $_"
-                            $linkDeleteFailed = $true
-                            $linkParent = [System.IO.Path]::GetDirectoryName($child.FullName)
-                            if ($linkParent -and -not $linkFailedParents.Contains($linkParent)) { $linkFailedParents.Add($linkParent) }
-                        }
-                    } elseif ($child.PSIsContainer) {
-                        $queue.Enqueue($child.FullName)
-                    }
-                }
-            }
+            $prunedLinks = Invoke-WinEaseTreeReparsePrunePass -Path $full -EnumDenied $enumDenied -LinkFailedParents $linkFailedParents -LinkDeleteFailed ([ref]$linkDeleteFailed)
+
             if ($linkDeleteFailed) { continue }   # links survived: skip robocopy/rd, retry after repairing their parents
 
             # --- Backup-mode mirror: ONLY when the walk proved the tree is link-free.
-            # VERIFIED HAZARD: robocopy /MIR purges THROUGH junctions even with /XJ (every
-            # tested variant destroyed the junction target), so it must never meet an
-            # unverified tree - not even one whose links are merely hidden from us.
             if ($enumDenied.Count -eq 0 -and (Test-Path -LiteralPath $emptyTemp)) {
                 $null = & robocopy.exe $emptyTemp $full /MIR /XJ /B /R:0 /W:0 /NFL /NDL /NP /NJH /NJS 2>&1
             }
@@ -914,18 +985,8 @@ function Remove-WinEaseTreeRobust {
 
     # --- Tier 3: heavy reset machinery for locked trees / loaded offline hives (opt-in) ---
     if ($AllowLockedFallback) {
-        if (Get-Command -Name Reset-DirectoryWithRobocopy -ErrorAction SilentlyContinue) {
-            try { Reset-DirectoryWithRobocopy -Path $full -Retries 2 } catch { Write-Warning "Remove-WinEaseTreeRobust: heavy reset failed for '$full': $(($_ -split "`n")[0])" }
-            if (Test-Path -LiteralPath $full) {
-                if (-not $linkDeleteFailed) { & cmd.exe /c "rd /s /q `"$full`"" > $null 2>&1 }
-                else { try { [System.IO.Directory]::Delete($full, $false) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" } }
-            }
-            if (-not (Test-Path -LiteralPath $full)) {
-                Write-Verbose "Remove-WinEaseTreeRobust: '$full' removed via tier 3 in $([math]::Round($sw.Elapsed.TotalSeconds,1))s."
-                return $true
-            }
-        } else {
-            Write-Warning "Remove-WinEaseTreeRobust: Reset-DirectoryWithRobocopy not available; heavy fallback skipped for '$full'."
+        if (Invoke-WinEaseTreeLockedFallback -Path $full -LinkDeleteFailed $linkDeleteFailed -Sw $sw) {
+            return $true
         }
     }
 
