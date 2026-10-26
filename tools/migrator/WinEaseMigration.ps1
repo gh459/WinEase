@@ -876,8 +876,8 @@ function Invoke-WinEaseMigrationRulesBackup {
         if ($rule.RegistryPaths) {
             foreach ($rp in $rule.RegistryPaths) {
                 $regKey = ([string]$rp).Trim() -replace ':', ''
-                if ($regKey -match '^(?i)HKCU\\') { $regKey = 'HKEY_CURRENT_USER\' + $regKey.Substring(5) }
-                elseif ($regKey -match '^(?i)HKLM\\') { $regKey = 'HKEY_LOCAL_MACHINE\' + $regKey.Substring(5) }
+                if ($regKey.StartsWith('HKCU\', [System.StringComparison]::OrdinalIgnoreCase)) { $regKey = 'HKEY_CURRENT_USER\' + $regKey.Substring(5) }
+                elseif ($regKey.StartsWith('HKLM\', [System.StringComparison]::OrdinalIgnoreCase)) { $regKey = 'HKEY_LOCAL_MACHINE\' + $regKey.Substring(5) }
                 $regName = ($regKey -replace '[\\/:*?"<>|\s]', '_')
                 if (-not $regName) { $regName = 'registry' }
                 $regFile = Join-Path -Path $ruleBackupDirNative -ChildPath ($regName + '.reg')
@@ -907,8 +907,8 @@ function Invoke-WinEaseMigrationRulesBackup {
                     SourcePaths   = @($existingSources)
                     RegistryKeys  = @(@($rule.RegistryPaths) | Where-Object { $_ } | ForEach-Object {
                         $k = ([string]$_).Trim() -replace ':', ''
-                        if ($k -match '^(?i)HKCU\\') { $k = 'HKEY_CURRENT_USER\' + $k.Substring(5) }
-                        elseif ($k -match '^(?i)HKLM\\') { $k = 'HKEY_LOCAL_MACHINE\' + $k.Substring(5) }
+                        if ($k.StartsWith('HKCU\', [System.StringComparison]::OrdinalIgnoreCase)) { $k = 'HKEY_CURRENT_USER\' + $k.Substring(5) }
+                        elseif ($k.StartsWith('HKLM\', [System.StringComparison]::OrdinalIgnoreCase)) { $k = 'HKEY_LOCAL_MACHINE\' + $k.Substring(5) }
                         $k
                     })
                     Entries       = @($ruleEntries)
