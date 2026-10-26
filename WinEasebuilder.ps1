@@ -1192,7 +1192,7 @@ $transcriptPath = $null
 
 try {
     if (-not (Test-Path -LiteralPath $logDir)) {
-        New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+        $null = New-Item -ItemType Directory -Force -Path $logDir
     }
     $transcriptPath = Join-Path -Path $logDir -ChildPath "WinEase_$timestampStr.log"
     $script:DismLogPath = Join-Path -Path $logDir -ChildPath "dism_$timestampStr.log"
