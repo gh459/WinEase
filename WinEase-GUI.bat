@@ -20,16 +20,15 @@ if not exist "%BUILDER%" (
     exit /b 1
 )
 
-:: Build the WinUI 3 window once (needs the .NET 8 SDK). Without it the builder shows the classic window.
-if not exist "%~dp0gui\winui\bin\WinEaseGui.exe" (
-    where dotnet >nul 2>&1
-    if not errorlevel 1 (
-        echo [WinEase] Building the WinUI 3 window ^(first launch only^)...
-        powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0gui\winui\build.ps1"
-        if errorlevel 1 echo [WinEase] WinUI 3 build failed; the classic window will be used.
-    ) else (
-        echo [WinEase] .NET 8 SDK not found; using the classic window. Install it and run gui\winui\build.ps1 for the WinUI 3 window.
-    )
+:: Build / refresh the WinUI 3 window (needs the .NET 8 SDK). -IfStale skips the build when the
+:: published exe is newer than its sources, so this check runs on every launch: a stale exe would
+:: silently run the GUI without every fix made since it was compiled.
+where dotnet >nul 2>&1
+if not errorlevel 1 (
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0gui\winui\build.ps1" -IfStale
+    if errorlevel 1 echo [WinEase] WinUI 3 build failed; the classic window will be used.
+) else (
+    if not exist "%~dp0gui\winui\bin\WinEaseGui.exe" echo [WinEase] .NET 8 SDK not found; using the classic window. Install it and run gui\winui\build.ps1 for the WinUI 3 window.
 )
 
 :: Check for admin privileges (net session)

@@ -29,10 +29,41 @@ namespace WinEase.Launcher
             return last;
         }
 
-        /// <summary>The batch built the WinUI window once when the exe was missing and dotnet was on PATH.</summary>
-        public static bool ShouldBuildWinUi(bool winUiExeExists, bool dotnetOnPath)
+        /// <summary>
+        /// The launcher builds the WinUI window when the published exe is missing or older than its sources
+        /// (a stale exe keeps running GUI code with every fix since it was compiled missing), and dotnet is
+        /// on PATH. Times are UTC last-write times; null means "missing / not readable".
+        /// </summary>
+        public static bool ShouldBuildWinUi(bool winUiExeExists, bool dotnetOnPath, DateTime? winUiExeUtc, DateTime? newestSourceUtc)
         {
-            return !winUiExeExists && dotnetOnPath;
+            if (!dotnetOnPath) return false;
+            if (!winUiExeExists) return true;
+            return newestSourceUtc.HasValue && winUiExeUtc.HasValue && newestSourceUtc.Value > winUiExeUtc.Value;
+        }
+
+        /// <summary>The newest last-write time of the WinUI sources (everything under gui\winui\WinEaseGui
+        /// except the bin and obj build outputs). Null when nothing exists.</summary>
+        public static DateTime? NewestSourceWriteTimeUtc(string sourceRoot, Func<string, bool> dirExists, Func<string, string, SearchOption, IEnumerable<string>> listFiles, Func<string, DateTime> lastWriteTimeUtc)
+        {
+            if (!dirExists(sourceRoot)) return null;
+            DateTime? newest = null;
+            foreach (string file in listFiles(sourceRoot, "*", SearchOption.AllDirectories))
+            {
+                if (IsUnderBuildOutput(file)) continue;
+                DateTime t = lastWriteTimeUtc(file);
+                if (newest == null || t > newest) newest = t;
+            }
+            return newest;
+        }
+
+        /// <summary>gui\winui\WinEaseGui\bin and \obj are build outputs, not sources.</summary>
+        public static bool IsUnderBuildOutput(string path)
+        {
+            foreach (string part in path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+            {
+                if (string.Equals(part, "bin", StringComparison.OrdinalIgnoreCase) || string.Equals(part, "obj", StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
         }
 
         /// <summary>Quotes one argument for a Windows command line (CommandLineToArgvW rules).</summary>

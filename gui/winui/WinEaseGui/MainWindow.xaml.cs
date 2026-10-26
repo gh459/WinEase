@@ -2560,7 +2560,10 @@ public sealed partial class MainWindow : Window
                     }
                     break;
             }
-            if (finished) _buildFinished = true;
+            if (finished || failed) _buildFinished = true;
+            // The result is in: the window must be closable now, not only when the builder process ends
+            // (its console can sit on a pause or a slow teardown long after the result was reported).
+            if (finished || failed) closeButton.IsEnabled = true;
             Refresh();
         }
 

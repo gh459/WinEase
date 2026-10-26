@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using WinEase.Launcher;
@@ -29,13 +31,48 @@ public class LauncherLogicTests
     }
 
     [Theory]
-    [InlineData(false, true, true)]
-    [InlineData(false, false, false)]
-    [InlineData(true, true, false)]
-    [InlineData(true, false, false)]
-    public void ShouldBuildWinUi_only_when_exe_missing_and_dotnet_present(bool exe, bool dotnet, bool expected)
+    [InlineData(false, true, null, null, true)]                    // exe missing, dotnet present
+    [InlineData(false, false, null, null, false)]                  // exe missing, no dotnet
+    [InlineData(true, true, "2026-10-24T20:00:00Z", "2026-10-26T06:30:00Z", true)]   // stale exe
+    [InlineData(true, true, "2026-10-26T09:00:00Z", "2026-10-26T06:30:00Z", false)]  // up to date
+    [InlineData(true, true, "2026-10-26T06:30:00Z", "2026-10-26T06:30:00Z", false)]  // same time is fresh
+    [InlineData(true, false, "2026-10-24T20:00:00Z", "2026-10-26T06:30:00Z", false)] // stale but no dotnet
+    [InlineData(true, true, "2026-10-24T20:00:00Z", null, false)]  // no readable source time
+    public void ShouldBuildWinUi_when_exe_missing_or_stale_and_dotnet_present(
+        bool exe, bool dotnet, string exeUtcText, string sourceUtcText, bool expected)
     {
-        Assert.Equal(expected, LauncherLogic.ShouldBuildWinUi(exe, dotnet));
+        DateTime? exeUtc = exeUtcText == null ? null : DateTime.Parse(exeUtcText, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind);
+        DateTime? sourceUtc = sourceUtcText == null ? null : DateTime.Parse(sourceUtcText, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind);
+        Assert.Equal(expected, LauncherLogic.ShouldBuildWinUi(exe, dotnet, exeUtc, sourceUtc));
+    }
+
+    [Fact]
+    public void NewestSourceWriteTimeUtc_ignores_bin_and_obj_and_keeps_the_newest_file()
+    {
+        string root = Path.Combine(Dir, "gui", "winui", "WinEaseGui");
+        var files = new[]
+        {
+            Path.Combine(root, "MainWindow.xaml.cs"),
+            Path.Combine(root, "obj", "Debug", "XamlTypeInfo.g.cs"),
+            Path.Combine(root, "bin", "WinEaseGui.exe"),
+            Path.Combine(root, "Bridge.cs"),
+        };
+        var times = new Dictionary<string, DateTime>
+        {
+            [files[0]] = new DateTime(2026, 10, 26, 6, 30, 0, DateTimeKind.Utc),
+            [files[1]] = new DateTime(2026, 10, 27, 0, 0, 0, DateTimeKind.Utc),   // newest, but obj
+            [files[2]] = new DateTime(2026, 10, 28, 0, 0, 0, DateTimeKind.Utc),   // newest, but bin
+            [files[3]] = new DateTime(2026, 10, 24, 20, 0, 0, DateTimeKind.Utc),
+        };
+        DateTime? newest = LauncherLogic.NewestSourceWriteTimeUtc(root,
+            d => d == root, (d, pattern, option) => files, f => times[f]);
+        Assert.Equal(times[files[0]], newest);
+    }
+
+    [Fact]
+    public void NewestSourceWriteTimeUtc_is_null_when_the_folder_is_missing()
+    {
+        Assert.Null(LauncherLogic.NewestSourceWriteTimeUtc(@"C:\nowhere", d => false, (d, pattern, option) => Enumerable.Empty<string>(), f => DateTime.UtcNow));
     }
 
     [Fact]
