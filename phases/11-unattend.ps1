@@ -866,14 +866,23 @@ if (-not (Test-Path -LiteralPath $imageTempDir)) {
     Write-Host "  - Recreated missing $imageTempDir (required by DISM servicing stack)" -ForegroundColor Yellow
 }
 
-Invoke-Dism -DismArgs @("/image:$scratchDir", "/Get-Packages", "/Format:Table") -CaptureOutput | Set-Content -LiteralPath $pkgAfterPath -Encoding utf8
-Invoke-Dism -DismArgs @("/image:$scratchDir", "/Get-Features", "/Format:Table") -CaptureOutput | Set-Content -LiteralPath $featAfterPath -Encoding utf8
+# C-H1 (partial): Invoke-Dism reports failure only through its return value
+# ($null with -CaptureOutput). These post-debloat captures used to pipe the
+# result on unchecked, so a failed DISM call silently produced empty metrics
+# and the phase continued as if it had succeeded. Failures now throw.
+$pkgAfterRaw = Invoke-Dism -DismArgs @("/image:$scratchDir", "/Get-Packages", "/Format:Table") -CaptureOutput
+if ($null -eq $pkgAfterRaw) { throw "Phase 11: DISM /Get-Packages failed for the mounted image (exit code $script:LastDismExitCode). Cannot capture the post-debloat package metrics." }
+$pkgAfterRaw | Set-Content -LiteralPath $pkgAfterPath -Encoding utf8
+$featAfterRaw = Invoke-Dism -DismArgs @("/image:$scratchDir", "/Get-Features", "/Format:Table") -CaptureOutput
+if ($null -eq $featAfterRaw) { throw "Phase 11: DISM /Get-Features failed for the mounted image (exit code $script:LastDismExitCode). Cannot capture the post-debloat feature metrics." }
+$featAfterRaw | Set-Content -LiteralPath $featAfterPath -Encoding utf8
 if ($safeDebloatMode) {
     Write-Host "SafeDebloatMode enabled: Skipping /AnalyzeComponentStore scan prior to commit to preserve memory and stream stability." -ForegroundColor Cyan
     $script:WinsxsAfterRaw = @("Actual Size of Component Store : 0 MB", "(AnalyzeComponentStore skipped in SafeDebloatMode)")
     $script:WinsxsAfterRaw | Set-Content -LiteralPath $winsxsAfterPath -Encoding utf8
 } else {
     $script:WinsxsAfterRaw = Invoke-Dism -DismArgs @("/image:$scratchDir", "/Cleanup-Image", "/AnalyzeComponentStore") -CaptureOutput
+    if ($null -eq $script:WinsxsAfterRaw) { throw "Phase 11: DISM /AnalyzeComponentStore failed for the mounted image (exit code $script:LastDismExitCode). Cannot capture the post-debloat component store metrics." }
     $script:WinsxsAfterRaw | Set-Content -LiteralPath $winsxsAfterPath -Encoding utf8
 }
 
