@@ -784,6 +784,9 @@ function Invoke-WinEaseMigrationRulesBackup {
     $backedUp = @()
     $notices = @()
     if (-not (Test-Path -LiteralPath $BackupRoot)) { New-Item -ItemType Directory -Force -Path $BackupRoot | Out-Null }
+    if (Test-Path -LiteralPath $BackupRoot) {
+        try { $BackupRoot = (Get-Item -LiteralPath $BackupRoot -ErrorAction SilentlyContinue).FullName } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
     foreach ($rid in $RuleIds) {
         $rule = $allRules | Where-Object { $_.Id -eq $rid } | Select-Object -First 1
         if (-not $rule) { $failed += [PSCustomObject]@{ Rule = $rid; Error = 'Rule not found' }; continue }
@@ -935,6 +938,9 @@ function Invoke-WinEaseMigrationRulesRestore {
         [psobject]$Rules
     )
     if (-not $Rules) { $Rules = Get-WinEaseMigrationRules }
+    if (Test-Path -LiteralPath $BackupRoot) {
+        try { $BackupRoot = (Get-Item -LiteralPath $BackupRoot -ErrorAction SilentlyContinue).FullName } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
     $allRules = @($Rules.GameRules) + @($Rules.AppConfigRules) + @($Rules.CustomPathRules)
     Write-Verbose "IncludeSecrets=$IncludeSecrets ForceRunningProcess=$ForceRunningProcess ConflictPolicy=$ConflictPolicy"
     $restored = 0
