@@ -1440,14 +1440,14 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
 
     It "the Japanese table translates every tweak, component switch and Advanced Debloat item, with no orphan entries" {
         $ja = Read-UiTable 'ja'
-        $missing = @()
-        foreach ($t in $settingsDef.Tweaks) { if (-not $ja.ContainsKey("Tweak.$($t.Key).Description")) { $missing += "Tweak.$($t.Key)" } }
+        $missing = [System.Collections.Generic.List[string]]::new()
+        foreach ($t in $settingsDef.Tweaks) { if (-not $ja.ContainsKey("Tweak.$($t.Key).Description")) { $missing.Add("Tweak.$($t.Key)") } }
         foreach ($c in @($settingsDef.Components | Where-Object { $_.Gui })) {
-            foreach ($f in 'Text', 'Description') { if (-not $ja.ContainsKey("Component.$($c.Key).$f")) { $missing += "Component.$($c.Key).$f" } }
+            foreach ($f in 'Text', 'Description') { if (-not $ja.ContainsKey("Component.$($c.Key).$f")) { $missing.Add("Component.$($c.Key).$f") } }
         }
         $items = Get-DebloatItemFromSource
         $items.Count | Should BeGreaterThan 40
-        foreach ($i in $items) { if (-not $ja.ContainsKey("Debloat:$i")) { $missing += "Debloat:$i" } }
+        foreach ($i in $items) { if (-not $ja.ContainsKey("Debloat:$i")) { $missing.Add("Debloat:$i") } }
         ($missing -join "`n") | Should Be ''
         $tweakKeys = @($settingsDef.Tweaks | ForEach-Object { $_.Key })
         $compKeys = @($settingsDef.Components | Where-Object { $_.Gui } | ForEach-Object { $_.Key })
