@@ -14,6 +14,9 @@ param()
 if (-not (Get-Command -Name Remove-WinEaseTreeRobust -ErrorAction SilentlyContinue)) {
     . (Join-Path -Path $script:RepoRoot -ChildPath "WinEasehelpers.ps1")
 }
+if (-not (Get-Command -Name Get-WinEaseMountedImages -ErrorAction SilentlyContinue)) {
+    . (Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseMount.ps1")
+}
 
 Describe "WinEase builder - path safety guards" {
     It "rejects drive roots" {
@@ -1191,6 +1194,9 @@ Describe "WinEase helpers - Path and Directory Safety Guards" {
         if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
         $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
         . $helpersPath
+        if (-not (Get-Command -Name Get-WinEaseMountedImages -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseMount.ps1")
+        }
     }
 
     It "Test-WinEasePathWithin blocks .. traversal escape attempts" {
@@ -1222,11 +1228,6 @@ Describe "WinEase helpers - Path and Directory Safety Guards" {
         $freeGB | Should BeGreaterThan 0
         { Get-WinEaseVolumeFreeSpaceGB -Path "" } | Should Throw
         { Get-WinEaseVolumeFreeSpaceGB -Path "Z:\NonExistentDriveXYZ" } | Should Throw
-    }
-
-    It "Test-CanSafelyDeleteDirectory refuses to delete workspace base directory itself" {
-        $baseDir = "C:\TestFolder\BaseWork"
-        Test-CanSafelyDeleteDirectory -Path $baseDir -ExpectedBaseDir $baseDir | Should Be $false
     }
 
     It "Test-IsPathPreserved correctly identifies exact, parent, and descendant preserved paths" {
@@ -1264,6 +1265,235 @@ Describe "WinEase helpers - Path and Directory Safety Guards" {
 
     It "Test-WinEasePathExistsSafe returns false when an exception occurs on invalid path" {
         Test-WinEasePathExistsSafe -Path "::invalid_path::\0\*\?\<\>" | Should Be $false
+    }
+}
+
+Describe "WinEase helpers - Test-CanSafelyDeleteDirectory" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        $helpersPath = Join-Path $script:RepoRoot "WinEasehelpers.ps1"
+        . $helpersPath
+        if (-not (Get-Command -Name Get-WinEaseMountedImages -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseMount.ps1")
+        }
+    }
+
+    It "returns false when script:BuildSucceeded is false" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $false
+            Test-CanSafelyDeleteDirectory -Path "C:\Workspace\SubDir" | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when Path is null, empty, or whitespace" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Test-CanSafelyDeleteDirectory -Path $null | Should Be $false
+            Test-CanSafelyDeleteDirectory -Path "" | Should Be $false
+            Test-CanSafelyDeleteDirectory -Path "   " | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when Path does not exist" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $false } -ParameterFilter { $LiteralPath -eq "C:\Workspace\NonExistent" }
+            Test-CanSafelyDeleteDirectory -Path "C:\Workspace\NonExistent" | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when Path fails safety check (Test-IsSafePathToDelete returns false)" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true } -ParameterFilter { $LiteralPath -eq "C:\Windows" }
+            Mock Test-IsSafePathToDelete { return $false } -ParameterFilter { $Path -eq "C:\Windows" }
+            Test-CanSafelyDeleteDirectory -Path "C:\Windows" | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when ConvertTo-WinEaseNormalizedPath throws for Path" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { throw "Invalid path format" }
+            Test-CanSafelyDeleteDirectory -Path "C:\Workspace\SubDir" | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when Path is workspace base directory itself (Path equals ExpectedBaseDir)" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { param($Path) return "C:\Workspace" }
+            Test-CanSafelyDeleteDirectory -Path "C:\Workspace" -ExpectedBaseDir "C:\Workspace" | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when Path is outside ExpectedBaseDir" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { param($Path) return $Path }
+            Mock Test-WinEasePathWithin { return $false }
+            Test-CanSafelyDeleteDirectory -Path "C:\OtherDir\Sub" -ExpectedBaseDir "C:\Workspace" | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when ConvertTo-WinEaseNormalizedPath throws for ExpectedBaseDir" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath {
+                param($Path)
+                if ($Path -eq "C:\InvalidBase") { throw "Base dir invalid" }
+                return $Path
+            }
+            Test-CanSafelyDeleteDirectory -Path "C:\Workspace\Sub" -ExpectedBaseDir "C:\InvalidBase" | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when Path is preserved in PreservedDirs" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { param($Path) return $Path }
+            Mock Test-WinEasePathWithin { return $true }
+            Mock Test-IsPathPreserved { return $true }
+            $preserved = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            [void]$preserved.Add("C:\Workspace\Sub")
+
+            Test-CanSafelyDeleteDirectory -Path "C:\Workspace\Sub" -PreservedDirs $preserved | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when active DISM mount is detected on or under Path" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { param($Path) return $Path }
+            Mock Test-WinEasePathWithin { return $true }
+            Mock Test-IsPathPreserved { return $false }
+            Mock Get-WinEaseMountedImages { return @([PSCustomObject]@{ Path = "C:\Workspace\Sub\Mount" }) }
+
+            Test-CanSafelyDeleteDirectory -Path "C:\Workspace\Sub" | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when querying mounted images throws an exception" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { param($Path) return $Path }
+            Mock Test-WinEasePathWithin { return $true }
+            Mock Test-IsPathPreserved { return $false }
+            Mock Get-WinEaseMountedImages { throw "DISM query error" }
+
+            Test-CanSafelyDeleteDirectory -Path "C:\Workspace\Sub" | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when an offline registry hive is currently loaded" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { param($Path) return $Path }
+            Mock Test-WinEasePathWithin { return $true }
+            Mock Test-IsPathPreserved { return $false }
+            Mock Get-WinEaseMountedImages { return @() }
+            Mock Test-Path {
+                param($LiteralPath)
+                if ($LiteralPath -like "HKLM:\zCOMPONENTS*") { return $true }
+                return $true
+            }
+
+            Test-CanSafelyDeleteDirectory -Path "C:\Workspace\Sub" | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns false when checking offline registry hives throws an exception" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { param($Path) return $Path }
+            Mock Test-WinEasePathWithin { return $true }
+            Mock Test-IsPathPreserved { return $false }
+            Mock Get-WinEaseMountedImages { return @() }
+            Mock Test-Path {
+                param($LiteralPath)
+                if ($LiteralPath -like "HKLM:\z*") { throw "Registry access error" }
+                return $true
+            }
+
+            Test-CanSafelyDeleteDirectory -Path "C:\Workspace\Sub" | Should Be $false
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns true when all safety checks pass successfully" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { param($Path) return $Path }
+            Mock Test-WinEasePathWithin { return $true }
+            Mock Test-IsPathPreserved { return $false }
+            Mock Get-WinEaseMountedImages { return @() }
+            Mock Test-Path {
+                param($LiteralPath)
+                if ($LiteralPath -like "HKLM:\z*") { return $false }
+                return $true
+            }
+
+            Test-CanSafelyDeleteDirectory -Path "C:\Workspace\Sub" -ExpectedBaseDir "C:\Workspace" | Should Be $true
+            Test-CanSafelyDeleteDirectory -Path "C:\Workspace\Sub" | Should Be $true
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
     }
 }
 
