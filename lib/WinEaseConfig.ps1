@@ -363,6 +363,26 @@ function Test-WinEaseResumeIntegrity {
         }
     }
 
+    # C-H3: if the checkpoint recorded the verified final payload hash, the payload
+    # on disk must still be that exact file. A checkpoint without the field (written
+    # by an older build, or saved before Phase 15 ran) is accepted for backward
+    # compatibility - but such a payload is not upgraded to "verified" anywhere:
+    # resume mode keeps FinalPayloadVerified = $false (see WinEaseResume.ps1).
+    if ($checkpointData -and $payloadPath) {
+        $savedPayloadHash = $null
+        if ($checkpointData.PSObject.Properties['FinalWimSha256']) { $savedPayloadHash = [string]$checkpointData.FinalWimSha256 }
+        if ($savedPayloadHash) {
+            try {
+                $actualPayloadHash = (Get-FileHash -LiteralPath $payloadPath -Algorithm SHA256).Hash
+                if ($actualPayloadHash -ine $savedPayloadHash) {
+                    $errors.Add("Checkpoint payload hash mismatch: checkpoint.json recorded FinalWimSha256 '$savedPayloadHash' but the payload on disk hashes to '$actualPayloadHash'. The payload was modified or replaced after it was verified; run a full build instead of resuming.")
+                }
+            } catch {
+                $errors.Add("Could not recompute the payload SHA256 to compare with checkpoint.json: $($_.Exception.Message)")
+            }
+        }
+    }
+
     # ISO root items validation for resume ISO mode
     if ($IsIsoOnly -or $TargetPhase -ge 13) {
         $requiredRootItems = @('boot', 'efi', 'bootmgr', 'bootmgr.efi', 'bootmgfw.efi', 'setup.exe', 'autounattend.xml')
