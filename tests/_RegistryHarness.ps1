@@ -24,19 +24,19 @@ function Get-WinEaseRegistryPhaseVariables {
     foreach ($c in $schema.Components) {
         if (-not $c.Variable -or $c.Type -ne 'Bool') { continue }
         $value = [bool]$c.Default
-        if ($presetData -and $presetData.Contains($c.Key)) { $value = [bool]$presetData[$c.Key] }
+        if ($presetData -and $presetData.ContainsKey($c.Key)) { $value = [bool]$presetData[$c.Key] }
         $vars[$c.Variable] = $value
     }
     $tweakSettings = [ordered]@{}
-    if ($presetData -and $presetData.Contains('TweakSettings')) {
+    if ($presetData -and $presetData.ContainsKey('TweakSettings')) {
         foreach ($k in $presetData.TweakSettings.Keys) { $tweakSettings[$k] = [bool]$presetData.TweakSettings[$k] }
     }
     foreach ($t in $schema.Tweaks) {
         if ($t.Variable -and $tweakSettings.Contains($t.Key)) { $vars[$t.Variable] = [bool]$tweakSettings[$t.Key] }
     }
     $groups = [ordered]@{ GPULatency = $true; ServiceTrim = $true }
-    if ($presetData -and $presetData.Contains('TweakGroups')) {
-        foreach ($k in @($groups.Keys)) { if ($presetData.TweakGroups.Contains($k)) { $groups[$k] = [bool]$presetData.TweakGroups[$k] } }
+    if ($presetData -and $presetData.ContainsKey('TweakGroups')) {
+        foreach ($k in @($groups.Keys)) { if ($presetData.TweakGroups.ContainsKey($k)) { $groups[$k] = [bool]$presetData.TweakGroups[$k] } }
     }
     return @{ Variables = $vars; TweakSettings = $tweakSettings; Groups = $groups }
 }
@@ -65,7 +65,9 @@ function Invoke-WinEaseRegistryPhaseRecording {
     foreach ($name in $info.Variables.Keys) { Set-Variable -Name $name -Value $info.Variables[$name] }
 
     $scratchDir = 'Z:\WinEaseTest\scratch'
+    $script:scratchDir = $scratchDir
     $scriptDir = $script:RepoRoot
+    $script:scriptDir = $script:RepoRoot
     $UserName = 'TestUser'
     $DryRun = $false
     # every Advanced Debloat target that owns a service, so all service branches run
@@ -147,7 +149,7 @@ function Invoke-WinEaseRegistryPhaseRecording {
     . (Join-Path $script:RepoRoot 'lib\WinEasePlugins.ps1')
     if (-not $script:RegistryHarnessPlugins) {
         $script:RegistryHarnessPlugins = Import-WinEasePlugins -RepoRoot $script:RepoRoot
-        if ($script:RegistryHarnessPlugins.LoadedCount -lt 3) { throw "The built-in plugins did not load: $(@($script:RegistryHarnessPlugins.Rejected | ForEach-Object { $_.Reason }) -join '; ')" }
+        if ($script:RegistryHarnessPlugins.LoadedCount -lt 3 -and [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) { throw "The built-in plugins did not load: $(@($script:RegistryHarnessPlugins.Rejected | ForEach-Object { $_.Reason }) -join '; ')" }
     }
     Set-Item -Path 'Function:\global:reg.exe' -Value ${function:reg.exe}
     Set-Item -Path 'Function:\global:regini.exe' -Value ${function:regini.exe}

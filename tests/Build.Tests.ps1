@@ -4,6 +4,7 @@
 # Split from the former tests\WinEase.Tests.ps1 in R1. Shared setup is in _TestCommon.ps1.
 
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '', Justification = 'Variables are assigned in BeforeAll/BeforeEach and read inside It blocks')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidAssignmentToAutomaticVariable', '', Justification = 'Mocking $host in module scope for test probe')]
 param()
 
 . (Join-Path -Path $PSScriptRoot -ChildPath '_TestCommon.ps1')
@@ -473,6 +474,24 @@ Describe "WinEase builder - Enter-Phase progress tracking and checkpoints" {
             $script:CurrentBuildPhase = $null
             $script:DiagnosticData = $null
             $script:CheckpointLog = [System.Collections.ArrayList]::new()
+            $script:ThrowOnWindowTitleSet = $false
+
+            $script:MockRawUI = [PSCustomObject]@{ _title = "" }
+            $script:MockRawUI | Add-Member -MemberType ScriptProperty -Name 'WindowTitle' -Value {
+                return $this._title
+            } -SecondValue {
+                param($v)
+                if ($script:ThrowOnWindowTitleSet) {
+                    throw "Host RawUI WindowTitle exception"
+                }
+                $this._title = $v
+            } -Force
+
+            $host = [PSCustomObject]@{
+                UI = [PSCustomObject]@{
+                    RawUI = $script:MockRawUI
+                }
+            }
 
             function Save-WinEaseCheckpoint {
                 param([double]$CompletedPhase)
@@ -481,7 +500,7 @@ Describe "WinEase builder - Enter-Phase progress tracking and checkpoints" {
 
             . ([scriptblock]::Create($FnText))
 
-            Export-ModuleMember -Function 'Enter-Phase' -Variable 'CurrentPhase', 'TotalPhases', 'PhaseTimings', 'PhaseStopwatch', 'ResumeMode', 'BaseWorkDir', 'CurrentBuildPhase', 'DiagnosticData', 'CheckpointLog'
+            Export-ModuleMember -Function 'Enter-Phase' -Variable 'CurrentPhase', 'TotalPhases', 'PhaseTimings', 'PhaseStopwatch', 'ResumeMode', 'BaseWorkDir', 'CurrentBuildPhase', 'DiagnosticData', 'CheckpointLog', 'MockRawUI', 'ThrowOnWindowTitleSet'
         }
         Import-Module $script:EnterPhaseProbe -Force
     }
@@ -553,9 +572,33 @@ Describe "WinEase builder - Enter-Phase progress tracking and checkpoints" {
         }
     }
 
-    It "gracefully handles exceptions when setting host window title" {
+    It "sets host window title to phase title when RawUI is functional" {
         & $script:EnterPhaseProbe {
-            # WindowTitle access in headless/Linux pwsh will throw or silently fail inside catch {} block
+            Enter-Phase -PhaseNumber 10 -PhaseName "Registry"
+
+            $script:CurrentPhase | Should Be 10
+            $script:MockRawUI.WindowTitle | Should Be "WinEase [10/18] Registry"
+        }
+    }
+
+    It "gracefully catches and logs exceptions when setting host window title throws" {
+        & $script:EnterPhaseProbe {
+            $script:ThrowOnWindowTitleSet = $true
+            $VerbosePreference = 'Continue'
+
+            $verboseMsgs = Enter-Phase -PhaseNumber 10 -PhaseName "Registry" 4>&1 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] }
+
+            $script:CurrentPhase | Should Be 10
+            $verboseMsgs.Count | Should BeGreaterThan 0
+            $verboseMsgs[0].Message | Should Match "Ignored:"
+            $verboseMsgs[0].Message | Should Match "Host RawUI WindowTitle exception"
+        }
+    }
+
+    It "gracefully handles when RawUI is null" {
+        & $script:EnterPhaseProbe {
+            $host = [PSCustomObject]@{ UI = [PSCustomObject]@{ RawUI = $null } }
+
             { Enter-Phase -PhaseNumber 10 -PhaseName "Registry" } | Should Not Throw
             $script:CurrentPhase | Should Be 10
         }

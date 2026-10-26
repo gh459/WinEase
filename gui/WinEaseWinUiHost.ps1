@@ -383,9 +383,9 @@ function Invoke-WinEaseWinUiRequest {
             if (-not (Get-Command -Name Get-WinEaseCustomScriptInventory -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $engine)) {
                 . $engine
             }
-            $rows = @()
+            $rows = [System.Collections.Generic.List[object]]::new()
             foreach ($e in @(Get-WinEaseCustomScriptInventory -RepoRoot $repo -Stage $stage)) {
-                $rows += [ordered]@{
+                $rows.Add([ordered]@{
                     Name = [string]$e.Name
                     Path = [string]$e.FullPath
                     Order = [string]$e.EffectiveOrder
@@ -395,7 +395,7 @@ function Invoke-WinEaseWinUiRequest {
                     OnError = [string]$e.OnError
                     Description = [string]$e.Description
                     Location = [string]$e.Location
-                }
+                })
             }
             return @{ Data = $rows }
         }
@@ -462,9 +462,9 @@ function Invoke-WinEaseWinUiRequest {
         'plugins.list' {
             $pluginEngine = Join-Path $repo 'lib\WinEasePlugins.ps1'
             if (-not (Get-Command -Name Get-WinEasePluginInventory -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $pluginEngine)) { . $pluginEngine }
-            $rows = @()
+            $rows = [System.Collections.Generic.List[object]]::new()
             foreach ($p in @(Get-WinEasePluginInventory -RepoRoot $repo)) {
-                $rows += [ordered]@{
+                $rows.Add([ordered]@{
                     Source = [string]$p.Source
                     File = [string]$p.File
                     Sha256 = [string]$p.Sha256
@@ -472,7 +472,7 @@ function Invoke-WinEaseWinUiRequest {
                     OnError = [string]$p.OnError
                     Enabled = [bool]$p.Enabled
                     Description = [string]$p.Description
-                }
+                })
             }
             return @{ Data = $rows }
         }

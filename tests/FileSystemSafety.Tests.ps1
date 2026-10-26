@@ -4,7 +4,7 @@
 #
 # Covers Test-IsSafePathToDelete, Test-WinEasePathHasReparsePoint, Test-WinEaseMountPathInWorkspace,
 # Get-WinEaseMountedImages, Assert-WinEaseDirectorySafety, Reset-DirectoryWithRobocopy,
-# Clear-DismMountConflicts and Initialize-WinEaseMountDirectory.
+# Clear-DismMountConflicts, Initialize-WinEaseMountDirectory and Test-CanSafelyDeleteVhdx.
 #
 # Safety rules for this file: only per-test temp directories are touched, DISM is never run
 # (Get-WinEaseMountedImages, dism.exe and every other mount helper is mocked), and links are
@@ -773,5 +773,89 @@ Describe "Initialize-WinEaseMountDirectory" -Tags 'slow' {
         Test-Path -LiteralPath $script:Mnt | Should Be $true
         @(Get-ChildItem -LiteralPath $script:Mnt -Force).Count | Should Be 0
         $global:FsDismCalls | Should Be 0
+    }
+}
+
+Describe "Test-CanSafelyDeleteVhdx" {
+    BeforeEach {
+        Initialize-FsTestState
+        $script:Ws = "C:\TestWorkspace"
+        $script:VhdxFile = "C:\TestWorkspace\test_disk.vhdx"
+        $script:BuildSucceeded = $true
+
+        # ConvertTo-WinEaseNormalizedPath requires drive-letter paths (C:\...).
+        # On non-Windows platforms (like Linux test runners), mock Test-Path and ConvertTo-WinEaseRealPath
+        # to properly resolve drive-letter test paths starting with C:\.
+        Mock Test-Path {
+            param($LiteralPath, $Path)
+            $p = if ($LiteralPath) { $LiteralPath } else { $Path }
+            if ($p -and ($p -like 'C:\TestWorkspace*' -or $p -like 'C:\OtherDir*')) {
+                return ($p -notlike '*missing.vhdx*')
+            }
+            if ([string]::IsNullOrWhiteSpace($p)) { return $false }
+            return ([System.IO.File]::Exists($p) -or [System.IO.Directory]::Exists($p))
+        }
+        Mock ConvertTo-WinEaseRealPath {
+            param($Path)
+            if ($Path) { return [System.IO.Path]::GetFullPath($Path) }
+            return $null
+        }
+    }
+
+    It "refuses deletion when script:BuildSucceeded is false" {
+        $script:BuildSucceeded = $false
+        Test-CanSafelyDeleteVhdx -VhdxPath $script:VhdxFile -VhdxDetached $true -ExpectedBaseDir $script:Ws | Should Be $false
+    }
+
+    It "refuses deletion when VhdxDetached is false" {
+        Test-CanSafelyDeleteVhdx -VhdxPath $script:VhdxFile -VhdxDetached $false -ExpectedBaseDir $script:Ws | Should Be $false
+    }
+
+    It "refuses null, empty, whitespace and non-existent VhdxPath" {
+        Test-CanSafelyDeleteVhdx -VhdxPath $null -VhdxDetached $true -ExpectedBaseDir $script:Ws | Should Be $false
+        Test-CanSafelyDeleteVhdx -VhdxPath '' -VhdxDetached $true -ExpectedBaseDir $script:Ws | Should Be $false
+        Test-CanSafelyDeleteVhdx -VhdxPath '   ' -VhdxDetached $true -ExpectedBaseDir $script:Ws | Should Be $false
+
+        $nonExistent = "C:\TestWorkspace\missing.vhdx"
+        Test-CanSafelyDeleteVhdx -VhdxPath $nonExistent -VhdxDetached $true -ExpectedBaseDir $script:Ws | Should Be $false
+    }
+
+    It "refuses deletion of a VHXD file in protected locations" {
+        Test-CanSafelyDeleteVhdx -VhdxPath $script:RepoRoot -VhdxDetached $true | Should Be $false
+        $win = if ($env:WINDIR) { $env:WINDIR } else { "C:\Windows" }
+        Test-CanSafelyDeleteVhdx -VhdxPath "$win\disk.vhdx" -VhdxDetached $true | Should Be $false
+    }
+
+    It "refuses deletion when VhdxPath is outside ExpectedBaseDir" {
+        $outsideVhdx = "C:\OtherDir\outside.vhdx"
+        Test-CanSafelyDeleteVhdx -VhdxPath $outsideVhdx -VhdxDetached $true -ExpectedBaseDir $script:Ws | Should Be $false
+    }
+
+    It "refuses deletion when ExpectedBaseDir is invalid path format" {
+        Test-CanSafelyDeleteVhdx -VhdxPath $script:VhdxFile -VhdxDetached $true -ExpectedBaseDir 'relative/workspace/dir' | Should Be $false
+    }
+
+    It "refuses deletion when VhdxPath or its directory is preserved in PreservedDirs" {
+        $preserved = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        [void]$preserved.Add($script:VhdxFile)
+
+        Test-CanSafelyDeleteVhdx -VhdxPath $script:VhdxFile -VhdxDetached $true -ExpectedBaseDir $script:Ws -PreservedDirs $preserved | Should Be $false
+
+        $preservedDir = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        [void]$preservedDir.Add($script:Ws)
+
+        Test-CanSafelyDeleteVhdx -VhdxPath $script:VhdxFile -VhdxDetached $true -ExpectedBaseDir $script:Ws -PreservedDirs $preservedDir | Should Be $false
+    }
+
+    It "allows deletion when all safety conditions are met" {
+        Test-CanSafelyDeleteVhdx -VhdxPath $script:VhdxFile -VhdxDetached $true -ExpectedBaseDir $script:Ws | Should Be $true
+        Test-CanSafelyDeleteVhdx -VhdxPath $script:VhdxFile -VhdxDetached $true | Should Be $true
+    }
+
+    It "supports slash variations and case variations on ExpectedBaseDir and VhdxPath" {
+        $wsForward = $script:Ws.Replace('\', '/')
+        $fileUpper = $script:VhdxFile.ToUpperInvariant()
+
+        Test-CanSafelyDeleteVhdx -VhdxPath $fileUpper -VhdxDetached $true -ExpectedBaseDir $wsForward | Should Be $true
     }
 }

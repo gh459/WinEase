@@ -737,13 +737,13 @@ function Test-TweakEnabled {
         [string]$Name,
         [bool]$Default = $true
     )
-    if ($null -ne $script:TweakSettings -and $script:TweakSettings.Contains($Name)) {
+    if ($null -ne $script:TweakSettings -and ([System.Collections.IDictionary]$script:TweakSettings).Contains($Name)) {
         return [bool]$script:TweakSettings[$Name]
     }
     # Legacy key names (older profiles / -TweakSettings hashtables) that map onto this GUI key
     if ($null -ne $script:TweakSettings -and $script:TweakKeyAliases) {
         foreach ($alias in $script:TweakKeyAliases.Keys) {
-            if ($script:TweakKeyAliases[$alias] -eq $Name -and $script:TweakSettings.Contains($alias)) {
+            if ($script:TweakKeyAliases[$alias] -eq $Name -and ([System.Collections.IDictionary]$script:TweakSettings).Contains($alias)) {
                 return [bool]$script:TweakSettings[$alias]
             }
         }
@@ -857,7 +857,9 @@ function Enter-Phase {
     }
     $script:PhaseStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $phaseTitle = "WinEase [$Step/$($script:TotalPhases)] $PhaseName"
-    try { $host.UI.RawUI.WindowTitle = $phaseTitle } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    if ($null -ne $host.UI.RawUI) {
+        try { $host.UI.RawUI.WindowTitle = $phaseTitle } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
     if (Get-Command -Name Send-WinEaseGuiProgress -ErrorAction SilentlyContinue) {
         $progress = @{ Phase = $Step; Total = $script:TotalPhases; Name = $PhaseName }
         if (-not $script:ProgressEstimateSent) {
@@ -1081,19 +1083,19 @@ function Apply-WinEaseProfileDebloat {
     # Older profiles still contain the "Physical: <target>" entries that were merged into
     # the standard list. They are mapped onto the canonical target and keep the Rust engine.
     $legacyEngines = [ordered]@{}
-    $normStd = @()
+    $normStd = [System.Collections.Generic.List[string]]::new()
     foreach ($raw in @($script:advancedDebloatStandard)) {
         $item = ConvertTo-WinEaseDebloatTarget -Item ([string]$raw)
         if (-not $item) { continue }
         if ($item -ne [string]$raw) { $legacyEngines[$item] = 'Rust' }
-        $normStd += $item
+        $normStd.Add($item)
     }
-    $normExp = @()
+    $normExp = [System.Collections.Generic.List[string]]::new()
     foreach ($raw in @($script:advancedDebloatExperimental)) {
         $item = ConvertTo-WinEaseDebloatTarget -Item ([string]$raw)
         if (-not $item) { continue }
         if ($item -ne [string]$raw) { $legacyEngines[$item] = 'Rust' }
-        $normExp += $item
+        $normExp.Add($item)
     }
     $script:advancedDebloatStandard     = @($normStd | Where-Object { $_ } | Select-Object -Unique)
     $script:advancedDebloatExperimental = @($normExp | Where-Object { $_ } | Select-Object -Unique)
@@ -1244,10 +1246,10 @@ function Import-WinEaseProfile {
 
         # Profile Schema Linter & Unknown Key Typo Detection
         $knownKeys = @($script:WinEaseProfileKeys) + @('ProfileName', 'Description', 'Version', 'Timestamp', 'Architecture')
-        $unknownKeys = @()
+        $unknownKeys = [System.Collections.Generic.List[string]]::new()
         foreach ($prop in $settings.PSObject.Properties) {
             if ($knownKeys -notcontains $prop.Name) {
-                $unknownKeys += $prop.Name
+                $unknownKeys.Add($prop.Name)
             }
         }
         if ($unknownKeys.Count -gt 0) {
@@ -2658,14 +2660,14 @@ try {
     # 5b. After a cancel: report what the cleanup left behind, so 'Cancelled' is never claimed over a half-cleaned state
     $script:CancelCleanupProblems = @()
     if ($script:BuildCancelled) {
-        $lingeringMountList = @()
+        $lingeringMountList = [System.Collections.Generic.List[string]]::new()
         foreach ($mPath in $allTargetMounts) {
             try {
                 foreach ($am in @(Get-WinEaseMountedImages)) {
                     $ap = if ($am.Path) { try { ConvertTo-WinEaseNormalizedPath -Path $am.Path } catch { $null } } else { $null }
-                    if ($ap -and ($ap -ieq $mPath)) { $lingeringMountList += $mPath }
+                    if ($ap -and ($ap -ieq $mPath)) { $lingeringMountList.Add($mPath) }
                 }
-            } catch { $lingeringMountList += "$mPath (status could not be read)" }
+            } catch { $lingeringMountList.Add("$mPath (status could not be read)") }
         }
         $stillLoadedHives = @(@('zCOMPONENTS', 'zDEFAULT', 'zNTUSER', 'zSOFTWARE', 'zSYSTEM') | Where-Object { Test-Path -LiteralPath "Registry::HKEY_LOCAL_MACHINE\$_" })
         $script:CancelCleanupProblems = Get-WinEaseCancelCleanupProblems -LoadedHives $stillLoadedHives -LingeringMounts $lingeringMountList `
@@ -2678,14 +2680,14 @@ try {
 
     # 5c. P1-02: Check for cleanup residues and generate explicit remediation commands on failure or cancel
     if ($script:BuildCancelled -or -not $script:BuildSucceeded) {
-        $lingeringMountListAll = @()
+        $lingeringMountListAll = [System.Collections.Generic.List[string]]::new()
         foreach ($mPath in $allTargetMounts) {
             try {
                 foreach ($am in @(Get-WinEaseMountedImages)) {
                     $ap = if ($am.Path) { try { ConvertTo-WinEaseNormalizedPath -Path $am.Path } catch { $null } } else { $null }
-                    if ($ap -and ($ap -ieq $mPath)) { $lingeringMountListAll += $mPath }
+                    if ($ap -and ($ap -ieq $mPath)) { $lingeringMountListAll.Add($mPath) }
                 }
-            } catch { $lingeringMountListAll += "$mPath (status could not be read)" }
+            } catch { $lingeringMountListAll.Add("$mPath (status could not be read)") }
         }
         $stillLoadedHivesAll = @(@('zCOMPONENTS', 'zDEFAULT', 'zNTUSER', 'zSOFTWARE', 'zSYSTEM') | Where-Object { Test-Path -LiteralPath "Registry::HKEY_LOCAL_MACHINE\$_" })
         if (Get-Command -Name Get-WinEaseCleanupRemediation -ErrorAction SilentlyContinue) {

@@ -48,6 +48,11 @@ if ($safeDebloatMode) {
 if ($CheckHealth) {
     Write-Host "Verifying image component store health (-CheckHealth)..." -ForegroundColor Cyan
     & dism.exe /English /Image:"$scratchDir" /Cleanup-Image /CheckHealth
+    # The health result is diagnostic only (nothing below consumes it), so a
+    # failure warns instead of aborting - but it must not pass silently.
+    if ($LASTEXITCODE -notin @(0, 3010)) {
+        Write-Warning "Phase 4: DISM /CheckHealth did not complete successfully (exit code $LASTEXITCODE). The component store may be corrupted; continuing anyway because -CheckHealth is diagnostic only."
+    }
 }
 
 # Directive 2.1: Physical ownership acquisition and deletion of System32 binaries removed to prevent WIM hardlink corruption.
@@ -55,6 +60,9 @@ if ($CheckHealth) {
 
 # Detect UI Language and Architecture
 $imageIntl = & dism.exe /English /Get-Intl "/Image:$scratchDir"
+if ($LASTEXITCODE -notin @(0, 3010)) {
+    Write-Warning "Phase 4: DISM /Get-Intl failed (exit code $LASTEXITCODE). UI language detection falls back to en-US."
+}
 $languageCode = "en-US"
 $imageIntlText = ($imageIntl -join "`n")
 if ($imageIntlText -match 'Default system UI language\s*:\s*([a-zA-Z]{2}-[a-zA-Z]{2})') {
@@ -83,6 +91,9 @@ if ($detectedLanguageLower -match '^(ko|kor)(-.*)?$') {
 }
 
 $imageInfo = & dism.exe /English /Get-WimInfo "/WimFile:$destWim" "/Index:$index"
+if ($LASTEXITCODE -notin @(0, 3010)) {
+    Write-Warning "Phase 4: DISM /Get-WimInfo failed (exit code $LASTEXITCODE). Architecture detection falls back to amd64."
+}
 $architecture = "amd64"
 $lines = $imageInfo -split '\r?\n'
 foreach ($line in $lines) {
@@ -116,6 +127,14 @@ if ($configSnapshotPath -and (Test-Path -LiteralPath $configSnapshotPath)) {
 if ($wslSupport) {
     Write-Host "Enabling WSL2 and VirtualMachinePlatform before WinSxS slimming..." -ForegroundColor Green
     & dism.exe /English "/image:$scratchDir" /Enable-Feature /FeatureName:VirtualMachinePlatform /All > $null 2>&1
+    $vmpExitCode = $LASTEXITCODE
     & dism.exe /English "/image:$scratchDir" /Enable-Feature /FeatureName:Microsoft-Windows-Subsystem-Linux /All > $null 2>&1
-    Write-Host "  - WSL2 and VirtualMachinePlatform enabled." -ForegroundColor Green
+    $wslExitCode = $LASTEXITCODE
+    # Best-effort, but the "enabled" message is only printed when both DISM
+    # calls actually succeeded (3010 = success, restart required).
+    if (($vmpExitCode -in @(0, 3010)) -and ($wslExitCode -in @(0, 3010))) {
+        Write-Host "  - WSL2 and VirtualMachinePlatform enabled." -ForegroundColor Green
+    } else {
+        Write-Warning "  - WSL feature enablement did not fully succeed (VirtualMachinePlatform exit code $vmpExitCode, Microsoft-Windows-Subsystem-Linux exit code $wslExitCode). WSL support may be missing from the image."
+    }
 }

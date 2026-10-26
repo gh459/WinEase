@@ -473,12 +473,15 @@ Describe "Security options - the defaults and the execution paths agree" {
         $json.properties.RemoveAppxBloatware | Should Not BeNullOrEmpty
     }
 
-    It "the aggressive presets still ask for the aggressive security options" {
+    It "the aggressive presets still ask for the aggressive security options but never bundle auto-logon" {
         foreach ($key in @('extreme', 'fat32', 'handheld', 'audio')) {
             $preset = $script:SecPresets.Presets[$key]
             [bool]$preset['RemoveDefender'] | Should Be $true
             [bool]$preset['DisableWindowsUpdate'] | Should Be $true
-            [bool]$preset.TweakSettings['ConfigureWinlogon'] | Should Be $true
+            # ConfigureWinlogon is deliberately NOT bundled into presets any
+            # more (separated in the 2026-10-26 review remediation): enabling
+            # auto-logon must be an explicit opt-in, never a preset side effect.
+            [bool]$preset.TweakSettings['ConfigureWinlogon'] | Should Be $false
         }
     }
 
@@ -510,15 +513,15 @@ Describe "Security options - the defaults and the execution paths agree" {
         $bypass = @('BypassHardwareRequirements', 'BypassNetworkRequirement', 'BypassNRO')
         foreach ($tk in $tweakKeys) {
             if ($bypass -contains $tk) {
-                $none.TweakSettings.Contains($tk) | Should Be $false
+                ([System.Collections.IDictionary]$none.TweakSettings).Contains($tk) | Should Be $false
                 continue
             }
-            $none.TweakSettings.Contains($tk) | Should Be $true
+            ([System.Collections.IDictionary]$none.TweakSettings).Contains($tk) | Should Be $true
             [bool]$none.TweakSettings[$tk] | Should Be $false
         }
-        $componentKeys = @($script:SecSchema.Components | Where-Object { $_.Type -ne 'Special' -and $_.ContainsKey('Default') } | ForEach-Object { $_.Key })
+        $componentKeys = @($script:SecSchema.Components | Where-Object { $_.Type -ne 'Special' -and ([System.Collections.IDictionary]$_).Contains('Default') } | ForEach-Object { $_.Key })
         foreach ($ck in $componentKeys) {
-            $none.Contains($ck) | Should Be $true
+            ([System.Collections.IDictionary]$none).Contains($ck) | Should Be $true
         }
     }
 
@@ -842,7 +845,7 @@ Describe "WinEase advanced debloat - the engine choice is explained" -Tags 'slow
         $winuiText | Should Match 'ToolTipService\.SetToolTip\(engineHelp'
     }
 
-    It "the help mark of the classic window shows the explanation on hover" {
+    It "the help mark of the classic window shows the explanation on hover" -Skip:(-not ('System.Windows.Forms.Form' -as [type])) {
         $schema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
         $script:AllTweakDefs = [ordered]@{}
         foreach ($td in $schema.Tweaks) { $script:AllTweakDefs[$td.Key] = @{ Category = $td.Category; Default = [bool]$td.Default; Description = $td.Description } }

@@ -90,7 +90,11 @@ $scripts = @(
 		function Redact-WinEaseSecret {
 			param([string]$Text)
 			if ([string]::IsNullOrEmpty($Text)) { return $Text; }
-			$masked = $Text -replace '(?i)(password|secret|token|apikey|key)\s*[:=]\s*[^\s]+', '$1: [REDACTED]';
+			# Quoted values first (JSON / assignment forms such as "password": "..."
+			# or 'apikey' = '...'): the value may contain spaces, so the unquoted
+			# pattern below would only mask its first word and leak the rest.
+			$masked = $Text -replace '(?i)(["\x27]?[\w-]*(password|secret|token|apikey)[\w-]*["\x27]?\s*[:=]\s*)("[^"]*"|\x27[^\x27]*\x27)', '$1[REDACTED]';
+			$masked = $masked -replace '(?i)(password|secret|token|apikey|key)\s*[:=]\s*(?!\[REDACTED\])[^\s]+', '$1: [REDACTED]';
 			$masked = $masked -replace '[A-Za-z0-9]{5}-[A-Za-z0-9]{5}-[A-Za-z0-9]{5}-[A-Za-z0-9]{5}-[A-Za-z0-9]{5}', 'XXXXX-XXXXX-XXXXX-XXXXX-XXXXX';
 			return $masked;
 		}
@@ -539,10 +543,9 @@ $scripts = @(
 		# into the default user hive; this confirms what the running user actually sees.
 		try {
 			$uiStatusPath = "C:\ProgramData\WinEase\ui-status.txt";
-			$uiLines = @(
-				"WinEase UI status",
-				"Timestamp: " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-			);
+			$uiLines = [System.Collections.Generic.List[string]]::new();
+			$uiLines.Add("WinEase UI status");
+			$uiLines.Add("Timestamp: " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss"));
 			$uiChecks = @(
 				@{ Label = "MinAnimate"; Path = "HKCU:\Control Panel\Desktop\WindowMetrics"; Name = "MinAnimate"; Expected = "0" },
 				@{ Label = "DragFullWindows"; Path = "HKCU:\Control Panel\Desktop"; Name = "DragFullWindows"; Expected = "0" },
@@ -556,14 +559,14 @@ $scripts = @(
 				$actual = $null;
 				try { $actual = (Get-ItemProperty -LiteralPath $uiCheck.Path -Name $uiCheck.Name -ErrorAction SilentlyContinue).($uiCheck.Name) } catch { Write-Verbose "UI preference read failed: $($_.Exception.Message)" }
 				$state = if ("$actual" -eq "$($uiCheck.Expected)") { "OK" } else { "DIFF" };
-				$uiLines += ("{0}: {1} (expected {2}) [{3}]" -f $uiCheck.Label, $actual, $uiCheck.Expected, $state);
+				$uiLines.Add("{0}: {1} (expected {2}) [{3}]" -f $uiCheck.Label, $actual, $uiCheck.Expected, $state);
 			}
 			$noLock = $null;
 			try { $noLock = (Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" -Name "NoLockScreen" -ErrorAction SilentlyContinue).NoLockScreen } catch { Write-Verbose "Lock-screen policy read failed: $($_.Exception.Message)" }
-			$uiLines += ("NoLockScreen (policy): {0}" -f $noLock);
+			$uiLines.Add("NoLockScreen (policy): {0}" -f $noLock);
 			$photoCmd = $null;
 			try { $photoCmd = (Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Classes\PhotoViewer.FileAssoc.Jpeg\shell\open\command" -ErrorAction SilentlyContinue).'(default)' } catch { Write-Verbose "Photo Viewer registration read failed: $($_.Exception.Message)" }
-			$uiLines += ("Photo Viewer JPEG command: {0}" -f $(if ($photoCmd) { "present" } else { "absent" }));
+			$uiLines.Add("Photo Viewer JPEG command: {0}" -f $(if ($photoCmd) { "present" } else { "absent" }));
 			[System.IO.File]::WriteAllLines($uiStatusPath, $uiLines, [System.Text.Encoding]::UTF8);
 		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};

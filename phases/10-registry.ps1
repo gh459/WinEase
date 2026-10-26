@@ -1,6 +1,8 @@
 # Phase 10: Registry Hive Loading, Hardware Bypasses & Granular Tweaks
 # Dot-sourced by the main orchestrator (WinEasebuilder.ps1)
 
+if (-not $scratchDir -and $script:scratchDir) { $scratchDir = $script:scratchDir }
+
 Write-Host "Loading offline registry hives..." -ForegroundColor Cyan
 $systemHive    = "$scratchDir\Windows\System32\config\SYSTEM"
 $softwareHive  = "$scratchDir\Windows\System32\config\SOFTWARE"
@@ -48,13 +50,13 @@ if (-not (Get-Command -Name Test-TweakEnabled -ErrorAction SilentlyContinue)) {
             [string]$Name,
             [bool]$Default = $true
         )
-        if ($null -ne $script:TweakSettings -and $script:TweakSettings.Contains($Name)) {
+        if ($null -ne $script:TweakSettings -and ([System.Collections.IDictionary]$script:TweakSettings).Contains($Name)) {
             return [bool]$script:TweakSettings[$Name]
         }
         # Legacy key names (older profiles / -TweakSettings hashtables) that map onto this GUI key
         if ($null -ne $script:TweakSettings -and $script:TweakKeyAliases) {
             foreach ($alias in $script:TweakKeyAliases.Keys) {
-                if ($script:TweakKeyAliases[$alias] -eq $Name -and $script:TweakSettings.Contains($alias)) {
+                if ($script:TweakKeyAliases[$alias] -eq $Name -and ([System.Collections.IDictionary]$script:TweakSettings).Contains($alias)) {
                     return [bool]$script:TweakSettings[$alias]
                 }
             }
@@ -300,7 +302,8 @@ Invoke-WinEaseRegistryTable -Section ui -Tweak TaskbarEndTask
 # after the first character of the data, holding a value named '/t'. The next
 # build found that value, reg.exe asked "Overwrite (Yes/No)?" and waited for a
 # key press - the build hung in phase 10 and no ISO was produced.
-$uiPreferencePath = Join-Path -Path $scriptDir -ChildPath "config\ui-preferences.psd1"
+$effectiveScriptDir = if ($scriptDir) { $scriptDir } elseif ($script:scriptDir) { $script:scriptDir } elseif ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+$uiPreferencePath = Join-Path -Path $effectiveScriptDir -ChildPath "config\ui-preferences.psd1"
 $uiPreferenceData = Import-PowerShellDataFile -LiteralPath $uiPreferencePath
 $uiPreferenceTweaks = @($uiPreferenceData.UiPreferences)
 
@@ -340,7 +343,7 @@ foreach ($v in $uiPreferenceTweaks) {
     if (-not (Test-TweakEnabled $v.Tweak $false)) { continue }
     # An empty field would be dropped by the native call and reg.exe would read
     # the next switch as the value - the entry is skipped instead.
-    $emptyFields = @('Path', 'Name', 'Type', 'Data') | Where-Object { [string]::IsNullOrWhiteSpace([string]$v[$_]) }
+    $emptyFields = @('Path', 'Name', 'Type', 'Data').Where({ [string]::IsNullOrWhiteSpace([string]$v[$_]) })
     if ($emptyFields.Count -gt 0) {
         Write-Warning "Skipping the UI preference of '$($v.Tweak)': the field(s) $($emptyFields -join ', ') are empty."
         continue
@@ -662,7 +665,8 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
         '\Registry\Machine\zSYSTEM\ControlSet001\Services\SgrmAgent [1 17]',
         '\Registry\Machine\zSOFTWARE\Microsoft\Windows Defender\Features [1 17]'
     )
-    $reginiFile = Join-Path -Path $env:TEMP -ChildPath "WinEase_regini_$([System.IO.Path]::GetRandomFileName()).txt"
+    $tempDir = if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() }
+    $reginiFile = Join-Path -Path $tempDir -ChildPath "WinEase_regini_$([System.IO.Path]::GetRandomFileName()).txt"
     [System.IO.File]::WriteAllLines($reginiFile, $reginiLines, [System.Text.Encoding]::ASCII)
     & regini.exe $reginiFile > $null 2>&1
     Remove-Item -LiteralPath $reginiFile -Force -ErrorAction SilentlyContinue
@@ -739,7 +743,7 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
         "$scratchDir\Windows\SystemApps",
         "$scratchDir\ProgramData\Microsoft\Windows\AppRepository\Packages"
     )) {
-        if (Test-Path -LiteralPath $secGlobRoot) {
+        if ($scratchDir -and (Test-Path -LiteralPath $secGlobRoot)) {
             Get-ChildItem -LiteralPath $secGlobRoot -Force -ErrorAction SilentlyContinue |
                 Where-Object { $_.Name -match 'SecHealthUI' } |
                 ForEach-Object { [void](Remove-WinEaseTreeRobust -Path $_.FullName -SafetyRoot $scratchDir) }
@@ -765,7 +769,7 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
         "$scratchDir\Windows\System32\Tasks\Microsoft\Windows\SecurityCenter",
         "$scratchDir\Windows\System32\Tasks\Microsoft\Windows\Windows Security"
     )) {
-        if (Test-Path -LiteralPath $taskFolder) {
+        if ($scratchDir -and (Test-Path -LiteralPath $taskFolder)) {
             [void](Remove-WinEaseTreeRobust -Path $taskFolder -SafetyRoot $scratchDir)
         }
     }

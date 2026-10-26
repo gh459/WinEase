@@ -123,3 +123,25 @@ those ISOs as non-shareable, and rebuild them.
   `zNTUSER`, `zCOMPONENTS`), persistence-related paths (Run/RunOnce,
   Image File Execution Options, Winlogon) are refused, and service names must
   match a plain service-name pattern.
+
+### Hardening applied, batch 2 (2026-10-26 review remediation)
+
+* **DISM exit-code checks widened.** More DISM call sites now verify the exit
+  code and abort the phase on failure instead of continuing silently.
+* **Parallel cleanup re-validates paths.** The Phase 05 parallel cleanup
+  re-checks that each target still belongs to the scratch area before deleting
+  it, instead of trusting the path list captured earlier.
+* **oscdimg DNS fallback removed.** The fallback that resolved the download
+  host through a public DNS resolver and connected by IP address is gone; the
+  download now uses the normal host name and TLS path only (the Authenticode /
+  pinned SHA-256 integrity check is unchanged).
+* **ExtractUnattend output is confined.** Files extracted from the answer file
+  are only written under `C:\Windows\Setup\Scripts\` or the Winhance scripts
+  folder (`C:\ProgramData\Winhance\Unattend\Scripts\`, where the shipped answer
+  file embeds `Winhancements.ps1`); targets outside those folders are refused.
+* **Optional plugin signer pinning.** A user plugin lock entry may carry a
+  `SignerThumbprint`; when present, the plugin DLL's Authenticode signer must
+  match it in addition to the SHA-256 in the lock file.
+* **Secret redaction covers more shapes.** The log redaction patterns now also
+  catch quoted values and JSON-style `"password": "..."` pairs, not only
+  bare `key=value` forms.

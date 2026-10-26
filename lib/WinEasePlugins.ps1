@@ -8,7 +8,11 @@
 #   Get-WinEasePluginInventory / Add-WinEaseUserPlugin   what the GUI shows and registers
 #
 # Trust model: only a DLL that is listed in plugins\builtin\builtin.lock.psd1 or
-# config\user\plugins.lock.psd1 is loaded, and only when its SHA256 matches. The file is read once
+# config\user\plugins.lock.psd1 is loaded, and only when its SHA256 matches. A lock entry may
+# additionally carry an optional SignerThumbprint: when present and non-empty, the DLL's
+# Authenticode signature must also be valid and its signer certificate thumbprint must match
+# (whitespace-insensitive, case-insensitive); entries without it are loaded on the SHA256
+# alone, exactly as before. The file is read once
 # as bytes; the same bytes are hashed and handed to Assembly.Load(byte[]), so the file cannot be
 # swapped between the check and the load. A plugin cannot replace a phase, so the safety gates and
 # the mount handling always run. Plugin code runs in the builder process with the rights of the
@@ -294,11 +298,14 @@ function Read-WinEasePluginLock {
         if ($null -eq $p) { continue }
         $onError = if ($p.OnError) { [string]$p.OnError } else { 'Warn' }
         $entries.Add([PSCustomObject]@{
-                File        = [string]$p.File
-                Sha256      = ([string]$p.Sha256).Trim().ToLowerInvariant()
-                OnError     = $onError
-                Description = [string]$p.Description
-                Enabled     = if ($p.ContainsKey('Enabled')) { [bool]$p.Enabled } else { $true }
+                File             = [string]$p.File
+                Sha256           = ([string]$p.Sha256).Trim().ToLowerInvariant()
+                OnError          = $onError
+                Description      = [string]$p.Description
+                Enabled          = if ($p.ContainsKey('Enabled')) { [bool]$p.Enabled } else { $true }
+                # Optional signer pinning (see the trust model at the top of this file):
+                # empty/absent means "SHA256 only", exactly as before this property existed.
+                SignerThumbprint = if ($p.ContainsKey('SignerThumbprint')) { [string]$p.SignerThumbprint } else { '' }
             })
     }
     return $entries.ToArray()
@@ -338,6 +345,39 @@ function Import-WinEasePluginAssembly {
     if ($actual -ne $Entry.Sha256) {
         Add-WinEasePluginRejection $Source $file "SHA256 mismatch (lock file $($Entry.Sha256), file $actual)"
         return
+    }
+
+    # Optional signer pinning: only when the lock entry carries a non-empty SignerThumbprint.
+    # Entries without it keep the historical behaviour (SHA256 only), so existing lock files
+    # are unaffected. The hash above proves the file's identity; this additionally proves the
+    # publisher, which a hash alone cannot.
+    # (Entries built outside Read-WinEasePluginLock may not carry the property at all.)
+    $pinnedThumbprint = ''
+    if ($null -ne $Entry.PSObject.Properties['SignerThumbprint']) {
+        $pinnedThumbprint = ([string]$Entry.SignerThumbprint) -replace '\s', ''
+    }
+    if (-not [string]::IsNullOrWhiteSpace($pinnedThumbprint)) {
+        $signature = $null
+        try {
+            $signature = Get-AuthenticodeSignature -LiteralPath $path
+        } catch {
+            Add-WinEasePluginRejection $Source $file "the lock entry pins signer thumbprint $pinnedThumbprint but the Authenticode signature could not be read: $($_.Exception.Message)"
+            return
+        }
+        if ($null -eq $signature -or $signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+            $status = if ($null -eq $signature) { 'unavailable' } else { [string]$signature.Status }
+            Add-WinEasePluginRejection $Source $file "the lock entry pins signer thumbprint $pinnedThumbprint but the Authenticode signature is not valid (status: $status)"
+            return
+        }
+        if ($null -eq $signature.SignerCertificate) {
+            Add-WinEasePluginRejection $Source $file "the lock entry pins signer thumbprint $pinnedThumbprint but the signature has no signer certificate"
+            return
+        }
+        $actualThumbprint = ([string]$signature.SignerCertificate.Thumbprint) -replace '\s', ''
+        if ($actualThumbprint -ine $pinnedThumbprint) {
+            Add-WinEasePluginRejection $Source $file "signer thumbprint mismatch (lock file $pinnedThumbprint, signer $actualThumbprint)"
+            return
+        }
     }
 
     $contractMajor = $Abstractions.GetName().Version.Major
