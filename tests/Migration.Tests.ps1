@@ -355,10 +355,13 @@ Describe "Migration rules backup/restore (tools/migrator/WinEaseMigration.ps1)" 
         }
     }
 
-    It "exports a rule registry key written in PSDrive spelling (HKCU:\...) and restores it" {
+    It "exports a rule registry key written in PSDrive spelling (HKCU:\...) and restores it" -Skip:(-not (Test-Path 'HKCU:')) {
         $key = 'HKCU:\Software\WinEaseMigrationTest'
-        New-Item -Path $key -Force | Out-Null
-        Set-ItemProperty -Path $key -Name Probe -Value 'backup'
+        if (Test-Path $key) { Remove-Item $key -Recurse -Force -ErrorAction SilentlyContinue }
+        $rk = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\WinEaseMigrationTest')
+        $rk.SetValue('Probe', 'backup')
+        $rk.Flush()
+        $rk.Close()
         $rules = [PSCustomObject]@{
             GameRules      = @()
             AppConfigRules = @(@{ Id = 'RegProbe'; Name = 'Registry probe'; Category = 'AppConfig'; RegistryPaths = @($key); SourcePaths = @(); ExcludePatterns = @(); ProcessNames = @(); ExcludeSecrets = $true })
