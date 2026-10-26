@@ -67,6 +67,20 @@ def main():
             return None if n == PREFIX + name else data
         return change
 
+    def duplicate(name):
+        # Adds a second entry with the same name and byte-identical content, so only
+        # the verifier's duplicate-name detection can reject the copy (the file list
+        # as a set and every content check would otherwise still pass).
+        saved = {}
+
+        def change(n, data):
+            if n is None:
+                return [(PREFIX + name, saved["data"])]
+            if n == PREFIX + name:
+                saved["data"] = data
+            return data
+        return change
+
     cases = {
         "a binary differs from the CI build output": flip("WinEase.exe"),
         "a WinUI file differs from the CI build output": flip("gui/winui/bin/WinEaseGui.exe"),
@@ -78,6 +92,7 @@ def main():
         "the launcher is missing": drop("WinEase.exe"),
         "the lock file is missing": drop("plugins/builtin/builtin.lock.psd1"),
         "a source file is missing": drop("LICENSE"),
+        "a duplicate entry with identical content": duplicate("LICENSE"),
     }
     with tempfile.TemporaryDirectory() as tmp:
         for label, change in cases.items():

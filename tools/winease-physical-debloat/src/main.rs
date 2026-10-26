@@ -4,8 +4,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
-    CloseHandle, GetLastError, LocalFree, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, HANDLE, HLOCAL,
-    LUID,
+    CloseHandle, GetLastError, LocalFree, ERROR_FILE_NOT_FOUND, ERROR_NOT_ALL_ASSIGNED,
+    ERROR_PATH_NOT_FOUND, HANDLE, HLOCAL, LUID,
 };
 use windows::Win32::Security::Authorization::{
     GetNamedSecurityInfoW, SetEntriesInAclW, SetNamedSecurityInfoW, EXPLICIT_ACCESS_W, GRANT_ACCESS,
@@ -143,8 +143,15 @@ fn enable_privilege(priv_name: &str) -> bool {
             }],
         };
         let result = AdjustTokenPrivileges(token, false, Some(&mut tp), 0, None, None);
+        // AdjustTokenPrivileges returns TRUE even when the privilege is not
+        // assigned to the token at all; that partial failure is reported only
+        // through GetLastError() == ERROR_NOT_ALL_ASSIGNED (1300). Read the last
+        // error before closing the handle (which may overwrite it) and treat
+        // the not-all-assigned case as a failure instead of reporting the
+        // privilege as enabled.
+        let last_error = GetLastError();
         let _ = CloseHandle(token);
-        result.is_ok()
+        result.is_ok() && last_error != ERROR_NOT_ALL_ASSIGNED
     }
 }
 
@@ -786,6 +793,11 @@ fn has_wildcard(s: &str) -> bool {
 }
 
 fn wildcard_match(pattern: &str, name: &str) -> bool {
+    // Greedy '*' matching with single-level backtracking: a '*' first matches
+    // the empty string (it consumes nothing), and on a later mismatch the
+    // most recent '*' is extended by one character and matching retries from
+    // there. Consuming a character eagerly in the '*' branch breaks patterns
+    // such as "*a" against "a", where the '*' has to match zero characters.
     let p: Vec<char> = pattern.to_lowercase().chars().collect();
     let n: Vec<char> = name.to_lowercase().chars().collect();
     let (mut pi, mut ni) = (0usize, 0usize);
@@ -799,7 +811,6 @@ fn wildcard_match(pattern: &str, name: &str) -> bool {
             star_pi = Some(pi);
             star_ni = ni;
             pi += 1;
-            ni += 1;
         } else if let Some(sp) = star_pi {
             pi = sp + 1;
             star_ni += 1;
@@ -905,11 +916,19 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
         });
     }
 
+    // "physical_minidump" used to carry its own block with the very same
+    // payload (Windows\Minidump); both keys now feed this one target so the
+    // directory is processed once even when both are enabled.
     if config
         .experimental
         .get("physical_crash_dumps")
         .copied()
         .unwrap_or(false)
+        || config
+            .experimental
+            .get("physical_minidump")
+            .copied()
+            .unwrap_or(false)
     {
         targets.push(DeletionTarget {
             name: "Crash Dumps",
@@ -943,20 +962,6 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             name: "Temp Files",
             files: vec![],
             dirs: vec!["Windows\\Temp"],
-            ..Default::default()
-        });
-    }
-
-    if config
-        .experimental
-        .get("physical_help")
-        .copied()
-        .unwrap_or(false)
-    {
-        targets.push(DeletionTarget {
-            name: "Help Files",
-            files: vec![],
-            dirs: vec!["Windows\\Help"],
             ..Default::default()
         });
     }
@@ -1027,20 +1032,6 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
             name: "Windows.old",
             files: vec![],
             dirs: vec!["Windows.old"],
-            ..Default::default()
-        });
-    }
-
-    if config
-        .experimental
-        .get("physical_minidump")
-        .copied()
-        .unwrap_or(false)
-    {
-        targets.push(DeletionTarget {
-            name: "Minidump",
-            files: vec![],
-            dirs: vec!["Windows\\Minidump"],
             ..Default::default()
         });
     }
@@ -1641,6 +1632,15 @@ fn chrono_now() -> String {
     }
 }
 
+const USAGE: &str = "Usage: winease-physical-debloat --config <path> [options]
+
+Options:
+  --config <path>           Path to the JSON debloat config.
+  --log-path <path>         Override the result log path from the config.
+  --dry-run                 Report what would be deleted, without deleting anything.
+  --confirm-offline-image   Allow real deletion against an offline mounted image.
+  -h, --help                Show this help and exit.";
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
@@ -1651,16 +1651,26 @@ fn main() {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
+            "--help" | "-h" => {
+                println!("{}", USAGE);
+                std::process::exit(0);
+            }
             "--config" => {
                 if i + 1 < args.len() {
                     config_path = args[i + 1].clone();
                     i += 1;
+                } else {
+                    eprintln!("Missing value for --config\n\n{}", USAGE);
+                    std::process::exit(2);
                 }
             }
             "--log-path" => {
                 if i + 1 < args.len() {
                     log_path_override = Some(args[i + 1].clone());
                     i += 1;
+                } else {
+                    eprintln!("Missing value for --log-path\n\n{}", USAGE);
+                    std::process::exit(2);
                 }
             }
             "--dry-run" => {
@@ -1669,12 +1679,21 @@ fn main() {
             "--confirm-offline-image" => {
                 confirm_offline_image = true;
             }
-            _ => {}
+            // Fail closed on anything else: silently ignoring an unknown
+            // argument lets a typo such as "--dry-rn" run a real deletion
+            // the operator believed was a dry run.
+            other => {
+                eprintln!("Unknown argument: {}\n\n{}", other, USAGE);
+                std::process::exit(2);
+            }
         }
         i += 1;
     }
 
-    println!("winease-physical-debloat v0.3.0 (Hardened)");
+    println!(
+        "winease-physical-debloat v{} (Hardened)",
+        env!("CARGO_PKG_VERSION")
+    );
     println!("Config: {}", config_path);
 
     let raw_bytes = match fs::read(&config_path) {
@@ -1974,6 +1993,13 @@ mod tests {
         ));
         assert!(wildcard_match("*.exe", "cmd.exe"));
         assert!(!wildcard_match("*.exe", "cmd.dll"));
+        // A '*' must be able to match zero characters, at either end.
+        assert!(wildcard_match("*a", "a"));
+        assert!(wildcard_match("*a", "ba"));
+        assert!(!wildcard_match("*a", "ab"));
+        assert!(wildcard_match("a*", "a"));
+        assert!(wildcard_match("*", ""));
+        assert!(wildcard_match("*", "anything"));
     }
 
     /// A junction is a reparse point that points at a directory, and it must never be
