@@ -292,7 +292,7 @@ function Invoke-WinEaseWinUiMigrationRequest {
             $ruleErrors = @(
                 try {
                     if ($data) { @($data.Errors | ForEach-Object { "$_" }) }
-                } catch { }
+                } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
             )
             return @{ Data = $rules; Errors = $ruleErrors }
         }
@@ -690,6 +690,7 @@ function Show-WinEaseWinUiGUI {
 # see docs\PROGRESS_PROTOCOL.md. A window that does not know an event ignores it.
 # A no-op without an open window; a closed window drops the channel and never stops the build.
 function Send-WinEaseGuiProgress {
+    [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidAssignmentToAutomaticVariable', '', Justification = 'Event parameter name matches progress protocol specification')]
     param(
         [Parameter(Mandatory)][ValidateSet('hello', 'state', 'phase', 'log', 'failure', 'done')][string]$Event,
         [hashtable]$Data = @{}
