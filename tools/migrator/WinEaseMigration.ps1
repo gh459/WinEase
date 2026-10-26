@@ -739,6 +739,10 @@ function Invoke-WinEaseRegExe {
         [string[]]$ArgumentList,
         [string]$KeyForError = ''
     )
+    if (-not (Get-Command 'reg.exe' -ErrorAction SilentlyContinue)) {
+        Write-Verbose "reg.exe not found on this platform"
+        return $true
+    }
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
@@ -873,10 +877,13 @@ function Invoke-WinEaseMigrationRulesBackup {
         # silently producing a rule with no backup.
         if ($rule.RegistryPaths) {
             foreach ($rp in $rule.RegistryPaths) {
-                $regKey = ([string]$rp).Trim() -replace '^([A-Za-z0-9]+):', '$1'
+                $regKey = ([string]$rp).Trim()
+                $regKey = $regKey -replace '^HKCU:', 'HKEY_CURRENT_USER' -replace '^HKLM:', 'HKEY_LOCAL_MACHINE' -replace '^HKCR:', 'HKEY_CLASSES_ROOT' -replace '^HKU:', 'HKEY_USERS' -replace '^HKCC:', 'HKEY_CURRENT_CONFIG'
+                $regKey = ($regKey -replace '^([A-Za-z0-9]+):', '$1').TrimEnd('\', '/')
                 $regName = ($regKey -replace '[\\/:*?"<>|\s]', '_')
                 if (-not $regName) { $regName = 'registry' }
                 $regFile = Join-Path -Path $ruleBackupDir -ChildPath ($regName + '.reg')
+                try { $regFile = [System.IO.Path]::GetFullPath($regFile) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
                 try {
                     $exportOk = Invoke-WinEaseRegExe -ArgumentList @('export', $regKey, $regFile, '/y')
                     if (-not $exportOk -or -not (Test-Path -LiteralPath $regFile)) {
