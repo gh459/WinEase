@@ -804,7 +804,7 @@ function Test-WinEaseTreeRemovalSafety {
 function Invoke-WinEaseTreeAclRepairPass {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory=$true)][string[]]$DeniedPaths,
+        [AllowEmptyCollection()][Parameter(Mandatory=$true)][string[]]$DeniedPaths,
         [Parameter(Mandatory=$true)][System.Collections.Generic.Dictionary[string,string]]$RepairFailures
     )
     foreach ($deniedPath in $DeniedPaths) {
@@ -823,8 +823,8 @@ function Invoke-WinEaseTreeReparsePrunePass {
     [OutputType([int])]
     param(
         [Parameter(Mandatory=$true)][string]$Path,
-        [Parameter(Mandatory=$true)][System.Collections.Generic.List[string]]$EnumDenied,
-        [Parameter(Mandatory=$true)][System.Collections.Generic.List[string]]$LinkFailedParents,
+        [AllowEmptyCollection()][Parameter(Mandatory=$true)][System.Collections.Generic.List[string]]$EnumDenied,
+        [AllowEmptyCollection()][Parameter(Mandatory=$true)][System.Collections.Generic.List[string]]$LinkFailedParents,
         [Parameter(Mandatory=$true)][ref]$LinkDeleteFailed
     )
     $prunedLinks = 0
