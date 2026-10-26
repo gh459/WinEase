@@ -742,7 +742,9 @@ function Invoke-WinEaseRegExe {
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $output = & reg.exe @ArgumentList 2>&1
+        $regCmd = (Get-Command -Name 'reg.exe' -CommandType Application -ErrorAction SilentlyContinue).Path
+        if (-not $regCmd) { $regCmd = 'reg.exe' }
+        $output = & $regCmd @ArgumentList 2>&1
         $exit = $LASTEXITCODE
         $stderrText = (@($output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$($_.Exception.Message)" }) -join ' ').Trim()
     } finally {
