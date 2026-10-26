@@ -2652,14 +2652,14 @@ try {
     # 5b. After a cancel: report what the cleanup left behind, so 'Cancelled' is never claimed over a half-cleaned state
     $script:CancelCleanupProblems = @()
     if ($script:BuildCancelled) {
-        $lingeringMountList = @()
+        $lingeringMountList = [System.Collections.Generic.List[string]]::new()
         foreach ($mPath in $allTargetMounts) {
             try {
                 foreach ($am in @(Get-WinEaseMountedImages)) {
                     $ap = if ($am.Path) { try { ConvertTo-WinEaseNormalizedPath -Path $am.Path } catch { $null } } else { $null }
-                    if ($ap -and ($ap -ieq $mPath)) { $lingeringMountList += $mPath }
+                    if ($ap -and ($ap -ieq $mPath)) { $lingeringMountList.Add($mPath) }
                 }
-            } catch { $lingeringMountList += "$mPath (status could not be read)" }
+            } catch { $lingeringMountList.Add("$mPath (status could not be read)") }
         }
         $stillLoadedHives = @(@('zCOMPONENTS', 'zDEFAULT', 'zNTUSER', 'zSOFTWARE', 'zSYSTEM') | Where-Object { Test-Path -LiteralPath "Registry::HKEY_LOCAL_MACHINE\$_" })
         $script:CancelCleanupProblems = Get-WinEaseCancelCleanupProblems -LoadedHives $stillLoadedHives -LingeringMounts $lingeringMountList `
@@ -2672,14 +2672,14 @@ try {
 
     # 5c. P1-02: Check for cleanup residues and generate explicit remediation commands on failure or cancel
     if ($script:BuildCancelled -or -not $script:BuildSucceeded) {
-        $lingeringMountListAll = @()
+        $lingeringMountListAll = [System.Collections.Generic.List[string]]::new()
         foreach ($mPath in $allTargetMounts) {
             try {
                 foreach ($am in @(Get-WinEaseMountedImages)) {
                     $ap = if ($am.Path) { try { ConvertTo-WinEaseNormalizedPath -Path $am.Path } catch { $null } } else { $null }
-                    if ($ap -and ($ap -ieq $mPath)) { $lingeringMountListAll += $mPath }
+                    if ($ap -and ($ap -ieq $mPath)) { $lingeringMountListAll.Add($mPath) }
                 }
-            } catch { $lingeringMountListAll += "$mPath (status could not be read)" }
+            } catch { $lingeringMountListAll.Add("$mPath (status could not be read)") }
         }
         $stillLoadedHivesAll = @(@('zCOMPONENTS', 'zDEFAULT', 'zNTUSER', 'zSOFTWARE', 'zSYSTEM') | Where-Object { Test-Path -LiteralPath "Registry::HKEY_LOCAL_MACHINE\$_" })
         if (Get-Command -Name Get-WinEaseCleanupRemediation -ErrorAction SilentlyContinue) {
