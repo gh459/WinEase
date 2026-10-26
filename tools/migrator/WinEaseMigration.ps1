@@ -771,6 +771,9 @@ function Invoke-WinEaseMigrationRulesBackup {
         # Optional preloaded rules (Get-WinEaseMigrationRules result); loaded on demand when omitted
         [psobject]$Rules
     )
+    if ($ExecutionContext -and $ExecutionContext.SessionState -and $ExecutionContext.SessionState.Path) {
+        try { $BackupRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BackupRoot) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
     if (-not $Rules) { $Rules = Get-WinEaseMigrationRules }
     $allRules = @($Rules.GameRules) + @($Rules.AppConfigRules) + @($Rules.CustomPathRules)
     $secretPatterns = $Rules.SecretPatterns
@@ -938,6 +941,9 @@ function Invoke-WinEaseMigrationRulesRestore {
         # Optional preloaded rules (Get-WinEaseMigrationRules result); loaded on demand when omitted
         [psobject]$Rules
     )
+    if ($ExecutionContext -and $ExecutionContext.SessionState -and $ExecutionContext.SessionState.Path) {
+        try { $BackupRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BackupRoot) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
     if (-not $Rules) { $Rules = Get-WinEaseMigrationRules }
     $allRules = @($Rules.GameRules) + @($Rules.AppConfigRules) + @($Rules.CustomPathRules)
     Write-Verbose "IncludeSecrets=$IncludeSecrets ForceRunningProcess=$ForceRunningProcess ConflictPolicy=$ConflictPolicy"
