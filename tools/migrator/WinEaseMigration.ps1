@@ -874,6 +874,7 @@ function Invoke-WinEaseMigrationRulesBackup {
         if ($rule.RegistryPaths) {
             foreach ($rp in $rule.RegistryPaths) {
                 $regKey = ([string]$rp).Trim() -replace '^([A-Za-z0-9]+):', '$1'
+                $regKey = $regKey -replace '^HKCU\\', 'HKEY_CURRENT_USER\' -replace '^HKLM\\', 'HKEY_LOCAL_MACHINE\' -replace '^HKU\\', 'HKEY_USERS\' -replace '^HKCR\\', 'HKEY_CLASSES_ROOT\' -replace '^HKCC\\', 'HKEY_CURRENT_CONFIG\'
                 $regName = ($regKey -replace '[\\/:*?"<>|\s]', '_')
                 if (-not $regName) { $regName = 'registry' }
                 $regFile = Join-Path -Path $ruleBackupDir -ChildPath ($regName + '.reg')
@@ -901,7 +902,10 @@ function Invoke-WinEaseMigrationRulesBackup {
                     Id            = $rid
                     Created       = (Get-Date).ToString('o')
                     SourcePaths   = @($existingSources)
-                    RegistryKeys  = @(@($rule.RegistryPaths) | Where-Object { $_ } | ForEach-Object { ([string]$_).Trim() -replace '^([A-Za-z0-9]+):', '$1' })
+                    RegistryKeys  = @(@($rule.RegistryPaths) | Where-Object { $_ } | ForEach-Object {
+                        $k = ([string]$_).Trim() -replace '^([A-Za-z0-9]+):', '$1'
+                        $k -replace '^HKCU\\', 'HKEY_CURRENT_USER\' -replace '^HKLM\\', 'HKEY_LOCAL_MACHINE\' -replace '^HKU\\', 'HKEY_USERS\' -replace '^HKCR\\', 'HKEY_CLASSES_ROOT\' -replace '^HKCC\\', 'HKEY_CURRENT_CONFIG\'
+                    })
                     Entries       = @($ruleEntries)
                 }
                 $ruleManifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path -Path $ruleBackupDir -ChildPath 'rule-manifest.json') -Encoding UTF8
