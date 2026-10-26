@@ -2175,6 +2175,100 @@ Describe "GUI core (lib\WinEaseGuiCore.ps1)" {
     }
 }
 
+Describe "Save-WinEaseGuiLanguage in lib\WinEaseGuiCore.ps1" {
+    BeforeAll {
+        . $script:GuiCorePath
+    }
+
+    BeforeEach {
+        $script:SaveLangTemp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_savelang_" + [guid]::NewGuid().ToString('N'))
+        [void](New-Item -ItemType Directory -Path $script:SaveLangTemp -Force)
+        $script:SavedLocalAppData = $env:LOCALAPPDATA
+        $env:LOCALAPPDATA = $script:SaveLangTemp
+    }
+
+    AfterEach {
+        $env:LOCALAPPDATA = $script:SavedLocalAppData
+        if (Test-Path -LiteralPath $script:SaveLangTemp) {
+            Remove-Item -LiteralPath $script:SaveLangTemp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "requires mandatory -Language parameter" {
+        { Save-WinEaseGuiLanguage } | Should Throw
+    }
+
+    It "does nothing and returns safely when LOCALAPPDATA environment variable is missing or empty" {
+        $env:LOCALAPPDATA = ""
+        { Save-WinEaseGuiLanguage -Language 'ja' } | Should Not Throw
+        (Get-WinEaseGuiSettingsPath) | Should BeNullOrEmpty
+    }
+
+    It "creates settings directory and writes valid JSON when settings file does not exist" {
+        $settingsFile = Get-WinEaseGuiSettingsPath
+        Test-Path -LiteralPath $settingsFile | Should Be $false
+
+        Save-WinEaseGuiLanguage -Language 'ja'
+
+        Test-Path -LiteralPath $settingsFile | Should Be $true
+        $content = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
+        $content.UiLanguage | Should Be 'ja'
+        (Get-WinEaseGuiSavedLanguage) | Should Be 'ja'
+    }
+
+    It "updates UiLanguage while preserving existing properties in settings file" {
+        $settingsFile = Get-WinEaseGuiSettingsPath
+        $settingsDir = Split-Path -Parent $settingsFile
+        New-Item -ItemType Directory -Force -Path $settingsDir | Out-Null
+
+        $initialSettings = [ordered]@{
+            "Theme"       = "Dark"
+            "WindowWidth" = 1024
+            "UiLanguage"  = "en"
+        }
+        [System.IO.File]::WriteAllText($settingsFile, ($initialSettings | ConvertTo-Json))
+
+        Save-WinEaseGuiLanguage -Language 'ja'
+
+        $updated = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
+        $updated.Theme | Should Be "Dark"
+        $updated.WindowWidth | Should Be 1024
+        $updated.UiLanguage | Should Be "ja"
+        (Get-WinEaseGuiSavedLanguage) | Should Be 'ja'
+    }
+
+    It "handles corrupted existing JSON gracefully and overwrites with valid language JSON" {
+        $settingsFile = Get-WinEaseGuiSettingsPath
+        $settingsDir = Split-Path -Parent $settingsFile
+        New-Item -ItemType Directory -Force -Path $settingsDir | Out-Null
+        [System.IO.File]::WriteAllText($settingsFile, "{ invalid json content ...")
+
+        Save-WinEaseGuiLanguage -Language 'ja'
+
+        $updated = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
+        $updated.UiLanguage | Should Be "ja"
+        (Get-WinEaseGuiSavedLanguage) | Should Be 'ja'
+    }
+
+    It "handles write exceptions silently without throwing to caller when settings path is blocked" {
+        $settingsDir = Join-Path -Path $script:SaveLangTemp -ChildPath 'WinEase'
+        # Create a file at the directory path location to block directory/file creation
+        [System.IO.File]::WriteAllText($settingsDir, 'blocking file')
+
+        { Save-WinEaseGuiLanguage -Language 'ja' } | Should Not Throw
+    }
+
+    It "saves custom language strings, but Get-WinEaseGuiSavedLanguage filters out unsupported languages" {
+        Save-WinEaseGuiLanguage -Language 'de'
+
+        $settingsFile = Get-WinEaseGuiSettingsPath
+        $saved = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
+        $saved.UiLanguage | Should Be 'de'
+
+        (Get-WinEaseGuiSavedLanguage) | Should BeNullOrEmpty
+    }
+}
+
 Describe "Send-WinEaseGuiProgress in gui\WinEaseWinUiHost.ps1" {
     BeforeAll {
         . (Join-Path -Path $script:RepoRoot -ChildPath 'gui\WinEaseWinUiHost.ps1')
