@@ -317,7 +317,7 @@ function New-MigBackupTab {
             Add-MigLog $f (Get-WinEaseUiString 'Migrator.Log.BackupFinished' -Format $o.Result.Verify.Message)
             $f.Tag.RestoreRoot.Text = $s.PackagePath
             $rp = $o.Result.ReportPath
-            if ($rp -and (Test-Path -LiteralPath $rp)) { Start-Process -FilePath $rp }
+            if ($rp -and (Test-Path -LiteralPath $rp)) { [void](Open-WinEaseFileSafe -Path $rp) }
         }
     })
 }
@@ -356,7 +356,7 @@ function New-MigRestoreTab {
         elseif ($o.Result -and $p.Mode -eq 'Verify') { Add-MigLog $f $o.Result.Message }
         elseif ($o.Result) {
             foreach ($r in @($o.Result.Results)) { Add-MigLog $f ('  {0}: {1}' -f $r.TaskId, $r.Status) }
-            if ($o.Result.ReportPath -and (Test-Path -LiteralPath $o.Result.ReportPath)) { Start-Process -FilePath $o.Result.ReportPath }
+            if ($o.Result.ReportPath -and (Test-Path -LiteralPath $o.Result.ReportPath)) { [void](Open-WinEaseFileSafe -Path $o.Result.ReportPath) }
         }
     }
     [void](New-WinEaseButton -Text (Get-WinEaseUiString 'Mig.Button.Verify') -X 12 -Y 100 -Width 230 -Height 36 -ForeColor $c.Text -Tag 'Verify' -OnClick $restoreHandler -Parent $Tab)

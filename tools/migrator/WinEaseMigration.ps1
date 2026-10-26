@@ -103,6 +103,49 @@ function Copy-WinEaseMigrationFileWithHash {
     }
 }
 
+# Copy-WinEaseMigrationRestoreFile: restores one backed up file with the conflict policy
+# applied. A file with an expected hash is copied to a temporary neighbour while it is
+# hashed (one read instead of Get-FileHash + Copy-Item), and only moved into place when
+# the hash matches, so a corrupt backup never replaces a good file.
+# Returns 'Restored', 'Skipped' or 'HashMismatch'; throws on I/O failure.
+function Copy-WinEaseMigrationRestoreFile {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourcePath,
+        [Parameter(Mandatory = $true)]
+        [string]$DestPath,
+        [ValidateSet('Skip','BackupExisting','OverwriteIfNewer','Overwrite')]
+        [string]$ConflictPolicy = 'BackupExisting',
+        [string]$ExpectedSha256
+    )
+    $sourceTime = [System.IO.File]::GetLastWriteTimeUtc($SourcePath)
+    $exists = [System.IO.File]::Exists($DestPath)
+    if ($exists) {
+        if ($ConflictPolicy -eq 'Skip') { return 'Skipped' }
+        if ($ConflictPolicy -eq 'OverwriteIfNewer' -and [System.IO.File]::GetLastWriteTimeUtc($DestPath) -ge $sourceTime) { return 'Skipped' }
+    }
+    if ($ExpectedSha256) {
+        $tempPath = "$DestPath.WinEase.tmp"
+        try {
+            $hash = Copy-WinEaseMigrationFileWithHash -SourcePath $SourcePath -DestPath $tempPath -SourceTimestamp $sourceTime
+            if ($hash -ne $ExpectedSha256) { return 'HashMismatch' }
+            if ($exists) {
+                if ($ConflictPolicy -eq 'BackupExisting') { [System.IO.File]::Copy($DestPath, "$DestPath.WinEase.bak", $true) }
+                [System.IO.File]::Delete($DestPath)
+            }
+            [System.IO.File]::Move($tempPath, $DestPath)
+        } finally {
+            if ([System.IO.File]::Exists($tempPath)) { try { [System.IO.File]::Delete($tempPath) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" } }
+        }
+        return 'Restored'
+    }
+    if ($exists -and $ConflictPolicy -eq 'BackupExisting') { [System.IO.File]::Copy($DestPath, "$DestPath.WinEase.bak", $true) }
+    [System.IO.File]::Copy($SourcePath, $DestPath, $true)
+    return 'Restored'
+}
+
 # 2. Get-WinEaseMigrationRules
 function Get-WinEaseMigrationRules {
     [CmdletBinding()]
@@ -619,19 +662,22 @@ function Restore-WinEaseUserData {
     # would resolve to the backup root itself and copy the whole backup into the profile.
     $entries = @($entries | Where-Object { $_ -and $_.Category -ne 'CustomPath' })
     if ($Categories) { $entries = @($entries | Where-Object { $Categories -contains $_.Category }) }
+    # Roots and reparse-free directories repeat across files: validated once, then cached.
+    $lookupCache = @{}
+    $createdDirs = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($entry in $entries) {
         $rel = [string]$entry.RelativePath
         $cat = [string]$entry.Category
         # The category is a single directory name below the backup root and the relative
         # path is relative to it. Both come from the manifest, which is not trusted: a
         # traversal in either of them must not reach outside the backup directory.
-        $catCheck = Resolve-WinEaseSafeRelativePath -RelativePath $cat -Root $BackupRoot -Label 'category'
+        $catCheck = Resolve-WinEaseSafeRelativePath -RelativePath $cat -Root $BackupRoot -Label 'category' -LookupCache $lookupCache
         if (-not $catCheck.IsSafe) {
             $failed += [PSCustomObject]@{ Path = $cat; Error = "Refused: $($catCheck.Reason)" }
             Write-Verbose "Ignored: $($catCheck.Reason)"
             continue
         }
-        $srcCheck = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $catCheck.Path -Label 'backup path'
+        $srcCheck = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $catCheck.Path -Label 'backup path' -LookupCache $lookupCache
         if (-not $srcCheck.IsSafe) {
             $failed += [PSCustomObject]@{ Path = $rel; Error = "Refused: $($srcCheck.Reason)" }
             Write-Verbose "Ignored: $($srcCheck.Reason)"
@@ -641,24 +687,17 @@ function Restore-WinEaseUserData {
         # Actually backup stores under BackupRoot\<Category>\<rel>; handle both
         if (-not (Test-Path -LiteralPath $srcPath)) {
             # try BackupRoot\<rel>
-            $fallback = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $BackupRoot -Label 'backup path'
+            $fallback = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $BackupRoot -Label 'backup path' -LookupCache $lookupCache
             if ($fallback.IsSafe -and (Test-Path -LiteralPath $fallback.Path)) { $srcPath = $fallback.Path }
         }
         if (-not (Test-Path -LiteralPath $srcPath)) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Backup file missing' }; continue }
-        # verify hash
-        if ($VerifyHashBeforeRestore -and $entry.Sha256) {
-            try {
-                $h = (Get-FileHash -LiteralPath $srcPath -Algorithm SHA256).Hash
-                if ($h -ne $entry.Sha256) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Hash mismatch (corrupt)' }; continue }
-            } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-        }
         # The restore target is the same kind of folder in the new profile: the category
         # (Documents, Desktop, Pictures, ...) followed by the relative path inside it.
         # Without the category every personal folder would be flattened into the profile
         # root (Documents\a.txt and Downloads\a.txt would collide). The manifest is not
         # trusted: the combined path is validated against the profile.
         $destRel = if ([string]::IsNullOrWhiteSpace($cat)) { $rel } else { "$cat\$rel" }
-        $destCheck = Resolve-WinEaseSafeRelativePath -RelativePath $destRel -Root $env:USERPROFILE -Label 'restore path'
+        $destCheck = Resolve-WinEaseSafeRelativePath -RelativePath $destRel -Root $env:USERPROFILE -Label 'restore path' -LookupCache $lookupCache
         if (-not $destCheck.IsSafe) {
             $failed += [PSCustomObject]@{ Path = $rel; Error = "Refused: $($destCheck.Reason)" }
             Write-Verbose "Ignored: $($destCheck.Reason)"
@@ -667,20 +706,14 @@ function Restore-WinEaseUserData {
         $destPath = $destCheck.Path
         if ($DryRun) { $restored++; continue }
         try {
-            $destDir = Split-Path -Parent $destPath
-            if (-not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
-            if (Test-Path -LiteralPath $destPath) {
-                if ($ConflictPolicy -eq 'Skip') { $skipped++; continue }
-                elseif ($ConflictPolicy -eq 'BackupExisting') {
-                    Copy-Item -LiteralPath $destPath -Destination "$destPath.WinEase.bak" -Force
-                } elseif ($ConflictPolicy -eq 'OverwriteIfNewer') {
-                    $destItem = Get-Item -LiteralPath $destPath
-                    $srcItem = Get-Item -LiteralPath $srcPath
-                    if ($destItem.LastWriteTimeUtc -ge $srcItem.LastWriteTimeUtc) { $skipped++; continue }
-                }
+            $destDir = [System.IO.Path]::GetDirectoryName($destPath)
+            if ($destDir -and $createdDirs.Add($destDir)) { [System.IO.Directory]::CreateDirectory($destDir) | Out-Null }
+            $expectedHash = if ($VerifyHashBeforeRestore -and $entry.Sha256) { [string]$entry.Sha256 } else { '' }
+            switch (Copy-WinEaseMigrationRestoreFile -SourcePath $srcPath -DestPath $destPath -ConflictPolicy $ConflictPolicy -ExpectedSha256 $expectedHash) {
+                'Restored' { $restored++ }
+                'Skipped' { $skipped++ }
+                'HashMismatch' { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Hash mismatch (corrupt)' } }
             }
-            Copy-Item -LiteralPath $srcPath -Destination $destPath -Force
-            $restored++
         } catch {
             $failed += [PSCustomObject]@{ Path = $rel; Error = $_.Exception.Message }
             Write-Verbose "Ignored: $($_.Exception.Message)"
@@ -940,6 +973,7 @@ function Invoke-WinEaseMigrationRulesRestore {
         }
 
         if ($manifestEntries.Count -gt 0) {
+            $createdDirs = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
             foreach ($entry in $manifestEntries) {
                 $rel = [string]$entry.RelativePath
                 if (-not $rel -or $rel -eq 'rule-manifest.json' -or $rel -like '*.reg') { continue }
@@ -968,20 +1002,9 @@ function Invoke-WinEaseMigrationRulesRestore {
                     continue
                 }
                 try {
-                    $destDir = Split-Path -Parent $destPath
-                    if (-not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
-                    if (Test-Path -LiteralPath $destPath) {
-                        if ($ConflictPolicy -eq 'Skip') { $skipped++; continue }
-                        elseif ($ConflictPolicy -eq 'BackupExisting') {
-                            Copy-Item -LiteralPath $destPath -Destination "$destPath.WinEase.bak" -Force
-                        } elseif ($ConflictPolicy -eq 'OverwriteIfNewer') {
-                            $destItem = Get-Item -LiteralPath $destPath
-                            $srcItem = Get-Item -LiteralPath $srcPath
-                            if ($destItem.LastWriteTimeUtc -ge $srcItem.LastWriteTimeUtc) { $skipped++; continue }
-                        }
-                    }
-                    Copy-Item -LiteralPath $srcPath -Destination $destPath -Force
-                    $restored++
+                    $destDir = [System.IO.Path]::GetDirectoryName($destPath)
+                    if ($destDir -and $createdDirs.Add($destDir)) { [System.IO.Directory]::CreateDirectory($destDir) | Out-Null }
+                    if ((Copy-WinEaseMigrationRestoreFile -SourcePath $srcPath -DestPath $destPath -ConflictPolicy $ConflictPolicy) -eq 'Skipped') { $skipped++ } else { $restored++ }
                 } catch {
                     $failed += [PSCustomObject]@{ Rule = $rid; Path = $rel; Error = $_.Exception.Message }
                     Write-Verbose "Ignored: $($_.Exception.Message)"
@@ -1377,10 +1400,12 @@ function Restore-WinEaseCustomPaths {
         $entries = @($entries | Where-Object { $_.SourcePath -and $_.SourcePath -ieq $SourcePath })
     }
 
+    $lookupCache = @{}
+    $createdDirs = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($entry in $entries) {
         $rel = [string]$entry.RelativePath
         # The backup copy must stay inside the backup directory.
-        $srcCheck = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $customRoot -Label 'backup path'
+        $srcCheck = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $customRoot -Label 'backup path' -LookupCache $lookupCache
         if (-not $srcCheck.IsSafe) {
             $failed += [PSCustomObject]@{ Path = $rel; Error = "Refused: $($srcCheck.Reason)" }
             Write-Verbose "Ignored: $($srcCheck.Reason)"
@@ -1388,12 +1413,6 @@ function Restore-WinEaseCustomPaths {
         }
         $srcPath = $srcCheck.Path
         if (-not (Test-Path -LiteralPath $srcPath)) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Backup file missing' }; continue }
-        if ($VerifyHashBeforeRestore -and $entry.Sha256) {
-            try {
-                $h = (Get-FileHash -LiteralPath $srcPath -Algorithm SHA256).Hash
-                if ($h -ne $entry.Sha256) { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Hash mismatch (corrupt)' }; continue }
-            } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-        }
         # Restore target: the location the file came from is only a proposal. It is used
         # when the caller allowed that location for this restore.
         $destPath = $null
@@ -1429,23 +1448,19 @@ function Restore-WinEaseCustomPaths {
             # A backed up folder is restored into the folder itself (the file name of the
             # backup copy differs from the name of the destination), a backed up file is
             # restored onto the file.
-            $destIsFolder = ($rel -match '[\\/]') -and (-not (Test-Path -LiteralPath $destPath -PathType Leaf))
-            $destDir = if ($destIsFolder) { $destPath } else { Split-Path -Parent $destPath }
-            if (-not [string]::IsNullOrWhiteSpace($destDir) -and -not (Test-Path -LiteralPath $destDir)) {
-                New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+            $destIsFolder = ($rel -match '[\\/]') -and (-not [System.IO.File]::Exists($destPath))
+            $destDir = if ($destIsFolder) { $destPath } else { [System.IO.Path]::GetDirectoryName($destPath) }
+            if (-not [string]::IsNullOrWhiteSpace($destDir) -and $createdDirs.Add($destDir)) {
+                [System.IO.Directory]::CreateDirectory($destDir) | Out-Null
             }
-            if (-not $destIsFolder -and (Test-Path -LiteralPath $destPath)) {
-                if ($ConflictPolicy -eq 'Skip') { $skipped++; continue }
-                elseif ($ConflictPolicy -eq 'BackupExisting') {
-                    Copy-Item -LiteralPath $destPath -Destination "$destPath.WinEase.bak" -Force
-                } elseif ($ConflictPolicy -eq 'OverwriteIfNewer') {
-                    $destItem = Get-Item -LiteralPath $destPath
-                    $srcItem = Get-Item -LiteralPath $srcPath
-                    if ($destItem.LastWriteTimeUtc -ge $srcItem.LastWriteTimeUtc) { $skipped++; continue }
-                }
+            # Into a folder the file keeps its backup name (as Copy-Item onto a folder did).
+            $finalDest = if ($destIsFolder) { Join-Path -Path $destPath -ChildPath ([System.IO.Path]::GetFileName($srcPath)) } else { $destPath }
+            $expectedHash = if ($VerifyHashBeforeRestore -and $entry.Sha256) { [string]$entry.Sha256 } else { '' }
+            switch (Copy-WinEaseMigrationRestoreFile -SourcePath $srcPath -DestPath $finalDest -ConflictPolicy $(if ($destIsFolder) { 'Overwrite' } else { $ConflictPolicy }) -ExpectedSha256 $expectedHash) {
+                'Restored' { $restored++ }
+                'Skipped' { $skipped++ }
+                'HashMismatch' { $failed += [PSCustomObject]@{ Path = $rel; Error = 'Hash mismatch (corrupt)' } }
             }
-            Copy-Item -LiteralPath $srcPath -Destination $destPath -Force
-            $restored++
         } catch {
             $failed += [PSCustomObject]@{ Path = $rel; Error = $_.Exception.Message }
             Write-Verbose "Ignored: $($_.Exception.Message)"

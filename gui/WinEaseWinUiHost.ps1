@@ -371,7 +371,8 @@ function Invoke-WinEaseWinUiRequest {
                 if (Test-Path -LiteralPath $guideJa) { $guide = $guideJa }
             }
             if (-not (Test-Path -LiteralPath $guide)) { throw (Get-WinEaseUiString 'Mig.Guide.NotFound' -Format $guide) }
-            Start-Process -FilePath $guide
+            try { Start-Process -FilePath $guide -ErrorAction Stop }
+            catch { Start-Process -FilePath 'explorer.exe' -ArgumentList "/select,`"$guide`"" }
             return @{}
         }
         # --- custom scripts (tools\custom-scripts\<Stage>) ---
