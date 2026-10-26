@@ -1251,6 +1251,232 @@ Describe "Format-WinEaseDependencyReport" {
     }
 }
 
+Describe "Get-WinEaseDependencyView" {
+    BeforeAll {
+        if (-not (Get-Command -Name Get-WinEaseDependencyView -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseDependencies.ps1")
+        }
+    }
+
+    It "returns an empty view when given a result with no conflicts, unknowns, or impacts" {
+        $result = @{ Conflicts = @(); Unknowns = @(); Impacts = @() }
+        $view = Get-WinEaseDependencyView -Result $result
+
+        $view.HasIssues | Should Be $false
+        $view.HasCritical | Should Be $false
+        @($view.Critical).Count | Should Be 0
+        @($view.Impact).Count | Should Be 0
+        @($view.KeptFeature).Count | Should Be 0
+        $view.CriticalText | Should Be ""
+        $view.ImpactText | Should Be ""
+        $view.Text | Should Be ""
+    }
+
+    It "formats Conflict items into Critical items with correct Glyph, Label, and KeptFeature flag" {
+        $conflictItem1 = [pscustomobject]@{
+            Category        = 'Component'
+            Source          = 'WSLSupport'
+            Summary         = 'WSL2 requires hypervisor'
+            ConflictingWith = 'NoHypervisor'
+            KeptFeature     = $false
+        }
+        $conflictItem2 = [pscustomobject]@{
+            Category        = 'Component'
+            Source          = 'KeepBluetooth'
+            Summary         = 'Bluetooth stack is being removed'
+            ConflictingWith = 'Bluetooth removal item'
+            KeptFeature     = $true
+        }
+
+        $result = @{
+            Conflicts = @($conflictItem1, $conflictItem2)
+            Unknowns  = @()
+            Impacts   = @()
+        }
+
+        $view = Get-WinEaseDependencyView -Result $result
+
+        $view.HasIssues | Should Be $true
+        $view.HasCritical | Should Be $true
+        @($view.Critical).Count | Should Be 2
+        @($view.Impact).Count | Should Be 0
+
+        # Verify first conflict item properties
+        $item1 = $view.Critical[0]
+        $item1.Kind | Should Be 'Conflict'
+        $item1.Severity | Should Be 'Critical'
+        $item1.Glyph | Should Be '[X]'
+        $item1.Label | Should Be 'CONFLICT'
+        $item1.Category | Should Be 'Component'
+        $item1.Source | Should Be 'WSLSupport'
+        $item1.KeptFeature | Should Be $false
+        $item1.Text | Should Be '[Component] WSLSupport: WSL2 requires hypervisor (conflicts with: NoHypervisor)'
+
+        # Verify second conflict item (KeptFeature = true)
+        $item2 = $view.Critical[1]
+        $item2.KeptFeature | Should Be $true
+        $item2.Text | Should Be '[Component] KeepBluetooth: Bluetooth stack is being removed (conflicts with: Bluetooth removal item) -- removes a feature you chose to keep'
+
+        # Verify KeptFeature filtering
+        @($view.KeptFeature).Count | Should Be 1
+        $view.KeptFeature[0].Source | Should Be 'KeepBluetooth'
+
+        # Verify CriticalText contains report, ImpactText is empty
+        $view.CriticalText | Should Match '\[DEPENDENCY CONFLICT\]'
+        $view.CriticalText | Should Match 'KeepBluetooth'
+        $view.ImpactText | Should Be ""
+        $view.Text | Should Be $view.CriticalText
+    }
+
+    It "formats Unknown items into Critical items with [?] Glyph and unverified Label" {
+        $unknownItem = @{
+            Category   = 'AdvancedDebloat'
+            Source     = 'UnknownDebloatItem'
+            Summary    = 'Unregistered item'
+            SummaryKey = 'Dep.Summary.Unregistered'
+            Reason     = 'Not defined in catalog'
+            ReasonKey  = 'Dep.Reason.Unregistered'
+        }
+
+        $result = @{
+            Conflicts = @()
+            Unknowns  = @($unknownItem)
+            Impacts   = @()
+        }
+
+        $view = Get-WinEaseDependencyView -Result $result
+
+        $view.HasIssues | Should Be $true
+        $view.HasCritical | Should Be $true
+        @($view.Critical).Count | Should Be 1
+        @($view.Impact).Count | Should Be 0
+
+        $item = $view.Critical[0]
+        $item.Kind | Should Be 'Unknown'
+        $item.Severity | Should Be 'Critical'
+        $item.Glyph | Should Be '[?]'
+        $item.Label | Should Match 'UNKNOWN \(not verified, may NOT be safe\)'
+        $item.Category | Should Be 'AdvancedDebloat'
+        $item.Source | Should Be 'UnknownDebloatItem'
+        $item.KeptFeature | Should Be $false
+        $item.Text | Should Match '\[AdvancedDebloat\] UnknownDebloatItem: Unregistered advanced debloat item -- Not defined in config/dependencies\.psd1'
+
+        $view.CriticalText | Should Match '\[DEPENDENCY UNKNOWN / .*\]'
+        $view.ImpactText | Should Be ""
+    }
+
+    It "formats Impact items into Impact collection with [i] Glyph and preserves AffectedFeatures" {
+        $impactItem = [pscustomobject]@{
+            Category         = 'Component'
+            Source           = 'RemoveStore'
+            Summary          = 'Store removal affects store apps'
+            AffectedFeatures = @('App Installer', 'Microsoft Store')
+        }
+
+        $result = @{
+            Conflicts = @()
+            Unknowns  = @()
+            Impacts   = @($impactItem)
+        }
+
+        $view = Get-WinEaseDependencyView -Result $result
+
+        $view.HasIssues | Should Be $true
+        $view.HasCritical | Should Be $false
+        @($view.Critical).Count | Should Be 0
+        @($view.Impact).Count | Should Be 1
+
+        $item = $view.Impact[0]
+        $item.Kind | Should Be 'Impact'
+        $item.Severity | Should Be 'Impact'
+        $item.Glyph | Should Be '[i]'
+        $item.Label | Should Be 'IMPACT'
+        $item.Category | Should Be 'Component'
+        $item.Source | Should Be 'RemoveStore'
+        $item.KeptFeature | Should Be $false
+        @($item.AffectedFeatures).Count | Should Be 2
+        $item.AffectedFeatures[0] | Should Be 'App Installer'
+        $item.AffectedFeatures[1] | Should Be 'Microsoft Store'
+        $item.Text | Should Be '[Component] RemoveStore: Store removal affects store apps'
+
+        $view.CriticalText | Should Be ""
+        $view.ImpactText | Should Match '\[FEATURE IMPACT\]'
+        $view.ImpactText | Should Match 'App Installer'
+        $view.Text | Should Be $view.ImpactText
+    }
+
+    It "combines Conflicts, Unknowns, and Impacts in a unified view and builds complete Text reports" {
+        $conflict = @{ Category = 'Component'; Source = 'Comp1'; Summary = 'Conflict item'; ConflictingWith = 'Comp2' }
+        $unknown = @{ Category = 'Tweak'; Source = 'Tweak1'; Summary = 'Unknown tweak'; Reason = 'Catalog unknown' }
+        $impact = @{ Category = 'Component'; Source = 'Comp3'; Summary = 'Impact item'; AffectedFeatures = @('FeatA') }
+
+        $result = @{
+            Conflicts = @($conflict)
+            Unknowns  = @($unknown)
+            Impacts   = @($impact)
+        }
+
+        $view = Get-WinEaseDependencyView -Result $result
+
+        $view.HasIssues | Should Be $true
+        $view.HasCritical | Should Be $true
+        @($view.Critical).Count | Should Be 2
+        @($view.Impact).Count | Should Be 1
+
+        # Check Critical contains both Conflict and Unknown
+        $view.Critical[0].Kind | Should Be 'Conflict'
+        $view.Critical[1].Kind | Should Be 'Unknown'
+        $view.Impact[0].Kind | Should Be 'Impact'
+
+        # Check report texts
+        $view.CriticalText | Should Match '\[DEPENDENCY CONFLICT\]'
+        $view.CriticalText | Should Match '\[DEPENDENCY UNKNOWN / .*\]'
+        $view.CriticalText | Should Not Match '\[FEATURE IMPACT\]'
+
+        $view.ImpactText | Should Match '\[FEATURE IMPACT\]'
+        $view.ImpactText | Should Not Match '\[DEPENDENCY CONFLICT\]'
+
+        $view.Text | Should Match '\[DEPENDENCY CONFLICT\]'
+        $view.Text | Should Match '\[DEPENDENCY UNKNOWN / .*\]'
+        $view.Text | Should Match '\[FEATURE IMPACT\]'
+    }
+
+    It "handles null items in array properties gracefully without throwing" {
+        $conflict = @{ Category = 'Component'; Source = 'Comp1'; Summary = 'Conflict item' }
+        $result = @{
+            Conflicts = @($null, $conflict, $null)
+            Unknowns  = @($null)
+            Impacts   = @($null)
+        }
+
+        $view = Get-WinEaseDependencyView -Result $result
+
+        $view.HasIssues | Should Be $true
+        $view.HasCritical | Should Be $true
+        @($view.Critical).Count | Should Be 1
+        @($view.Impact).Count | Should Be 0
+        $view.Critical[0].Source | Should Be 'Comp1'
+    }
+
+    It "handles both Hashtable and PSCustomObject items in the input result" {
+        $conflictObj = [pscustomobject]@{ Category = 'Component'; Source = 'CompObj'; Summary = 'Obj summary' }
+        $unknownHash = @{ Category = 'Tweak'; Source = 'TweakHash'; Summary = 'Hash summary'; Reason = 'Reason string' }
+        $impactObj = [pscustomobject]@{ Category = 'Component'; Source = 'CompImpact'; Summary = 'Impact obj'; AffectedFeatures = @('Feat1') }
+
+        $result = @{
+            Conflicts = @($conflictObj)
+            Unknowns  = @($unknownHash)
+            Impacts   = @($impactObj)
+        }
+
+        $view = Get-WinEaseDependencyView -Result $result
+
+        $view.Critical[0].Source | Should Be 'CompObj'
+        $view.Critical[1].Source | Should Be 'TweakHash'
+        $view.Impact[0].Source | Should Be 'CompImpact'
+    }
+}
+
 # --- User Extensibility Engine tests (M2) ---
 if (-not (Get-Command -Name Import-WinEaseUserExtensions -ErrorAction SilentlyContinue)) {
     . (Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseExtensions.ps1")
