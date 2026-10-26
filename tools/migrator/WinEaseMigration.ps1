@@ -860,6 +860,7 @@ function Invoke-WinEaseMigrationRulesBackup {
                     $exclude = $false
                     foreach ($pat in @($rule.ExcludePatterns)) { if ($item.Name -like $pat) { $exclude = $true; break } }
                     if ($exclude) { $skipped++; continue }
+                    if (-not (Test-Path -LiteralPath $ruleBackupDir)) { New-Item -ItemType Directory -Force -Path $ruleBackupDir | Out-Null }
                     Copy-Item -LiteralPath $src -Destination (Join-Path -Path $ruleBackupDir -ChildPath $item.Name) -Force
                     $ruleEntries += [PSCustomObject]@{ RelativePath = [string]$item.Name; SourcePath = [string]$sp; IsFileSource = $true }
                     $ruleCopied++
@@ -872,6 +873,7 @@ function Invoke-WinEaseMigrationRulesBackup {
         # (HKCU\...) and check the exit code so a failed export is reported instead of
         # silently producing a rule with no backup.
         if ($rule.RegistryPaths) {
+            if (-not (Test-Path -LiteralPath $ruleBackupDir)) { New-Item -ItemType Directory -Force -Path $ruleBackupDir | Out-Null }
             foreach ($rp in $rule.RegistryPaths) {
                 $regKey = ([string]$rp).Trim() -replace '^([A-Za-z0-9]+):', '$1'
                 $regName = ($regKey -replace '[\\/:*?"<>|\s]', '_')
