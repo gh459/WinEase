@@ -874,6 +874,11 @@ function Invoke-WinEaseMigrationRulesBackup {
         if ($rule.RegistryPaths) {
             foreach ($rp in $rule.RegistryPaths) {
                 $regKey = ([string]$rp).Trim() -replace '^([A-Za-z0-9]+):', '$1'
+                if ($regKey -match '^(?i)HKCU\\') { $regKey = $regKey -replace '^(?i)HKCU\\', 'HKEY_CURRENT_USER\' }
+                elseif ($regKey -match '^(?i)HKLM\\') { $regKey = $regKey -replace '^(?i)HKLM\\', 'HKEY_LOCAL_MACHINE\' }
+                elseif ($regKey -match '^(?i)HKCR\\') { $regKey = $regKey -replace '^(?i)HKCR\\', 'HKEY_CLASSES_ROOT\' }
+                elseif ($regKey -match '^(?i)HKU\\') { $regKey = $regKey -replace '^(?i)HKU\\', 'HKEY_USERS\' }
+                elseif ($regKey -match '^(?i)HKCC\\') { $regKey = $regKey -replace '^(?i)HKCC\\', 'HKEY_CURRENT_CONFIG\' }
                 $regName = ($regKey -replace '[\\/:*?"<>|\s]', '_')
                 if (-not $regName) { $regName = 'registry' }
                 $regFile = Join-Path -Path $ruleBackupDir -ChildPath ($regName + '.reg')
@@ -901,7 +906,15 @@ function Invoke-WinEaseMigrationRulesBackup {
                     Id            = $rid
                     Created       = (Get-Date).ToString('o')
                     SourcePaths   = @($existingSources)
-                    RegistryKeys  = @(@($rule.RegistryPaths) | Where-Object { $_ } | ForEach-Object { ([string]$_).Trim() -replace '^([A-Za-z0-9]+):', '$1' })
+                    RegistryKeys  = @(@($rule.RegistryPaths) | Where-Object { $_ } | ForEach-Object {
+                        $k = ([string]$_).Trim() -replace '^([A-Za-z0-9]+):', '$1'
+                        if ($k -match '^(?i)HKCU\\') { $k = $k -replace '^(?i)HKCU\\', 'HKEY_CURRENT_USER\' }
+                        elseif ($k -match '^(?i)HKLM\\') { $k = $k -replace '^(?i)HKLM\\', 'HKEY_LOCAL_MACHINE\' }
+                        elseif ($k -match '^(?i)HKCR\\') { $k = $k -replace '^(?i)HKCR\\', 'HKEY_CLASSES_ROOT\' }
+                        elseif ($k -match '^(?i)HKU\\') { $k = $k -replace '^(?i)HKU\\', 'HKEY_USERS\' }
+                        elseif ($k -match '^(?i)HKCC\\') { $k = $k -replace '^(?i)HKCC\\', 'HKEY_CURRENT_CONFIG\' }
+                        $k
+                    })
                     Entries       = @($ruleEntries)
                 }
                 $ruleManifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path -Path $ruleBackupDir -ChildPath 'rule-manifest.json') -Encoding UTF8
