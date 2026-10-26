@@ -220,7 +220,7 @@ Describe "Migration rules backup/restore (tools/migrator/WinEaseMigration.ps1)" 
         }
     }
 
-    It "exports a rule registry key written in PSDrive spelling (HKCU:\...) and restores it" {
+    It "exports a rule registry key written in PSDrive spelling (HKCU:\...) and restores it" -Skip:(-not (Get-PSDrive -Name HKCU -ErrorAction SilentlyContinue)) {
         $key = 'HKCU:\Software\WinEaseMigrationTest'
         New-Item -Path $key -Force | Out-Null
         Set-ItemProperty -Path $key -Name Probe -Value 'backup'

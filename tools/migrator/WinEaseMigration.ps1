@@ -802,6 +802,7 @@ function Invoke-WinEaseMigrationRulesBackup {
         }
         $ruleBackupDir = Join-Path -Path $BackupRoot -ChildPath "rules\$rid"
         if (-not (Test-Path -LiteralPath $ruleBackupDir)) { New-Item -ItemType Directory -Force -Path $ruleBackupDir | Out-Null }
+        try { $ruleBackupDir = (Resolve-Path -LiteralPath $ruleBackupDir -ErrorAction Stop).ProviderPath } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         $ruleCopied = 0
         $ruleRegistry = 0
         # RelativePath -> the rule's own SourcePaths pattern it was copied from, so the
@@ -944,6 +945,7 @@ function Invoke-WinEaseMigrationRulesRestore {
         $rule = $allRules | Where-Object { $_.Id -eq $rid } | Select-Object -First 1
         $ruleBackupDir = Join-Path -Path $BackupRoot -ChildPath "rules\$rid"
         if (-not (Test-Path -LiteralPath $ruleBackupDir)) { $failed += [PSCustomObject]@{ Rule = $rid; Error = 'Backup not found' }; continue }
+        try { $ruleBackupDir = (Resolve-Path -LiteralPath $ruleBackupDir -ErrorAction Stop).ProviderPath } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         if (-not $rule) { $failed += [PSCustomObject]@{ Rule = $rid; Error = 'Rule not found (remove or rename the rule, then restore its files manually)' }; continue }
         # process running check: restoring under a running application produces files it
         # will never read back (settings are written on exit), so the rule is skipped.
