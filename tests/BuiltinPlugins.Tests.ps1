@@ -176,7 +176,7 @@ Describe "Built-in plugins - what is implemented where" {
 
         function Test-TweakEnabled {
             param([string]$Name, [bool]$Default = $true)
-            if ($script:BiTweakSettings -and $script:BiTweakSettings.Contains($Name)) { return [bool]$script:BiTweakSettings[$Name] }
+            if ($script:BiTweakSettings -and ([System.Collections.IDictionary]$script:BiTweakSettings).Contains($Name)) { return [bool]$script:BiTweakSettings[$Name] }
             return $Default
         }
 
@@ -271,7 +271,7 @@ Describe "Built-in plugins - what is implemented where" {
         }
         function Test-TweakEnabled {
             param([string]$Name, [bool]$Default = $true)
-            if ($null -ne $script:TweakSettings -and $script:TweakSettings.Contains($Name)) { return [bool]$script:TweakSettings[$Name] }
+            if ($null -ne $script:TweakSettings -and ([System.Collections.IDictionary]$script:TweakSettings).Contains($Name)) { return [bool]$script:TweakSettings[$Name] }
             return $Default
         }
 

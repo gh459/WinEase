@@ -26,12 +26,12 @@ if (-not (Get-Command -Name Test-TweakEnabled -ErrorAction SilentlyContinue)) {
             [string]$Name,
             [bool]$Default = $true
         )
-        if ($null -ne $script:TweakSettings -and $script:TweakSettings.Contains($Name)) {
+        if ($null -ne $script:TweakSettings -and ([System.Collections.IDictionary]$script:TweakSettings).Contains($Name)) {
             return [bool]$script:TweakSettings[$Name]
         }
         if ($null -ne $script:TweakSettings -and $script:TweakKeyAliases) {
             foreach ($alias in $script:TweakKeyAliases.Keys) {
-                if ($script:TweakKeyAliases[$alias] -eq $Name -and $script:TweakSettings.Contains($alias)) {
+                if ($script:TweakKeyAliases[$alias] -eq $Name -and ([System.Collections.IDictionary]$script:TweakSettings).Contains($alias)) {
                     return [bool]$script:TweakSettings[$alias]
                 }
             }
