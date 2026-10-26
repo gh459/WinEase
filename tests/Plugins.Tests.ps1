@@ -15,7 +15,7 @@ Describe "Plugin host" {
 
     function Test-TweakEnabled {
         param([string]$Name, [bool]$Default = $true)
-        if ($null -ne $script:TweakSettings -and $script:TweakSettings.Contains($Name)) { return [bool]$script:TweakSettings[$Name] }
+        if ($null -ne $script:TweakSettings -and ([System.Collections.IDictionary]$script:TweakSettings).Contains($Name)) { return [bool]$script:TweakSettings[$Name] }
         return $Default
     }
 

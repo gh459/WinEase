@@ -48,13 +48,13 @@ if (-not (Get-Command -Name Test-TweakEnabled -ErrorAction SilentlyContinue)) {
             [string]$Name,
             [bool]$Default = $true
         )
-        if ($null -ne $script:TweakSettings -and $script:TweakSettings.Contains($Name)) {
+        if ($null -ne $script:TweakSettings -and ([System.Collections.IDictionary]$script:TweakSettings).Contains($Name)) {
             return [bool]$script:TweakSettings[$Name]
         }
         # Legacy key names (older profiles / -TweakSettings hashtables) that map onto this GUI key
         if ($null -ne $script:TweakSettings -and $script:TweakKeyAliases) {
             foreach ($alias in $script:TweakKeyAliases.Keys) {
-                if ($script:TweakKeyAliases[$alias] -eq $Name -and $script:TweakSettings.Contains($alias)) {
+                if ($script:TweakKeyAliases[$alias] -eq $Name -and ([System.Collections.IDictionary]$script:TweakSettings).Contains($alias)) {
                     return [bool]$script:TweakSettings[$alias]
                 }
             }
@@ -300,7 +300,8 @@ Invoke-WinEaseRegistryTable -Section ui -Tweak TaskbarEndTask
 # after the first character of the data, holding a value named '/t'. The next
 # build found that value, reg.exe asked "Overwrite (Yes/No)?" and waited for a
 # key press - the build hung in phase 10 and no ISO was produced.
-$uiPreferencePath = Join-Path -Path $scriptDir -ChildPath "config\ui-preferences.psd1"
+$effectiveScriptDir = if ($scriptDir) { $scriptDir } elseif ($script:scriptDir) { $script:scriptDir } elseif ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+$uiPreferencePath = Join-Path -Path $effectiveScriptDir -ChildPath "config\ui-preferences.psd1"
 $uiPreferenceData = Import-PowerShellDataFile -LiteralPath $uiPreferencePath
 $uiPreferenceTweaks = @($uiPreferenceData.UiPreferences)
 

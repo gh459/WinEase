@@ -26,12 +26,12 @@ if (-not (Get-Command -Name Test-TweakEnabled -ErrorAction SilentlyContinue)) {
             [string]$Name,
             [bool]$Default = $true
         )
-        if ($null -ne $script:TweakSettings -and $script:TweakSettings.Contains($Name)) {
+        if ($null -ne $script:TweakSettings -and ([System.Collections.IDictionary]$script:TweakSettings).Contains($Name)) {
             return [bool]$script:TweakSettings[$Name]
         }
         if ($null -ne $script:TweakSettings -and $script:TweakKeyAliases) {
             foreach ($alias in $script:TweakKeyAliases.Keys) {
-                if ($script:TweakKeyAliases[$alias] -eq $Name -and $script:TweakSettings.Contains($alias)) {
+                if ($script:TweakKeyAliases[$alias] -eq $Name -and ([System.Collections.IDictionary]$script:TweakSettings).Contains($alias)) {
                     return [bool]$script:TweakSettings[$alias]
                 }
             }
@@ -684,10 +684,10 @@ if (Test-Path -LiteralPath $unattendSource) {
     # Residual per-user AppX removal: the per-user packages of the apps the offline
     # pass removed from the image. The list follows the same options as the offline
     # removal, so nothing is removed when the matching option is off.
-    $appxResidualPackages = @()
-    if (Test-TweakEnabled 'RemoveWindowsBackup' $true)    { $appxResidualPackages += 'WindowsBackupApp' }
-    if (Test-TweakEnabled 'RemoveWebExperienceHost' $true) { $appxResidualPackages += 'Client.WebExperience' }
-    if ($removeAppxBloatware)                               { $appxResidualPackages += 'Getstarted' }
+    $appxResidualPackages = [System.Collections.Generic.List[string]]::new()
+    if (Test-TweakEnabled 'RemoveWindowsBackup' $true)    { $appxResidualPackages.Add('WindowsBackupApp') }
+    if (Test-TweakEnabled 'RemoveWebExperienceHost' $true) { $appxResidualPackages.Add('Client.WebExperience') }
+    if ($removeAppxBloatware)                               { $appxResidualPackages.Add('Getstarted') }
     # Every package phase 05 really removed. The three names above only covered a part of
     # the removal list, so the other apps stayed registered for the first user while their
     # payload folder was gone: the app started and rendered a white window. The identity
@@ -695,7 +695,7 @@ if (Test-Path -LiteralPath $unattendSource) {
     # and it is what Get-AppxPackage -Name matches against.
     if ($script:WinEaseRemovedAppxPackages -and $script:WinEaseRemovedAppxPackages.Count -gt 0) {
         foreach ($removedPkg in $script:WinEaseRemovedAppxPackages) {
-            if ($removedPkg.ShortName) { $appxResidualPackages += $removedPkg.ShortName }
+            if ($removedPkg.ShortName) { $appxResidualPackages.Add($removedPkg.ShortName) }
         }
     }
     $appxResidualPackages = @($appxResidualPackages | Where-Object { $_ } | Select-Object -Unique)

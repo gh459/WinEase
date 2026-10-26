@@ -24,19 +24,19 @@ function Get-WinEaseRegistryPhaseVariables {
     foreach ($c in $schema.Components) {
         if (-not $c.Variable -or $c.Type -ne 'Bool') { continue }
         $value = [bool]$c.Default
-        if ($presetData -and $presetData.Contains($c.Key)) { $value = [bool]$presetData[$c.Key] }
+        if ($presetData -and $presetData.ContainsKey($c.Key)) { $value = [bool]$presetData[$c.Key] }
         $vars[$c.Variable] = $value
     }
     $tweakSettings = [ordered]@{}
-    if ($presetData -and $presetData.Contains('TweakSettings')) {
+    if ($presetData -and $presetData.ContainsKey('TweakSettings')) {
         foreach ($k in $presetData.TweakSettings.Keys) { $tweakSettings[$k] = [bool]$presetData.TweakSettings[$k] }
     }
     foreach ($t in $schema.Tweaks) {
         if ($t.Variable -and $tweakSettings.Contains($t.Key)) { $vars[$t.Variable] = [bool]$tweakSettings[$t.Key] }
     }
     $groups = [ordered]@{ GPULatency = $true; ServiceTrim = $true }
-    if ($presetData -and $presetData.Contains('TweakGroups')) {
-        foreach ($k in @($groups.Keys)) { if ($presetData.TweakGroups.Contains($k)) { $groups[$k] = [bool]$presetData.TweakGroups[$k] } }
+    if ($presetData -and $presetData.ContainsKey('TweakGroups')) {
+        foreach ($k in @($groups.Keys)) { if ($presetData.TweakGroups.ContainsKey($k)) { $groups[$k] = [bool]$presetData.TweakGroups[$k] } }
     }
     return @{ Variables = $vars; TweakSettings = $tweakSettings; Groups = $groups }
 }
@@ -66,6 +66,7 @@ function Invoke-WinEaseRegistryPhaseRecording {
 
     $scratchDir = 'Z:\WinEaseTest\scratch'
     $scriptDir = $script:RepoRoot
+    $script:scriptDir = $script:RepoRoot
     $UserName = 'TestUser'
     $DryRun = $false
     # every Advanced Debloat target that owns a service, so all service branches run

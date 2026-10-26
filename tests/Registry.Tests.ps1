@@ -203,7 +203,7 @@ Describe "Invoke-WinEaseRegistryTable" {
         $script:TblCalls = [System.Collections.Generic.List[string]]::new()
         function Test-TweakEnabled {
             param([string]$Name, [bool]$Default = $true)
-            if ($script:TblSettings -and $script:TblSettings.Contains($Name)) { return [bool]$script:TblSettings[$Name] }
+            if ($script:TblSettings -and ([System.Collections.IDictionary]$script:TblSettings).Contains($Name)) { return [bool]$script:TblSettings[$Name] }
             return $Default
         }
         function Invoke-WinEaseReg {

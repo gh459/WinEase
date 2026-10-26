@@ -513,15 +513,15 @@ Describe "Security options - the defaults and the execution paths agree" {
         $bypass = @('BypassHardwareRequirements', 'BypassNetworkRequirement', 'BypassNRO')
         foreach ($tk in $tweakKeys) {
             if ($bypass -contains $tk) {
-                $none.TweakSettings.Contains($tk) | Should Be $false
+                ([System.Collections.IDictionary]$none.TweakSettings).Contains($tk) | Should Be $false
                 continue
             }
-            $none.TweakSettings.Contains($tk) | Should Be $true
+            ([System.Collections.IDictionary]$none.TweakSettings).Contains($tk) | Should Be $true
             [bool]$none.TweakSettings[$tk] | Should Be $false
         }
-        $componentKeys = @($script:SecSchema.Components | Where-Object { $_.Type -ne 'Special' -and $_.ContainsKey('Default') } | ForEach-Object { $_.Key })
+        $componentKeys = @($script:SecSchema.Components | Where-Object { $_.Type -ne 'Special' -and ([System.Collections.IDictionary]$_).Contains('Default') } | ForEach-Object { $_.Key })
         foreach ($ck in $componentKeys) {
-            $none.Contains($ck) | Should Be $true
+            ([System.Collections.IDictionary]$none).Contains($ck) | Should Be $true
         }
     }
 
