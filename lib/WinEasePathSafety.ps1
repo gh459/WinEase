@@ -9,12 +9,13 @@ function ConvertTo-WinEaseNormalizedPath {
     if ([string]::IsNullOrWhiteSpace($Path)) {
         throw "Path cannot be null or empty."
     }
-    $cleanPath = $Path.Replace('/', '\')
-    if ($cleanPath -notmatch '^[A-Za-z]:\\') {
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $cleanPath = if ($sep -eq '\') { $Path.Replace('/', '\') } else { $Path.Replace('\', '/') }
+    if ($cleanPath -notmatch '^[A-Za-z]:[\\/]' -and -not ($cleanPath.StartsWith('/') -and $sep -ne '\')) {
         throw "Path must be an absolute local drive path starting with a drive letter: '$Path'"
     }
     try {
-        $fullPath = [System.IO.Path]::GetFullPath($cleanPath).TrimEnd('\')
+        $fullPath = [System.IO.Path]::GetFullPath($cleanPath).TrimEnd($sep)
     } catch {
         throw "Failed to get full path for '$Path': $_"
     }
@@ -35,15 +36,16 @@ function Test-WinEasePathWithin {
         return $false
     }
     try {
-        $cleanP = $Path.Replace('/', '\')
-        $cleanR = $Root.Replace('/', '\')
+        $sep = [System.IO.Path]::DirectorySeparatorChar
+        $cleanP = if ($sep -eq '\') { $Path.Replace('/', '\') } else { $Path.Replace('\', '/') }
+        $cleanR = if ($sep -eq '\') { $Root.Replace('/', '\') } else { $Root.Replace('\', '/') }
         $p = [System.IO.Path]::GetFullPath($cleanP).TrimEnd('\', '/')
         $r = [System.IO.Path]::GetFullPath($cleanR).TrimEnd('\', '/')
     } catch {
         return $false
     }
     if ($p -ieq $r) { return $true }
-    return $p.StartsWith($r + '\', [System.StringComparison]::OrdinalIgnoreCase)
+    return $p.StartsWith($r + $sep, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
 # Helper function: path of an enumerated item relative to the folder it was enumerated from.
@@ -61,6 +63,7 @@ function Get-WinEaseRelativePath {
     $candidates.Add($BasePath)
     try { $candidates.Add((Get-Item -LiteralPath $BasePath -Force -ErrorAction Stop).FullName) } catch { Write-Verbose "Get-WinEaseRelativePath: Get-Item failed: $($_.Exception.Message)" }
     try { $candidates.Add((Resolve-Path -LiteralPath $BasePath -ErrorAction Stop).ProviderPath) } catch { Write-Verbose "Get-WinEaseRelativePath: Resolve-Path failed: $($_.Exception.Message)" }
+    $sep = [System.IO.Path]::DirectorySeparatorChar
     foreach ($candidate in $candidates) {
         $base = $candidate.TrimEnd('\', '/')
 # --- Restore path validation (shared by the PC migration engine) -------------------
@@ -69,7 +72,7 @@ function Get-WinEaseRelativePath {
 # that manifest is therefore treated as untrusted input: it is normalized and checked
 # against the allowed root before a single byte is written.
 
-        if ($base -and $FullName.StartsWith($base + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+        if ($base -and ($FullName.StartsWith($base + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $FullName.StartsWith($base + '/', [System.StringComparison]::OrdinalIgnoreCase))) {
             return $FullName.Substring($base.Length + 1)
         }
     }
@@ -91,7 +94,8 @@ function ConvertTo-WinEaseComparablePath {
         [string]$Path
     )
     if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
-    $clean = $Path.Replace('/', '\')
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $clean = if ($sep -eq '\') { $Path.Replace('/', '\') } else { $Path.Replace('\', '/') }
     try {
         $full = [System.IO.Path]::GetFullPath($clean)
     } catch {
@@ -112,7 +116,7 @@ function ConvertTo-WinEaseComparablePath {
             Write-Verbose "Ignored: $($_.Exception.Message)"
         }
     }
-    $trimmed = $resolved.TrimEnd('\')
+    $trimmed = $resolved.TrimEnd('\', '/')
     if ([string]::IsNullOrEmpty($trimmed)) { return $resolved }
     # A drive root keeps its separator: "C:" would be resolved against the current
     # directory of the drive instead of the root itself.
@@ -131,9 +135,11 @@ function Test-WinEaseAbsoluteLocalPath {
         [string]$Path
     )
     if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
-    $clean = $Path.Replace('/', '\')
-    if ($clean -match '^[A-Za-z]:\\') { return $true }
-    if ($clean -match '^\\\\[^\\]+\\[^\\]+') { return $true }
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $clean = if ($sep -eq '\') { $Path.Replace('/', '\') } else { $Path.Replace('\', '/') }
+    if ($clean -match '^[A-Za-z]:[\\/]') { return $true }
+    if ($clean -match '^[\\/]{2}[^\\/]+[\\/][^\\/]+') { return $true }
+    if ($sep -ne '\' -and $clean.StartsWith('/')) { return $true }
     return $false
 }
 
@@ -155,7 +161,8 @@ function ConvertTo-WinEaseRealPath {
         [string]$Path
     )
     if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
-    $clean = $Path.Replace('/', '\')
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $clean = if ($sep -eq '\') { $Path.Replace('/', '\') } else { $Path.Replace('\', '/') }
     if (-not (Test-WinEaseAbsoluteLocalPath -Path $clean)) { return $null }
     try {
         $full = [System.IO.Path]::GetFullPath($clean)
@@ -165,20 +172,20 @@ function ConvertTo-WinEaseRealPath {
     }
     $root = [System.IO.Path]::GetPathRoot($full)
     if ([string]::IsNullOrEmpty($root)) { return $null }
-    $current = $root.TrimEnd('\')
-    $rest = $full.Substring($root.Length).TrimStart('\')
-    $segments = @(); if ($rest) { $segments = @($rest -split '\\') }
+    $current = $root.TrimEnd('\', '/')
+    $rest = $full.Substring($root.Length).TrimStart('\', '/')
+    $segments = @(); if ($rest) { $segments = @($rest -split '[\\/]') }
     for ($i = 0; $i -lt $segments.Count; $i++) {
-        $candidate = $current + '\' + $segments[$i]
+        $candidate = Join-Path -Path $current -ChildPath $segments[$i]
         $item = $null
         try { $item = Get-Item -LiteralPath $candidate -Force -ErrorAction Stop } catch { Write-Verbose "ConvertTo-WinEaseRealPath: '$candidate' not inspectable: $($_.Exception.Message)" }
         if (-not $item) {
             # Element does not exist (or cannot be inspected): everything below is lexical.
             $remaining = for ($j = $i; $j -lt $segments.Count; $j++) { $segments[$j] }
-            $current = $current + '\' + ($remaining -join '\')
+            $current = Join-Path -Path $current -ChildPath ($remaining -join $sep)
             break
         }
-        if (-not [string]::IsNullOrEmpty($item.FullName)) { $current = $item.FullName.TrimEnd('\') }
+        if (-not [string]::IsNullOrEmpty($item.FullName)) { $current = $item.FullName.TrimEnd('\', '/') }
         else { $current = $candidate }
         if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
             $target = $null
@@ -187,13 +194,13 @@ function ConvertTo-WinEaseRealPath {
                 Write-Verbose "ConvertTo-WinEaseRealPath: cannot resolve the target of reparse point '$candidate'."
                 return $null
             }
-            $target = $target.Replace('/', '\')
+            $target = if ($sep -eq '\') { $target.Replace('/', '\') } else { $target.Replace('\', '/') }
             if (-not ([System.IO.Path]::IsPathRooted($target))) {
                 # Relative link target: resolve against the link's parent.
-                try { $target = [System.IO.Path]::GetFullPath($current + '\' + $target) } catch { return $null }
+                try { $target = [System.IO.Path]::GetFullPath((Join-Path -Path $current -ChildPath $target)) } catch { return $null }
             }
             try { $target = [System.IO.Path]::GetFullPath($target) } catch { return $null }
-            $current = $target.TrimEnd('\')
+            $current = $target.TrimEnd('\', '/')
         }
     }
     return $current
@@ -265,7 +272,8 @@ function Resolve-WinEaseSafeRelativePath {
         $result.Reason = 'the allowed root is empty'
         return $result
     }
-    $clean = $RelativePath.Replace('/', '\')
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $clean = if ($sep -eq '\') { $RelativePath.Replace('/', '\') } else { $RelativePath.Replace('\', '/') }
     if ([System.IO.Path]::IsPathRooted($clean)) {
         $result.Reason = "the $Label is not relative: '$RelativePath'"
         return $result
@@ -275,7 +283,7 @@ function Resolve-WinEaseSafeRelativePath {
         return $result
     }
     $segments = @()
-    foreach ($seg in ($clean -split '\\')) { if ($seg -ne '' -and $seg -ne '.') { $segments += $seg } }
+    foreach ($seg in ($clean -split '[\\/]')) { if ($seg -ne '' -and $seg -ne '.') { $segments += $seg } }
     if ($segments.Count -eq 0) {
         $result.Reason = "the $Label does not name a file: '$RelativePath'"
         return $result
@@ -297,7 +305,7 @@ function Resolve-WinEaseSafeRelativePath {
         $result.Reason = "the allowed root cannot be resolved: '$Root'"
         return $result
     }
-    $joined = Join-Path -Path $rootFull -ChildPath ($segments -join '\')
+    $joined = Join-Path -Path $rootFull -ChildPath ($segments -join $sep)
     $full = ConvertTo-WinEaseComparablePath -Path $joined
     if (-not $full) {
         $result.Reason = "the $Label cannot be resolved: '$RelativePath'"
@@ -364,7 +372,8 @@ function Resolve-WinEaseRestoreTarget {
         $result.Reason = 'the restore target is empty'
         return $result
     }
-    $clean = $Path.Replace('/', '\')
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $clean = if ($sep -eq '\') { $Path.Replace('/', '\') } else { $Path.Replace('\', '/') }
     if (-not (Test-WinEaseAbsoluteLocalPath -Path $clean)) {
         $result.Reason = "the restore target is not an absolute path: '$Path'"
         return $result
