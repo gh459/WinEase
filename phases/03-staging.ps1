@@ -36,12 +36,12 @@ if (-not (Test-Path -LiteralPath $destWim) -or ((Get-Item -LiteralPath $destWim)
         Write-Host "Decompressing LZMS stream to LZX maximum compression via DISM. Please wait..." -ForegroundColor Cyan
 
         $esdInfoOutput = & dism.exe /English /Get-WimInfo "/WimFile:$sourceEsd"
-        $esdIndexEntries = @()
+        $esdIndexEntries = [System.Collections.Generic.List[PSCustomObject]]::new()
         $curEsdEntry = $null
         foreach ($line in ($esdInfoOutput -split '\r?\n')) {
             if ($line -match '^\s*Index\s*:\s*(\d+)') {
                 $curEsdEntry = [PSCustomObject]@{ Index = $matches[1]; Name = "" }
-                $esdIndexEntries += $curEsdEntry
+                $esdIndexEntries.Add($curEsdEntry)
             } elseif ($curEsdEntry -and ($line -match '^\s*Name\s*:\s*(.+)')) {
                 $curEsdEntry.Name = $matches[1].Trim()
             }
@@ -124,12 +124,12 @@ $wimInfoOutput = & dism.exe /English /Get-WimInfo "/WimFile:$destWim"
 $wimInfoOutput | ForEach-Object { Write-Host $_ }
 
 # Parse available indices and detect Pro edition
-$indexEntries = @()
+$indexEntries = [System.Collections.Generic.List[PSCustomObject]]::new()
 $currentIndex = $null
 foreach ($line in ($wimInfoOutput -split '\r?\n')) {
     if ($line -match '^\s*Index\s*:\s*(\d+)') {
         $currentIndex = [PSCustomObject]@{ Index = $matches[1]; Name = "" }
-        $indexEntries += $currentIndex
+        $indexEntries.Add($currentIndex)
     } elseif ($currentIndex -and ($line -match '^\s*Name\s*:\s*(.+)')) {
         $currentIndex.Name = $matches[1].Trim()
     }
