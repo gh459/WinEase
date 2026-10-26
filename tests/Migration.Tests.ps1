@@ -286,7 +286,7 @@ Describe "Migration rules backup/restore (tools/migrator/WinEaseMigration.ps1)" 
         }
         $bk = Join-Path $TestDrive 'bk-reg'
         Mock Invoke-WinEaseRegExe {
-            param($ArgumentList, $KeyForError)
+            param($ArgumentList)
             if ($ArgumentList[0] -eq 'export') {
                 $regFile = $ArgumentList[2]
                 Set-Content -LiteralPath $regFile -Value 'Windows Registry Editor Version 5.00' -Encoding UTF8
