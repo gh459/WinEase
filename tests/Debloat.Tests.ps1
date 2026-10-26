@@ -439,7 +439,7 @@ Describe "AppX removal - the settings decide what is removed" {
         foreach ($key in $presets.PresetOrder) {
             $preset = $presets.Presets[$key]
             # every preset names the option, so the GUI and the CLI cannot drift apart
-            $preset.Contains('RemoveAppxBloatware') | Should Be $true
+            $preset.ContainsKey('RemoveAppxBloatware') | Should Be $true
         }
         $component = @($script:AppxSchema.Components | Where-Object { $_.Key -eq 'RemoveAppxBloatware' })
         $component.Count | Should Be 1
@@ -510,15 +510,15 @@ Describe "Security options - the defaults and the execution paths agree" {
         $bypass = @('BypassHardwareRequirements', 'BypassNetworkRequirement', 'BypassNRO')
         foreach ($tk in $tweakKeys) {
             if ($bypass -contains $tk) {
-                $none.TweakSettings.Contains($tk) | Should Be $false
+                $none.TweakSettings.ContainsKey($tk) | Should Be $false
                 continue
             }
-            $none.TweakSettings.Contains($tk) | Should Be $true
+            $none.TweakSettings.ContainsKey($tk) | Should Be $true
             [bool]$none.TweakSettings[$tk] | Should Be $false
         }
         $componentKeys = @($script:SecSchema.Components | Where-Object { $_.Type -ne 'Special' -and $_.ContainsKey('Default') } | ForEach-Object { $_.Key })
         foreach ($ck in $componentKeys) {
-            $none.Contains($ck) | Should Be $true
+            $none.ContainsKey($ck) | Should Be $true
         }
     }
 

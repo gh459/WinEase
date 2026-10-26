@@ -11,6 +11,12 @@ param()
 
 $script:RegistryPresets = @('default', 'none', 'extreme', 'balanced', 'vm', 'handheld', 'audio')
 
+function Test-WinEaseDictHasKey($dict, $key) {
+    if (-not $dict) { return $false }
+    if ($dict -is [hashtable]) { return $dict.ContainsKey($key) }
+    return [bool]$dict.Contains($key)
+}
+
 function Get-WinEaseRegistryPhaseVariables {
     # The variables the builder derives from a preset (components, variable-mapped tweaks,
     # tweak groups), without running the builder. 'default' = no preset at all.
@@ -24,19 +30,19 @@ function Get-WinEaseRegistryPhaseVariables {
     foreach ($c in $schema.Components) {
         if (-not $c.Variable -or $c.Type -ne 'Bool') { continue }
         $value = [bool]$c.Default
-        if ($presetData -and $presetData.Contains($c.Key)) { $value = [bool]$presetData[$c.Key] }
+        if (Test-WinEaseDictHasKey $presetData $c.Key) { $value = [bool]$presetData[$c.Key] }
         $vars[$c.Variable] = $value
     }
     $tweakSettings = [ordered]@{}
-    if ($presetData -and $presetData.Contains('TweakSettings')) {
+    if (Test-WinEaseDictHasKey $presetData 'TweakSettings') {
         foreach ($k in $presetData.TweakSettings.Keys) { $tweakSettings[$k] = [bool]$presetData.TweakSettings[$k] }
     }
     foreach ($t in $schema.Tweaks) {
-        if ($t.Variable -and $tweakSettings.Contains($t.Key)) { $vars[$t.Variable] = [bool]$tweakSettings[$t.Key] }
+        if ($t.Variable -and (Test-WinEaseDictHasKey $tweakSettings $t.Key)) { $vars[$t.Variable] = [bool]$tweakSettings[$t.Key] }
     }
     $groups = [ordered]@{ GPULatency = $true; ServiceTrim = $true }
-    if ($presetData -and $presetData.Contains('TweakGroups')) {
-        foreach ($k in @($groups.Keys)) { if ($presetData.TweakGroups.Contains($k)) { $groups[$k] = [bool]$presetData.TweakGroups[$k] } }
+    if (Test-WinEaseDictHasKey $presetData 'TweakGroups') {
+        foreach ($k in @($groups.Keys)) { if (Test-WinEaseDictHasKey $presetData.TweakGroups $k) { $groups[$k] = [bool]$presetData.TweakGroups[$k] } }
     }
     return @{ Variables = $vars; TweakSettings = $tweakSettings; Groups = $groups }
 }
