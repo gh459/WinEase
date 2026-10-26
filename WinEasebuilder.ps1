@@ -1047,22 +1047,22 @@ function Apply-WinEaseProfileDebloat {
     # Older profiles still contain the "Physical: <target>" entries that were merged into
     # the standard list. They are mapped onto the canonical target and keep the Rust engine.
     $legacyEngines = [ordered]@{}
-    $normStd = @()
+    $normStd = [System.Collections.Generic.List[string]]::new()
     foreach ($raw in @($script:advancedDebloatStandard)) {
         $item = ConvertTo-WinEaseDebloatTarget -Item ([string]$raw)
         if (-not $item) { continue }
         if ($item -ne [string]$raw) { $legacyEngines[$item] = 'Rust' }
-        $normStd += $item
+        $normStd.Add($item)
     }
-    $normExp = @()
+    $normExp = [System.Collections.Generic.List[string]]::new()
     foreach ($raw in @($script:advancedDebloatExperimental)) {
         $item = ConvertTo-WinEaseDebloatTarget -Item ([string]$raw)
         if (-not $item) { continue }
         if ($item -ne [string]$raw) { $legacyEngines[$item] = 'Rust' }
-        $normExp += $item
+        $normExp.Add($item)
     }
-    $script:advancedDebloatStandard     = @($normStd | Where-Object { $_ } | Select-Object -Unique)
-    $script:advancedDebloatExperimental = @($normExp | Where-Object { $_ } | Select-Object -Unique)
+    $script:advancedDebloatStandard     = @($normStd.ToArray() | Where-Object { $_ } | Select-Object -Unique)
+    $script:advancedDebloatExperimental = @($normExp.ToArray() | Where-Object { $_ } | Select-Object -Unique)
 
     # Engine selection (PowerShell <-> Rust) per target
     $script:DebloatEngineSelection = [ordered]@{}
