@@ -868,6 +868,171 @@ Describe "WinEase builder - Get-WinEaseComponentValue" {
     }
 }
 
+Describe "Get-WinEaseDependencyReview" {
+    BeforeAll {
+        if (-not (Get-Command -Name Get-WinEaseDependencyReview -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot -ChildPath "WinEasehelpers.ps1")
+        }
+    }
+
+    It "returns a review hashtable with all expected keys for null Config" {
+        $review = Get-WinEaseDependencyReview -Config $null
+        $review | Should Not Be $null
+        $review.ContainsKey('HasIssues') | Should Be $true
+        $review.ContainsKey('HasCritical') | Should Be $true
+        $review.ContainsKey('Critical') | Should Be $true
+        $review.ContainsKey('Impact') | Should Be $true
+        $review.ContainsKey('KeptFeature') | Should Be $true
+        $review.ContainsKey('CriticalText') | Should Be $true
+        $review.ContainsKey('ImpactText') | Should Be $true
+        $review.ContainsKey('Text') | Should Be $true
+        $review.ContainsKey('Result') | Should Be $true
+
+        $review.HasIssues | Should Be $false
+        $review.HasCritical | Should Be $false
+        $review.Critical.Count | Should Be 0
+        $review.Impact.Count | Should Be 0
+        $review.KeptFeature.Count | Should Be 0
+        $review.CriticalText | Should Be ''
+        $review.ImpactText | Should Be ''
+        $review.Text | Should Be ''
+    }
+
+    It "accepts Config passed as a hashtable and as a PSCustomObject" {
+        $dictCfg = @{
+            RemoveStore = $true
+            TweakSettings = @{}
+            AdvancedDebloatStandard = @()
+            AdvancedDebloatExperimental = @()
+        }
+        $reviewDict = Get-WinEaseDependencyReview -Config $dictCfg
+        $reviewDict.HasIssues | Should Be $true
+        $reviewDict.Impact.Count | Should BeGreaterThan 0
+
+        $objCfg = [PSCustomObject]@{
+            RemoveStore = $true
+            TweakSettings = @{}
+            AdvancedDebloatStandard = @()
+            AdvancedDebloatExperimental = @()
+        }
+        $reviewObj = Get-WinEaseDependencyReview -Config $objCfg
+        $reviewObj.HasIssues | Should Be $true
+        $reviewObj.Impact.Count | Should BeGreaterThan 0
+    }
+
+    It "attaches the raw Test-WinEaseDependencies Result hashtable to the review object" {
+        $cfg = @{ WSLSupport = $true; NoHypervisor = $true }
+        $review = Get-WinEaseDependencyReview -Config $cfg
+        $review.Result | Should Not Be $null
+        $review.Result.ContainsKey('HasIssues') | Should Be $true
+        $review.Result.ContainsKey('HasCritical') | Should Be $true
+        $review.Result.ContainsKey('Conflicts') | Should Be $true
+        $review.Result.ContainsKey('Impacts') | Should Be $true
+        $review.Result.ContainsKey('Unknowns') | Should Be $true
+    }
+
+    It "processes dependency conflicts and formats Critical entries correctly" {
+        $cfg = @{ WSLSupport = $true; NoHypervisor = $true }
+        $review = Get-WinEaseDependencyReview -Config $cfg
+
+        $review.HasIssues | Should Be $true
+        $review.HasCritical | Should Be $true
+        $review.Critical.Count | Should BeGreaterThan 0
+
+        $conflictItem = @($review.Critical | Where-Object { $_.Kind -eq 'Conflict' })[0]
+        $conflictItem | Should Not Be $null
+        $conflictItem.Severity | Should Be 'Critical'
+        $conflictItem.Glyph | Should Be '[X]'
+        $conflictItem.Label | Should Be 'CONFLICT'
+        $conflictItem.Category | Should Be 'Component'
+        $conflictItem.Source | Should Be 'WSLSupport'
+
+        $review.CriticalText | Should Match '\[DEPENDENCY CONFLICT\]'
+        $review.CriticalText | Should Match 'WSLSupport'
+        # NoHypervisor is a known tweak that also reports feature impacts
+        $review.ImpactText | Should Match '\[FEATURE IMPACT\]'
+        $review.ImpactText | Should Match 'NoHypervisor'
+    }
+
+    It "processes unknown items and formats Critical entries correctly" {
+        $cfg = @{ RemoveDrivers = $true }
+        $review = Get-WinEaseDependencyReview -Config $cfg
+
+        $review.HasIssues | Should Be $true
+        $review.HasCritical | Should Be $true
+        $review.Critical.Count | Should BeGreaterThan 0
+
+        $unknownItem = @($review.Critical | Where-Object { $_.Kind -eq 'Unknown' })[0]
+        $unknownItem | Should Not Be $null
+        $unknownItem.Severity | Should Be 'Critical'
+        $unknownItem.Glyph | Should Be '[?]'
+        $unknownItem.Label | Should Match 'not verified'
+        $unknownItem.Source | Should Be 'RemoveDrivers'
+
+        $review.CriticalText | Should Match '\[DEPENDENCY UNKNOWN'
+        $review.ImpactText | Should Be ''
+    }
+
+    It "processes feature impacts and formats Impact entries correctly" {
+        $cfg = @{ RemoveStore = $true }
+        $review = Get-WinEaseDependencyReview -Config $cfg
+
+        $review.HasIssues | Should Be $true
+        $review.HasCritical | Should Be $false
+        $review.Critical.Count | Should Be 0
+        $review.Impact.Count | Should BeGreaterThan 0
+
+        $impactItem = $review.Impact[0]
+        $impactItem.Kind | Should Be 'Impact'
+        $impactItem.Severity | Should Be 'Impact'
+        $impactItem.Glyph | Should Be '[i]'
+        $impactItem.Label | Should Be 'IMPACT'
+        $impactItem.Source | Should Be 'RemoveStore'
+
+        $review.CriticalText | Should Be ''
+        $review.ImpactText | Should Match '\[FEATURE IMPACT\]'
+        $review.ImpactText | Should Match 'RemoveStore'
+    }
+
+    It "identifies kept feature conflicts and populates KeptFeature array" {
+        $cfg = @{
+            KeepBluetooth = $true
+            AdvancedDebloatStandard = @('Remove Bluetooth stack (service + binary) [20-40MB]')
+        }
+        $review = Get-WinEaseDependencyReview -Config $cfg
+
+        $review.KeptFeature.Count | Should BeGreaterThan 0
+        $keptItem = $review.KeptFeature[0]
+        $keptItem.KeptFeature | Should Be $true
+        $keptItem.Source | Should Be 'KeepBluetooth'
+    }
+
+    It "orchestrates Test-WinEaseDependencies and Get-WinEaseDependencyView correctly when mocked" {
+        $mockConfig = @{ TestKey = 'TestValue' }
+        $mockResult = @{ Conflicts = @(); Unknowns = @(); Impacts = @(); HasIssues = $false; HasCritical = $false }
+        $mockView = @{
+            HasIssues    = $false
+            HasCritical  = $false
+            Critical     = @()
+            Impact       = @()
+            KeptFeature  = @()
+            CriticalText = ''
+            ImpactText   = ''
+            Text         = ''
+        }
+
+        Mock Test-WinEaseDependencies { return $mockResult } -ParameterFilter { $Config -eq $mockConfig }
+        Mock Get-WinEaseDependencyView { return $mockView } -ParameterFilter { $Result -eq $mockResult }
+
+        $review = Get-WinEaseDependencyReview -Config $mockConfig
+
+        Assert-MockCalled Test-WinEaseDependencies -Exactly 1 -ParameterFilter { $Config -eq $mockConfig }
+        Assert-MockCalled Get-WinEaseDependencyView -Exactly 1 -ParameterFilter { $Result -eq $mockResult }
+
+        $review.Result | Should Be $mockResult
+    }
+}
+
 Describe "WinEase settings - config\schema.psd1 is the single source of truth" {
     $builderText = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
     $builderAst = [System.Management.Automation.Language.Parser]::ParseInput($builderText, [ref]$null, [ref]$null)
