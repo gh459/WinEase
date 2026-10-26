@@ -616,3 +616,61 @@ Describe "WinEase builder - ConvertTo-WinEaseCliArgument" {
         ConvertTo-WinEaseCliArgument -Name "SourceDrive" -Value $null | Should Be "-SourceDrive ''"
     }
 }
+
+Describe "WinEase builder - leftover registry hive cleanup" {
+    BeforeAll {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $pipelineNode = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.PipelineAst] -and
+            $node.Extent.Text -match 'Unmount-RegistryHiveWithRetry' -and
+            $node.Extent.Text -match 'zCOMPONENTS'
+        }, $true)
+        $script:CleanupScriptBlock = [scriptblock]::Create($pipelineNode.Extent.Text)
+    }
+
+    It "attempts unmount on all 5 hives when Unmount-RegistryHiveWithRetry succeeds" {
+        $probe = New-Module -Name 'WinEaseCleanupSuccessProbe' -ArgumentList $script:CleanupScriptBlock -ScriptBlock {
+            param($ScriptBlock)
+            $script:Unmounted = [System.Collections.Generic.List[string]]::new()
+            function Unmount-RegistryHiveWithRetry {
+                param([string]$Name)
+                $script:Unmounted.Add($Name)
+                return $true
+            }
+            . $ScriptBlock
+            Export-ModuleMember -Variable 'Unmounted'
+        }
+        Import-Module $probe -Force
+        try {
+            & $probe { $script:Unmounted.Count } | Should Be 5
+            & $probe { $script:Unmounted -join ',' } | Should Be 'zCOMPONENTS,zDEFAULT,zNTUSER,zSOFTWARE,zSYSTEM'
+        } finally {
+            Remove-Module $probe -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "catches exception from Unmount-RegistryHiveWithRetry and continues through all 5 hives" {
+        $probe = New-Module -Name 'WinEaseCleanupErrorProbe' -ArgumentList $script:CleanupScriptBlock -ScriptBlock {
+            param($ScriptBlock)
+            $script:Attempted = [System.Collections.Generic.List[string]]::new()
+            function Unmount-RegistryHiveWithRetry {
+                param([string]$Name)
+                $script:Attempted.Add($Name)
+                throw "Simulated unmount error for $Name"
+            }
+            . $ScriptBlock
+            Export-ModuleMember -Variable 'Attempted'
+        }
+        Import-Module $probe -Force
+        try {
+            { & $probe { } } | Should Not Throw
+            & $probe { $script:Attempted.Count } | Should Be 5
+            & $probe { $script:Attempted -join ',' } | Should Be 'zCOMPONENTS,zDEFAULT,zNTUSER,zSOFTWARE,zSYSTEM'
+        } finally {
+            Remove-Module $probe -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
