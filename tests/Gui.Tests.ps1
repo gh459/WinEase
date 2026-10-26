@@ -1478,8 +1478,9 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
         ([int[]][char[]]$ja['Language.Name'] -join ',') | Should Be '26085,26412,35486'
         foreach ($k in $ja.Keys) { $ja[$k].Contains([string][char]0xFFFD) | Should Be $false | Out-Null }
         # a fresh Windows PowerShell 5.1 process that only dot-sources the GUI file and asks for the string
+        $psExe = if (Get-Command 'powershell.exe' -ErrorAction SilentlyContinue) { 'powershell.exe' } else { 'pwsh' }
         $cmd = ". '$($script:GuiPath)'; `$s = Get-WinEaseUiString 'Button.SelectAll' -Language ja; ([int[]][char[]]`$s) -join ','"
-        $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command $cmd
+        $out = & $psExe -NoProfile -ExecutionPolicy Bypass -Command $cmd
         (@($out)[-1]) | Should Be '12377,12409,12390,36984,25246'
     }
 
@@ -2157,10 +2158,11 @@ Describe "GUI core (lib\WinEaseGuiCore.ps1)" {
     }
 
     It "works in a fresh process that loads only the core and the WinUI host (no WinForms window functions)" {
+        $psExe = if (Get-Command 'powershell.exe' -ErrorAction SilentlyContinue) { 'powershell.exe' } else { 'pwsh' }
         $cmd = ". '$($script:GuiCorePath)'; . '$(Join-Path $script:RepoRoot 'gui\WinEaseWinUiHost.ps1')'; " +
             "(Get-WinEaseUiString 'Button.SelectAll' -Language ja).Length; (Get-Command Get-WinEaseGuiDraftConfig).Name; " +
             "[bool](Get-Command Show-WinEaseGUI -ErrorAction SilentlyContinue); [bool](Get-Command New-WinEaseForm -ErrorAction SilentlyContinue)"
-        $out = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -Command $cmd)
+        $out = @(& $psExe -NoProfile -ExecutionPolicy Bypass -Command $cmd)
         $out[-4] | Should Be '5'
         $out[-3] | Should Be 'Get-WinEaseGuiDraftConfig'
         $out[-2] | Should Be 'False'
@@ -2172,6 +2174,61 @@ Describe "GUI core (lib\WinEaseGuiCore.ps1)" {
         [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'tools\migrator\WinEase-Migrator.ps1')) | Should Match 'WinEaseGuiCore\.ps1'
         [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\11-unattend.ps1')) | Should Match 'lib\\WinEaseGuiCore\.ps1'
         [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot '.github\scripts\verify-release-zip.py')) | Should Match 'lib/WinEaseGuiCore\.ps1'
+    }
+
+    It "Get-WinEaseGuiRecoveryReadiness calls Get-WinEaseGuiDraftConfig and passes result to Test-WinEaseRecoveryReadiness" {
+        . (Join-Path -Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')
+        if (-not (Get-Command Test-WinEaseRecoveryReadiness -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot 'WinEasehelpers.ps1')
+        }
+
+        $dummyGui = @{
+            ComponentCheckboxes = @{
+                'RemoveDefender' = [PSCustomObject]@{ Checked = $true }
+            }
+        }
+
+        $script:capturedConfig = $null
+        Mock Test-WinEaseRecoveryReadiness {
+            param($Config)
+            $script:capturedConfig = $Config
+            return [PSCustomObject]@{ ReadinessScore = 100; Status = 'Ready' }
+        }
+
+        $result = Get-WinEaseGuiRecoveryReadiness -Gui $dummyGui
+        $result.ReadinessScore | Should Be 100
+        $result.Status | Should Be 'Ready'
+        $script:capturedConfig['RemoveDefender'] | Should Be $true
+        Assert-MockCalled Test-WinEaseRecoveryReadiness -Exactly 1 -Scope It
+    }
+
+    It "Get-WinEaseGuiRecoveryReadiness forwards Gui hashtable and returns Test-WinEaseRecoveryReadiness output" {
+        . (Join-Path -Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')
+
+        $mockDraft = @{ FeatureEnabled = $true }
+        $script:passedGui = $null
+        $script:passedConfig = $null
+
+        Mock Get-WinEaseGuiDraftConfig {
+            param($Gui)
+            $script:passedGui = $Gui
+            return $mockDraft
+        }
+
+        Mock Test-WinEaseRecoveryReadiness {
+            param($Config)
+            $script:passedConfig = $Config
+            return @{ Assessment = 'Passed' }
+        }
+
+        $testGui = @{ ComponentCheckboxes = @{} }
+        $res = Get-WinEaseGuiRecoveryReadiness -Gui $testGui
+
+        $res.Assessment | Should Be 'Passed'
+        $script:passedGui | Should Be $testGui
+        $script:passedConfig | Should Be $mockDraft
+        Assert-MockCalled Get-WinEaseGuiDraftConfig -Exactly 1 -Scope It
+        Assert-MockCalled Test-WinEaseRecoveryReadiness -Exactly 1 -Scope It
     }
 }
 
