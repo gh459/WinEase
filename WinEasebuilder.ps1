@@ -1097,8 +1097,8 @@ function Apply-WinEaseProfileDebloat {
         if ($item -ne [string]$raw) { $legacyEngines[$item] = 'Rust' }
         $normExp.Add($item)
     }
-    $script:advancedDebloatStandard     = @($normStd | Where-Object { $_ } | Select-Object -Unique)
-    $script:advancedDebloatExperimental = @($normExp | Where-Object { $_ } | Select-Object -Unique)
+    $script:advancedDebloatStandard     = @($normStd.ToArray() | Where-Object { $_ } | Select-Object -Unique)
+    $script:advancedDebloatExperimental = @($normExp.ToArray() | Where-Object { $_ } | Select-Object -Unique)
 
     # Engine selection (PowerShell <-> Rust) per target
     $script:DebloatEngineSelection = [ordered]@{}
@@ -2184,16 +2184,17 @@ function Write-WinEaseDiagnosticReport {
         # parallel). It is therefore created again before the report is written, so a
         # failed build always leaves its report behind.
         if (-not (Test-Path -LiteralPath $script:DiagDir)) {
-            $null = New-Item -ItemType Directory -Path $script:DiagDir -Force
+            $null = New-Item -ItemType Directory -Path $script:DiagDir -Force -ErrorAction Stop
         }
         $jsonPath = Join-Path -Path $script:DiagDir -ChildPath "build_diagnostic_report.json"
         # R7: the plugins that took part in this build (loaded) and the ones that were refused
         if (Get-Command -Name Get-WinEaseLoadedPlugins -ErrorAction SilentlyContinue) {
-            $script:DiagnosticData['Plugins'] = @(Get-WinEaseLoadedPlugins | ForEach-Object { [ordered]@{ Id = $_.Id; Version = $_.Version; Source = $_.Source; File = $_.File; Sha256 = $_.Sha256; OnError = $_.OnError } })
-            $script:DiagnosticData['PluginsRejected'] = @($script:WinEasePluginRejected | ForEach-Object { [ordered]@{ Source = $_.Source; File = $_.File; Reason = $_.Reason } })
-            $script:DiagnosticData['PluginRuns'] = @($script:WinEasePluginRunLog | ForEach-Object { [ordered]@{ Plugin = $_.Plugin; Phase = $_.Phase; Stage = $_.Stage; Status = $_.Status } })
+            $loadedPlugins = Get-WinEaseLoadedPlugins
+            $script:DiagnosticData['Plugins'] = if ($loadedPlugins) { @($loadedPlugins | ForEach-Object { [ordered]@{ Id = $_.Id; Version = $_.Version; Source = $_.Source; File = $_.File; Sha256 = $_.Sha256; OnError = $_.OnError } }) } else { @() }
+            $script:DiagnosticData['PluginsRejected'] = if ($script:WinEasePluginRejected) { @($script:WinEasePluginRejected | ForEach-Object { [ordered]@{ Source = $_.Source; File = $_.File; Reason = $_.Reason } }) } else { @() }
+            $script:DiagnosticData['PluginRuns'] = if ($script:WinEasePluginRunLog) { @($script:WinEasePluginRunLog | ForEach-Object { [ordered]@{ Plugin = $_.Plugin; Phase = $_.Phase; Stage = $_.Stage; Status = $_.Status } }) } else { @() }
         }
-        $script:DiagnosticData | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $jsonPath -Encoding utf8
+        $script:DiagnosticData | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $jsonPath -Encoding utf8 -ErrorAction Stop
 
         $txtPath = Join-Path -Path $script:DiagDir -ChildPath "build_diagnostic_summary.txt"
         $txtLines = @(
@@ -2235,7 +2236,7 @@ function Write-WinEaseDiagnosticReport {
             ($script:DiagnosticData.PreservedArtifacts | ForEach-Object { "  - $_" }),
             "========================================================="
         )
-        $txtLines | Set-Content -LiteralPath $txtPath -Encoding utf8
+        $txtLines | Set-Content -LiteralPath $txtPath -Encoding utf8 -ErrorAction Stop
     } catch {
         Write-Warning "Failed writing diagnostic report: $_"
     }
