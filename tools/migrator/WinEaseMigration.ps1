@@ -586,7 +586,12 @@ function Backup-WinEaseUserData {
                         if ($destItem.LastWriteTimeUtc -ge $it.LastWriteTimeUtc) { $doCopy = $false }
                     }
                 }
-                if (-not $doCopy) { $skipped++; continue }
+                if (-not $doCopy) {
+                    # The copy already in the backup still has to be restored: keep it in the manifest
+                    $skipped++
+                    $manifest += [PSCustomObject]@{ RelativePath = $rel; Category = $cat; SizeBytes = $it.Length; Sha256 = ''; LastWriteTimeUtc = $it.LastWriteTimeUtc.ToString('o') }
+                    continue
+                }
                 $hash = ''
                 if ($VerifySha256) {
                     # Copy and hash in one pass: the file is read once, not twice.
@@ -1075,6 +1080,14 @@ function Start-WinEaseMigrationBackup {
     $customExpanded = @($CustomPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { Expand-WinEaseMigrationPath -RawPath $_.Trim() })
     Assert-WinEaseBackupRootOutsideSources -BackupRoot $BackupRoot -SourcePaths (@($FolderMap.Values) + $customExpanded)
     if (-not $DryRun -and -not (Test-Path -LiteralPath $BackupRoot)) { New-Item -ItemType Directory -Force -Path $BackupRoot | Out-Null }
+    # A previous backup into the same root: read it before Backup-WinEaseUserData rewrites
+    # the manifest, so the categories / rules / custom paths this run does not touch keep
+    # being restored (their files are still in the root).
+    $previous = $null
+    $previousPath = Join-Path -Path $BackupRoot -ChildPath 'migration-manifest.json'
+    if (-not $DryRun -and (Test-Path -LiteralPath $previousPath)) {
+        try { $previous = Get-Content -LiteralPath $previousPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
     # App inventory
     $invPath = Join-Path -Path $BackupRoot -ChildPath 'apps-inventory.json'
     $inv = Export-WinEaseAppInventory -OutputPath $invPath -OfflineTestMode:$OfflineTestMode
@@ -1104,6 +1117,26 @@ function Start-WinEaseMigrationBackup {
     }
     $ruleList = @()
     if ($rb) { $ruleList = @($rb.BackedUpRules) }
+    $customList = @($customExpanded)
+    if ($previous) {
+        # What this run backed up replaces the previous record of the same item; the rest is kept
+        $newCategories = @($FolderMap.Keys | ForEach-Object { [string]$_ })
+        $newRuleIds = @($ruleList | ForEach-Object { [string]$_.Id })
+        # A file skipped as unchanged keeps the hash the previous backup recorded for it
+        $previousHash = @{}
+        foreach ($pe in @($previous.Entries)) { if ($pe -and $pe.Sha256) { $previousHash["$($pe.Category)|$($pe.RelativePath)"] = [string]$pe.Sha256 } }
+        foreach ($e in $entries) {
+            $key = "$($e.Category)|$($e.RelativePath)"
+            if (-not $e.Sha256 -and $previousHash.ContainsKey($key)) { $e.Sha256 = $previousHash[$key] }
+        }
+        $keptEntries = @($previous.Entries | Where-Object {
+                $_ -and $(if ([string]$_.Category -eq 'CustomPath') { $customList -notcontains [string]$_.SourcePath } else { $newCategories -notcontains [string]$_.Category })
+            })
+        $entries = $keptEntries + $entries
+        $folderList = @($previous.Folders | Where-Object { $_ -and $_.Category -and $newCategories -notcontains [string]$_.Category }) + $folderList
+        $ruleList = @($previous.Rules | Where-Object { $_ -and $_.Id -and $newRuleIds -notcontains [string]$_.Id }) + $ruleList
+        $customList = @($previous.CustomPaths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) -and $customList -notcontains [string]$_ }) + $customList
+    }
     $manifest = [PSCustomObject]@{
         Created      = (Get-Date).ToString('o')
         BackupRoot   = $BackupRoot
@@ -1112,7 +1145,7 @@ function Start-WinEaseMigrationBackup {
         Folders      = $folderList
         Rules        = $ruleList
         RuleErrors   = $ruleErrors
-        CustomPaths  = @($customExpanded)
+        CustomPaths  = @($customList)
         UserData     = $ud
         RulesResult  = $rb
         CustomResult = $cp

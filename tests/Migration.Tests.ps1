@@ -168,6 +168,25 @@ Describe "Migration engine S3 (tools/migrator/WinEaseMigration.ps1)" -Tags 'slow
         $html | Should Match '&lt;script&gt;'
     }
 
+    It "A second backup into the same root keeps the folders the first one recorded" {
+        $docs = Join-Path $TestDrive 'merge\Docs'
+        $pics = Join-Path $TestDrive 'merge\Pics'
+        $bk = Join-Path $TestDrive 'bk-merge'
+        New-Item -ItemType Directory -Force -Path $docs, $pics | Out-Null
+        Set-Content (Join-Path $docs 'a.txt') 'a'
+        Set-Content (Join-Path $pics 'p.txt') 'p'
+        Start-WinEaseMigrationBackup -FolderMap @{ 'Documents' = $docs } -BackupRoot $bk -OfflineTestMode | Out-Null
+        Start-WinEaseMigrationBackup -FolderMap @{ 'Pictures' = $pics } -BackupRoot $bk -OfflineTestMode | Out-Null
+        $mf = Get-Content (Join-Path $bk 'migration-manifest.json') -Raw | ConvertFrom-Json
+        @($mf.Folders | ForEach-Object { $_.Category } | Sort-Object) -join ',' | Should Be 'Documents,Pictures'
+        @($mf.Entries).Count | Should Be 2
+        # Backing up the same folder again replaces its entries instead of duplicating them
+        Start-WinEaseMigrationBackup -FolderMap @{ 'Documents' = $docs } -BackupRoot $bk -OfflineTestMode | Out-Null
+        $mf = Get-Content (Join-Path $bk 'migration-manifest.json') -Raw | ConvertFrom-Json
+        @($mf.Folders).Count | Should Be 2
+        @($mf.Entries).Count | Should Be 2
+    }
+
     It "Backup-WinEaseUserData and Backup-WinEaseCustomPaths reject a BackupRoot inside the source" {
         $src = Join-Path $TestDrive 'guard\Docs'
         New-Item -ItemType Directory -Force -Path $src | Out-Null
