@@ -739,14 +739,28 @@ function Invoke-WinEaseRegExe {
         [string[]]$ArgumentList,
         [string]$KeyForError = ''
     )
-    $prevEap = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
+    $exit = -1
+    $stderrText = ''
     try {
-        $output = & reg.exe @ArgumentList 2>&1
-        $exit = $LASTEXITCODE
-        $stderrText = (@($output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$($_.Exception.Message)" }) -join ' ').Trim()
-    } finally {
-        $ErrorActionPreference = $prevEap
+        $regPath = "reg.exe"
+        if (Test-Path "C:\Windows\System32\reg.exe") { $regPath = "C:\Windows\System32\reg.exe" }
+        $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+        $pinfo.FileName = $regPath
+        $pinfo.Arguments = ($ArgumentList | ForEach-Object { if ($_ -match '\s') { "`"$_`"" } else { $_ } }) -join ' '
+        $pinfo.UseShellExecute = $false
+        $pinfo.RedirectStandardOutput = $true
+        $pinfo.RedirectStandardError = $true
+        $pinfo.CreateNoWindow = $true
+        $p = [System.Diagnostics.Process]::Start($pinfo)
+        $stdout = $p.StandardOutput.ReadToEnd()
+        $stderr = $p.StandardError.ReadToEnd()
+        $p.WaitForExit()
+        $exit = $p.ExitCode
+        $stderrText = if ($stderr) { $stderr.Trim() } else { $stdout.Trim() }
+    } catch {
+        if ($KeyForError) { throw "reg.exe $($ArgumentList[0]) failed for '$KeyForError': $($_.Exception.Message)" }
+        Write-Verbose "reg.exe $($ArgumentList[0]) failed: $($_.Exception.Message)"
+        return $false
     }
     if ($exit -ne 0) {
         if ($KeyForError) { throw "reg.exe $($ArgumentList[0]) failed for '$KeyForError' (exit $exit): $stderrText" }
