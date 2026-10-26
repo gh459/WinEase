@@ -37,6 +37,7 @@ REQUIRED = [
     "autounattend.xml",
     "README.md",
     "LICENSE",
+    "NOTICE",
     "CHANGELOG.md",
     "config/schema.psd1",
     "config/presets.psd1",
