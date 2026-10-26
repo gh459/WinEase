@@ -528,10 +528,9 @@ $scripts = @(
 		# into the default user hive; this confirms what the running user actually sees.
 		try {
 			$uiStatusPath = "C:\ProgramData\WinEase\ui-status.txt";
-			$uiLines = @(
-				"WinEase UI status",
-				"Timestamp: " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-			);
+			$uiLines = [System.Collections.Generic.List[string]]::new();
+			$uiLines.Add("WinEase UI status");
+			$uiLines.Add("Timestamp: " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss"));
 			$uiChecks = @(
 				@{ Label = "MinAnimate"; Path = "HKCU:\Control Panel\Desktop\WindowMetrics"; Name = "MinAnimate"; Expected = "0" },
 				@{ Label = "DragFullWindows"; Path = "HKCU:\Control Panel\Desktop"; Name = "DragFullWindows"; Expected = "0" },
@@ -545,14 +544,14 @@ $scripts = @(
 				$actual = $null;
 				try { $actual = (Get-ItemProperty -LiteralPath $uiCheck.Path -Name $uiCheck.Name -ErrorAction SilentlyContinue).($uiCheck.Name) } catch { Write-Verbose "UI preference read failed: $($_.Exception.Message)" }
 				$state = if ("$actual" -eq "$($uiCheck.Expected)") { "OK" } else { "DIFF" };
-				$uiLines += ("{0}: {1} (expected {2}) [{3}]" -f $uiCheck.Label, $actual, $uiCheck.Expected, $state);
+				$uiLines.Add("{0}: {1} (expected {2}) [{3}]" -f $uiCheck.Label, $actual, $uiCheck.Expected, $state);
 			}
 			$noLock = $null;
 			try { $noLock = (Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" -Name "NoLockScreen" -ErrorAction SilentlyContinue).NoLockScreen } catch { Write-Verbose "Lock-screen policy read failed: $($_.Exception.Message)" }
-			$uiLines += ("NoLockScreen (policy): {0}" -f $noLock);
+			$uiLines.Add("NoLockScreen (policy): {0}" -f $noLock);
 			$photoCmd = $null;
 			try { $photoCmd = (Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Classes\PhotoViewer.FileAssoc.Jpeg\shell\open\command" -ErrorAction SilentlyContinue).'(default)' } catch { Write-Verbose "Photo Viewer registration read failed: $($_.Exception.Message)" }
-			$uiLines += ("Photo Viewer JPEG command: {0}" -f $(if ($photoCmd) { "present" } else { "absent" }));
+			$uiLines.Add("Photo Viewer JPEG command: {0}" -f $(if ($photoCmd) { "present" } else { "absent" }));
 			[System.IO.File]::WriteAllLines($uiStatusPath, $uiLines, [System.Text.Encoding]::UTF8);
 		} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 	};
