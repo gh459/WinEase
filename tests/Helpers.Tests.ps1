@@ -583,6 +583,10 @@ Describe "WinEase helpers - registry hive unmounting (Unmount-RegistryHiveWithRe
         . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
     }
 
+    AfterEach {
+        Remove-Item Function:\reg.exe -ErrorAction SilentlyContinue
+    }
+
     It "returns true immediately when hive is not mounted (reg query fails)" {
         $script:unloadCalled = $false
         function reg.exe {
@@ -1838,7 +1842,8 @@ Describe "WinEase helpers - split module layout (R2)" {
         # (Get-WinEaseDependencyStringDefaults/String/Field/View/Review, New-...Result, Format-...ItemLine).
         # G1 added ConvertTo-WinEaseRealPath and Test-WinEaseProtectedLexicalPath (path safety).
         # P1-01 added Test-WinEaseUnattendXmlStructure (unattend template safety).
-        $functions.Count | Should Be 59
+        # Refactored Test-WinEaseDependencies added 8 modular dependency helpers.
+        $functions.Count | Should Be 67
         $duplicates = @($functions | Group-Object Name | Where-Object Count -gt 1)
         $duplicates.Count | Should Be 0
         @($ast.FindAll({
