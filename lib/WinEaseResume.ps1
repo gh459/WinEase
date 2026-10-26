@@ -12,7 +12,6 @@
 # failure pattern without repeating a 15-minute debloat pipeline.
 # ============================================================================
 function Invoke-WinEaseResumeIsoBuild {
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', 'bootWimPath', Justification = 'Read by New-BuildContextFromScriptScope via dynamic scope')]
     [CmdletBinding()]
     param()
 
@@ -115,7 +114,7 @@ function Invoke-WinEaseResumeIsoBuild {
     $resumeBootInfo = & dism.exe /English /Get-WimInfo "/WimFile:$resumeBootWim"
     $resumeHasIndex2 = (($resumeBootInfo -split '\r?\n') -match 'Index\s*:\s*2')
     $resumeIndices = if ($resumeHasIndex2) { @(1, 2) } else { @(1) }
-    $bootWimPath = $resumeBootWim
+    $script:bootWimPath = $resumeBootWim
     foreach ($bIndex in $resumeIndices) {
         Write-Host "  - Applying bypasses to boot.wim Index $bIndex..." -ForegroundColor Cyan
         $bMountResult = Invoke-WinEaseImageMount -ImageFile $resumeBootWim -ImageIndex $bIndex -Retries 3
