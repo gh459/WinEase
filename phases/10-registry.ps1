@@ -341,7 +341,7 @@ foreach ($v in $uiPreferenceTweaks) {
     if (-not (Test-TweakEnabled $v.Tweak $false)) { continue }
     # An empty field would be dropped by the native call and reg.exe would read
     # the next switch as the value - the entry is skipped instead.
-    $emptyFields = @('Path', 'Name', 'Type', 'Data') | Where-Object { [string]::IsNullOrWhiteSpace([string]$v[$_]) }
+    $emptyFields = @('Path', 'Name', 'Type', 'Data').Where({ [string]::IsNullOrWhiteSpace([string]$v[$_]) })
     if ($emptyFields.Count -gt 0) {
         Write-Warning "Skipping the UI preference of '$($v.Tweak)': the field(s) $($emptyFields -join ', ') are empty."
         continue
