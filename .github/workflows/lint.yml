@@ -37,7 +37,9 @@ jobs:
           if (-not (Get-PSRepository -Name 'PSGallery' -ErrorAction SilentlyContinue)) {
             Register-PSRepository -Default -ErrorAction SilentlyContinue
           }
-          Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue
+          if (Get-PSRepository -Name 'PSGallery' -ErrorAction SilentlyContinue) {
+            Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue
+          }
           # Pin the analyzer version (review finding O-M1): installing "the newest" made
           # lint results depend on whatever PSGallery served that day and let a new rule
           # set appear without a code change. Bump this version deliberately, in its own
