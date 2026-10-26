@@ -583,6 +583,10 @@ Describe "WinEase helpers - registry hive unmounting (Unmount-RegistryHiveWithRe
         . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
     }
 
+    AfterEach {
+        Remove-Item Function:\reg.exe -ErrorAction SilentlyContinue
+    }
+
     It "returns true immediately when hive is not mounted (reg query fails)" {
         $script:unloadCalled = $false
         function reg.exe {
