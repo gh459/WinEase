@@ -1097,8 +1097,8 @@ function Apply-WinEaseProfileDebloat {
         if ($item -ne [string]$raw) { $legacyEngines[$item] = 'Rust' }
         $normExp.Add($item)
     }
-    $script:advancedDebloatStandard     = @($normStd | Where-Object { $_ } | Select-Object -Unique)
-    $script:advancedDebloatExperimental = @($normExp | Where-Object { $_ } | Select-Object -Unique)
+    $script:advancedDebloatStandard     = @($normStd.ToArray() | Where-Object { $_ } | Select-Object -Unique)
+    $script:advancedDebloatExperimental = @($normExp.ToArray() | Where-Object { $_ } | Select-Object -Unique)
 
     # Engine selection (PowerShell <-> Rust) per target
     $script:DebloatEngineSelection = [ordered]@{}
