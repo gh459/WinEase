@@ -473,12 +473,15 @@ Describe "Security options - the defaults and the execution paths agree" {
         $json.properties.RemoveAppxBloatware | Should Not BeNullOrEmpty
     }
 
-    It "the aggressive presets still ask for the aggressive security options" {
+    It "the aggressive presets still ask for the aggressive security options but never bundle auto-logon" {
         foreach ($key in @('extreme', 'fat32', 'handheld', 'audio')) {
             $preset = $script:SecPresets.Presets[$key]
             [bool]$preset['RemoveDefender'] | Should Be $true
             [bool]$preset['DisableWindowsUpdate'] | Should Be $true
-            [bool]$preset.TweakSettings['ConfigureWinlogon'] | Should Be $true
+            # ConfigureWinlogon is deliberately NOT bundled into presets any
+            # more (separated in the 2026-10-26 review remediation): enabling
+            # auto-logon must be an explicit opt-in, never a preset side effect.
+            [bool]$preset.TweakSettings['ConfigureWinlogon'] | Should Be $false
         }
     }
 
