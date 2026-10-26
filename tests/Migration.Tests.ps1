@@ -224,6 +224,7 @@ Describe "Migration rules backup/restore (tools/migrator/WinEaseMigration.ps1)" 
         $key = 'HKCU:\Software\WinEaseMigrationTest'
         New-Item -Path $key -Force | Out-Null
         Set-ItemProperty -Path $key -Name Probe -Value 'backup'
+        try { [Microsoft.Win32.Registry]::CurrentUser.Flush() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         $rules = [PSCustomObject]@{
             GameRules      = @()
             AppConfigRules = @(@{ Id = 'RegProbe'; Name = 'Registry probe'; Category = 'AppConfig'; RegistryPaths = @($key); SourcePaths = @(); ExcludePatterns = @(); ProcessNames = @(); ExcludeSecrets = $true })
@@ -238,10 +239,12 @@ Describe "Migration rules backup/restore (tools/migrator/WinEaseMigration.ps1)" 
         $regFile = Get-ChildItem -LiteralPath (Join-Path $bk 'rules\RegProbe') -Filter '*.reg' | Select-Object -First 1
         $regFile | Should Not BeNullOrEmpty
         Remove-Item $key -Recurse -Force
+        try { [Microsoft.Win32.Registry]::CurrentUser.Flush() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         $rr = Invoke-WinEaseMigrationRulesRestore -RuleIds @('RegProbe') -BackupRoot $bk -Rules $rules -ForceRunningProcess
         @($rr.FailedFiles).Count | Should Be 0
         (Get-ItemProperty -Path $key -Name Probe).Probe | Should Be 'backup'
         Remove-Item $key -Recurse -Force
+        try { [Microsoft.Win32.Registry]::CurrentUser.Flush() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
 
     It "restores every file of a multi-source rule to its own source location" {
