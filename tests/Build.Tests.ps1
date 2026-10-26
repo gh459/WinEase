@@ -475,7 +475,7 @@ Describe "WinEase builder - Enter-Phase progress tracking and checkpoints" {
             $script:CheckpointLog = [System.Collections.ArrayList]::new()
 
             function Save-WinEaseCheckpoint {
-                param([int]$CompletedPhase)
+                param([double]$CompletedPhase)
                 [void]$script:CheckpointLog.Add($CompletedPhase)
             }
 
@@ -569,7 +569,7 @@ Describe "WinEase builder - Enter-Phase progress tracking and checkpoints" {
             $script:CurrentPhase | Should Be 9.5
             Enter-Phase -PhaseNumber 10 -PhaseName "Registry" -Step 11
             $script:PhaseTimings.Contains('Phase 9.5') | Should Be $true
-            $script:CheckpointLog[-1] | Should Be 9
+            $script:CheckpointLog[-1] | Should Be 9.5
         }
     }
 }
