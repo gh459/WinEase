@@ -106,6 +106,12 @@ jobs:
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
+          # Passed through the environment instead of being expanded into the
+          # script text: template expansion inside a run: block is code
+          # injection if a value is ever attacker-controllable (zizmor).
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
         shell: bash
         run: |
           set -u
@@ -125,7 +131,7 @@ jobs:
 
           # (a) Local checkout: committed diff against the default branch, plus anything
           # left uncommitted in the working tree.
-          base="origin/${{ github.event.repository.default_branch }}"
+          base="origin/${DEFAULT_BRANCH}"
           # Note: the checker is fed with process substitution, not a pipe, so the
           # fail flag it sets is not lost in a subshell.
           if git rev-parse --verify --quiet "$base" >/dev/null; then
@@ -138,7 +144,7 @@ jobs:
           # (b) Pull requests the agent opened during this run (head branch claude/*,
           # created at or after the workflow run started). The agent delivers through a
           # draft PR, so this is where its changes actually land.
-          run_started="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" --jq .created_at 2>/dev/null || true)"
+          run_started="$(gh api "repos/${REPO}/actions/runs/${RUN_ID}" --jq .created_at 2>/dev/null || true)"
           if [ -n "$run_started" ]; then
             while read -r pr_number pr_created pr_head; do
               [ -n "$pr_number" ] || continue
