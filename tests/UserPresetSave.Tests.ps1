@@ -77,6 +77,62 @@ function New-PresetDraft {
     return $draft
 }
 
+Describe "Get-WinEaseGuiUserPresetFilePath" {
+    It "resolves file path given an explicit RepoRoot and Name" {
+        $repo = Join-Path $TestDrive 'TestRepo'
+        $expected = Join-Path (Join-Path (Join-Path $repo 'config') 'user') (Join-Path 'presets' 'my preset.psd1')
+        $path = Get-WinEaseGuiUserPresetFilePath -RepoRoot $repo -Name 'My Preset'
+        $path | Should Be $expected
+    }
+
+    It "normalizes preset names by trimming whitespace and lowercasing" {
+        $repo = Join-Path $TestDrive 'TestRepo'
+        $expected = Join-Path (Join-Path (Join-Path $repo 'config') 'user') (Join-Path 'presets' 'gaming-preset_01.psd1')
+        $path = Get-WinEaseGuiUserPresetFilePath -RepoRoot $repo -Name '  Gaming-Preset_01  '
+        $path | Should Be $expected
+    }
+
+    It "handles non-ASCII and Unicode preset names such as Japanese" {
+        $repo = Join-Path $TestDrive 'TestRepo'
+        $expected = Join-Path (Join-Path (Join-Path $repo 'config') 'user') (Join-Path 'presets' 'プリセット alpha.psd1')
+        $path = Get-WinEaseGuiUserPresetFilePath -RepoRoot $repo -Name '  プリセット Alpha  '
+        $path | Should Be $expected
+    }
+
+    It "falls back to `$script:WinEaseGuiRepoRoot when RepoRoot parameter is omitted or empty" {
+        $orig = $script:WinEaseGuiRepoRoot
+        try {
+            $repo = Join-Path $TestDrive 'ScriptRepo'
+            $script:WinEaseGuiRepoRoot = $repo
+            $expected = Join-Path (Join-Path (Join-Path $repo 'config') 'user') (Join-Path 'presets' 'testpreset.psd1')
+            $path = Get-WinEaseGuiUserPresetFilePath -Name 'TestPreset'
+            $path | Should Be $expected
+
+            $pathEmpty = Get-WinEaseGuiUserPresetFilePath -RepoRoot '' -Name 'TestPreset'
+            $pathEmpty | Should Be $expected
+        } finally {
+            $script:WinEaseGuiRepoRoot = $orig
+        }
+    }
+
+    It "falls back to Get-Location path when both RepoRoot parameter and `$script:WinEaseGuiRepoRoot are empty" {
+        $orig = $script:WinEaseGuiRepoRoot
+        try {
+            $script:WinEaseGuiRepoRoot = ''
+            $loc = (Get-Location).Path
+            $expected = Join-Path (Join-Path (Join-Path $loc 'config') 'user') (Join-Path 'presets' 'testpreset.psd1')
+            $path = Get-WinEaseGuiUserPresetFilePath -Name 'TestPreset'
+            $path | Should Be $expected
+        } finally {
+            $script:WinEaseGuiRepoRoot = $orig
+        }
+    }
+
+    It "throws parameter binding exception when mandatory Name is omitted" {
+        { Get-WinEaseGuiUserPresetFilePath -RepoRoot (Join-Path $TestDrive 'TestRepo') } | Should Throw
+    }
+}
+
 Describe "Test-WinEaseGuiUserPresetName" {
     It "accepts letters, digits, spaces, '-' and '_' (Japanese included), up to 40 characters" {
         Test-WinEaseGuiUserPresetName -Name 'abc-DEF 123' | Should Be $true
@@ -165,8 +221,8 @@ Describe "Save-WinEaseGuiUserPreset" {
         $text | Should Not Match 'Sup3rSecret'
         $text | Should Not Match 'SourceDrive'
         $text | Should Not Match 'WorkDir'
-        $text | Should Not Match [regex]::Escape('E:')
-        $text | Should Not Match [regex]::Escape((Join-Path 'C:' 'some'))
+        $text | Should Not Match "'E:'"
+        $text | Should Not Match 'some\\workdir'
     }
 
     It "refuses built-in preset names and the reserved names" {
