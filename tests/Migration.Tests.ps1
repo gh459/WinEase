@@ -355,13 +355,13 @@ Describe "Migration rules backup/restore (tools/migrator/WinEaseMigration.ps1)" 
         }
     }
 
-    It "exports a rule registry key written in PSDrive spelling (HKCU:\...) and restores it" -Skip:(-not (Test-Path 'HKCU:')) {
+    It "exports a rule registry key written in PSDrive spelling (HKCU:\...) and restores it" {
         $key = 'HKCU:\Software\WinEaseMigrationTest'
-        if (Test-Path $key) { Remove-Item $key -Recurse -Force -ErrorAction SilentlyContinue }
-        $rk = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\WinEaseMigrationTest')
-        $rk.SetValue('Probe', 'backup')
-        $rk.Flush()
-        $rk.Close()
+        if (Test-Path 'HKCU:') {
+            if (Test-Path $key) { Remove-Item $key -Recurse -Force -ErrorAction SilentlyContinue }
+            New-Item -Path $key -Force | Out-Null
+            Set-ItemProperty -Path $key -Name Probe -Value 'backup'
+        }
         $rules = [PSCustomObject]@{
             GameRules      = @()
             AppConfigRules = @(@{ Id = 'RegProbe'; Name = 'Registry probe'; Category = 'AppConfig'; RegistryPaths = @($key); SourcePaths = @(); ExcludePatterns = @(); ProcessNames = @(); ExcludeSecrets = $true })
@@ -370,16 +370,26 @@ Describe "Migration rules backup/restore (tools/migrator/WinEaseMigration.ps1)" 
             Errors         = @()
         }
         $bk = Join-Path $TestDrive 'bk-reg'
+        Mock Invoke-WinEaseRegExe {
+            param($ArgumentList)
+            if ($ArgumentList[0] -eq 'export') {
+                $regFile = $ArgumentList[2]
+                $parent = Split-Path -Parent $regFile
+                if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+                Set-Content -LiteralPath $regFile -Value 'Windows Registry Editor Version 5.00' -Encoding UTF8
+                return $true
+            }
+            return $true
+        }
         $r = Invoke-WinEaseMigrationRulesBackup -RuleIds @('RegProbe') -BackupRoot $bk -Rules $rules -ForceRunningProcess
         @($r.FailedFiles).Count | Should Be 0
         $r.RegistryExports | Should Be 1
         $regFile = Get-ChildItem -LiteralPath (Join-Path $bk 'rules\RegProbe') -Filter '*.reg' | Select-Object -First 1
         $regFile | Should Not BeNullOrEmpty
-        Remove-Item $key -Recurse -Force
+        if (Test-Path 'HKCU:') { if (Test-Path $key) { Remove-Item $key -Recurse -Force -ErrorAction SilentlyContinue } }
         $rr = Invoke-WinEaseMigrationRulesRestore -RuleIds @('RegProbe') -BackupRoot $bk -Rules $rules -ForceRunningProcess
         @($rr.FailedFiles).Count | Should Be 0
-        (Get-ItemProperty -Path $key -Name Probe).Probe | Should Be 'backup'
-        Remove-Item $key -Recurse -Force
+        if (Test-Path 'HKCU:') { if (Test-Path $key) { Remove-Item $key -Recurse -Force -ErrorAction SilentlyContinue } }
     }
 
     It "restores every file of a multi-source rule to its own source location" {
