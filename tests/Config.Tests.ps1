@@ -2032,10 +2032,19 @@ Describe "WinEase builder - Apply-WinEaseProfileComponents edge cases" {
         . ([scriptblock]::Create($fnGetValStr))
         . ([scriptblock]::Create($fnApplyCompStr))
 
+        $script:SavedComponentDefs = $script:ComponentDefs
         $schema = Import-PowerShellDataFile -Path $schemaPath
         $script:ComponentDefs = [ordered]@{}
         foreach ($cd in $schema.Components) {
             $script:ComponentDefs[$cd.Key] = $cd
+        }
+
+        $script:SavedComponentVars = @{}
+        foreach ($cd in $script:ComponentDefs.Values) {
+            if ($cd.Variable) {
+                $v = Get-Variable -Name $cd.Variable -Scope Script -ErrorAction SilentlyContinue
+                if ($v) { $script:SavedComponentVars[$cd.Variable] = $v.Value }
+            }
         }
     }
 
@@ -2046,6 +2055,21 @@ Describe "WinEase builder - Apply-WinEaseProfileComponents edge cases" {
                 Set-Variable -Name $cd.Variable -Scope Script -Value $null
             }
         }
+    }
+
+    AfterAll {
+        if ($script:ComponentDefs) {
+            foreach ($cd in $script:ComponentDefs.Values) {
+                if ($cd.Variable) {
+                    if ($script:SavedComponentVars.ContainsKey($cd.Variable)) {
+                        Set-Variable -Name $cd.Variable -Scope Script -Value $script:SavedComponentVars[$cd.Variable]
+                    } else {
+                        Remove-Variable -Name $cd.Variable -Scope Script -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+        }
+        $script:ComponentDefs = $script:SavedComponentDefs
     }
 
     It "handles null or empty TargetPreset by applying base defaults" {
