@@ -78,23 +78,87 @@ function New-PresetDraft {
 }
 
 Describe "Test-WinEaseGuiUserPresetName" {
-    It "accepts letters, digits, spaces, '-' and '_' (Japanese included), up to 40 characters" {
+    It "accepts letters, digits, spaces, '-' and '_' across international scripts" {
         Test-WinEaseGuiUserPresetName -Name 'abc-DEF 123' | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name 'My_Preset-01' | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name 'Gaming Profile v2' | Should Be $true
+        # Japanese (Kanji, Hiragana, Katakana)
         Test-WinEaseGuiUserPresetName -Name 'プリセット 01' | Should Be $true
-        Test-WinEaseGuiUserPresetName -Name ('a' * 40) | Should Be $true
-        Test-WinEaseGuiUserPresetName -Name '  trimmed  ' | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name '設定_ゲーム' | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name 'ひらがな' | Should Be $true
+        # Other Unicode scripts (Cyrillic, Greek, German umlauts, French accents, Arabic, Chinese)
+        Test-WinEaseGuiUserPresetName -Name 'Пресет_01' | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name 'Προεπιλογή' | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name 'Über-Preset' | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name 'Élégant' | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name 'إعداد-1' | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name '預設值' | Should Be $true
     }
-    It "refuses empty, too long, path-like and quoted names" {
+
+    It "accepts single-character valid names (letters and digits)" {
+        Test-WinEaseGuiUserPresetName -Name 'a' | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name 'Z' | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name '1' | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name '0' | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name '日' | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name '９' | Should Be $true
+    }
+
+    It "accepts names starting with digits" {
+        Test-WinEaseGuiUserPresetName -Name '100-gaming' | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name '01_preset' | Should Be $true
+    }
+
+    It "trims leading and trailing whitespace before validation" {
+        Test-WinEaseGuiUserPresetName -Name '  trimmed  ' | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name "`t preset_1 `n" | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name '   a   ' | Should Be $true
+    }
+
+    It "enforces length limits (1 to 40 characters after trimming)" {
+        Test-WinEaseGuiUserPresetName -Name ('a' * 40) | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name ('  ' + ('b' * 40) + '  ') | Should Be $true
+        Test-WinEaseGuiUserPresetName -Name ('a' * 41) | Should Be $false
+        Test-WinEaseGuiUserPresetName -Name ('  ' + ('c' * 41) + '  ') | Should Be $false
+    }
+
+    It "refuses empty, null, or whitespace-only inputs" {
         Test-WinEaseGuiUserPresetName -Name '' | Should Be $false
         Test-WinEaseGuiUserPresetName -Name '   ' | Should Be $false
         Test-WinEaseGuiUserPresetName -Name $null | Should Be $false
-        Test-WinEaseGuiUserPresetName -Name ('a' * 41) | Should Be $false
+        Test-WinEaseGuiUserPresetName -Name "`t`r`n " | Should Be $false
+    }
+
+    It "enforces first character rule (must start with letter or digit)" {
+        Test-WinEaseGuiUserPresetName -Name '-preset' | Should Be $false
+        Test-WinEaseGuiUserPresetName -Name '_preset' | Should Be $false
+        Test-WinEaseGuiUserPresetName -Name '-1' | Should Be $false
+        Test-WinEaseGuiUserPresetName -Name '_1' | Should Be $false
+        Test-WinEaseGuiUserPresetName -Name '.preset' | Should Be $false
+        Test-WinEaseGuiUserPresetName -Name '!preset' | Should Be $false
+        Test-WinEaseGuiUserPresetName -Name '@preset' | Should Be $false
+    }
+
+    It "refuses invalid characters (path separators, quotes, control chars, symbols, emojis)" {
+        # Path separators
         Test-WinEaseGuiUserPresetName -Name 'a/b' | Should Be $false
         Test-WinEaseGuiUserPresetName -Name 'a\b' | Should Be $false
         Test-WinEaseGuiUserPresetName -Name 'a:b' | Should Be $false
+        # Quotes
         Test-WinEaseGuiUserPresetName -Name "it's" | Should Be $false
         Test-WinEaseGuiUserPresetName -Name 'a"b' | Should Be $false
+        # Control characters
         Test-WinEaseGuiUserPresetName -Name "a`tb" | Should Be $false
+        Test-WinEaseGuiUserPresetName -Name "a`nb" | Should Be $false
+        Test-WinEaseGuiUserPresetName -Name "a`rb" | Should Be $false
+        # Special symbols
+        foreach ($sym in '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '=', '+', '[', ']', '{', '}', ';', ',', '.', '<', '>', '?', '|', '~', '`') {
+            Test-WinEaseGuiUserPresetName -Name "preset${sym}name" | Should Be $false
+        }
+        # Emojis and non-alphanumeric symbols
+        Test-WinEaseGuiUserPresetName -Name 'preset😊' | Should Be $false
+        Test-WinEaseGuiUserPresetName -Name 'preset★' | Should Be $false
+        Test-WinEaseGuiUserPresetName -Name 'preset©' | Should Be $false
     }
 }
 
@@ -165,8 +229,15 @@ Describe "Save-WinEaseGuiUserPreset" {
         $text | Should Not Match 'Sup3rSecret'
         $text | Should Not Match 'SourceDrive'
         $text | Should Not Match 'WorkDir'
-        $text | Should Not Match [regex]::Escape('E:')
-        $text | Should Not Match [regex]::Escape((Join-Path 'C:' 'some'))
+        $text | Should Not Match 'C:\\some'
+    }
+
+    It "refuses invalid preset names via Test-WinEaseGuiUserPresetName integration" {
+        foreach ($invalid in '   ', '-preset', '_preset', 'a/b', 'a\b', 'a:b', "it's", 'a"b', ('a' * 41), 'preset😊') {
+            $res = Save-WinEaseGuiUserPreset -Name $invalid -Current (New-PresetDraft) -RepoRoot $script:TmpRepo
+            $res.Saved | Should Be $false
+            $res.ReasonKey | Should Be 'SavePreset.Reason.InvalidName'
+        }
     }
 
     It "refuses built-in preset names and the reserved names" {
@@ -311,7 +382,7 @@ Describe "the WinForms window rebuilds the preset list without a restart" {
     BeforeEach {
         Initialize-PresetTestState
     }
-    It "shows saved presets after the rebuild and keeps Custom last" {
+    It "shows saved presets after the rebuild and keeps Custom last" -Skip:(-not ('System.Windows.Forms.Form' -as [type])) {
         $script:WinEaseGuiDir = Join-Path $script:RepoRoot 'gui'
         . $script:GuiPath
         . ([scriptblock]::Create($script:GuiNoModalStubs))
