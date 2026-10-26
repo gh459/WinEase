@@ -1893,3 +1893,148 @@ Describe "WinEase helpers - split module layout (R2)" {
         }, $true)).Count | Should Be 0
     }
 }
+
+Describe "WinEase WIM - Get-WinEaseWimFileFingerprint" {
+    BeforeAll {
+        . (Join-Path $script:RepoRoot "lib\WinEaseWim.ps1")
+        if (-not (Get-Command -Name Get-AuthenticodeSignature -ErrorAction SilentlyContinue)) {
+            function global:Get-AuthenticodeSignature {
+                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+                param($FilePath, [switch]$ErrorAction)
+                return $null
+            }
+        }
+        if (-not (Get-Command -Name cmd.exe -ErrorAction SilentlyContinue)) {
+            function global:cmd.exe {
+                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+                param([Parameter(ValueFromRemainingArguments=$true)][string[]]$cmdArgs)
+                if ($cmdArgs -and $cmdArgs.Count -ge 3 -and $cmdArgs[0] -eq '/c' -and $cmdArgs[1] -eq 'rd /s /q') {
+                    $dirPath = $cmdArgs[2].Trim('"')
+                    if (Test-Path -LiteralPath $dirPath) {
+                        Remove-Item -LiteralPath $dirPath -Recurse -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+        }
+    }
+
+    It "returns null when Export-WinEaseWimFile fails to extract the image file" {
+        $tempWork = Join-Path ([System.IO.Path]::GetTempPath()) ("wim_fp_fail_" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempWork -Force | Out-Null
+        try {
+            Mock Export-WinEaseWimFile { return $false }
+            $res = Get-WinEaseWimFileFingerprint -WimPath "C:\test.wim" -Index 1 -ImagePath "Windows\System32\cmd.exe" -WorkDir $tempWork
+            $res | Should Be $null
+        } finally {
+            Remove-Item -LiteralPath $tempWork -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "returns fingerprint object with StableRead = true on matching dual reads" {
+        $tempWork = Join-Path ([System.IO.Path]::GetTempPath()) ("wim_fp_pass_" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempWork -Force | Out-Null
+        try {
+            Mock Export-WinEaseWimFile {
+                param($Destination)
+                $parent = Split-Path -Path $Destination -Parent
+                if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+                [System.IO.File]::WriteAllText($Destination, "stable_content")
+                return $true
+            }
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{ Status = 'Valid' }
+            }
+
+            $res = Get-WinEaseWimFileFingerprint -WimPath "C:\test.wim" -Index 1 -ImagePath "Windows\System32\cmd.exe" -WorkDir $tempWork
+            $res | Should Not Be $null
+            $res.StableRead | Should Be $true
+            $res.Sha1 | Should Not BeNullOrEmpty
+            $res.Signature | Should Be 'Valid'
+            $res.File | Should Be $null
+            $res.RunDir | Should Not BeNullOrEmpty
+        } finally {
+            Remove-Item -LiteralPath $tempWork -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "returns StableRead = false when hashes differ between consecutive reads" {
+        $tempWork = Join-Path ([System.IO.Path]::GetTempPath()) ("wim_fp_unstable_" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempWork -Force | Out-Null
+        try {
+            Mock Export-WinEaseWimFile {
+                param($Destination)
+                $parent = Split-Path -Path $Destination -Parent
+                if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+                [System.IO.File]::WriteAllText($Destination, "content")
+                return $true
+            }
+            $hashCount = 0
+            Mock Get-FileHash {
+                $script:hashCount++
+                if ($script:hashCount -eq 1) {
+                    return [PSCustomObject]@{ Hash = 'ABC123HASH1' }
+                } else {
+                    return [PSCustomObject]@{ Hash = 'DEF456HASH2' }
+                }
+            }
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{ Status = 'Valid' }
+            }
+
+            $res = Get-WinEaseWimFileFingerprint -WimPath "C:\test.wim" -Index 1 -ImagePath "Windows\System32\cmd.exe" -WorkDir $tempWork
+            $res | Should Not Be $null
+            $res.Sha1 | Should Be 'ABC123HASH1'
+            $res.StableRead | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $tempWork -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "returns kept file path when KeepFile switch is specified" {
+        $tempWork = Join-Path ([System.IO.Path]::GetTempPath()) ("wim_fp_keep_" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempWork -Force | Out-Null
+        try {
+            Mock Export-WinEaseWimFile {
+                param($Destination)
+                $parent = Split-Path -Path $Destination -Parent
+                if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+                [System.IO.File]::WriteAllText($Destination, "content_to_keep")
+                return $true
+            }
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{ Status = 'Valid' }
+            }
+
+            $res = Get-WinEaseWimFileFingerprint -WimPath "C:\test.wim" -Index 1 -ImagePath "Windows\System32\cmd.exe" -WorkDir $tempWork -KeepFile
+            $res | Should Not Be $null
+            $res.File | Should Not BeNullOrEmpty
+            (Test-Path -LiteralPath $res.File) | Should Be $true
+            $res.File | Should Match 'read1[/\\]cmd\.exe$'
+        } finally {
+            Remove-Item -LiteralPath $tempWork -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "falls back to Signature = Unknown when Get-AuthenticodeSignature throws an exception" {
+        $tempWork = Join-Path ([System.IO.Path]::GetTempPath()) ("wim_fp_sigerr_" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempWork -Force | Out-Null
+        try {
+            Mock Export-WinEaseWimFile {
+                param($Destination)
+                $parent = Split-Path -Path $Destination -Parent
+                if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+                [System.IO.File]::WriteAllText($Destination, "content")
+                return $true
+            }
+            Mock Get-AuthenticodeSignature {
+                throw "Authenticode signature error"
+            }
+
+            $res = Get-WinEaseWimFileFingerprint -WimPath "C:\test.wim" -Index 1 -ImagePath "Windows\System32\cmd.exe" -WorkDir $tempWork
+            $res | Should Not Be $null
+            $res.Signature | Should Be 'Unknown'
+        } finally {
+            Remove-Item -LiteralPath $tempWork -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
