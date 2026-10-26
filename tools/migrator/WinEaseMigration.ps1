@@ -877,8 +877,10 @@ function Invoke-WinEaseMigrationRulesBackup {
                 $regName = ($regKey -replace '[\\/:*?"<>|\s]', '_')
                 if (-not $regName) { $regName = 'registry' }
                 $regFile = Join-Path -Path $ruleBackupDir -ChildPath ($regName + '.reg')
+                $regFileArg = try { (Resolve-Path -LiteralPath (Split-Path -Parent $regFile) -ErrorAction SilentlyContinue).ProviderPath } catch { $null }
+                if ($regFileArg) { $regFileArg = Join-Path -Path $regFileArg -ChildPath (Split-Path -Leaf $regFile) } else { $regFileArg = $regFile }
                 try {
-                    $exportOk = Invoke-WinEaseRegExe -ArgumentList @('export', $regKey, $regFile, '/y')
+                    $exportOk = Invoke-WinEaseRegExe -ArgumentList @('export', $regKey, $regFileArg, '/y')
                     if (-not $exportOk -or -not (Test-Path -LiteralPath $regFile)) {
                         $failed += [PSCustomObject]@{ Rule = $rid; Path = [string]$rp; Error = "Registry export failed for '$regKey' (reg.exe exit code $($LASTEXITCODE))" }
                     } else {
@@ -973,7 +975,9 @@ function Invoke-WinEaseMigrationRulesRestore {
         # Registry restore: every *.reg file the backup wrote (one per key)
         $regFiles = @(Get-ChildItem -LiteralPath $ruleBackupDir -Filter '*.reg' -File -ErrorAction SilentlyContinue)
         foreach ($reg in $regFiles) {
-            if (Invoke-WinEaseRegExe -ArgumentList @('import', $reg.FullName)) { $restored++ }
+            $regPathArg = try { (Resolve-Path -LiteralPath $reg.FullName -ErrorAction SilentlyContinue).ProviderPath } catch { $null }
+            if (-not $regPathArg) { $regPathArg = $reg.FullName }
+            if (Invoke-WinEaseRegExe -ArgumentList @('import', $regPathArg)) { $restored++ }
             else { $failed += [PSCustomObject]@{ Rule = $rid; Path = $reg.Name; Error = "Registry import failed (reg.exe exit code $($LASTEXITCODE))" } }
         }
 
