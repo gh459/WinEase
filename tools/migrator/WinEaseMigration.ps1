@@ -873,12 +873,16 @@ function Invoke-WinEaseMigrationRulesBackup {
         # silently producing a rule with no backup.
         if ($rule.RegistryPaths) {
             foreach ($rp in $rule.RegistryPaths) {
-                $regKey = ([string]$rp).Trim() -replace '^([A-Za-z0-9]+):', '$1'
+                $regKey = ([string]$rp).Trim() -replace '^([A-Za-z0-9_]+):\\?', '$1\'
+                $regKey = ($regKey -replace '/', '\').TrimEnd('\')
                 $regName = ($regKey -replace '[\\/:*?"<>|\s]', '_')
                 if (-not $regName) { $regName = 'registry' }
                 $regFile = Join-Path -Path $ruleBackupDir -ChildPath ($regName + '.reg')
+                $regFilePhys = if ($ExecutionContext.SessionState.Path) {
+                    $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($regFile)
+                } else { $regFile }
                 try {
-                    $exportOk = Invoke-WinEaseRegExe -ArgumentList @('export', $regKey, $regFile, '/y')
+                    $exportOk = Invoke-WinEaseRegExe -ArgumentList @('export', $regKey, $regFilePhys, '/y')
                     if (-not $exportOk -or -not (Test-Path -LiteralPath $regFile)) {
                         $failed += [PSCustomObject]@{ Rule = $rid; Path = [string]$rp; Error = "Registry export failed for '$regKey' (reg.exe exit code $($LASTEXITCODE))" }
                     } else {
@@ -973,7 +977,10 @@ function Invoke-WinEaseMigrationRulesRestore {
         # Registry restore: every *.reg file the backup wrote (one per key)
         $regFiles = @(Get-ChildItem -LiteralPath $ruleBackupDir -Filter '*.reg' -File -ErrorAction SilentlyContinue)
         foreach ($reg in $regFiles) {
-            if (Invoke-WinEaseRegExe -ArgumentList @('import', $reg.FullName)) { $restored++ }
+            $regPathPhys = if ($ExecutionContext.SessionState.Path) {
+                $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($reg.FullName)
+            } else { $reg.FullName }
+            if (Invoke-WinEaseRegExe -ArgumentList @('import', $regPathPhys)) { $restored++ }
             else { $failed += [PSCustomObject]@{ Rule = $rid; Path = $reg.Name; Error = "Registry import failed (reg.exe exit code $($LASTEXITCODE))" } }
         }
 
