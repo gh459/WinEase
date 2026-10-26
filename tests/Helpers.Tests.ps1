@@ -1289,13 +1289,35 @@ Describe "WinEase helpers - Test-CanSafelyDeleteVhdx" {
         }
     }
 
-    It "returns false when VhdxPath is null, empty, or whitespace" {
+    It "returns false when VhdxPath is null, empty, or whitespace across parameter combinations" {
         $savedBuildSucceeded = $script:BuildSucceeded
         try {
             $script:BuildSucceeded = $true
-            Test-CanSafelyDeleteVhdx -VhdxPath $null -VhdxDetached $true | Should Be $false
-            Test-CanSafelyDeleteVhdx -VhdxPath "" -VhdxDetached $true | Should Be $false
-            Test-CanSafelyDeleteVhdx -VhdxPath "   " -VhdxDetached $true | Should Be $false
+            $preserved = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            [void]$preserved.Add("C:\Workspace\disk.vhdx")
+
+            foreach ($p in @($null, "", "   ")) {
+                Test-CanSafelyDeleteVhdx -VhdxPath $p -VhdxDetached $true | Should Be $false
+                Test-CanSafelyDeleteVhdx -VhdxPath $p -VhdxDetached $false | Should Be $false
+                Test-CanSafelyDeleteVhdx -VhdxPath $p -VhdxDetached $true -ExpectedBaseDir "C:\Workspace" | Should Be $false
+                Test-CanSafelyDeleteVhdx -VhdxPath $p -VhdxDetached $true -ExpectedBaseDir "C:\Workspace" -PreservedDirs $preserved | Should Be $false
+            }
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns true when ExpectedBaseDir is null or empty" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { param($Path) return $Path }
+            Mock Test-IsPathPreserved { return $false }
+
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\disk.vhdx" -VhdxDetached $true -ExpectedBaseDir $null | Should Be $true
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\disk.vhdx" -VhdxDetached $true -ExpectedBaseDir "" | Should Be $true
         } finally {
             $script:BuildSucceeded = $savedBuildSucceeded
         }
