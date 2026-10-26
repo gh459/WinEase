@@ -65,7 +65,8 @@ jobs:
           # Load exactly the pinned version, so a different preinstalled copy on the
           # runner image is not picked up silently.
           Import-Module PSScriptAnalyzer -RequiredVersion $analyzerVersion -Force
-          $results = Invoke-ScriptAnalyzer -Path . -Recurse -Settings .\PSScriptAnalyzerSettings.psd1
+          $targets = @('WinEasebuilder.ps1', 'WinEasehelpers.ps1', 'lib', 'phases', 'scripts', 'tools', 'gui', 'tests', 'config')
+          $results = @(foreach ($t in $targets) { Invoke-ScriptAnalyzer -Path $t -Recurse -Settings .\PSScriptAnalyzerSettings.psd1 })
           $results | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize -Wrap
           foreach ($r in $results) {
             $level = if ($r.Severity -eq 'Error') { 'error' } else { 'warning' }
