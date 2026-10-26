@@ -169,6 +169,17 @@ $scripts = @(
 					$startDt = Get-Date;
 					$startStr = $startDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
 
+					# Fail closed (S-H2): custom scripts are present (this loop only runs
+					# for target files), but there is no usable integrity manifest, so
+					# nothing is executed.
+					if (-not $manifest) {
+						$endDt = Get-Date;
+						$endStr = $endDt.ToString("yyyy-MM-dd HH:mm:ss.fff");
+						Write-CustomScriptLog "[$idx/$($targetFiles.Count)] [SECURITY REFUSAL] Script: $scriptName | Path: $scriptPath | StartTime: $startStr | EndTime: $endStr | Reason: Integrity manifest is missing or unreadable. Execution blocked (fail-closed).";
+						$failCount++;
+						continue;
+					}
+
 					# Enforce SHA256 verification against build-time manifest
 					if ($manifest) {
 						$expectedHash = $manifest."$scriptName";

@@ -100,3 +100,26 @@ file and the Winlogon value). **Every ISO built before this change contains that
 password** in `autounattend.xml`, and a machine installed from such an ISO may still
 have it as the account password. Change it with `net user <name> <new password>`, treat
 those ISOs as non-shareable, and rebuild them.
+
+## Hardening applied (2026-10-26 review remediation)
+
+* **Custom scripts are fail-closed.** If custom scripts are present in
+  `C:\Windows\Setup\Scripts\Custom` (first logon) or `...\UserCustom` (per-user)
+  but the build-time integrity manifest `custom-scripts-manifest.json` is missing
+  or unreadable, **no** custom script is executed; each one is logged as
+  `[SECURITY REFUSAL]` instead. This applies to `scripts\FirstLogon.ps1`,
+  `scripts\UserOnce.ps1` and the copies embedded in `autounattend.xml`.
+* **Browser downloads are signature-checked.** `scripts\tools\Install-Browser.ps1`
+  verifies the Authenticode signature of every downloaded installer before
+  running it: the signature must be `Valid` and the signer must match the
+  expected publisher (Google, Mozilla, Brave, Microsoft; Floorp also accepts
+  its own publisher names). A file that fails is deleted and the install aborts.
+* **Presets no longer enable auto-logon.** The `extreme`, `fat32`, `handheld`
+  and `audio` presets no longer set `ConfigureWinlogon`. Because that option
+  embeds credentials in the ISO answer file in clear text, it must now be
+  opted into explicitly per build, never via a preset bundle.
+* **User tweaks are validated.** Registry actions from `user-tweaks.psd1` are
+  restricted to the plugin hive allowlist (`zSYSTEM`, `zSOFTWARE`, `zDEFAULT`,
+  `zNTUSER`, `zCOMPONENTS`), persistence-related paths (Run/RunOnce,
+  Image File Execution Options, Winlogon) are refused, and service names must
+  match a plain service-name pattern.
