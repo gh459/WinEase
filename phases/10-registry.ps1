@@ -1,6 +1,8 @@
 # Phase 10: Registry Hive Loading, Hardware Bypasses & Granular Tweaks
 # Dot-sourced by the main orchestrator (WinEasebuilder.ps1)
 
+if (-not $scratchDir -and $script:scratchDir) { $scratchDir = $script:scratchDir }
+
 Write-Host "Loading offline registry hives..." -ForegroundColor Cyan
 $systemHive    = "$scratchDir\Windows\System32\config\SYSTEM"
 $softwareHive  = "$scratchDir\Windows\System32\config\SOFTWARE"
@@ -741,7 +743,7 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
         "$scratchDir\Windows\SystemApps",
         "$scratchDir\ProgramData\Microsoft\Windows\AppRepository\Packages"
     )) {
-        if (Test-Path -LiteralPath $secGlobRoot) {
+        if ($scratchDir -and (Test-Path -LiteralPath $secGlobRoot)) {
             Get-ChildItem -LiteralPath $secGlobRoot -Force -ErrorAction SilentlyContinue |
                 Where-Object { $_.Name -match 'SecHealthUI' } |
                 ForEach-Object { [void](Remove-WinEaseTreeRobust -Path $_.FullName -SafetyRoot $scratchDir) }
@@ -767,7 +769,7 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
         "$scratchDir\Windows\System32\Tasks\Microsoft\Windows\SecurityCenter",
         "$scratchDir\Windows\System32\Tasks\Microsoft\Windows\Windows Security"
     )) {
-        if (Test-Path -LiteralPath $taskFolder) {
+        if ($scratchDir -and (Test-Path -LiteralPath $taskFolder)) {
             [void](Remove-WinEaseTreeRobust -Path $taskFolder -SafetyRoot $scratchDir)
         }
     }
