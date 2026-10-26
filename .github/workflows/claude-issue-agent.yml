@@ -106,6 +106,7 @@ jobs:
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         shell: bash
         run: |
           set -u
@@ -125,7 +126,7 @@ jobs:
 
           # (a) Local checkout: committed diff against the default branch, plus anything
           # left uncommitted in the working tree.
-          base="origin/${{ github.event.repository.default_branch }}"
+          base="origin/${DEFAULT_BRANCH}"
           # Note: the checker is fed with process substitution, not a pipe, so the
           # fail flag it sets is not lost in a subshell.
           if git rev-parse --verify --quiet "$base" >/dev/null; then
