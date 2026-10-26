@@ -231,7 +231,9 @@ Describe "Migration rules backup/restore (tools/migrator/WinEaseMigration.ps1)" 
             SecretPatterns = @()
             Errors         = @()
         }
-        $bk = Join-Path $TestDrive 'bk-reg'
+        $bkDir = Join-Path $TestDrive 'bk-reg'
+        New-Item -ItemType Directory -Force -Path $bkDir | Out-Null
+        $bk = (Get-Item -LiteralPath $bkDir).ProviderPath
         $r = Invoke-WinEaseMigrationRulesBackup -RuleIds @('RegProbe') -BackupRoot $bk -Rules $rules -ForceRunningProcess
         @($r.FailedFiles).Count | Should Be 0
         $r.RegistryExports | Should Be 1
