@@ -76,7 +76,7 @@ jobs:
           persist-credentials: false
 
       - name: Run Claude Code
-        uses: anthropics/claude-code-action@a5a423f75c251dcbff8a74e99f83b2cb03c72bfa # v1.0.256
+        uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # Assignment trigger for the issues event. Matches the if: condition above.
