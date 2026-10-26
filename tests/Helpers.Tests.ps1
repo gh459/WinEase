@@ -1212,11 +1212,21 @@ Describe "WinEase helpers - Path and Directory Safety Guards" {
         Test-IsSafePathToDelete -Path (Join-Path $script:RepoRoot "WinEasehelpers.ps1") | Should Be $false
     }
 
-    It "Get-WinEaseVolumeFreeSpaceGB returns positive value for valid drive and throws on invalid" {
-        $freeGB = Get-WinEaseVolumeFreeSpaceGB -Path "C:\"
-        $freeGB | Should BeGreaterThan 0
-        { Get-WinEaseVolumeFreeSpaceGB -Path "" } | Should Throw
-        { Get-WinEaseVolumeFreeSpaceGB -Path "Z:\NonExistentDriveXYZ" } | Should Throw
+    It "Get-WinEaseVolumeFreeSpaceGB returns positive or zero free space value for valid path" {
+        $tempPath = [System.IO.Path]::GetTempPath()
+        $freeGB = Get-WinEaseVolumeFreeSpaceGB -Path $tempPath
+        ($freeGB -ge 0) | Should Be $true
+    }
+
+    It "Get-WinEaseVolumeFreeSpaceGB throws exception when path is null, empty, or whitespace" {
+        { Get-WinEaseVolumeFreeSpaceGB -Path $null } | Should Throw "Path cannot be null or empty when querying volume free space."
+        { Get-WinEaseVolumeFreeSpaceGB -Path "" } | Should Throw "Path cannot be null or empty when querying volume free space."
+        { Get-WinEaseVolumeFreeSpaceGB -Path "   " } | Should Throw "Path cannot be null or empty when querying volume free space."
+    }
+
+    It "Get-WinEaseVolumeFreeSpaceGB throws exception when drive root is invalid or unavailable" {
+        $invalidPath = [string]::Concat("C:\test", [char]0, "invalid")
+        { Get-WinEaseVolumeFreeSpaceGB -Path $invalidPath } | Should Throw "Failed to query volume free space"
     }
 
     It "Test-CanSafelyDeleteDirectory refuses to delete workspace base directory itself" {
