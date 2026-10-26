@@ -297,6 +297,75 @@ Describe "WinEase builder - phase timing telemetry" {
         Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
     }
 
+    It "ignores non-numeric JSON properties when calculating Get-WinEaseLastRunTotalSeconds" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Get-WinEaseLastRunTotalSeconds'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $jsonPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_timings_edge1_" + [guid]::NewGuid().ToString('N').Substring(0, 8) + ".json")
+        '{ "Phase 1": 10.5, "Text": "invalid", "Flag": true, "Empty": null, "Phase 2": 20 }' | Set-Content -LiteralPath $jsonPath -Encoding utf8
+        $total = Get-WinEaseLastRunTotalSeconds -TimingsPath $jsonPath
+        ([math]::Round($total, 1)) | Should Be 30.5
+        Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
+    }
+
+    It "returns 0 for an empty JSON object in Get-WinEaseLastRunTotalSeconds" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Get-WinEaseLastRunTotalSeconds'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $jsonPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_timings_edge2_" + [guid]::NewGuid().ToString('N').Substring(0, 8) + ".json")
+        '{}' | Set-Content -LiteralPath $jsonPath -Encoding utf8
+        $total = Get-WinEaseLastRunTotalSeconds -TimingsPath $jsonPath
+        $total | Should Be 0
+        Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
+    }
+
+    It "correctly accumulates mixed numeric types in Get-WinEaseLastRunTotalSeconds" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Get-WinEaseLastRunTotalSeconds'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $jsonPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_timings_edge3_" + [guid]::NewGuid().ToString('N').Substring(0, 8) + ".json")
+        '{ "IntVal": 10, "FloatVal": 20.25, "LargeVal": 30.75 }' | Set-Content -LiteralPath $jsonPath -Encoding utf8
+        $total = Get-WinEaseLastRunTotalSeconds -TimingsPath $jsonPath
+        $total | Should Be 61.0
+        Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
+    }
+
+    It "throws an exception when Get-WinEaseLastRunTotalSeconds is called with a non-existent file path" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Get-WinEaseLastRunTotalSeconds'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $nonExistentPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_nonexistent_" + [guid]::NewGuid().ToString('N') + ".json")
+        { Get-WinEaseLastRunTotalSeconds -TimingsPath $nonExistentPath } | Should Throw
+    }
+
     It "writes diagnostic JSON and summary text report when Write-WinEaseDiagnosticReport is invoked" {
         $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
         $tokens = $null; $parseErrors = $null
