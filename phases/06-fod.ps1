@@ -13,11 +13,21 @@ if ($removeLegacyFOD) {
         'Microsoft.Windows.PowerShell.ISE~~~~0.0.1.0',
         'Media.WindowsMediaPlayer~~~~0.0.1.0'
     )
+    $legacyFailures = @()
     foreach ($cap in $legacyCaps) {
         & dism.exe /English "/image:$scratchDir" /Remove-Capability "/CapabilityName:$cap" > $null 2>&1
+        if ($LASTEXITCODE -notin @(0, 3010)) { $legacyFailures += "$cap (exit code $LASTEXITCODE)" }
     }
     & dism.exe /English "/image:$scratchDir" /Disable-Feature /Remove /FeatureName:SMB1Protocol > $null 2>&1
-    Write-Host "  - Legacy capabilities (VBScript, ISE, WMP, SMB1) removed." -ForegroundColor Green
+    if ($LASTEXITCODE -notin @(0, 3010)) { $legacyFailures += "SMB1Protocol (exit code $LASTEXITCODE)" }
+    # Best-effort (a capability may simply not be installed), but only claim
+    # success for the removals DISM actually completed (3010 = success,
+    # restart required); failures are warnings, not a green "removed" line.
+    if ($legacyFailures.Count -eq 0) {
+        Write-Host "  - Legacy capabilities (VBScript, ISE, WMP, SMB1) removed." -ForegroundColor Green
+    } else {
+        Write-Warning "  - Some legacy capability/feature removals did not succeed: $($legacyFailures -join ', '). They may not be present in this image."
+    }
 }
 # FoD / optional-feature package patterns, each bound to an individual option.
 # The polarity is uniform: the option is ON -> the package is removed, OFF -> the package
@@ -168,6 +178,9 @@ if ($keepAsianIME) {
 }
 
 $allPackagesOutput = & dism.exe /English "/image:$scratchDir" /Get-Packages /Format:Table
+if ($LASTEXITCODE -notin @(0, 3010)) {
+    throw "Phase 6: DISM /Get-Packages failed for the mounted image (exit code $LASTEXITCODE). Cannot scan the image packages for FoD removal."
+}
 $allPackages = ($allPackagesOutput -split '\r?\n') | Select-Object -Skip 1
 
 $packagesToRemove = [System.Collections.Generic.List[string]]::new()
@@ -209,6 +222,9 @@ if ($packagePatterns.Count -gt 0) {
 foreach ($packageIdentity in $packagesToRemove) {
     Write-Host "  - Removing package: $packageIdentity"
     & dism.exe /English "/image:$scratchDir" /Remove-Package "/PackageName:$packageIdentity" > $null 2>&1
+    if ($LASTEXITCODE -notin @(0, 3010)) {
+        Write-Warning "  - Failed to remove package '$packageIdentity' (exit code $LASTEXITCODE). Continuing with the remaining packages."
+    }
 }
 
 # The Advanced Debloat targets this phase owns (config\schema.psd1 -> DebloatEngines):
@@ -229,6 +245,9 @@ foreach ($pluginFod in @($pluginFodRemovals | Where-Object { $_.Kind -ne 'Packag
         & dism.exe /English "/image:$scratchDir" /Remove-Capability "/CapabilityName:$($pluginFod.Name)" > $null 2>&1
     } else {
         & dism.exe /English "/image:$scratchDir" /Disable-Feature "/FeatureName:$($pluginFod.Name)" /Remove > $null 2>&1
+    }
+    if ($LASTEXITCODE -notin @(0, 3010)) {
+        Write-Warning "  - Failed to remove $($pluginFod.Kind) '$($pluginFod.Name)' contributed by plugin $($pluginFod.PluginId) (exit code $LASTEXITCODE)."
     }
 }
 

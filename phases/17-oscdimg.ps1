@@ -66,29 +66,12 @@ try {
         }
     }
 
-    # If still not found (e.g. system DNS failed to resolve hostnames), try public DNS resolution fallback
-    if (-not $oscdimgExe) {
-        try {
-            Write-Host "  - Attempting public DNS fallback resolution (8.8.8.8)..." -ForegroundColor Gray
-            $dnsEntry = Resolve-DnsName -Name "raw.githubusercontent.com" -Server 8.8.8.8 -ErrorAction SilentlyContinue | Where-Object { $_.IP4Address } | Select-Object -First 1
-            if ($dnsEntry -and $dnsEntry.IP4Address) {
-                $tempOscdPath = Join-Path -Path $env:TEMP -ChildPath "oscdimg_dns_temp_$([System.IO.Path]::GetRandomFileName()).exe"
-                $wc = New-Object System.Net.WebClient
-                $wc.Headers.Add("Host", "raw.githubusercontent.com")
-                $wc.Headers.Add("User-Agent", "Mozilla/5.0")
-                $wc.DownloadFile("https://$($dnsEntry.IP4Address)/gh459/WinEase/main/oscdimg.exe", $tempOscdPath)
-                if ((Test-Path -LiteralPath $tempOscdPath) -and (Test-OscdimgIntegrity -OscdimgPath $tempOscdPath)) {
-                    Move-Item -LiteralPath $tempOscdPath -Destination $targetOscdPath -Force
-                    $oscdimgExe = $targetOscdPath
-                    Write-Host "  - oscdimg.exe downloaded and verified successfully via public DNS fallback!" -ForegroundColor Green
-                } else {
-                    if (Test-Path -LiteralPath $tempOscdPath) { Remove-Item -LiteralPath $tempOscdPath -Force -ErrorAction SilentlyContinue }
-                }
-            }
-        } catch {
-            Write-Host "  - Public DNS fallback download failed: $($_.Exception.Message)" -ForegroundColor Yellow
-        }
-    }
+    # NOTE: The former public-DNS fallback (resolving raw.githubusercontent.com
+    # via 8.8.8.8 and downloading from the raw IP with a Host header) was
+    # removed: unauthenticated DNS answers decided the download endpoint and
+    # the IP-literal HTTPS request could not validate the certificate against
+    # the hostname. If every mirror above fails, the build stops below; local
+    # candidates and mirror downloads remain gated by Test-OscdimgIntegrity.
 }
 
 if (-not $oscdimgExe) {

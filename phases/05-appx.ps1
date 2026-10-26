@@ -187,6 +187,27 @@ foreach ($package in $packagesToRemove) {
 # because the offline image is locked by DISM per call; parallel DISM on one image fails with lock errors.
 $folderCleanupScript = {
     param($folderPath, $scratchPath)
+    # This script block runs inside a worker runspace, where the builder's
+    # functions (Test-WinEasePathWithin etc.) are not available. Re-validate
+    # containment here anyway: the caller checked $folderPath once before
+    # queueing, but the worker must not delete a path that is not inside the
+    # scratch (mount) directory, whatever it was handed. The check mirrors
+    # Test-WinEasePathWithin: canonicalize both paths with GetFullPath, then
+    # require equality or a '\'-bounded prefix, case-insensitively.
+    $normalizedRoot = $null
+    $normalizedTarget = $null
+    try {
+        if (-not [string]::IsNullOrWhiteSpace($scratchPath)) {
+            $normalizedRoot = [System.IO.Path]::GetFullPath($scratchPath.Replace('/', '\')).TrimEnd('\', '/')
+        }
+        if (-not [string]::IsNullOrWhiteSpace($folderPath)) {
+            $normalizedTarget = [System.IO.Path]::GetFullPath($folderPath.Replace('/', '\')).TrimEnd('\', '/')
+        }
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    if (-not $normalizedRoot -or -not $normalizedTarget) { return $false }
+    $isWithinRoot = $normalizedTarget.Equals($normalizedRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $normalizedTarget.StartsWith($normalizedRoot + '\', [System.StringComparison]::OrdinalIgnoreCase)
+    if (-not $isWithinRoot) { return $false }
     if (Test-Path -LiteralPath $folderPath) {
         try {
             $rootItem = Get-Item -LiteralPath $folderPath -Force -ErrorAction SilentlyContinue
@@ -233,33 +254,38 @@ if ($parallelism -le 1 -or $folderPaths.Count -le 1) {
 } else {
     Write-Host "  [F7] Cleaning $($folderPaths.Count) WindowsApps folders with $parallelism parallel workers..." -ForegroundColor Cyan
     $runspacePool = [runspacefactory]::CreateRunspacePool(1, $parallelism)
-    $runspacePool.Open()
-    $jobs = [System.Collections.Generic.List[object]]::new()
-    foreach ($fp in $folderPaths) {
-        if (-not (Test-WinEasePathWithin -Path $fp -Root $scratchDir)) {
-            Write-Warning "  - Skipping parallel cleanup of '$fp': path is outside the working directory."
-            continue
-        }
-        if (-not (Test-Path -LiteralPath $fp)) { continue }
-        $ps = [powershell]::Create()
-        $ps.RunspacePool = $runspacePool
-        [void]$ps.AddScript($folderCleanupScript).AddArgument($fp).AddArgument($scratchDir)
-        $jobs.Add([PSCustomObject]@{ PS = $ps; Handle = $ps.BeginInvoke(); Path = $fp })
-    }
-    foreach ($job in $jobs) {
-        try {
-            $workerResult = @($job.PS.EndInvoke($job.Handle))
-            if ($workerResult.Count -eq 0 -or -not $workerResult[-1]) {
-                Write-Warning "  - Parallel cleanup failed for folder '$(Split-Path -Leaf $job.Path)' (retrying sequentially)."
+    try {
+        $runspacePool.Open()
+        $jobs = [System.Collections.Generic.List[object]]::new()
+        foreach ($fp in $folderPaths) {
+            if (-not (Test-WinEasePathWithin -Path $fp -Root $scratchDir)) {
+                Write-Warning "  - Skipping parallel cleanup of '$fp': path is outside the working directory."
+                continue
             }
-        } catch {
-            Write-Warning "Parallel folder cleanup worker failed: $_ (falling back to sequential)"
-        } finally {
-            $job.PS.Dispose()
+            if (-not (Test-Path -LiteralPath $fp)) { continue }
+            $ps = [powershell]::Create()
+            $ps.RunspacePool = $runspacePool
+            [void]$ps.AddScript($folderCleanupScript).AddArgument($fp).AddArgument($scratchDir)
+            $jobs.Add([PSCustomObject]@{ PS = $ps; Handle = $ps.BeginInvoke(); Path = $fp })
         }
+        foreach ($job in $jobs) {
+            try {
+                $workerResult = @($job.PS.EndInvoke($job.Handle))
+                if ($workerResult.Count -eq 0 -or -not $workerResult[-1]) {
+                    Write-Warning "  - Parallel cleanup failed for folder '$(Split-Path -Leaf $job.Path)' (retrying sequentially)."
+                }
+            } catch {
+                Write-Warning "Parallel folder cleanup worker failed: $_ (falling back to sequential)"
+            } finally {
+                $job.PS.Dispose()
+            }
+        }
+    } finally {
+        # The pool is released even if Open() or a worker throws; the
+        # sequential verification pass below still runs afterwards.
+        try { $runspacePool.Close() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        $runspacePool.Dispose()
     }
-    $runspacePool.Close()
-    $runspacePool.Dispose()
     # Verify + sequential fallback for any survivors
     foreach ($fp in $folderPaths) {
         if (Test-Path -LiteralPath $fp) {
@@ -273,7 +299,18 @@ if ($parallelism -le 1 -or $folderPaths.Count -le 1) {
 if (Test-TweakEnabled 'RemoveRecall' $true) {
     Write-Host "Disabling Recall and modern AI optional features..." -ForegroundColor Cyan
     & dism.exe /English "/image:$scratchDir" /Disable-Feature /FeatureName:Recall /Remove > $null 2>&1
+    $recallExitCode = $LASTEXITCODE
     & dism.exe /English "/image:$scratchDir" /Disable-Feature /FeatureName:Windows-Recall-Optional-Package /Remove > $null 2>&1
+    $recallPackageExitCode = $LASTEXITCODE
+    # Best-effort: these features legitimately do not exist on many images, so
+    # a failure is not fatal - but record the exit codes instead of dropping
+    # them silently (3010 = success, restart required).
+    if ($recallExitCode -notin @(0, 3010)) {
+        Write-Verbose "Phase 5: DISM /Disable-Feature Recall returned exit code $recallExitCode (the feature may not be present in this image)."
+    }
+    if ($recallPackageExitCode -notin @(0, 3010)) {
+        Write-Verbose "Phase 5: DISM /Disable-Feature Windows-Recall-Optional-Package returned exit code $recallPackageExitCode (the package may not be present in this image)."
+    }
 }
 
 # 5c. The Advanced Debloat targets this phase owns (config\schema.psd1 -> DebloatEngines).
