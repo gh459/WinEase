@@ -744,7 +744,7 @@ function Invoke-WinEaseRegExe {
     try {
         $output = & reg.exe @ArgumentList 2>&1
         $exit = $LASTEXITCODE
-        $stderrText = (@($output | ForEach-Object { "$_" }) -join ' ').Trim()
+        $stderrText = (@($output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$($_.Exception.Message)" }) -join ' ').Trim()
     } finally {
         $ErrorActionPreference = $prevEap
     }
@@ -873,12 +873,7 @@ function Invoke-WinEaseMigrationRulesBackup {
         # silently producing a rule with no backup.
         if ($rule.RegistryPaths) {
             foreach ($rp in $rule.RegistryPaths) {
-                $regKey = (([string]$rp).Trim() -replace '^([A-Za-z0-9_]+):', '$1').TrimEnd('\', '/')
-                if ($regKey -match '^HKCU(\\|$)') { $regKey = 'HKEY_CURRENT_USER' + $regKey.Substring(4) }
-                elseif ($regKey -match '^HKLM(\\|$)') { $regKey = 'HKEY_LOCAL_MACHINE' + $regKey.Substring(4) }
-                elseif ($regKey -match '^HKCR(\\|$)') { $regKey = 'HKEY_CLASSES_ROOT' + $regKey.Substring(4) }
-                elseif ($regKey -match '^HKU(\\|$)') { $regKey = 'HKEY_USERS' + $regKey.Substring(3) }
-                elseif ($regKey -match '^HKCC(\\|$)') { $regKey = 'HKEY_CURRENT_CONFIG' + $regKey.Substring(4) }
+                $regKey = ([string]$rp).Trim() -replace '^([A-Za-z0-9]+):', '$1'
                 $regName = ($regKey -replace '[\\/:*?"<>|\s]', '_')
                 if (-not $regName) { $regName = 'registry' }
                 $regFile = Join-Path -Path $ruleBackupDir -ChildPath ($regName + '.reg')
@@ -906,7 +901,7 @@ function Invoke-WinEaseMigrationRulesBackup {
                     Id            = $rid
                     Created       = (Get-Date).ToString('o')
                     SourcePaths   = @($existingSources)
-                    RegistryKeys  = @(@($rule.RegistryPaths) | Where-Object { $_ } | ForEach-Object { (([string]$_).Trim() -replace '^([A-Za-z0-9_]+):', '$1').TrimEnd('\', '/') })
+                    RegistryKeys  = @(@($rule.RegistryPaths) | Where-Object { $_ } | ForEach-Object { ([string]$_).Trim() -replace '^([A-Za-z0-9]+):', '$1' })
                     Entries       = @($ruleEntries)
                 }
                 $ruleManifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path -Path $ruleBackupDir -ChildPath 'rule-manifest.json') -Encoding UTF8
