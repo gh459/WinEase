@@ -225,9 +225,9 @@ try {
     $remainingPackages = @(Get-AppxPackage -AllUsers -Name '*SecHealthUI*' -ErrorAction SilentlyContinue |
         ForEach-Object { $_.PackageFullName })
 } catch { Write-Verbose "Best-effort enforcement step failed: $($_.Exception.Message)" }
-$remainingDirs = @()
+$remainingDirs = [System.Collections.Generic.List[string]]::new()
 foreach ($dir in $payloadDirs) {
-    if ($dir -and (Test-Path -LiteralPath $dir)) { $remainingDirs += $dir }
+    if ($dir -and (Test-Path -LiteralPath $dir)) { $remainingDirs.Add($dir) }
 }
 $ifeoPresent = @()
 foreach ($ifeoName in @('MsMpEng.exe', 'SecurityHealthService.exe', 'SecurityHealthSystray.exe')) {
