@@ -26,8 +26,8 @@
     },
     {
         "path":  "scripts/tools/Install-Browser.ps1",
-        "sha256":  "03acc853142767a5bfc72c755420a978de02b3e607cc76e5a8bc55bca57b2e6e",
-        "bytes":  5101
+        "sha256":  "1d29e6388c7b6d5cf781999d61dba09841c6849fccc1029879b39b042bff21f5",
+        "bytes":  7990
     },
     {
         "path":  "scripts/tools/Install-Browser.cmd",
