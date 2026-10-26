@@ -182,3 +182,73 @@ Describe "Secrets - registry (Winlogon DefaultPassword)" {
         [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8) | Should Match "'WinEaseSecrets\.ps1'"
     }
 }
+
+Describe "Secrets - UserOnce Redact-WinEaseUserSecret and logging" {
+    BeforeAll {
+        $userOncePath = Join-Path $script:RepoRoot 'scripts\UserOnce.ps1'
+        $userOnceText = [System.IO.File]::ReadAllText($userOncePath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($userOnceText, [ref]$tokens, [ref]$errors)
+        $fnAsts = $ast.FindAll({
+            param($n)
+            $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $n.Name -in @('Redact-WinEaseUserSecret', 'Write-UserScriptLog')
+        }, $true)
+        foreach ($fn in $fnAsts) {
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+    }
+
+    It "returns null or empty string unchanged for null/empty input" {
+        (Redact-WinEaseUserSecret -Text $null) | Should BeNullOrEmpty
+        (Redact-WinEaseUserSecret -Text '') | Should Be ''
+    }
+
+    It "returns plain unredacted text unchanged when no secret keywords or product keys are present" {
+        $msg = "User script starting execution for User1"
+        (Redact-WinEaseUserSecret -Text $msg) | Should Be $msg
+    }
+
+    It "redacts password, secret, token, apikey, and key patterns with colon or equals signs case-insensitively" {
+        (Redact-WinEaseUserSecret -Text "password: MyPassword123") | Should Be "password: [REDACTED]"
+        (Redact-WinEaseUserSecret -Text "PASSWORD=SecretPass456") | Should Be "PASSWORD: [REDACTED]"
+        (Redact-WinEaseUserSecret -Text "Secret : SuperSecretVal") | Should Be "Secret: [REDACTED]"
+        (Redact-WinEaseUserSecret -Text "token=abcdef12345") | Should Be "token: [REDACTED]"
+        (Redact-WinEaseUserSecret -Text "apiKey : xyz-987-abc") | Should Be "apiKey: [REDACTED]"
+        (Redact-WinEaseUserSecret -Text "key=my-private-key-data") | Should Be "key: [REDACTED]"
+    }
+
+    It "redacts 5x5 Windows product key patterns" {
+        (Redact-WinEaseUserSecret -Text "License VK7JG-NPHTM-C97JM-9MPGT-3V66T activated") | Should Be "License XXXXX-XXXXX-XXXXX-XXXXX-XXXXX activated"
+    }
+
+    It "redacts multiple secrets and product keys in a single line" {
+        $inputStr = "password: pass123 and token=tok456 with Key VK7JG-NPHTM-C97JM-9MPGT-3V66T"
+        $expected = "password: [REDACTED] and token: [REDACTED] with Key XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"
+        (Redact-WinEaseUserSecret -Text $inputStr) | Should Be $expected
+    }
+
+    It "Write-UserScriptLog writes formatted timestamp and redacted message to specified log file" {
+        $tmpLog = Join-Path ([System.IO.Path]::GetTempPath()) ("UserOnce_test_" + [guid]::NewGuid().ToString('N') + ".log")
+        try {
+            $userLogFile = $tmpLog
+            Write-UserScriptLog -Message "Executed script with password: MySecretPass"
+
+            (Test-Path -LiteralPath $tmpLog) | Should Be $true
+            $content = Get-Content -LiteralPath $tmpLog -Raw
+            $content | Should Match '\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] Executed script with password: \[REDACTED\]'
+        } finally {
+            if (Test-Path -LiteralPath $tmpLog) {
+                Remove-Item -LiteralPath $tmpLog -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "Write-UserScriptLog handles file write errors gracefully without throwing an exception" {
+        $invalidLogFile = Join-Path ([System.IO.Path]::GetTempPath()) ("nonexistent_dir_" + [guid]::NewGuid().ToString('N') + "\invalid\path\UserOnce.log")
+        $userLogFile = $invalidLogFile
+        {
+            Write-UserScriptLog -Message "Log entry attempt" 3>&1 | Out-String
+        } | Should Not Throw
+    }
+}
