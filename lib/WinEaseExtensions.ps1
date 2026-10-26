@@ -217,11 +217,29 @@ function Invoke-WinEaseUserExtensionActions {
                     Write-Verbose "UserExtension FOD: $($act.Name)"
                 } elseif ($PhaseType -eq 'Registry') {
                     if ($actType -eq 'Registry') {
+                        # S-M5: user-tweaks are shareable data files, so the hive is
+                        # restricted to the same allowlist the plugin host uses
+                        # (lib/WinEasePlugins.ps1: $script:WinEasePluginHives), and
+                        # persistence-related paths are refused outright. Throwing
+                        # here is caught by the surrounding try/catch and recorded
+                        # as a failed action.
+                        $allowedUserTweakHives = @('zSYSTEM', 'zSOFTWARE', 'zDEFAULT', 'zNTUSER', 'zCOMPONENTS')
+                        if ($allowedUserTweakHives -notcontains [string]$act.Hive) {
+                            throw "User tweak Registry action rejected: hive '$($act.Hive)' is not in the allowlist ($($allowedUserTweakHives -join ', '))."
+                        }
+                        if ([string]$act.Path -match '(?i)CurrentVersion\\Run(Once)?(\\|$)|Image File Execution Options|\\Winlogon(\\|$)') {
+                            throw "User tweak Registry action rejected: path '$($act.Path)' targets a persistence-related key (Run/RunOnce, Image File Execution Options or Winlogon)."
+                        }
                         $hivePath = "HKLM:\$($act.Hive)\$($act.Path)"
                         if (-not (Test-Path -LiteralPath $hivePath)) { New-Item -Path $hivePath -Force | Out-Null }
                         $kind = if ($act.Kind) { $act.Kind } else { 'String' }
                         Set-ItemProperty -LiteralPath $hivePath -Name $act.Name -Value $act.Value -Type $kind -Force -ErrorAction Stop
                     } elseif ($actType -eq 'Service') {
+                        # S-M5: the service name is interpolated into a registry
+                        # path, so only a plain service-name shape is accepted.
+                        if ([string]$act.Name -notmatch '^[A-Za-z0-9_.\-]+$') {
+                            throw "User tweak Service action rejected: service name '$($act.Name)' is invalid."
+                        }
                         $svcPath = "HKLM:\zSYSTEM\ControlSet001\Services\$($act.Name)"
                         if (Test-Path -LiteralPath $svcPath) {
                             $startVal = switch ($act.Value) { 'Disabled' { 4 } 'Manual' { 3 } 'Automatic' { 2 } default { 4 } }
