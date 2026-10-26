@@ -40,7 +40,7 @@
         @{ Key = 'HardenSystemSecurity'; Category = 'Security'; Default = $false; Description = 'Harden LSA, NTLM, anonymous access, AutoRun and PowerShell logging (Harden-Windows-Security subset)'; CliSwitch = $true }
         @{ Key = 'PreventDeviceEncryption'; Category = 'Security'; Default = $false; Description = 'Prevent automatic BitLocker device encryption on OOBE'; CliSwitch = $true }
         @{ Key = 'DisableCPUMitigations'; Category = 'Security'; Default = $false; Description = 'Disable Spectre/Meltdown CPU speculative execution mitigations (exposes system to side channels; performance gain is unverified)'; Variable = 'disableCPUMitigations'; CliSwitch = $true }
-        @{ Key = 'ConfigureWinlogon'; Category = 'Security'; Default = $false; Description = 'Allow blank-password local logon and pre-configure auto-logon (ISO keeps unattended password in autounattend.xml)'; CliSwitch = $true }
+        @{ Key = 'ConfigureWinlogon'; Category = 'Security'; Default = $false; Description = 'Allow blank-password local logon and pre-configure auto-logon (ISO keeps unattended password in autounattend.xml)'; Variable = 'configureWinlogon'; CliSwitch = $true }
         @{ Key = 'EnableScripts'; Category = 'Security'; Default = $true; Description = 'Relax the PowerShell script execution policy to RemoteSigned'; CliSwitch = $true }
 
         # Privacy
