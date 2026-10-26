@@ -903,6 +903,10 @@ function Invoke-WinEaseMigrationRulesBackup {
                 try {
                     $exportOk = Invoke-WinEaseRegExe -ArgumentList @('export', $regKey, $regFile, '/y')
                     if (-not $exportOk -or -not (Test-Path -LiteralPath $regFile)) {
+                        Start-Sleep -Milliseconds 100
+                        $exportOk = Invoke-WinEaseRegExe -ArgumentList @('export', $regKey, $regFile, '/y')
+                    }
+                    if (-not $exportOk -or -not (Test-Path -LiteralPath $regFile)) {
                         $failed += [PSCustomObject]@{ Rule = $rid; Path = [string]$rp; Error = "Registry export failed for '$regKey' (reg.exe exit code $($LASTEXITCODE))" }
                     } else {
                         $ruleEntries += [PSCustomObject]@{ RelativePath = ($regName + '.reg'); SourcePath = '' }
