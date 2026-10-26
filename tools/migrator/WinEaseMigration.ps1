@@ -868,12 +868,19 @@ function Invoke-WinEaseMigrationRulesBackup {
         }
         # RegistryPaths
         # reg.exe does not understand the PowerShell PSDrive spelling (HKCU:\...): the
-        # colon makes it abort with "invalid key name". Export with the plain root name
-        # (HKCU\...) and check the exit code so a failed export is reported instead of
+        # colon makes it abort with "invalid key name". Expand root hives to full names
+        # (HKEY_CURRENT_USER\...) and check the exit code so a failed export is reported instead of
         # silently producing a rule with no backup.
         if ($rule.RegistryPaths) {
             foreach ($rp in $rule.RegistryPaths) {
-                $regKey = ([string]$rp).Trim() -replace '^([A-Za-z0-9]+):', '$1'
+                $regKey = ([string]$rp).Trim()
+                $regKey = $regKey -replace '^HKCU:\\?', 'HKEY_CURRENT_USER\' `
+                                  -replace '^HKLM:\\?', 'HKEY_LOCAL_MACHINE\' `
+                                  -replace '^HKCR:\\?', 'HKEY_CLASSES_ROOT\' `
+                                  -replace '^HKU:\\?',  'HKEY_USERS\' `
+                                  -replace '^HKCC:\\?', 'HKEY_CURRENT_CONFIG\' `
+                                  -replace '^([A-Za-z0-9_]+):\\?', '$1\'
+                $regKey = $regKey.TrimEnd('\')
                 $regName = ($regKey -replace '[\\/:*?"<>|\s]', '_')
                 if (-not $regName) { $regName = 'registry' }
                 $regFile = Join-Path -Path $ruleBackupDir -ChildPath ($regName + '.reg')
@@ -901,8 +908,14 @@ function Invoke-WinEaseMigrationRulesBackup {
                     Id            = $rid
                     Created       = (Get-Date).ToString('o')
                     SourcePaths   = @($existingSources)
-                    RegistryKeys  = @(@($rule.RegistryPaths) | Where-Object { $_ } | ForEach-Object { ([string]$_).Trim() -replace '^([A-Za-z0-9]+):', '$1' })
-                    Entries       = @($ruleEntries)
+                    RegistryKeys  = @(@($rule.RegistryPaths) | Where-Object { $_ } | ForEach-Object {
+                        ([string]$_).Trim() -replace '^HKCU:\\?', 'HKEY_CURRENT_USER\' `
+                                            -replace '^HKLM:\\?', 'HKEY_LOCAL_MACHINE\' `
+                                            -replace '^HKCR:\\?', 'HKEY_CLASSES_ROOT\' `
+                                            -replace '^HKU:\\?',  'HKEY_USERS\' `
+                                            -replace '^HKCC:\\?', 'HKEY_CURRENT_CONFIG\' `
+                                            -replace '^([A-Za-z0-9_]+):\\?', '$1\'
+                    })
                 }
                 $ruleManifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path -Path $ruleBackupDir -ChildPath 'rule-manifest.json') -Encoding UTF8
             } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
