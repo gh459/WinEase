@@ -21,6 +21,12 @@ ADD	HKLM\zSYSTEM\ControlSet001\Services\i8042prt\Parameters	OverrideKeyboardIden
 ADD	HKLM\zSYSTEM\ControlSet001\Services\i8042prt\Parameters	OverrideKeyboardType	REG_DWORD	7
 ADD	HKLM\zSYSTEM\ControlSet001\Services\i8042prt\Parameters	OverrideKeyboardSubtype	REG_DWORD	2
 ADD	HKLM\zSYSTEM\ControlSet001\Control\Lsa	LimitBlankPasswordUse	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon	AutoAdminLogon	REG_SZ	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon	DefaultUserName	REG_SZ	TestUser
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon	DefaultPassword	REG_SZ	""
+ADD	HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon	ForceAutoLogon	REG_SZ	1
+ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\System	AllowDomainDelayLock	REG_DWORD	1
+ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System	FilterAdministratorToken	REG_DWORD	0
 ADD	HKLM\zSOFTWARE\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell	ExecutionPolicy	REG_SZ	RemoteSigned
 ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\PowerShell	EnableScripts	REG_DWORD	1
 ADD	HKLM\zSOFTWARE\Policies\Microsoft\Windows\PowerShell	ExecutionPolicy	REG_SZ	RemoteSigned
