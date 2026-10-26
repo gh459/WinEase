@@ -91,7 +91,14 @@ function Invoke-WinEaseResumeIsoBuild {
     Write-Host "  - Expanded size:      $resumeExpandedSizeGB GB" -ForegroundColor Green
 
     $script:VerifiedFinalWimSha256 = (Get-FileHash -LiteralPath $resumePayload -Algorithm SHA256).Hash
-    $script:FinalPayloadVerified = $true
+    # C-H3: FinalPayloadVerified stays $false in resume mode. The hash above only
+    # proves which file is on disk (and Test-WinEaseResumeIntegrity has already
+    # checked it against the checkpoint's recorded FinalWimSha256 when one was
+    # saved); the Phase 15 deep-apply verification itself is deliberately skipped
+    # in this run, so this payload must not be reported as "verified" the way a
+    # full build's Phase 15 pass is. The ISO built here is therefore reported
+    # with PayloadVerified = $false until a full build verifies the payload.
+    $script:FinalPayloadVerified = $false
     $script:IsoPayloadVerified = $false
     $activePayloadPath = $resumePayload
 
@@ -99,7 +106,7 @@ function Invoke-WinEaseResumeIsoBuild {
         $script:DiagnosticData.SourceIsoPath = "(resume mode - preserved workspace payload)"
         $script:DiagnosticData.SelectedImageIndex = 1
         $script:DiagnosticData.SelectedImageName = $resumeEditionName
-        $script:DiagnosticData.FinalPayloadVerified = $true
+        $script:DiagnosticData.FinalPayloadVerified = $false
         $script:DiagnosticData.FinalWimSha256 = $script:VerifiedFinalWimSha256
         $script:DiagnosticData.ExportSucceeded = $false
     }
@@ -383,9 +390,39 @@ function Invoke-WinEaseResumeIsoBuild {
 # ============================================================================
 # F2. Phase Checkpoint Save/Load (foundation for -ResumeFromPhase)
 # ============================================================================
+# C-H3: canonical hash of the resolved configuration (selected profile + the
+# resolved TweakSettings, keys sorted) so a checkpoint can be tied to the build
+# that produced it. Returns $null when no configuration is available; callers
+# treat $null as "not recorded" and skip the comparison rather than failing.
+function Get-WinEaseCheckpointConfigHash {
+    [CmdletBinding()]
+    param()
+    try {
+        $pairs = [System.Collections.Generic.List[string]]::new()
+        $ts = $script:TweakSettings
+        if ($ts -is [System.Collections.IDictionary]) {
+            foreach ($k in @($ts.Keys | Sort-Object)) { $pairs.Add("$k=$([bool]$ts[$k])") }
+        } elseif ($null -ne $ts) {
+            foreach ($p in @($ts.PSObject.Properties | Sort-Object -Property Name)) { $pairs.Add("$($p.Name)=$([bool]$p.Value)") }
+        }
+        $canonical = "Profile=$([string]$selectedProfile)`n" + ($pairs -join "`n")
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($canonical)
+            return ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '')
+        } finally {
+            $sha.Dispose()
+        }
+    } catch {
+        return $null
+    }
+}
+
 function Save-WinEaseCheckpoint {
     [CmdletBinding()]
-    param([int]$CompletedPhase = 0)
+    # C-H4: [double] so a checkpoint can record Phase 9.5 as completed without
+    # the value being rounded to a neighbouring integer phase.
+    param([double]$CompletedPhase = 0)
     try {
         if (-not $script:BaseWorkDir) { return }
         $cpPath = Join-Path -Path $script:BaseWorkDir -ChildPath "checkpoint.json"
@@ -409,6 +446,13 @@ function Save-WinEaseCheckpoint {
             SafeDebloatMode     = [bool]$safeDebloatMode
             AllowPhysicalDebloat = [bool]$allowPhysicalDebloat
             TweakSettings       = $script:TweakSettings
+            # C-H3: bind the checkpoint to the build that produced it. FinalWimSha256
+            # is the Phase 15 verified payload hash (empty until Phase 15 has run);
+            # Test-WinEaseResumeIntegrity recomputes the on-disk payload hash and
+            # rejects the resume when a recorded value does not match.
+            # ResolvedConfigHash is checked by WinEasebuilder.ps1 on -ResumeFromPhase.
+            FinalWimSha256      = if ($script:VerifiedFinalWimSha256) { [string]$script:VerifiedFinalWimSha256 } else { $null }
+            ResolvedConfigHash  = Get-WinEaseCheckpointConfigHash
         }
         $json = $cp | ConvertTo-Json -Depth 6
         [void](Write-WinEaseTextFileAtomic -Path $cpPath -Content $json -Encoding utf8)

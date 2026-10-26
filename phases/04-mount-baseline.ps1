@@ -25,14 +25,23 @@ $pkgBeforePath = Join-Path -Path $logDir -ChildPath "packages-before.txt"
 $featBeforePath = Join-Path -Path $logDir -ChildPath "features-before.txt"
 $winsxsBeforePath = Join-Path -Path $logDir -ChildPath "winsxs-before.txt"
 
-Invoke-Dism -DismArgs @("/image:$scratchDir", "/Get-Packages", "/Format:Table") -CaptureOutput | Set-Content -LiteralPath $pkgBeforePath -Encoding utf8
-Invoke-Dism -DismArgs @("/image:$scratchDir", "/Get-Features", "/Format:Table") -CaptureOutput | Set-Content -LiteralPath $featBeforePath -Encoding utf8
+# C-H1 (partial): Invoke-Dism reports failure only through its return value
+# ($null with -CaptureOutput). These baseline captures used to pipe the result
+# on unchecked, so a failed DISM call silently produced an empty baseline and
+# the phase continued as if it had succeeded. Failures now throw.
+$pkgBeforeRaw = Invoke-Dism -DismArgs @("/image:$scratchDir", "/Get-Packages", "/Format:Table") -CaptureOutput
+if ($null -eq $pkgBeforeRaw) { throw "Phase 4: DISM /Get-Packages failed for the mounted image (exit code $script:LastDismExitCode). Cannot capture the pre-debloat package baseline." }
+$pkgBeforeRaw | Set-Content -LiteralPath $pkgBeforePath -Encoding utf8
+$featBeforeRaw = Invoke-Dism -DismArgs @("/image:$scratchDir", "/Get-Features", "/Format:Table") -CaptureOutput
+if ($null -eq $featBeforeRaw) { throw "Phase 4: DISM /Get-Features failed for the mounted image (exit code $script:LastDismExitCode). Cannot capture the pre-debloat feature baseline." }
+$featBeforeRaw | Set-Content -LiteralPath $featBeforePath -Encoding utf8
 if ($safeDebloatMode) {
     Write-Host "SafeDebloatMode enabled: Skipping /AnalyzeComponentStore baseline scan to prevent cache thrashing and preserve stream stability." -ForegroundColor Cyan
     $script:WinsxsBeforeRaw = @("Actual Size of Component Store : 0 MB", "(AnalyzeComponentStore skipped in SafeDebloatMode)")
     $script:WinsxsBeforeRaw | Set-Content -LiteralPath $winsxsBeforePath -Encoding utf8
 } else {
     $script:WinsxsBeforeRaw = Invoke-Dism -DismArgs @("/image:$scratchDir", "/Cleanup-Image", "/AnalyzeComponentStore") -CaptureOutput
+    if ($null -eq $script:WinsxsBeforeRaw) { throw "Phase 4: DISM /AnalyzeComponentStore failed for the mounted image (exit code $script:LastDismExitCode). Cannot capture the pre-debloat component store baseline." }
     $script:WinsxsBeforeRaw | Set-Content -LiteralPath $winsxsBeforePath -Encoding utf8
 }
 
