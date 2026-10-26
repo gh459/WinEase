@@ -224,9 +224,6 @@ Describe "Migration rules backup/restore (tools/migrator/WinEaseMigration.ps1)" 
         $key = 'HKCU:\Software\WinEaseMigrationTest'
         New-Item -Path $key -Force | Out-Null
         Set-ItemProperty -Path $key -Name Probe -Value 'backup'
-        if ('Microsoft.Win32.Registry' -as [type]) {
-            try { [Microsoft.Win32.Registry]::CurrentUser.Flush() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-        }
         $rules = [PSCustomObject]@{
             GameRules      = @()
             AppConfigRules = @(@{ Id = 'RegProbe'; Name = 'Registry probe'; Category = 'AppConfig'; RegistryPaths = @($key); SourcePaths = @(); ExcludePatterns = @(); ProcessNames = @(); ExcludeSecrets = $true })
