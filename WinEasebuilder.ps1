@@ -823,7 +823,9 @@ function Enter-Phase {
     }
     $script:PhaseStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $phaseTitle = "WinEase [$PhaseNumber/$($script:TotalPhases)] $PhaseName"
-    try { $host.UI.RawUI.WindowTitle = $phaseTitle } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    if ($null -ne $host.UI.RawUI) {
+        try { $host.UI.RawUI.WindowTitle = $phaseTitle } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
     if (Get-Command -Name Send-WinEaseGuiProgress -ErrorAction SilentlyContinue) {
         $progress = @{ Phase = $PhaseNumber; Total = $script:TotalPhases; Name = $PhaseName }
         if (-not $script:ProgressEstimateSent) {

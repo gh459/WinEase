@@ -662,7 +662,8 @@ if ($removeDefender -or (Test-TweakEnabled 'RemoveDefender' $false)) {
         '\Registry\Machine\zSYSTEM\ControlSet001\Services\SgrmAgent [1 17]',
         '\Registry\Machine\zSOFTWARE\Microsoft\Windows Defender\Features [1 17]'
     )
-    $reginiFile = Join-Path -Path $env:TEMP -ChildPath "WinEase_regini_$([System.IO.Path]::GetRandomFileName()).txt"
+    $tempDir = if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() }
+    $reginiFile = Join-Path -Path $tempDir -ChildPath "WinEase_regini_$([System.IO.Path]::GetRandomFileName()).txt"
     [System.IO.File]::WriteAllLines($reginiFile, $reginiLines, [System.Text.Encoding]::ASCII)
     & regini.exe $reginiFile > $null 2>&1
     Remove-Item -LiteralPath $reginiFile -Force -ErrorAction SilentlyContinue
