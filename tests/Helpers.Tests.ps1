@@ -410,6 +410,142 @@ Describe "WinEase builder - phase timing telemetry" {
 
         { Write-WinEaseDiagnosticReport "Status" -ErrorAction SilentlyContinue } | Should Not Throw
     }
+
+    It "creates diagnostic directory automatically when script:DiagDir does not exist" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Write-WinEaseDiagnosticReport'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $tempDiagDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_auto_diag_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        if (Test-Path -LiteralPath $tempDiagDir) { Remove-Item -LiteralPath $tempDiagDir -Recurse -Force }
+        $script:DiagDir = $tempDiagDir
+        $script:DiagnosticData = [ordered]@{ BuildId = "auto-created-dir-123"; BuildSucceeded = $true }
+
+        Write-WinEaseDiagnosticReport "Status message"
+
+        (Test-Path -LiteralPath $tempDiagDir) | Should Be $true
+        (Test-Path -LiteralPath (Join-Path $tempDiagDir "build_diagnostic_report.json")) | Should Be $true
+        (Test-Path -LiteralPath (Join-Path $tempDiagDir "build_diagnostic_summary.txt")) | Should Be $true
+
+        Remove-Item -LiteralPath $tempDiagDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It "aggregates loaded plugins, rejected plugins, and plugin runs when Get-WinEaseLoadedPlugins exists" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Write-WinEaseDiagnosticReport'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        function global:Get-WinEaseLoadedPlugins {
+            return @(
+                [pscustomobject]@{ Id = "PluginA"; Version = "1.0.0"; Source = "builtin"; File = "A.dll"; Sha256 = "hashA"; OnError = "Stop" }
+            )
+        }
+
+        $tempDiagDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_diag_plugin_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($tempDiagDir) | Out-Null
+        $script:DiagDir = $tempDiagDir
+        $script:WinEasePluginRejected = @(
+            [pscustomobject]@{ Source = "custom"; File = "B.dll"; Reason = "Untrusted" }
+        )
+        $script:WinEasePluginRunLog = @(
+            [pscustomobject]@{ Plugin = "PluginA"; Phase = "10"; Stage = "Pre"; Status = "Success" }
+        )
+        $script:DiagnosticData = [ordered]@{ BuildId = "plugin-build-789"; BuildSucceeded = $true }
+
+        try {
+            Write-WinEaseDiagnosticReport "Testing plugins"
+
+            $jsonPath = Join-Path -Path $tempDiagDir -ChildPath "build_diagnostic_report.json"
+            $txtPath = Join-Path -Path $tempDiagDir -ChildPath "build_diagnostic_summary.txt"
+
+            $reportJson = (Get-Content -LiteralPath $jsonPath -Raw -Encoding UTF8) | ConvertFrom-Json
+            @($reportJson.Plugins).Count | Should Be 1
+            $reportJson.Plugins[0].Id | Should Be "PluginA"
+            @($reportJson.PluginsRejected).Count | Should Be 1
+            $reportJson.PluginsRejected[0].Reason | Should Be "Untrusted"
+            @($reportJson.PluginRuns).Count | Should Be 1
+            $reportJson.PluginRuns[0].Plugin | Should Be "PluginA"
+
+            $summaryTxt = Get-Content -LiteralPath $txtPath -Raw -Encoding UTF8
+            $summaryTxt | Should Match "Plugins loaded:\s+PluginA 1\.0\.0 \[hashA\]"
+            $summaryTxt | Should Match "Plugins refused:\s+B\.dll: Untrusted"
+        } finally {
+            Remove-Item Function:\Get-WinEaseLoadedPlugins -ErrorAction SilentlyContinue
+            $script:WinEasePluginRejected = $null
+            $script:WinEasePluginRunLog = $null
+            Remove-Item -LiteralPath $tempDiagDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "formats plugins loaded and refused as (none) when plugin collections are empty or null" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Write-WinEaseDiagnosticReport'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        function global:Get-WinEaseLoadedPlugins { return @() }
+
+        $tempDiagDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_diag_noplugin_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($tempDiagDir) | Out-Null
+        $script:DiagDir = $tempDiagDir
+        $script:WinEasePluginRejected = $null
+        $script:WinEasePluginRunLog = $null
+        $script:DiagnosticData = [ordered]@{ BuildId = "noplugin-build-101"; BuildSucceeded = $true }
+
+        try {
+            Write-WinEaseDiagnosticReport "No plugins"
+
+            $txtPath = Join-Path -Path $tempDiagDir -ChildPath "build_diagnostic_summary.txt"
+            $summaryTxt = Get-Content -LiteralPath $txtPath -Raw -Encoding UTF8
+            $summaryTxt | Should Match "Plugins loaded:\s+\(none\)"
+            $summaryTxt | Should Match "Plugins refused:\s+\(none\)"
+        } finally {
+            Remove-Item Function:\Get-WinEaseLoadedPlugins -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempDiagDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "logs warning when writing diagnostic report fails" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Write-WinEaseDiagnosticReport'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $tempFile = [System.IO.Path]::GetTempFileName()
+        try {
+            $script:DiagDir = $tempFile
+            $script:DiagnosticData = [ordered]@{ BuildId = "warning-test" }
+
+            $warns = @(Write-WinEaseDiagnosticReport "Fail write" 3>&1)
+
+            @($warns).Count | Should BeGreaterThan 0
+            $warns[0].Message | Should Match "Failed writing diagnostic report:"
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 Describe "WinEase telemetry - Save-WinEaseTelemetry" {
@@ -581,6 +717,10 @@ Describe "WinEase helpers - DISM wrapper (Invoke-Dism)" {
 Describe "WinEase helpers - registry hive unmounting (Unmount-RegistryHiveWithRetry)" {
     BeforeAll {
         . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+    }
+
+    AfterEach {
+        Remove-Item Function:\reg.exe -ErrorAction SilentlyContinue
     }
 
     It "returns true immediately when hive is not mounted (reg query fails)" {
@@ -1838,7 +1978,8 @@ Describe "WinEase helpers - split module layout (R2)" {
         # (Get-WinEaseDependencyStringDefaults/String/Field/View/Review, New-...Result, Format-...ItemLine).
         # G1 added ConvertTo-WinEaseRealPath and Test-WinEaseProtectedLexicalPath (path safety).
         # P1-01 added Test-WinEaseUnattendXmlStructure (unattend template safety).
-        $functions.Count | Should Be 59
+        # Refactored Test-WinEaseDependencies added 8 modular dependency helpers.
+        $functions.Count | Should Be 67
         $duplicates = @($functions | Group-Object Name | Where-Object Count -gt 1)
         $duplicates.Count | Should Be 0
         @($ast.FindAll({
