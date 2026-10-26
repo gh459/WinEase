@@ -874,6 +874,17 @@ function Invoke-WinEaseMigrationRulesBackup {
         if ($rule.RegistryPaths) {
             foreach ($rp in $rule.RegistryPaths) {
                 $regKey = ([string]$rp).Trim() -replace '^([A-Za-z0-9]+):', '$1'
+                if ($regKey.StartsWith('HKCU\', [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $regKey = 'HKEY_CURRENT_USER\' + $regKey.Substring(5)
+                } elseif ($regKey.StartsWith('HKLM\', [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $regKey = 'HKEY_LOCAL_MACHINE\' + $regKey.Substring(5)
+                } elseif ($regKey.StartsWith('HKCR\', [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $regKey = 'HKEY_CLASSES_ROOT\' + $regKey.Substring(5)
+                } elseif ($regKey.StartsWith('HKU\', [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $regKey = 'HKEY_USERS\' + $regKey.Substring(4)
+                } elseif ($regKey.StartsWith('HKCC\', [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $regKey = 'HKEY_CURRENT_CONFIG\' + $regKey.Substring(5)
+                }
                 $regName = ($regKey -replace '[\\/:*?"<>|\s]', '_')
                 if (-not $regName) { $regName = 'registry' }
                 $regFile = Join-Path -Path $ruleBackupDir -ChildPath ($regName + '.reg')
