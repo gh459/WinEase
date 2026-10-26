@@ -596,6 +596,7 @@ public sealed partial class MainWindow : Window
     {
         var b = new Button { Content = text.Trim() };
         AutomationProperties.SetName(b, text.Trim());
+        ToolTipService.SetToolTip(b, text.Trim());
         if (accent) b.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
         b.Click += click;
         return b;
