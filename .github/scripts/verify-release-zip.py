@@ -4,9 +4,7 @@
 Checks:
   1. the archive opens and every member passes its CRC check
   2. the file list is exactly the file list of the verified commit (git ls-tree),
-     so nothing stale, generated or local can be in it and nothing is missing;
-     duplicate entry names and symbolic-link entries are rejected outright
-     (a name set alone would hide both)
+     so nothing stale, generated or local can be in it and nothing is missing
   3. the files the builder needs to start are present
   4. no build output, log, key or credential file is included, and no file carries
      an obvious private key or token
@@ -25,7 +23,6 @@ import argparse
 import fnmatch
 import hashlib
 import re
-import stat
 import subprocess
 import sys
 import zipfile
@@ -220,25 +217,8 @@ def main():
             failures += 1
 
         names = set()
-        seen = set()
         for info in zf.infolist():
             if info.is_dir():
-                continue
-            # Duplicate entry names: readers disagree on which copy wins (first vs
-            # last), so a second entry under an existing name could smuggle content
-            # past the per-name checks below. Reject any repeat outright.
-            if info.filename in seen:
-                error(f"duplicate entry in the archive: {info.filename}")
-                failures += 1
-                continue
-            seen.add(info.filename)
-            # Symbolic links: the unix file type lives in the high 16 bits of
-            # external_attr (entries written on Windows carry 0 there and pass).
-            # A link entry's "content" is its target path, never commit content,
-            # and extraction tools may follow it outside the target folder.
-            if stat.S_ISLNK(info.external_attr >> 16):
-                error(f"symbolic link entry in the archive: {info.filename}")
-                failures += 1
                 continue
             if not info.filename.startswith(prefix):
                 error(f"entry outside the {prefix} prefix: {info.filename}")

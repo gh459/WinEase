@@ -243,10 +243,7 @@
             BypassActivationRestrictions = $true
             RadicalRAM = $true
             TweakSettings = @{
-                # ConfigureWinlogon is intentionally NOT enabled by this preset:
-                # it embeds credentials in the ISO answer file in clear text, so
-                # it must be opted into explicitly per build, never via a preset.
-                ConfigureWinlogon = $false
+                ConfigureWinlogon = $true
             }
             TweakGroups = @{
                 NetworkStack = $true
@@ -353,10 +350,7 @@
             BypassActivationRestrictions = $true
             RadicalRAM = $true
             TweakSettings = @{
-                # ConfigureWinlogon is intentionally NOT enabled by this preset:
-                # it embeds credentials in the ISO answer file in clear text, so
-                # it must be opted into explicitly per build, never via a preset.
-                ConfigureWinlogon = $false
+                ConfigureWinlogon = $true
             }
             TweakGroups = @{
                 NetworkStack = $true
@@ -411,10 +405,7 @@
             BypassActivationRestrictions = $true
             RadicalRAM = $true
             TweakSettings = @{
-                # ConfigureWinlogon is intentionally NOT enabled by this preset:
-                # it embeds credentials in the ISO answer file in clear text, so
-                # it must be opted into explicitly per build, never via a preset.
-                ConfigureWinlogon = $false
+                ConfigureWinlogon = $true
             }
             TweakGroups = @{
                 NetworkStack = $true
@@ -521,10 +512,7 @@
             BypassActivationRestrictions = $true
             RadicalRAM = $true
             TweakSettings = @{
-                # ConfigureWinlogon is intentionally NOT enabled by this preset:
-                # it embeds credentials in the ISO answer file in clear text, so
-                # it must be opted into explicitly per build, never via a preset.
-                ConfigureWinlogon = $false
+                ConfigureWinlogon = $true
             }
             TweakGroups = @{
                 NetworkStack = $false

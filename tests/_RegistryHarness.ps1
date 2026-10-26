@@ -7,6 +7,7 @@
 #   <ACTION><TAB><key><TAB><value name><TAB><type><TAB><data>
 # Value name is "(default)" for /ve and empty for a key-only call.
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '', Justification = 'Variables are consumed by the dot-sourced phase')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidGlobalVars', '', Justification = 'Test harness sets global test variables for recording')]
 param()
 
 $script:RegistryPresets = @('default', 'none', 'extreme', 'balanced', 'vm', 'handheld', 'audio')
@@ -53,6 +54,9 @@ function Invoke-WinEaseRegistryPhaseRecording {
     $info = Get-WinEaseRegistryPhaseVariables -Preset $Preset
     $script:RegCalls = [System.Collections.Generic.List[string]]::new()
     $script:TweakSettings = if ($Preset -eq 'default') { $null } else { $info.TweakSettings }
+    $global:TweakSettings = $script:TweakSettings
+    $script:scriptDir = $script:RepoRoot
+    $global:scriptDir = $script:RepoRoot
     if ($TweakOverride) {
         $merged = [ordered]@{}
         if ($script:TweakSettings) { foreach ($k in $script:TweakSettings.Keys) { $merged[$k] = $script:TweakSettings[$k] } }

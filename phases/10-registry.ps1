@@ -300,7 +300,8 @@ Invoke-WinEaseRegistryTable -Section ui -Tweak TaskbarEndTask
 # after the first character of the data, holding a value named '/t'. The next
 # build found that value, reg.exe asked "Overwrite (Yes/No)?" and waited for a
 # key press - the build hung in phase 10 and no ISO was produced.
-$uiPreferencePath = Join-Path -Path $scriptDir -ChildPath "config\ui-preferences.psd1"
+$targetScriptDir = if ($scriptDir) { $scriptDir } elseif ($script:scriptDir) { $script:scriptDir } elseif ($script:RepoRoot) { $script:RepoRoot } else { Split-Path -Parent $PSScriptRoot }
+$uiPreferencePath = Join-Path -Path $targetScriptDir -ChildPath "config\ui-preferences.psd1"
 $uiPreferenceData = Import-PowerShellDataFile -LiteralPath $uiPreferencePath
 $uiPreferenceTweaks = @($uiPreferenceData.UiPreferences)
 
