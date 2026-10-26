@@ -518,9 +518,19 @@ $myWindowsPrincipal = New-Object System.Security.Principal.WindowsPrincipal($myW
 if ((-not $myWindowsPrincipal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) -and ($env:WINEASE_TEST_MODE -ne "1") -and (-not $TestSelf) -and (-not $isDryRunMode)) {
     Write-Host "Restarting script with Administrator privileges in a new window..." -ForegroundColor Yellow
 
-    # Reconstruct bound parameters for elevated process
+    # Reconstruct bound parameters for elevated process.
+    # S-M1: UserPassword is deliberately NOT serialized here. The argument list is
+    # turned into a -EncodedCommand process argument (New-WinEaseChildArguments),
+    # and Base64 is not encryption: any local process can read and decode another
+    # process's command line. The elevated process therefore starts without the
+    # password; if it is needed (e.g. ConfigureWinlogon), it must be supplied again
+    # in the elevated session instead of being inherited through the command line.
     $paramList = [System.Collections.Generic.List[string]]::new()
     foreach ($key in $PSBoundParameters.Keys) {
+        if ($key -eq 'UserPassword') {
+            Write-Host "Note: -UserPassword is not forwarded to the elevated process (it would be readable in the process command line). Please supply it again in the elevated session if prompted." -ForegroundColor Yellow
+            continue
+        }
         $paramList.Add((ConvertTo-WinEaseCliArgument -Name $key -Value $PSBoundParameters[$key]))
     }
 
@@ -547,8 +557,24 @@ if ((-not $TestSelf) -and ($env:WINEASE_TEST_MODE -ne "1") -and (-not $isDryRunM
             Write-Host "Error: Another instance of WinEase builder is currently running (Global\WinEaseBuilder)." -ForegroundColor Red
             exit 1
         }
+    } catch [System.Threading.AbandonedMutexException] {
+        # The previous owner exited without releasing the mutex. Per .NET semantics
+        # this exception means THIS thread now owns the mutex, so the build may
+        # continue - but the previous run may have left mounts / workspace state
+        # behind, so say so loudly instead of treating it as a plain failure.
+        $script:HasMutex = $true
+        Write-Host "Warning: The global build mutex was abandoned by a previous run; this process now owns it. Leftover mounts or workspace state from that run may exist." -ForegroundColor Yellow
     } catch {
-        Write-Warning "Could not acquire global mutex: $_"
+        # C-H2 (fail-closed): this used to only warn and let the build continue
+        # without any lock, so two builds could race on the same workspace and the
+        # DISM mount registry. Acquisition failure now stops the build instead.
+        Write-Host "Error: Could not acquire the global build mutex (Global\WinEaseBuilder): $_" -ForegroundColor Red
+        Write-Host "Refusing to build without the concurrency lock. Close any other WinEase builder process and retry." -ForegroundColor Red
+        if ($script:BuildMutex) {
+            try { $script:BuildMutex.Dispose() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+            $script:BuildMutex = $null
+        }
+        exit 1
     }
 }
 
@@ -797,14 +823,19 @@ function Export-WinEaseProfile {
 }
 
 # Phase Progress & Telemetry Tracking
-$script:CurrentPhase = 0
+$script:CurrentPhase = [double]0
 $script:TotalPhases = 18
 $script:PhaseTimings = [ordered]@{}
 $script:PhaseStopwatch = $null
 
 function Enter-Phase {
     param(
-        [int]$PhaseNumber,
+        # C-H4: [double], not [int] - Phase 9.5 exists, and an [int] parameter silently
+        # rounded it to a neighbouring integer, which collided with Phase 10 in the
+        # timing keys and in the checkpoint's CompletedPhase. All phase-number
+        # representations (this parameter, $script:CurrentPhase, timing keys,
+        # CompletedPhase, the failure record) are [double] now.
+        [double]$PhaseNumber,
         [string]$PhaseName
     )
     # F2: persist a checkpoint for the phase that just completed (foundation for -ResumeFromPhase)
@@ -823,7 +854,9 @@ function Enter-Phase {
     }
     $script:PhaseStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $phaseTitle = "WinEase [$PhaseNumber/$($script:TotalPhases)] $PhaseName"
-    try { $host.UI.RawUI.WindowTitle = $phaseTitle } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    if ($null -ne $host.UI.RawUI) {
+        try { $host.UI.RawUI.WindowTitle = $phaseTitle } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
     if (Get-Command -Name Send-WinEaseGuiProgress -ErrorAction SilentlyContinue) {
         $progress = @{ Phase = $PhaseNumber; Total = $script:TotalPhases; Name = $PhaseName }
         if (-not $script:ProgressEstimateSent) {
@@ -1047,19 +1080,19 @@ function Apply-WinEaseProfileDebloat {
     # Older profiles still contain the "Physical: <target>" entries that were merged into
     # the standard list. They are mapped onto the canonical target and keep the Rust engine.
     $legacyEngines = [ordered]@{}
-    $normStd = @()
+    $normStd = [System.Collections.Generic.List[string]]::new()
     foreach ($raw in @($script:advancedDebloatStandard)) {
         $item = ConvertTo-WinEaseDebloatTarget -Item ([string]$raw)
         if (-not $item) { continue }
         if ($item -ne [string]$raw) { $legacyEngines[$item] = 'Rust' }
-        $normStd += $item
+        $normStd.Add($item)
     }
-    $normExp = @()
+    $normExp = [System.Collections.Generic.List[string]]::new()
     foreach ($raw in @($script:advancedDebloatExperimental)) {
         $item = ConvertTo-WinEaseDebloatTarget -Item ([string]$raw)
         if (-not $item) { continue }
         if ($item -ne [string]$raw) { $legacyEngines[$item] = 'Rust' }
-        $normExp += $item
+        $normExp.Add($item)
     }
     $script:advancedDebloatStandard     = @($normStd | Where-Object { $_ } | Select-Object -Unique)
     $script:advancedDebloatExperimental = @($normExp | Where-Object { $_ } | Select-Object -Unique)
@@ -1368,8 +1401,17 @@ if ($Profile -and $Profile.Contains(',')) {
         foreach ($qProf in $profileQueue) {
             Write-Host "`n>>> Starting Batch Build for Profile: $qProf <<<" -ForegroundColor Yellow
             $argsToPass = [System.Collections.Generic.List[string]]::new()
+            # S-M1: UserPassword is excluded from the serialized arguments for the same
+            # reason as in the elevation path above: the arguments become a
+            # -EncodedCommand process argument, and Base64 is readable by any local
+            # process. Batch child builds therefore run without the password; a
+            # profile in the queue that needs one (ConfigureWinlogon) must not rely
+            # on it being inherited from the parent process.
+            if ($PSBoundParameters.ContainsKey('UserPassword')) {
+                Write-Host "Note: -UserPassword is not forwarded to batch child builds (it would be readable in the child process command line)." -ForegroundColor Yellow
+            }
             foreach ($k in $PSBoundParameters.Keys) {
-                if ($k -in @('Profile', 'TestSelf', 'NonInteractive')) { continue }
+                if ($k -in @('Profile', 'TestSelf', 'NonInteractive', 'UserPassword')) { continue }
                 $argsToPass.Add((ConvertTo-WinEaseCliArgument -Name $k -Value $PSBoundParameters[$k]))
             }
             $argsToPass.Add((ConvertTo-WinEaseCliArgument -Name 'Profile' -Value $qProf))
@@ -2274,7 +2316,7 @@ if ($ResumeFromPhase -gt 0) {
     if (-not $cp) {
         throw "ResumeFromPhase: no checkpoint.json found. Run a full build first so a checkpoint is recorded."
     }
-    $cpPhase = [int]$cp.CompletedPhase
+    $cpPhase = [double]$cp.CompletedPhase
     if ($cpPhase -lt ($ResumeFromPhase - 1)) {
         throw "ResumeFromPhase: checkpoint only reaches Phase $cpPhase, cannot resume from Phase $ResumeFromPhase. Run a full build or lower the target."
     }
@@ -2384,6 +2426,18 @@ try {
         if ($rCfg.PSObject.Properties['AllowPhysicalDebloat'])         { $allowPhysicalDebloat         = [bool]$rCfg.AllowPhysicalDebloat }
         if ($rCfg.PSObject.Properties['TweakSettings'] -and $rCfg.TweakSettings) {
             $script:TweakSettings = $rCfg.TweakSettings
+        }
+    }
+
+    # C-H3: when resuming, the configuration resolved for THIS run must match the
+    # checkpoint it resumes from. Save-WinEaseCheckpoint records ResolvedConfigHash
+    # (a hash of the resolved TweakSettings + selected profile); a checkpoint made
+    # by a different configuration must not silently drive this build. Checkpoints
+    # written before this field existed carry no hash and are accepted as-is.
+    if ($ResumeFromPhase -gt 0 -and $cp -and $cp.PSObject.Properties['ResolvedConfigHash'] -and $cp.ResolvedConfigHash) {
+        $currentConfigHash = Get-WinEaseCheckpointConfigHash
+        if ($currentConfigHash -and ($currentConfigHash -ine [string]$cp.ResolvedConfigHash)) {
+            throw "ResumeFromPhase: the resolved configuration does not match the checkpoint (ResolvedConfigHash mismatch). Run a full build, or resume with the same settings that produced the checkpoint."
         }
     }
 
@@ -2600,14 +2654,14 @@ try {
     # 5b. After a cancel: report what the cleanup left behind, so 'Cancelled' is never claimed over a half-cleaned state
     $script:CancelCleanupProblems = @()
     if ($script:BuildCancelled) {
-        $lingeringMountList = @()
+        $lingeringMountList = [System.Collections.Generic.List[string]]::new()
         foreach ($mPath in $allTargetMounts) {
             try {
                 foreach ($am in @(Get-WinEaseMountedImages)) {
                     $ap = if ($am.Path) { try { ConvertTo-WinEaseNormalizedPath -Path $am.Path } catch { $null } } else { $null }
-                    if ($ap -and ($ap -ieq $mPath)) { $lingeringMountList += $mPath }
+                    if ($ap -and ($ap -ieq $mPath)) { $lingeringMountList.Add($mPath) }
                 }
-            } catch { $lingeringMountList += "$mPath (status could not be read)" }
+            } catch { $lingeringMountList.Add("$mPath (status could not be read)") }
         }
         $stillLoadedHives = @(@('zCOMPONENTS', 'zDEFAULT', 'zNTUSER', 'zSOFTWARE', 'zSYSTEM') | Where-Object { Test-Path -LiteralPath "Registry::HKEY_LOCAL_MACHINE\$_" })
         $script:CancelCleanupProblems = Get-WinEaseCancelCleanupProblems -LoadedHives $stillLoadedHives -LingeringMounts $lingeringMountList `
@@ -2620,14 +2674,14 @@ try {
 
     # 5c. P1-02: Check for cleanup residues and generate explicit remediation commands on failure or cancel
     if ($script:BuildCancelled -or -not $script:BuildSucceeded) {
-        $lingeringMountListAll = @()
+        $lingeringMountListAll = [System.Collections.Generic.List[string]]::new()
         foreach ($mPath in $allTargetMounts) {
             try {
                 foreach ($am in @(Get-WinEaseMountedImages)) {
                     $ap = if ($am.Path) { try { ConvertTo-WinEaseNormalizedPath -Path $am.Path } catch { $null } } else { $null }
-                    if ($ap -and ($ap -ieq $mPath)) { $lingeringMountListAll += $mPath }
+                    if ($ap -and ($ap -ieq $mPath)) { $lingeringMountListAll.Add($mPath) }
                 }
-            } catch { $lingeringMountListAll += "$mPath (status could not be read)" }
+            } catch { $lingeringMountListAll.Add("$mPath (status could not be read)") }
         }
         $stillLoadedHivesAll = @(@('zCOMPONENTS', 'zDEFAULT', 'zNTUSER', 'zSOFTWARE', 'zSYSTEM') | Where-Object { Test-Path -LiteralPath "Registry::HKEY_LOCAL_MACHINE\$_" })
         if (Get-Command -Name Get-WinEaseCleanupRemediation -ErrorAction SilentlyContinue) {
@@ -2748,12 +2802,15 @@ try {
         Stop-Transcript
     }
 
-    # 8. Release global mutex guard
+    # 8. Release global mutex guard (C-H2: release only when this process actually
+    # owns the mutex - the same HasMutex rule the batch-queue path already used.
+    # ReleaseMutex on a mutex the thread does not own throws ApplicationException.)
     if ($script:BuildMutex) {
         try {
-            $script:BuildMutex.ReleaseMutex()
+            if ($script:HasMutex) { $script:BuildMutex.ReleaseMutex() }
             $script:BuildMutex.Dispose()
             $script:BuildMutex = $null
+            $script:HasMutex = $false
         } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
 

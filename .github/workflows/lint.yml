@@ -38,11 +38,20 @@ jobs:
             Register-PSRepository -Default -ErrorAction SilentlyContinue
           }
           Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue
-          if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
+          # Pin the analyzer version (review finding O-M1): installing "the newest" made
+          # lint results depend on whatever PSGallery served that day and let a new rule
+          # set appear without a code change. Bump this version deliberately, in its own
+          # pull request, so the rule change is reviewed like a code change.
+          $analyzerVersion = '1.22.0'
+          if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer | Where-Object { $_.Version -eq $analyzerVersion })) {
             $attempts = 0
             while ($attempts -lt 3) {
               try {
-                Install-Module PSScriptAnalyzer -Force -SkipPublisherCheck -Scope CurrentUser -ErrorAction Stop
+                # -SkipPublisherCheck is kept on purpose: with it removed, a PSGallery
+                # publisher-certificate rotation can fail this non-interactive install
+                # even for the genuine Microsoft module. The reproducibility control is
+                # the pinned -RequiredVersion above, not the publisher check.
+                Install-Module PSScriptAnalyzer -RequiredVersion $analyzerVersion -Force -SkipPublisherCheck -Scope CurrentUser -ErrorAction Stop
                 break
               } catch {
                 $attempts++
@@ -51,6 +60,9 @@ jobs:
               }
             }
           }
+          # Load exactly the pinned version, so a different preinstalled copy on the
+          # runner image is not picked up silently.
+          Import-Module PSScriptAnalyzer -RequiredVersion $analyzerVersion -Force
           $results = Invoke-ScriptAnalyzer -Path . -Recurse -Settings .\PSScriptAnalyzerSettings.psd1
           $results | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize -Wrap
           foreach ($r in $results) {

@@ -1,0 +1,88 @@
+NOTICE — WinEase
+
+WinEase is a fork and further development of the nano11 project. This file
+separates the attribution of the parts of this repository by origin. The
+license that applies to the software as distributed from this repository is
+the MIT License in the file LICENSE.
+
+----------------------------------------------------------------------
+1. Portions derived from nano11
+
+    Original project and concept: nano11 by NTDEV
+    https://github.com/ntdevlabs/nano11
+
+    Copyright (c) 2025 NTDEV & nano11 contributors
+
+    The builder structure and the offline image-customisation approach of
+    WinEase originate from nano11. That copyright notice is the one carried
+    in LICENSE, as the MIT License requires it to be included in all copies
+    or substantial portions of the software.
+
+2. The WinEase fork itself
+
+    Copyright (c) 2026 gh459 and WinEase contributors
+
+    The fork's own additions — including the phase pipeline, the libraries
+    under lib/, the WinForms and WinUI windows, the C# launcher and plugin
+    system under src/, the Rust physical-debloat tool, the configuration
+    data under config/ and the test suite — are the work of the WinEase
+    contributors and are distributed under the same MIT License.
+
+3. Re-implemented tweaks (ideas and registry values, re-implemented in
+   WinEase; last upstream review 2026-10-22, see
+   docs/dev/upstream-sync-2026-10.md and the Attribution section of
+   README.md)
+
+    - Chris Titus Tech's WinUtil — https://github.com/ChrisTitusTech/winutil
+    - Sophia Script for Windows by Dmitry Nefedov (farag2) —
+      https://github.com/farag2/Sophia-Script-for-Windows
+    - SophiApp — https://github.com/Sophia-Community/SophiApp
+    - Optimizer by Hellzerg — https://github.com/hellzerg/optimizer
+    - Bloatynosy by Builtbybel — https://github.com/builtbybel/Bloatynosy
+    - ReviOS & Revision Tool — https://github.com/meetrevision
+    - AtlasOS — https://github.com/atlas-os/atlas
+    - Win11Debloat by Raphire — https://github.com/raphire/win11debloat
+    - Windows Defender Remover by ionuttbara —
+      https://github.com/ionuttbara/windows-defender-remover
+    - privacy.sexy by undergroundwires —
+      https://github.com/undergroundwires/privacy.sexy
+    - Crapfixer by Builtbybel — https://github.com/builtbybel/Crapfixer
+    - FluentCleaner by Builtbybel — https://github.com/builtbybel/FluentCleaner
+    - Debloat-Win11 by SysAdminDoc — https://github.com/SysAdminDoc/Debloat-Win11
+    - Harden-Windows-Security by HotCakeX —
+      https://github.com/HotCakeX/Harden-Windows-Security
+
+    These projects are listed as the sources the WinEase implementations
+    were reviewed against. Inclusion in this list does not transfer their
+    copyrights or licenses to this repository; each upstream project keeps
+    its own license terms.
+
+4. scripts/tools/Atlas-ReviOS Tools/*.bat (7 files)
+
+    These batch files present themselves as "Atlas/ReviOS Tool" in their
+    own banners and are named after the AtlasOS and ReviOS projects
+    (section 3). Their provenance cannot be determined from the files
+    themselves: they carry no copyright notice, no author attribution and
+    no license header, so it is not recorded here — because it is not known
+    — whether they are original to WinEase, adapted, or copied. They are
+    shipped in the release package as post-install tools. Anyone
+    redistributing WinEase should verify the origin and license of these
+    files first; this notice flags the gap instead of papering over it.
+
+5. oscdimg.exe (bundled binary, repository root)
+
+    oscdimg.exe is a tool of the Microsoft Windows Assessment and
+    Deployment Kit (Windows ADK); it is a Microsoft binary, not a WinEase
+    work, and Microsoft's terms for the ADK apply to it. The bundled copy
+    is version 2.56. WinEase does not trust the file by its presence: at
+    build time Test-OscdimgIntegrity (lib/WinEaseSystem.ps1) accepts an
+    oscdimg binary only when its Authenticode signature is valid and
+    issued by Microsoft, or when its SHA-256 matches a pinned known hash.
+    The SHA-256 of the bundled copy is:
+
+        f5129f313ed7eb46f2677cf522e64264a225f226307ed0ddb52bb14c46e7cfdd
+
+----------------------------------------------------------------------
+Contributors named in README.md: Tinnitus97 (PR #6: universal language
+support, robocopy WinSxS fix), and community bug reports and feature
+requests from the nano11 issue tracker.
