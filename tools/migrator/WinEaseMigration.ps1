@@ -815,6 +815,7 @@ function Invoke-WinEaseMigrationRulesBackup {
         }
         $ruleBackupDir = Join-Path -Path $BackupRoot -ChildPath "rules\$rid"
         if (-not (Test-Path -LiteralPath $ruleBackupDir)) { New-Item -ItemType Directory -Force -Path $ruleBackupDir | Out-Null }
+        $ruleBackupDirPhysical = try { (Get-Item -LiteralPath $ruleBackupDir -ErrorAction Stop).FullName } catch { $ruleBackupDir }
         $ruleCopied = 0
         $ruleRegistry = 0
         # RelativePath -> the rule's own SourcePaths pattern it was copied from, so the
@@ -882,12 +883,13 @@ function Invoke-WinEaseMigrationRulesBackup {
         # RegistryPaths
         # reg.exe export does not accept PSDrive notation (HKCU:\...) or abbreviated
         # hive names (HKCU\): export requires full hive names (HKEY_CURRENT_USER\...).
+        # Also resolve PS drive path (e.g. TestDrive:\...) to physical disk path for reg.exe.
         if ($rule.RegistryPaths) {
             foreach ($rp in $rule.RegistryPaths) {
-                $regKey = ConvertTo-WinEaseFullRegistryKey -Key [string]$rp
+                $regKey = ConvertTo-WinEaseFullRegistryKey -Key "$rp"
                 $regName = ($regKey -replace '[\\/:*?"<>|\s]', '_')
                 if (-not $regName) { $regName = 'registry' }
-                $regFile = Join-Path -Path $ruleBackupDir -ChildPath ($regName + '.reg')
+                $regFile = Join-Path -Path $ruleBackupDirPhysical -ChildPath ($regName + '.reg')
                 try {
                     $exportOk = Invoke-WinEaseRegExe -ArgumentList @('export', $regKey, $regFile, '/y')
                     if (-not $exportOk -or -not (Test-Path -LiteralPath $regFile)) {
@@ -912,7 +914,7 @@ function Invoke-WinEaseMigrationRulesBackup {
                     Id            = $rid
                     Created       = (Get-Date).ToString('o')
                     SourcePaths   = @($existingSources)
-                    RegistryKeys  = @(@($rule.RegistryPaths) | Where-Object { $_ } | ForEach-Object { ConvertTo-WinEaseFullRegistryKey -Key [string]$_ })
+                    RegistryKeys  = @(@($rule.RegistryPaths) | Where-Object { $_ } | ForEach-Object { ConvertTo-WinEaseFullRegistryKey -Key "$_" })
                     Entries       = @($ruleEntries)
                 }
                 $ruleManifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path -Path $ruleBackupDir -ChildPath 'rule-manifest.json') -Encoding UTF8
@@ -955,6 +957,7 @@ function Invoke-WinEaseMigrationRulesRestore {
         $rule = $allRules | Where-Object { $_.Id -eq $rid } | Select-Object -First 1
         $ruleBackupDir = Join-Path -Path $BackupRoot -ChildPath "rules\$rid"
         if (-not (Test-Path -LiteralPath $ruleBackupDir)) { $failed += [PSCustomObject]@{ Rule = $rid; Error = 'Backup not found' }; continue }
+        $ruleBackupDirPhysical = try { (Get-Item -LiteralPath $ruleBackupDir -ErrorAction Stop).FullName } catch { $ruleBackupDir }
         if (-not $rule) { $failed += [PSCustomObject]@{ Rule = $rid; Error = 'Rule not found (remove or rename the rule, then restore its files manually)' }; continue }
         # process running check: restoring under a running application produces files it
         # will never read back (settings are written on exit), so the rule is skipped.
@@ -982,7 +985,7 @@ function Invoke-WinEaseMigrationRulesRestore {
         $allowedRoots = @(@($rule.SourcePaths) | ForEach-Object { Expand-WinEaseMigrationPath -RawPath ([string]$_) } | Where-Object { $_ })
 
         # Registry restore: every *.reg file the backup wrote (one per key)
-        $regFiles = @(Get-ChildItem -LiteralPath $ruleBackupDir -Filter '*.reg' -File -ErrorAction SilentlyContinue)
+        $regFiles = @(Get-ChildItem -LiteralPath $ruleBackupDirPhysical -Filter '*.reg' -File -ErrorAction SilentlyContinue)
         foreach ($reg in $regFiles) {
             if (Invoke-WinEaseRegExe -ArgumentList @('import', $reg.FullName)) { $restored++ }
             else { $failed += [PSCustomObject]@{ Rule = $rid; Path = $reg.Name; Error = "Registry import failed (reg.exe exit code $($LASTEXITCODE))" } }
