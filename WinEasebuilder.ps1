@@ -1054,12 +1054,12 @@ function Apply-WinEaseProfileDebloat {
         if ($item -ne [string]$raw) { $legacyEngines[$item] = 'Rust' }
         $normStd += $item
     }
-    $normExp = @()
+    $normExp = [System.Collections.Generic.List[string]]::new()
     foreach ($raw in @($script:advancedDebloatExperimental)) {
         $item = ConvertTo-WinEaseDebloatTarget -Item ([string]$raw)
         if (-not $item) { continue }
         if ($item -ne [string]$raw) { $legacyEngines[$item] = 'Rust' }
-        $normExp += $item
+        $normExp.Add($item)
     }
     $script:advancedDebloatStandard     = @($normStd | Where-Object { $_ } | Select-Object -Unique)
     $script:advancedDebloatExperimental = @($normExp | Where-Object { $_ } | Select-Object -Unique)
