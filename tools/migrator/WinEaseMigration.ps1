@@ -802,6 +802,8 @@ function Invoke-WinEaseMigrationRulesBackup {
         }
         $ruleBackupDir = Join-Path -Path $BackupRoot -ChildPath "rules\$rid"
         if (-not (Test-Path -LiteralPath $ruleBackupDir)) { New-Item -ItemType Directory -Force -Path $ruleBackupDir | Out-Null }
+        $ruleBackupDirNative = $ruleBackupDir
+        try { $ruleBackupDirNative = (Get-Item -LiteralPath $ruleBackupDir -ErrorAction Stop).FullName } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         $ruleCopied = 0
         $ruleRegistry = 0
         # RelativePath -> the rule's own SourcePaths pattern it was copied from, so the
@@ -873,12 +875,12 @@ function Invoke-WinEaseMigrationRulesBackup {
         # silently producing a rule with no backup.
         if ($rule.RegistryPaths) {
             foreach ($rp in $rule.RegistryPaths) {
-                $regKey = ([string]$rp).Trim() -replace '^([A-Za-z0-9]+):', '$1'
+                $regKey = ([string]$rp).Trim() -replace ':', ''
                 if ($regKey -match '^(?i)HKCU\\') { $regKey = 'HKEY_CURRENT_USER\' + $regKey.Substring(5) }
                 elseif ($regKey -match '^(?i)HKLM\\') { $regKey = 'HKEY_LOCAL_MACHINE\' + $regKey.Substring(5) }
                 $regName = ($regKey -replace '[\\/:*?"<>|\s]', '_')
                 if (-not $regName) { $regName = 'registry' }
-                $regFile = Join-Path -Path $ruleBackupDir -ChildPath ($regName + '.reg')
+                $regFile = Join-Path -Path $ruleBackupDirNative -ChildPath ($regName + '.reg')
                 try {
                     $exportOk = Invoke-WinEaseRegExe -ArgumentList @('export', $regKey, $regFile, '/y')
                     if (-not $exportOk -or -not (Test-Path -LiteralPath $regFile)) {
@@ -904,7 +906,7 @@ function Invoke-WinEaseMigrationRulesBackup {
                     Created       = (Get-Date).ToString('o')
                     SourcePaths   = @($existingSources)
                     RegistryKeys  = @(@($rule.RegistryPaths) | Where-Object { $_ } | ForEach-Object {
-                        $k = ([string]$_).Trim() -replace '^([A-Za-z0-9]+):', '$1'
+                        $k = ([string]$_).Trim() -replace ':', ''
                         if ($k -match '^(?i)HKCU\\') { $k = 'HKEY_CURRENT_USER\' + $k.Substring(5) }
                         elseif ($k -match '^(?i)HKLM\\') { $k = 'HKEY_LOCAL_MACHINE\' + $k.Substring(5) }
                         $k
@@ -980,7 +982,9 @@ function Invoke-WinEaseMigrationRulesRestore {
         # Registry restore: every *.reg file the backup wrote (one per key)
         $regFiles = @(Get-ChildItem -LiteralPath $ruleBackupDir -Filter '*.reg' -File -ErrorAction SilentlyContinue)
         foreach ($reg in $regFiles) {
-            if (Invoke-WinEaseRegExe -ArgumentList @('import', $reg.FullName)) { $restored++ }
+            $regPathNative = $reg.FullName
+            try { $regPathNative = (Get-Item -LiteralPath $reg.FullName -ErrorAction Stop).FullName } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+            if (Invoke-WinEaseRegExe -ArgumentList @('import', $regPathNative)) { $restored++ }
             else { $failed += [PSCustomObject]@{ Rule = $rid; Path = $reg.Name; Error = "Registry import failed (reg.exe exit code $($LASTEXITCODE))" } }
         }
 
