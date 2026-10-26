@@ -1,5 +1,8 @@
 # GitHub automation audit (2026-10-21)
 
+> Note: this audit is a point-in-time record from 2026-10-21. Do not use it for
+> current decisions; check the live repository state instead.
+
 Review of the GitHub Actions workflows, the Claude agent, Dependabot and the test setup of
 `gh459/WinEase`, with the changes made in the same branch. Baseline: `main` at `79558b9`.
 
@@ -16,7 +19,7 @@ paths, Windows PowerShell 5.1) can only be confirmed by the Windows CI jobs.
 | `claude-issue-agent.yml` | `issues: assigned`, `issue_comment`, `pull_request_review_comment`, `pull_request_review`. Workflow-wide `contents/pull-requests/issues: write`, `id-token: write`, `actions: read`. Started for **any** comment containing `@claude`. |
 | `release.yml` | `v*` tag: `git archive` of HEAD to a ZIP, `softprops/action-gh-release`. No tests, no checksum, `contents: write` for the whole workflow. |
 | `dependabot.yml` | GitHub Actions only, monthly. Cargo (`tools/winease-physical-debloat`) and NuGet (`gui/winui/WinEaseGui/WinEaseGui.csproj`) not covered. |
-| Agent definitions | No `.github/agents/`, no Copilot instructions, no `CLAUDE.md`. `.jules/` and `.Jules/` hold notes of the Jules agent, not configuration. |
+| Agent definitions | No `.github/agents/`, no Copilot instructions, no `CLAUDE.md`. `.jules/` holds notes of the Jules agent, not configuration (the former `.Jules/` directory has been merged into `.jules/`). |
 | Branch protection | Not visible from the repository; must be checked in the GitHub settings (see 7). |
 | Rust engine | No CI job compiled it. |
 | Tests | 4,669-line Pester suite already covering the schema as single source of truth, GUI toggle wiring, CLI bindings, aliases, presets, dependency conflicts, user extensions, `-ComparePreset`, restore path validation, symbolic links and backup hashes. |

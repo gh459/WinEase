@@ -386,6 +386,13 @@ function Invoke-WinEaseLevel3RegistryPurge {
         if (-not $mountedKey) { return }
 
         $subKeyNames = $mountedKey.GetSubKeyNames()
+        # Orphan purges (entries that do NOT match the target mount/WIM and are
+        # only eligible because they sit inside the workspace with an Invalid /
+        # Needs-Remount status) are capped per call: a recovery run must not
+        # silently wipe an unbounded number of unrelated mount records. Entries
+        # matching the target itself are not subject to this cap.
+        $orphanPurgeCount = 0
+        $orphanPurgeLimit = 25
         foreach ($guid in $subKeyNames) {
             $entryKey = $null
             try {
@@ -403,9 +410,19 @@ function Invoke-WinEaseLevel3RegistryPurge {
                 $matchTargetMount = ($NormMount -and $normEntryMount -and ($normEntryMount -ieq $NormMount))
                 $matchTargetWim   = ($NormWim -and $normEntryWim -and ($normEntryWim -ieq $NormWim))
                 $isWorkspaceMount = Test-WinEaseMountPathInWorkspace -Path $normEntryMount
+                $isTargetEntry    = ($matchTargetMount -or $matchTargetWim)
+                $isOrphanEntry    = (-not $isTargetEntry) -and $isWorkspaceMount -and ($statusVal -in @(2, 3, "2", "3"))
 
                 # Strictly require Mount Path or WIM Path to match managed target, or be orphaned within workspace
-                if ($matchTargetMount -or $matchTargetWim -or ($isWorkspaceMount -and ($statusVal -in @(2, 3, "2", "3")))) {
+                if ($isTargetEntry -or $isOrphanEntry) {
+                    if ($isOrphanEntry) {
+                        if ($orphanPurgeCount -ge $orphanPurgeLimit) {
+                            Write-Warning "Level 3 purge: orphan purge limit ($orphanPurgeLimit) reached in this call; leaving WIMMount entry $guid (Mount: $mPathVal, WIM: $wPathVal, Status: $statusVal) in place."
+                            continue
+                        }
+                        $orphanPurgeCount++
+                        Write-Host "Level 3 orphan purge $orphanPurgeCount/$orphanPurgeLimit in this call: $guid (Mount: $mPathVal, WIM: $wPathVal, Status: $statusVal) - not a target of this recovery, orphaned inside the workspace." -ForegroundColor Yellow
+                    }
                     Write-Host "Purging corrupted/orphaned DISM mount metadata from registry: $guid (Mount: $mPathVal, WIM: $wPathVal, Status: $statusVal)..." -ForegroundColor Yellow
                     try {
                         $mountedKey.DeleteSubKeyTree($guid, $false)

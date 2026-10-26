@@ -284,7 +284,11 @@ exit 0;
   function Redact-WinEaseUserSecret {
     param([string]$Text)
     if ([string]::IsNullOrEmpty($Text)) { return $Text; }
-    $masked = $Text -replace '(?i)(password|secret|token|apikey|key)\s*[:=]\s*[^\s]+', '$1: [REDACTED]';
+    # Quoted values first (JSON / assignment forms such as "password": "..."
+    # or 'apikey' = '...'): the value may contain spaces, so the unquoted
+    # pattern below would only mask its first word and leak the rest.
+    $masked = $Text -replace '(?i)(["\x27]?[\w-]*(password|secret|token|apikey)[\w-]*["\x27]?\s*[:=]\s*)("[^"]*"|\x27[^\x27]*\x27)', '$1[REDACTED]';
+    $masked = $masked -replace '(?i)(password|secret|token|apikey|key)\s*[:=]\s*(?!\[REDACTED\])[^\s]+', '$1: [REDACTED]';
     $masked = $masked -replace '[A-Za-z0-9]{5}-[A-Za-z0-9]{5}-[A-Za-z0-9]{5}-[A-Za-z0-9]{5}-[A-Za-z0-9]{5}', 'XXXXX-XXXXX-XXXXX-XXXXX-XXXXX';
     return $masked;
   }
@@ -551,7 +555,11 @@ $scripts = @(
 		function Redact-WinEaseSecret {
 			param([string]$Text)
 			if ([string]::IsNullOrEmpty($Text)) { return $Text; }
-			$masked = $Text -replace '(?i)(password|secret|token|apikey|key)\s*[:=]\s*[^\s]+', '$1: [REDACTED]';
+			# Quoted values first (JSON / assignment forms such as "password": "..."
+			# or 'apikey' = '...'): the value may contain spaces, so the unquoted
+			# pattern below would only mask its first word and leak the rest.
+			$masked = $Text -replace '(?i)(["\x27]?[\w-]*(password|secret|token|apikey)[\w-]*["\x27]?\s*[:=]\s*)("[^"]*"|\x27[^\x27]*\x27)', '$1[REDACTED]';
+			$masked = $masked -replace '(?i)(password|secret|token|apikey|key)\s*[:=]\s*(?!\[REDACTED\])[^\s]+', '$1: [REDACTED]';
 			$masked = $masked -replace '[A-Za-z0-9]{5}-[A-Za-z0-9]{5}-[A-Za-z0-9]{5}-[A-Za-z0-9]{5}-[A-Za-z0-9]{5}', 'XXXXX-XXXXX-XXXXX-XXXXX-XXXXX';
 			return $masked;
 		}

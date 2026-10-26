@@ -665,16 +665,30 @@ fn delete_directory(path: &str, dry_run: bool) -> Result<bool, String> {
     }
     let mut entries: Vec<PathBuf> = Vec::new();
     fn collect(path: &Path, entries: &mut Vec<PathBuf>) {
-        // The ownership is taken and the delete right granted before the folder is
-        // read. A component folder that is owned by TrustedInstaller refuses the
-        // listing, and the refused listing was swallowed before, so the entries of
-        // such a folder were never collected and the folder survived the removal.
-        let _ = force_access(&path.to_string_lossy());
+        // The folder is listed plainly first, mirroring delete_file's ladder of
+        // "try the plain operation, force access only when it fails". Ownership is
+        // taken and the delete right granted only when the plain listing is
+        // refused: a component folder that is owned by TrustedInstaller refuses
+        // the listing, so on that failure force_access runs and the listing is
+        // retried once. Forcing every folder up front rewrote ownership and DACLs
+        // across the whole tree even when nothing needed it, and those changes
+        // survive in the image after the mount is committed.
         let rd = match fs::read_dir(path) {
             Ok(rd) => rd,
-            Err(e) => {
-                println!("  [ERR] cannot list {}: {}", path.to_string_lossy(), e);
-                return;
+            Err(first_err) => {
+                let _ = force_access(&path.to_string_lossy());
+                match fs::read_dir(path) {
+                    Ok(rd) => rd,
+                    Err(e) => {
+                        println!(
+                            "  [ERR] cannot list {}: {} (first attempt: {})",
+                            path.to_string_lossy(),
+                            e,
+                            first_err
+                        );
+                        return;
+                    }
+                }
             }
         };
         for entry in rd.flatten() {
@@ -770,10 +784,16 @@ fn delete_directory_contents(path: &str, dry_run: bool) -> RemovalOutcome {
     for entry in &entries {
         let entry_path = entry.to_string_lossy().to_string();
         if entry.is_dir() {
-            if remove_directory_forced(&entry_path) {
-                outcome.dirs += 1;
-            } else {
-                outcome.errors.push(format!("directory not removed: {}", entry_path));
+            // A nested directory is removed recursively through delete_directory:
+            // remove_directory_forced alone only succeeds on an empty directory,
+            // so a subfolder with content survived here and failed the target.
+            // Only the content of `path` is removed; `path` itself stays.
+            match delete_directory(&entry_path, false) {
+                Ok(true) => outcome.dirs += 1,
+                Ok(false) => {
+                    outcome.errors.push(format!("directory not removed: {}", entry_path))
+                }
+                Err(e) => outcome.errors.push(e),
             }
         } else {
             match delete_file(&entry_path, false) {
@@ -1939,9 +1959,23 @@ fn main() {
     }
 
     if !config.log_path.is_empty() {
-        let result_json = serde_json::to_string_pretty(&result).unwrap();
-        let _ = fs::write(&config.log_path, result_json);
-        println!("\nResult written to: {}", config.log_path);
+        // The caller (phase 09) reads this result file, so a failure to produce
+        // it must not be swallowed: report it on stderr instead of panicking on
+        // serialization or silently dropping the write error. The exit code is
+        // unchanged; it still reflects the removal result alone.
+        match serde_json::to_string_pretty(&result) {
+            Ok(result_json) => match fs::write(&config.log_path, result_json) {
+                Ok(()) => println!("\nResult written to: {}", config.log_path),
+                Err(e) => eprintln!(
+                    "\n[ERR] Could not write the result file {}: {}",
+                    config.log_path, e
+                ),
+            },
+            Err(e) => eprintln!(
+                "\n[ERR] Could not serialize the result for {}: {}",
+                config.log_path, e
+            ),
+        }
     }
 
     println!("\n=== Summary ===");

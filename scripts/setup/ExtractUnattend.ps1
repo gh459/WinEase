@@ -69,10 +69,29 @@ try {
             $fileNodes = $xml.SelectNodes('//ext:File | //u:File | //File', $nsmgr)
             if ($fileNodes -and $fileNodes.Count -gt 0) {
                 Log-Extract "Found $($fileNodes.Count) embedded file nodes."
+                # Extraction targets are restricted to the setup scripts folder:
+                # the unattend file controls both the path and the content of the
+                # extracted files (which later run as SYSTEM), so a path outside
+                # this folder must never be written.
+                # The second root is the Winhance scripts folder: the shipped unattend embeds
+                # Winhancements.ps1 there and the required-scripts check below expects it there.
+                $allowedExtractRoots = @('C:\Windows\Setup\Scripts\', 'C:\ProgramData\Winhance\Unattend\Scripts\')
                 foreach ($file in $fileNodes) {
                     $rawPath = $file.GetAttribute('path')
                     if (-not $rawPath) { continue }
-                    $targetPath = [System.Environment]::ExpandEnvironmentVariables($rawPath)
+                    $expandedPath = [System.Environment]::ExpandEnvironmentVariables($rawPath)
+                    try {
+                        $targetPath = [System.IO.Path]::GetFullPath($expandedPath)
+                    } catch {
+                        Log-Extract "[SECURITY REFUSAL] Skipped embedded file with an unresolvable path: $rawPath"
+                        continue
+                    }
+                    $isAllowedExtractPath = $false
+                    foreach ($allowedRoot in $allowedExtractRoots) { if ($targetPath.StartsWith($allowedRoot, [System.StringComparison]::OrdinalIgnoreCase)) { $isAllowedExtractPath = $true; break } }
+                    if (-not $isAllowedExtractPath) {
+                        Log-Extract "[SECURITY REFUSAL] Skipped embedded file outside the allowed folder ($($allowedExtractRoots -join ', ')): $targetPath"
+                        continue
+                    }
                     if (-not (Test-Path -LiteralPath $targetPath)) {
                         $parent = Split-Path -Path $targetPath -Parent
                         if ($parent -and -not (Test-Path -LiteralPath $parent)) {
