@@ -742,6 +742,7 @@ function Invoke-WinEaseRegExe {
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
+        $global:LASTEXITCODE = 0
         $output = & reg.exe @ArgumentList 2>&1
         $exit = $LASTEXITCODE
         $stderrText = (@($output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$($_.Exception.Message)" }) -join ' ').Trim()
@@ -874,6 +875,10 @@ function Invoke-WinEaseMigrationRulesBackup {
         if ($rule.RegistryPaths) {
             foreach ($rp in $rule.RegistryPaths) {
                 $regKey = ([string]$rp).Trim() -replace '^([A-Za-z0-9]+):', '$1'
+                if ($regKey -match '^HKCU\\?') { $regKey = 'HKEY_CURRENT_USER' + $regKey.Substring(4) }
+                elseif ($regKey -match '^HKLM\\?') { $regKey = 'HKEY_LOCAL_MACHINE' + $regKey.Substring(4) }
+                elseif ($regKey -match '^HKU\\?') { $regKey = 'HKEY_USERS' + $regKey.Substring(3) }
+                elseif ($regKey -match '^HKCR\\?') { $regKey = 'HKEY_CLASSES_ROOT' + $regKey.Substring(4) }
                 $regName = ($regKey -replace '[\\/:*?"<>|\s]', '_')
                 if (-not $regName) { $regName = 'registry' }
                 $regFile = Join-Path -Path $ruleBackupDir -ChildPath ($regName + '.reg')
