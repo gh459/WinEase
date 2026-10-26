@@ -1838,7 +1838,10 @@ Describe "WinEase helpers - split module layout (R2)" {
         # (Get-WinEaseDependencyStringDefaults/String/Field/View/Review, New-...Result, Format-...ItemLine).
         # G1 added ConvertTo-WinEaseRealPath and Test-WinEaseProtectedLexicalPath (path safety).
         # P1-01 added Test-WinEaseUnattendXmlStructure (unattend template safety).
-        $functions.Count | Should Be 59
+        # Refactored Test-WinEaseConfigConflicts into 5 modular helpers (Get-WinEaseConfigValue,
+        # Get-WinEaseConfigTweakValue, Get-WinEaseDebloatPreservationConflicts,
+        # Get-WinEaseLogicAndDependencyConflicts, Get-WinEaseSafetyGateConflicts).
+        $functions.Count | Should Be 64
         $duplicates = @($functions | Group-Object Name | Where-Object Count -gt 1)
         $duplicates.Count | Should Be 0
         @($ast.FindAll({
