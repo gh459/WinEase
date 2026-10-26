@@ -132,7 +132,7 @@ function Get-WinEaseDeepApplyFailedFiles {
         if ($line -match 'DISM WIM Provider:\s*PID=\d+\s+(?<p>.+?)\s+\(HRESULT=0x(?:80070241|80070570|8007000D|80070017)\)') {
             $full = $matches['p'].Trim()
             if ($full.StartsWith($applyRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-                $rel = $full.Substring($applyRoot.Length).TrimStart('\')
+                $rel = $full.Substring($applyRoot.Length).TrimStart('\').TrimStart('/')
                 if ($rel -and -not $found.Contains($rel)) { $found.Add($rel) }
             }
         }
