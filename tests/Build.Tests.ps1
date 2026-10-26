@@ -616,3 +616,59 @@ Describe "WinEase builder - ConvertTo-WinEaseCliArgument" {
         ConvertTo-WinEaseCliArgument -Name "SourceDrive" -Value $null | Should Be "-SourceDrive ''"
     }
 }
+
+Describe "WinEase builder - VHDX cleanup fallback" {
+    It "WinEasebuilder.ps1 AST contains the double try-catch fallback structure for VHDX reparse point deletion" {
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:BuilderPath, [ref]$tokens, [ref]$errors)
+        $errors.Count | Should Be 0
+
+        $tryNodes = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.TryStatementAst] -and
+            $node.Body.Extent.Text -match 'System\.IO\.Directory.*Delete.*vhdxMountDir'
+        }, $true))
+
+        $tryNodes.Count | Should Be 1
+        $vhdxTry = $tryNodes[0]
+        $vhdxTry.CatchClauses.Count | Should Be 1
+        $catchText = $vhdxTry.CatchClauses[0].Body.Extent.Text
+        $catchText | Should Match '\$rpCheck\.Delete\(\)'
+        $catchText | Should Match 'Write-Verbose'
+    }
+
+    It "invokes `$rpCheck.Delete() fallback when [System.IO.Directory]::Delete fails" {
+        $vhdxMountDir = Join-Path ([System.IO.Path]::GetTempPath()) ("winease_test_vhdx_" + [guid]::NewGuid().ToString('N'))
+        $script:fallbackCalled = $false
+        $rpCheck = [PSCustomObject]@{
+            Attributes = [System.IO.FileAttributes]::ReparsePoint
+        }
+        $rpCheck | Add-Member -MemberType ScriptMethod -Name "Delete" -Value {
+            $script:fallbackCalled = $true
+        }
+
+        # [System.IO.Directory]::Delete will throw because $vhdxMountDir does not exist
+        try { [System.IO.Directory]::Delete($vhdxMountDir, $false) } catch { try { $rpCheck.Delete() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" } }
+
+        $script:fallbackCalled | Should Be $true
+    }
+
+    It "catches exceptions from `$rpCheck.Delete() without throwing unhandled error" {
+        $vhdxMountDir = Join-Path ([System.IO.Path]::GetTempPath()) ("winease_test_vhdx_" + [guid]::NewGuid().ToString('N'))
+        $script:fallbackCalled = $false
+        $rpCheck = [PSCustomObject]@{
+            Attributes = [System.IO.FileAttributes]::ReparsePoint
+        }
+        $rpCheck | Add-Member -MemberType ScriptMethod -Name "Delete" -Value {
+            $script:fallbackCalled = $true
+            throw "Access denied on fallback delete"
+        }
+
+        $scriptBlock = {
+            try { [System.IO.Directory]::Delete($vhdxMountDir, $false) } catch { try { $rpCheck.Delete() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" } }
+        }
+
+        $scriptBlock | Should Not Throw
+        $script:fallbackCalled | Should Be $true
+    }
+}
