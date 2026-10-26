@@ -100,7 +100,7 @@ Describe "PC Migration & Backup Engine (tools/migrator/WinEaseMigration.ps1)" -T
 Describe "Restore-WinEaseApps (tools/migrator/WinEaseMigration.ps1)" {
     BeforeAll {
         if (-not (Get-Command -Name winget -ErrorAction SilentlyContinue)) {
-            function global:winget { param($a, $b, $c, $d, $e) }
+            function global:winget { $null = $args }
         }
         if (-not (Get-Command -Name Restore-WinEaseApps -ErrorAction SilentlyContinue)) {
             . (Join-Path -Path $script:RepoRoot -ChildPath "tools\migrator\WinEaseMigration.ps1")
