@@ -784,6 +784,11 @@ function Invoke-WinEaseMigrationRulesBackup {
     $backedUp = @()
     $notices = @()
     if (-not (Test-Path -LiteralPath $BackupRoot)) { New-Item -ItemType Directory -Force -Path $BackupRoot | Out-Null }
+    try {
+        if (Get-Command Resolve-Path -ErrorAction SilentlyContinue) {
+            $BackupRoot = (Resolve-Path -LiteralPath $BackupRoot -ErrorAction Stop).ProviderPath
+        }
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     foreach ($rid in $RuleIds) {
         $rule = $allRules | Where-Object { $_.Id -eq $rid } | Select-Object -First 1
         if (-not $rule) { $failed += [PSCustomObject]@{ Rule = $rid; Error = 'Rule not found' }; continue }
@@ -877,9 +882,6 @@ function Invoke-WinEaseMigrationRulesBackup {
                 $regName = ($regKey -replace '[\\/:*?"<>|\s]', '_')
                 if (-not $regName) { $regName = 'registry' }
                 $regFile = Join-Path -Path $ruleBackupDir -ChildPath ($regName + '.reg')
-                if ($ExecutionContext -and $ExecutionContext.SessionState -and $ExecutionContext.SessionState.Path) {
-                    try { $regFile = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($regFile) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-                }
                 try {
                     $exportOk = Invoke-WinEaseRegExe -ArgumentList @('export', $regKey, $regFile, '/y')
                     if (-not $exportOk -or -not (Test-Path -LiteralPath $regFile)) {
@@ -943,6 +945,11 @@ function Invoke-WinEaseMigrationRulesRestore {
     $restored = 0
     $skipped = 0
     $failed = @()
+    try {
+        if ((Test-Path -LiteralPath $BackupRoot) -and (Get-Command Resolve-Path -ErrorAction SilentlyContinue)) {
+            $BackupRoot = (Resolve-Path -LiteralPath $BackupRoot -ErrorAction Stop).ProviderPath
+        }
+    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     foreach ($rid in $RuleIds) {
         $rule = $allRules | Where-Object { $_.Id -eq $rid } | Select-Object -First 1
         $ruleBackupDir = Join-Path -Path $BackupRoot -ChildPath "rules\$rid"
@@ -976,11 +983,7 @@ function Invoke-WinEaseMigrationRulesRestore {
         # Registry restore: every *.reg file the backup wrote (one per key)
         $regFiles = @(Get-ChildItem -LiteralPath $ruleBackupDir -Filter '*.reg' -File -ErrorAction SilentlyContinue)
         foreach ($reg in $regFiles) {
-            $regPath = $reg.FullName
-            if ($ExecutionContext -and $ExecutionContext.SessionState -and $ExecutionContext.SessionState.Path) {
-                try { $regPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($regPath) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-            }
-            if (Invoke-WinEaseRegExe -ArgumentList @('import', $regPath)) { $restored++ }
+            if (Invoke-WinEaseRegExe -ArgumentList @('import', $reg.FullName)) { $restored++ }
             else { $failed += [PSCustomObject]@{ Rule = $rid; Path = $reg.Name; Error = "Registry import failed (reg.exe exit code $($LASTEXITCODE))" } }
         }
 
