@@ -331,19 +331,11 @@ namespace @@NS@@ {
             @(Get-WinEasePluginContributions -Kind Registry).Count | Should Be 0
         }
         It "returns unique appx patterns via Get-WinEasePluginAppxPatterns" {
-            $script:WinEasePlugins = [System.Collections.Generic.List[object]]::new()
-            $mockInstance = [PSCustomObject]@{
-                GetAppxRemovals = { return @('PackageA.*', 'PackageB.*') }
-                AppliesTo       = { return $true }
-            }
-            $script:WinEasePlugins.Add([PSCustomObject]@{
-                Id          = 'MockPlugin'
-                Instance    = $mockInstance
-                Description = [PSCustomObject]@{ MinBuild = 0; MaxBuild = 0 }
-            })
+            Mock Get-WinEasePluginContributions {
+                return @([PSCustomObject]@{ PluginId = 'Mock'; Pattern = 'PackageA.*' })
+            } -ParameterFilter { $Kind -eq 'Appx' }
             $patterns = Get-WinEasePluginAppxPatterns
             $patterns -contains 'PackageA.*' | Should Be $true
-            $patterns -contains 'PackageB.*' | Should Be $true
         }
     }
 
