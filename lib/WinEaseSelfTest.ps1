@@ -92,11 +92,11 @@ function Test-WinEaseSelfCheck04ProfilePresets {
     $expectedPresetKeys = @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')
     $missingPresets = @()
     foreach ($ep in $expectedPresetKeys) {
-        if (-not $script:BuiltInPresets.Contains($ep)) {
+        if (-not $script:BuiltInPresets -or -not $script:BuiltInPresets.Contains($ep)) {
             $missingPresets += $ep
         }
     }
-    if ($missingPresets.Count -eq 0 -and $script:TweakGroups.Count -ge 4) {
+    if ($missingPresets.Count -eq 0 -and $script:TweakGroups -and $script:TweakGroups.Count -ge 4) {
         $badPresets = @()
         foreach ($kv in $script:BuiltInPresets.GetEnumerator()) {
             $pName = $kv.Key
@@ -865,4 +865,15 @@ function Invoke-WinEaseSelfTest {
     }
     Write-Host "=========================================================" -ForegroundColor Cyan
     return $allPassed
+}
+
+# Entry point for the full validation suite (backward-compatible alias wrapper for Start-WinEaseSelfTest)
+function Start-WinEaseSelfTest {
+    [CmdletBinding()]
+    param(
+        [string]$ScriptRoot = (Split-Path -Parent $PSScriptRoot),
+        [string]$BuilderPath,
+        [string]$UnattendPath
+    )
+    Invoke-WinEaseSelfTest -ScriptRoot $ScriptRoot -BuilderPath $BuilderPath -UnattendPath $UnattendPath
 }

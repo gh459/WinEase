@@ -3192,6 +3192,120 @@ Describe "Builder cleanup S11" {
     }
 }
 
+Describe "WinEase self-test runner (Invoke-WinEaseSelfTest & Start-WinEaseSelfTest)" {
+    BeforeAll {
+        . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+        . (Join-Path $script:RepoRoot "lib\WinEaseSelfTest.ps1")
+    }
+
+    It "exports Invoke-WinEaseSelfTest and Start-WinEaseSelfTest commands" {
+        (Get-Command -Name Invoke-WinEaseSelfTest -ErrorAction SilentlyContinue) | Should Not Be $null
+        (Get-Command -Name Start-WinEaseSelfTest -ErrorAction SilentlyContinue) | Should Not Be $null
+    }
+
+    Context "When all self-checks pass" {
+        It "Invoke-WinEaseSelfTest returns true" {
+            Mock Test-WinEaseSelfCheck01AstSyntax { [PSCustomObject]@{ Test = "1"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck02RegistrySafety { [PSCustomObject]@{ Test = "2"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck03UnattendSchema { [PSCustomObject]@{ Test = "3"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck04ProfilePresets { [PSCustomObject]@{ Test = "4"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck05ToolingAssets { [PSCustomObject]@{ Test = "5"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck06BatchTargets { [PSCustomObject]@{ Test = "6"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck07UnattendSingularity { [PSCustomObject]@{ Test = "7"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck08AppxPatterns { [PSCustomObject]@{ Test = "8"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck09HiveIsolation { [PSCustomObject]@{ Test = "9"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck10MountPathGeneration { [PSCustomObject]@{ Test = "10"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck11MountConflict { [PSCustomObject]@{ Test = "11"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck12MountSafety { [PSCustomObject]@{ Test = "12"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck13FontImePreservation { [PSCustomObject]@{ Test = "13"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck14WorkspacePreservation { [PSCustomObject]@{ Test = "14"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck15WinSxsAppxGuards { [PSCustomObject]@{ Test = "15"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck16WimSelfHealing { [PSCustomObject]@{ Test = "16"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck17AtomicFileIO { [PSCustomObject]@{ Test = "17"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck18ConfigConflicts { [PSCustomObject]@{ Test = "18"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck19ResumeIntegrity { [PSCustomObject]@{ Test = "19"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck20TweakCoverage { [PSCustomObject]@{ Test = "20"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck21ExtensionCatalogs { [PSCustomObject]@{ Test = "21"; Passed = $true; Details = "OK" } }
+
+            $res = Invoke-WinEaseSelfTest -ScriptRoot $script:RepoRoot
+            $res | Should Be $true
+        }
+    }
+
+    Context "When a self-check fails" {
+        It "Invoke-WinEaseSelfTest returns false" {
+            Mock Test-WinEaseSelfCheck01AstSyntax { [PSCustomObject]@{ Test = "1"; Passed = $false; Details = "Syntax error" } }
+            Mock Test-WinEaseSelfCheck02RegistrySafety { [PSCustomObject]@{ Test = "2"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck03UnattendSchema { [PSCustomObject]@{ Test = "3"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck04ProfilePresets { [PSCustomObject]@{ Test = "4"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck05ToolingAssets { [PSCustomObject]@{ Test = "5"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck06BatchTargets { [PSCustomObject]@{ Test = "6"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck07UnattendSingularity { [PSCustomObject]@{ Test = "7"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck08AppxPatterns { [PSCustomObject]@{ Test = "8"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck09HiveIsolation { [PSCustomObject]@{ Test = "9"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck10MountPathGeneration { [PSCustomObject]@{ Test = "10"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck11MountConflict { [PSCustomObject]@{ Test = "11"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck12MountSafety { [PSCustomObject]@{ Test = "12"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck13FontImePreservation { [PSCustomObject]@{ Test = "13"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck14WorkspacePreservation { [PSCustomObject]@{ Test = "14"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck15WinSxsAppxGuards { [PSCustomObject]@{ Test = "15"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck16WimSelfHealing { [PSCustomObject]@{ Test = "16"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck17AtomicFileIO { [PSCustomObject]@{ Test = "17"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck18ConfigConflicts { [PSCustomObject]@{ Test = "18"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck19ResumeIntegrity { [PSCustomObject]@{ Test = "19"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck20TweakCoverage { [PSCustomObject]@{ Test = "20"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck21ExtensionCatalogs { [PSCustomObject]@{ Test = "21"; Passed = $true; Details = "OK" } }
+
+            $res = Invoke-WinEaseSelfTest -ScriptRoot $script:RepoRoot
+            $res | Should Be $false
+        }
+    }
+
+    Context "When Start-WinEaseSelfTest alias entry point is invoked" {
+        It "returns expected boolean result" {
+            Mock Test-WinEaseSelfCheck01AstSyntax { [PSCustomObject]@{ Test = "1"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck02RegistrySafety { [PSCustomObject]@{ Test = "2"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck03UnattendSchema { [PSCustomObject]@{ Test = "3"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck04ProfilePresets { [PSCustomObject]@{ Test = "4"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck05ToolingAssets { [PSCustomObject]@{ Test = "5"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck06BatchTargets { [PSCustomObject]@{ Test = "6"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck07UnattendSingularity { [PSCustomObject]@{ Test = "7"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck08AppxPatterns { [PSCustomObject]@{ Test = "8"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck09HiveIsolation { [PSCustomObject]@{ Test = "9"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck10MountPathGeneration { [PSCustomObject]@{ Test = "10"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck11MountConflict { [PSCustomObject]@{ Test = "11"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck12MountSafety { [PSCustomObject]@{ Test = "12"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck13FontImePreservation { [PSCustomObject]@{ Test = "13"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck14WorkspacePreservation { [PSCustomObject]@{ Test = "14"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck15WinSxsAppxGuards { [PSCustomObject]@{ Test = "15"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck16WimSelfHealing { [PSCustomObject]@{ Test = "16"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck17AtomicFileIO { [PSCustomObject]@{ Test = "17"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck18ConfigConflicts { [PSCustomObject]@{ Test = "18"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck19ResumeIntegrity { [PSCustomObject]@{ Test = "19"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck20TweakCoverage { [PSCustomObject]@{ Test = "20"; Passed = $true; Details = "OK" } }
+            Mock Test-WinEaseSelfCheck21ExtensionCatalogs { [PSCustomObject]@{ Test = "21"; Passed = $true; Details = "OK" } }
+
+            $res = Start-WinEaseSelfTest -ScriptRoot $script:RepoRoot
+            $res | Should Be $true
+        }
+    }
+
+    It "Test-WinEaseSelfCheck04ProfilePresets handles null script state safely" {
+        $oldPresets = $script:BuiltInPresets
+        $oldGroups = $script:TweakGroups
+        try {
+            $script:BuiltInPresets = $null
+            $script:TweakGroups = $null
+            $chk = Test-WinEaseSelfCheck04ProfilePresets
+            $chk.Passed | Should Be $false
+            $chk.Details | Should Match 'Missing built-in presets'
+        } finally {
+            $script:BuiltInPresets = $oldPresets
+            $script:TweakGroups = $oldGroups
+        }
+    }
+}
+
 Describe "Documentation S12" {
     # Files the docs mention that are created at run/build time, or live outside the repo.
     $script:DocPathExclusions = @(
