@@ -229,10 +229,10 @@ $remainingDirs = [System.Collections.Generic.List[string]]::new()
 foreach ($dir in $payloadDirs) {
     if ($dir -and (Test-Path -LiteralPath $dir)) { $remainingDirs.Add($dir) }
 }
-$ifeoPresent = @()
+$ifeoPresent = [System.Collections.Generic.List[string]]::new()
 foreach ($ifeoName in @('MsMpEng.exe', 'SecurityHealthService.exe', 'SecurityHealthSystray.exe')) {
     $ifeoKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\' + $ifeoName
-    if (Test-Path -LiteralPath $ifeoKey) { $ifeoPresent += $ifeoName }
+    if (Test-Path -LiteralPath $ifeoKey) { $ifeoPresent.Add($ifeoName) }
 }
 
 $status = @(
