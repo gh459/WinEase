@@ -33,7 +33,7 @@ if ($removeLegacyFOD) {
 # The polarity is uniform: the option is ON -> the package is removed, OFF -> the package
 # is kept. Before this mapping every pattern below was removed on every build, so a user
 # could not keep any of these features.
-$packagePatterns = @()
+$packagePatterns = [System.Collections.Generic.List[string]]::new()
 
 # Map: option key -> package patterns. The map lives in config\schema.psd1 (Targets), so
 # the schema is the single source of truth for what an option removes.
@@ -50,8 +50,8 @@ foreach ($optKey in $packageOptionMap.Keys) {
     if (-not $optionOn -and (Get-Command -Name Test-WinEaseDebloatOptionEnabled -ErrorAction SilentlyContinue)) {
         $optionOn = Test-WinEaseDebloatOptionEnabled -Option $optKey
     }
-    if ($optionOn) {
-        $packagePatterns += $packageOptionMap[$optKey]
+    if ($optionOn -and $packageOptionMap[$optKey]) {
+        $packagePatterns.AddRange([string[]]$packageOptionMap[$optKey])
     }
 }
 
@@ -59,33 +59,33 @@ foreach ($optKey in $packageOptionMap.Keys) {
 # These are bound to the font options: keepExtraFonts keeps the extra international fonts,
 # keepAsianIME keeps the Asian IME related packages.
 if (-not $keepExtraFonts) {
-    $packagePatterns += @(
+    $packagePatterns.AddRange([string[]]@(
         "Microsoft-Windows-LanguageFeatures-Fonts-Hans-Package~",
         "Microsoft-Windows-LanguageFeatures-Fonts-Hant-Package~",
         "Microsoft-Windows-LanguageFeatures-Fonts-Kore-Package~",
         "Microsoft-Windows-LanguageFeatures-Fonts-Thai-Package~",
         "Microsoft-Windows-LanguageFeatures-Fonts-Deva-Package~",
-    "Microsoft-Windows-LanguageFeatures-Fonts-Syrc-Package~",
-    "Microsoft-Windows-LanguageFeatures-Fonts-Cher-Package~",
-    "Microsoft-Windows-LanguageFeatures-Fonts-Ethi-Package~",
-    "Microsoft-Windows-LanguageFeatures-Fonts-Beng-Package~",
-    "Microsoft-Windows-LanguageFeatures-Fonts-Gujr-Package~",
-    "Microsoft-Windows-LanguageFeatures-Fonts-Guru-Package~",
-    "Microsoft-Windows-LanguageFeatures-Fonts-Knda-Package~",
-    "Microsoft-Windows-LanguageFeatures-Fonts-Mlym-Package~",
-    "Microsoft-Windows-LanguageFeatures-Fonts-Orya-Package~",
-    "Microsoft-Windows-LanguageFeatures-Fonts-Taml-Package~",
-    "Microsoft-Windows-LanguageFeatures-Fonts-Telu-Package~",
-    "Microsoft-Windows-LanguageFeatures-Fonts-Hebr-Package~",
-    "Microsoft-Windows-LanguageFeatures-Fonts-Arab-Package~"
-    )
+        "Microsoft-Windows-LanguageFeatures-Fonts-Syrc-Package~",
+        "Microsoft-Windows-LanguageFeatures-Fonts-Cher-Package~",
+        "Microsoft-Windows-LanguageFeatures-Fonts-Ethi-Package~",
+        "Microsoft-Windows-LanguageFeatures-Fonts-Beng-Package~",
+        "Microsoft-Windows-LanguageFeatures-Fonts-Gujr-Package~",
+        "Microsoft-Windows-LanguageFeatures-Fonts-Guru-Package~",
+        "Microsoft-Windows-LanguageFeatures-Fonts-Knda-Package~",
+        "Microsoft-Windows-LanguageFeatures-Fonts-Mlym-Package~",
+        "Microsoft-Windows-LanguageFeatures-Fonts-Orya-Package~",
+        "Microsoft-Windows-LanguageFeatures-Fonts-Taml-Package~",
+        "Microsoft-Windows-LanguageFeatures-Fonts-Telu-Package~",
+        "Microsoft-Windows-LanguageFeatures-Fonts-Hebr-Package~",
+        "Microsoft-Windows-LanguageFeatures-Fonts-Arab-Package~"
+    ))
 }
 
 # Foreign Speech / Text-to-Speech / Handwriting / OCR packages for non-target languages.
 # These are bound to the Asian-IME option: with keepAsianIME the foreign language IME and
 # language-feature packages are kept, otherwise they are removed.
 if (-not $keepAsianIME) {
-    $packagePatterns += @(
+    $packagePatterns.AddRange([string[]]@(
         "*IME-ko-kr*",
         "*IME-zh-cn*",
         "*IME-zh-tw*",
@@ -110,17 +110,17 @@ if (-not $keepAsianIME) {
         "Microsoft-Windows-LanguageFeatures-Handwriting-ko-*",
         "Microsoft-Windows-LanguageFeatures-OCR-zh-*",
         "Microsoft-Windows-LanguageFeatures-OCR-ko-*"
-    )
+    ))
 }
 
 if (-not $keepAsianIME) {
-    $packagePatterns += @(
+    $packagePatterns.AddRange([string[]]@(
         "Microsoft-Windows-LanguageFeatures-Handwriting-$languageCode-Package~",
         "Microsoft-Windows-LanguageFeatures-OCR-$languageCode-Package~",
         "Microsoft-Windows-LanguageFeatures-Speech-$languageCode-Package~",
         "Microsoft-Windows-LanguageFeatures-TextToSpeech-$languageCode-Package~",
         "*IME-ja-jp*"
-    )
+    ))
 }
 
 if ($removeDefender) {
@@ -131,8 +131,8 @@ if ($removeDefender) {
     # The pattern is kept for images that actually ship the FoD client package, and the
     # real payload (windows-defender-service) is neutralized in Phase 08 by removing the
     # CBS re-staging maps plus the ProgramData/Program Files payload.
-    $packagePatterns += "Windows-Defender-Client-Package~"
-    $packagePatterns += "Microsoft-Windows-Windows-Defender-Client-Package~"
+    $packagePatterns.Add("Windows-Defender-Client-Package~")
+    $packagePatterns.Add("Microsoft-Windows-Windows-Defender-Client-Package~")
 }
 
 # UltraSlim size-first trim (additional ④ size levers):
@@ -141,11 +141,11 @@ if ($removeDefender) {
 # Applied only for CJK targets (ja/ko/zh): heavyweight ML voice & character data live only there.
 if ($ultraSlimMode -and ("$languageCode" -match '^(ja|ko|zh)[-a-zA-Z]*$')) {
     Write-Host "  [UltraSlim] Trimming Speech/TextToSpeech/OCR language feature packages for '$languageCode'..." -ForegroundColor Cyan
-    $packagePatterns += @(
+    $packagePatterns.AddRange([string[]]@(
         "Microsoft-Windows-LanguageFeatures-Speech-$languageCode*",
         "Microsoft-Windows-LanguageFeatures-TextToSpeech-$languageCode*",
         "Microsoft-Windows-LanguageFeatures-OCR-$languageCode*"
-    )
+    ))
 }
 
 # Plugin contributions (IFodRemovalContributor). Packages join the pattern list, so the
@@ -156,13 +156,13 @@ if (Get-Command -Name Get-WinEasePluginContributions -ErrorAction SilentlyContin
     $pluginFodRemovals = @(Get-WinEasePluginContributions -Kind Fod)
     foreach ($pluginFod in @($pluginFodRemovals | Where-Object { $_.Kind -eq 'Package' })) {
         Write-Host "  [Plugin $($pluginFod.PluginId)] package removal pattern: $($pluginFod.Name)" -ForegroundColor DarkCyan
-        $packagePatterns += $pluginFod.Name
+        $packagePatterns.Add($pluginFod.Name)
     }
 }
 
 # Apply preservation filters to $packagePatterns before scanning
 if ($keepExtraFonts) {
-    $packagePatterns = @($packagePatterns | Where-Object { $_ -notlike "Microsoft-Windows-LanguageFeatures-Fonts-*" })
+    [void]$packagePatterns.RemoveAll({ param($p) $p -like "Microsoft-Windows-LanguageFeatures-Fonts-*" })
 }
 if ($keepAsianIME) {
     # Decoupled Asian IME trimming (size-first, README "Keep Asian IMEs" behavior):
@@ -173,7 +173,7 @@ if ($keepAsianIME) {
     #      removed by DISM, while IME-ja-jp is protected (no pattern remains for it plus a
     #      per-package guard below).
     if ($script:primaryImeLang) {
-        $packagePatterns = @($packagePatterns | Where-Object { $_ -notlike "*IME-$script:primaryImeLang*" })
+        [void]$packagePatterns.RemoveAll({ param($p) $p -like "*IME-$script:primaryImeLang*" })
     }
 }
 
