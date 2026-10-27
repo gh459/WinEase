@@ -727,19 +727,6 @@ function Restore-WinEaseUserData {
     return [PSCustomObject]@{ RestoredFiles = $restored; SkippedFiles = $skipped; FailedFiles = $failed }
 }
 
-function ConvertTo-WinEaseFullRegistryKey {
-    [CmdletBinding()]
-    [OutputType([string])]
-    param([string]$Key)
-    if ([string]::IsNullOrWhiteSpace($Key)) { return '' }
-    $k = $Key.Trim() -replace '^([A-Za-z0-9]+):', '$1'
-    return $k -replace '^HKCU(\\|$)', 'HKEY_CURRENT_USER$1' `
-              -replace '^HKLM(\\|$)', 'HKEY_LOCAL_MACHINE$1' `
-              -replace '^HKCR(\\|$)', 'HKEY_CLASSES_ROOT$1' `
-              -replace '^HKU(\\|$)', 'HKEY_USERS$1' `
-              -replace '^HKCC(\\|$)', 'HKEY_CURRENT_CONFIG$1'
-}
-
 # Invoke-WinEaseRegExe: runs reg.exe and reports success without letting its stderr
 # output throw: under $ErrorActionPreference = 'Stop' the 2>&1 redirection turns every
 # stderr line (including "The operation completed successfully.") into a terminating
@@ -755,7 +742,9 @@ function Invoke-WinEaseRegExe {
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $output = & reg.exe @ArgumentList 2>&1
+        $regExe = if ($env:SystemRoot) { Join-Path -Path $env:SystemRoot -ChildPath 'System32\reg.exe' } else { 'reg.exe' }
+        if (-not (Test-Path -LiteralPath $regExe)) { $regExe = 'reg.exe' }
+        $output = & $regExe @ArgumentList 2>&1
         $exit = $LASTEXITCODE
         $stderrText = (@($output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$($_.Exception.Message)" }) -join ' ').Trim()
     } finally {
@@ -815,7 +804,7 @@ function Invoke-WinEaseMigrationRulesBackup {
         }
         $ruleBackupDir = Join-Path -Path $BackupRoot -ChildPath "rules\$rid"
         if (-not (Test-Path -LiteralPath $ruleBackupDir)) { New-Item -ItemType Directory -Force -Path $ruleBackupDir | Out-Null }
-        $ruleBackupDirPhysical = try { (Get-Item -LiteralPath $ruleBackupDir -ErrorAction Stop).FullName } catch { $ruleBackupDir }
+        try { $ruleBackupDir = (Get-Item -LiteralPath $ruleBackupDir -ErrorAction Stop).FullName } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         $ruleCopied = 0
         $ruleRegistry = 0
         # RelativePath -> the rule's own SourcePaths pattern it was copied from, so the
@@ -881,17 +870,25 @@ function Invoke-WinEaseMigrationRulesBackup {
             }
         }
         # RegistryPaths
-        # reg.exe export does not accept PSDrive notation (HKCU:\...) or abbreviated
-        # hive names (HKCU\): export requires full hive names (HKEY_CURRENT_USER\...).
-        # Also resolve PS drive path (e.g. TestDrive:\...) to physical disk path for reg.exe.
+        # reg.exe does not understand the PowerShell PSDrive spelling (HKCU:\...): the
+        # colon makes it abort with "invalid key name". Export with the plain root name
+        # (HKCU\...) and check the exit code so a failed export is reported instead of
+        # silently producing a rule with no backup.
         if ($rule.RegistryPaths) {
             foreach ($rp in $rule.RegistryPaths) {
-                $regKey = ConvertTo-WinEaseFullRegistryKey -Key "$rp"
+                $regKey = ([string]$rp).Trim() -replace '^([A-Za-z0-9]+):', '$1'
+                if ($regKey -match '^(?i)HKCU(?=\\|$)') { $regKey = $regKey -ireplace '^HKCU', 'HKEY_CURRENT_USER' }
+                elseif ($regKey -match '^(?i)HKLM(?=\\|$)') { $regKey = $regKey -ireplace '^HKLM', 'HKEY_LOCAL_MACHINE' }
+                elseif ($regKey -match '^(?i)HKCR(?=\\|$)') { $regKey = $regKey -ireplace '^HKCR', 'HKEY_CLASSES_ROOT' }
+                elseif ($regKey -match '^(?i)HKU(?=\\|$)') { $regKey = $regKey -ireplace '^HKU', 'HKEY_USERS' }
+                elseif ($regKey -match '^(?i)HKCC(?=\\|$)') { $regKey = $regKey -ireplace '^HKCC', 'HKEY_CURRENT_CONFIG' }
                 $regName = ($regKey -replace '[\\/:*?"<>|\s]', '_')
                 if (-not $regName) { $regName = 'registry' }
-                $regFile = Join-Path -Path $ruleBackupDirPhysical -ChildPath ($regName + '.reg')
+                $regFile = Join-Path -Path $ruleBackupDir -ChildPath ($regName + '.reg')
+                $regFileArg = try { (Resolve-Path -LiteralPath (Split-Path -Parent $regFile) -ErrorAction SilentlyContinue).ProviderPath } catch { $null }
+                if ($regFileArg) { $regFileArg = Join-Path -Path $regFileArg -ChildPath (Split-Path -Leaf $regFile) } else { $regFileArg = $regFile }
                 try {
-                    $exportOk = Invoke-WinEaseRegExe -ArgumentList @('export', $regKey, $regFile, '/y')
+                    $exportOk = Invoke-WinEaseRegExe -ArgumentList @('export', $regKey, $regFileArg, '/y')
                     if (-not $exportOk -or -not (Test-Path -LiteralPath $regFile)) {
                         $failed += [PSCustomObject]@{ Rule = $rid; Path = [string]$rp; Error = "Registry export failed for '$regKey' (reg.exe exit code $($LASTEXITCODE))" }
                     } else {
@@ -914,7 +911,7 @@ function Invoke-WinEaseMigrationRulesBackup {
                     Id            = $rid
                     Created       = (Get-Date).ToString('o')
                     SourcePaths   = @($existingSources)
-                    RegistryKeys  = @(@($rule.RegistryPaths) | Where-Object { $_ } | ForEach-Object { ConvertTo-WinEaseFullRegistryKey -Key "$_" })
+                    RegistryKeys  = @(@($rule.RegistryPaths) | Where-Object { $_ } | ForEach-Object { ([string]$_).Trim() -replace '^([A-Za-z0-9]+):', '$1' })
                     Entries       = @($ruleEntries)
                 }
                 $ruleManifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path -Path $ruleBackupDir -ChildPath 'rule-manifest.json') -Encoding UTF8
@@ -957,7 +954,7 @@ function Invoke-WinEaseMigrationRulesRestore {
         $rule = $allRules | Where-Object { $_.Id -eq $rid } | Select-Object -First 1
         $ruleBackupDir = Join-Path -Path $BackupRoot -ChildPath "rules\$rid"
         if (-not (Test-Path -LiteralPath $ruleBackupDir)) { $failed += [PSCustomObject]@{ Rule = $rid; Error = 'Backup not found' }; continue }
-        $ruleBackupDirPhysical = try { (Get-Item -LiteralPath $ruleBackupDir -ErrorAction Stop).FullName } catch { $ruleBackupDir }
+        try { $ruleBackupDir = (Get-Item -LiteralPath $ruleBackupDir -ErrorAction Stop).FullName } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         if (-not $rule) { $failed += [PSCustomObject]@{ Rule = $rid; Error = 'Rule not found (remove or rename the rule, then restore its files manually)' }; continue }
         # process running check: restoring under a running application produces files it
         # will never read back (settings are written on exit), so the rule is skipped.
@@ -985,9 +982,11 @@ function Invoke-WinEaseMigrationRulesRestore {
         $allowedRoots = @(@($rule.SourcePaths) | ForEach-Object { Expand-WinEaseMigrationPath -RawPath ([string]$_) } | Where-Object { $_ })
 
         # Registry restore: every *.reg file the backup wrote (one per key)
-        $regFiles = @(Get-ChildItem -LiteralPath $ruleBackupDirPhysical -Filter '*.reg' -File -ErrorAction SilentlyContinue)
+        $regFiles = @(Get-ChildItem -LiteralPath $ruleBackupDir -Filter '*.reg' -File -ErrorAction SilentlyContinue)
         foreach ($reg in $regFiles) {
-            if (Invoke-WinEaseRegExe -ArgumentList @('import', $reg.FullName)) { $restored++ }
+            $regPathArg = try { (Resolve-Path -LiteralPath $reg.FullName -ErrorAction SilentlyContinue).ProviderPath } catch { $null }
+            if (-not $regPathArg) { $regPathArg = $reg.FullName }
+            if (Invoke-WinEaseRegExe -ArgumentList @('import', $regPathArg)) { $restored++ }
             else { $failed += [PSCustomObject]@{ Rule = $rid; Path = $reg.Name; Error = "Registry import failed (reg.exe exit code $($LASTEXITCODE))" } }
         }
 
