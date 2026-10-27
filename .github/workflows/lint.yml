@@ -42,7 +42,7 @@ jobs:
           # lint results depend on whatever PSGallery served that day and let a new rule
           # set appear without a code change. Bump this version deliberately, in its own
           # pull request, so the rule change is reviewed like a code change.
-          $analyzerVersion = '1.22.0'
+          $analyzerVersion = '1.25.0'
           if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer | Where-Object { $_.Version -eq $analyzerVersion })) {
             $attempts = 0
             while ($attempts -lt 3) {
