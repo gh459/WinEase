@@ -451,6 +451,112 @@ function Invoke-WinEaseLevel3RegistryPurge {
     Invoke-WinEaseMountpointCleanup | Out-Null
 }
 
+# Internal helper function: Confirm target mount directory is managed or adopt workspace child
+function Confirm-WinEaseMountDirManaged {
+    param(
+        [string]$NormMount
+    )
+    if ($NormMount -and -not $script:ManagedMountDirs.Contains($NormMount)) {
+        $isWorkspaceChild = $false
+        if ($script:MountAllocationRoot) {
+            $normAllocRoot = ConvertTo-WinEaseNormalizedPath -Path $script:MountAllocationRoot
+            if (Test-WinEasePathWithin -Path $NormMount -Root $normAllocRoot) {
+                $isWorkspaceChild = $true
+            }
+        }
+        $wsRef = if ($script:BaseWorkDir) { $script:BaseWorkDir } elseif ($baseWorkDir) { $baseWorkDir } elseif ($workingDir) { $workingDir } else { $null }
+        if (-not $isWorkspaceChild -and $wsRef) {
+            $normWorking = ConvertTo-WinEaseNormalizedPath -Path $wsRef
+            if (Test-WinEasePathWithin -Path $NormMount -Root $normWorking) {
+                $isWorkspaceChild = $true
+            }
+        }
+
+        if ($isWorkspaceChild) {
+            [void]$script:ManagedMountDirs.Add($NormMount)
+        } else {
+            throw "Safety violation: Target mount directory '$NormMount' is not in ManagedMountDirs. Refusing to operate on unmanaged paths."
+        }
+    }
+}
+
+# Internal helper function: Test if a mounted image record matches target mount directory or WIM path
+function Test-WinEaseMountedImageMatches {
+    param(
+        [object]$MountedImage,
+        [string]$NormMount,
+        [string]$NormWim
+    )
+    if (-not $MountedImage) { return $false }
+    $mPath = if ($MountedImage.Path) { try { [System.IO.Path]::GetFullPath($MountedImage.Path).TrimEnd('\') } catch { $null } } else { $null }
+    $mImg  = if ($MountedImage.ImagePath) { try { [System.IO.Path]::GetFullPath($MountedImage.ImagePath).TrimEnd('\') } catch { $null } } else { $null }
+    return [bool](($NormMount -and $mPath -and ($mPath -ieq $NormMount)) -or ($NormWim -and $mImg -and ($mImg -ieq $NormWim)))
+}
+
+# Internal helper function: Filter mounted images for conflicts matching target mount directory or WIM
+function Get-WinEaseMountConflicts {
+    param(
+        [object[]]$MountedImages,
+        [string]$NormMount,
+        [string]$NormWim
+    )
+    $conflicts = [System.Collections.Generic.List[object]]::new()
+    foreach ($m in $MountedImages) {
+        $mPath = if ($m.Path) { try { [System.IO.Path]::GetFullPath($m.Path).TrimEnd('\') } catch { $null } } else { $null }
+        $mImg  = if ($m.ImagePath) { try { [System.IO.Path]::GetFullPath($m.ImagePath).TrimEnd('\') } catch { $null } } else { $null }
+
+        $matchMount = ($NormMount -and $mPath -and ($mPath -ieq $NormMount))
+        $matchWim   = ($NormWim -and $mImg -and ($mImg -ieq $NormWim))
+
+        if ($matchWim -and (-not $matchMount) -and $mPath) {
+            # Check if $mPath or $NormWim is located inside workspace root
+            $isWorkspaceMount = (Test-WinEaseMountPathInWorkspace -Path $mPath) -or ($NormWim -and (Test-WinEaseMountPathInWorkspace -Path $NormWim))
+
+            if ($isWorkspaceMount) {
+                Write-Host "Detected prior build mount at workspace path '$mPath' for '$NormWim'. Adopting for safe cleanup." -ForegroundColor Yellow
+                [void]$script:ManagedMountDirs.Add($mPath)
+                [void]$script:AllocatedMountDirs.Add($mPath)
+                $conflicts.Add($m)
+                continue
+            } else {
+                throw "Safety violation: Target image '$NormWim' is currently mounted at an external unmanaged directory '$mPath' (Status: $($m.MountStatus)). Refusing to automatically discard."
+            }
+        }
+
+        if ($matchMount -or $matchWim) {
+            $conflicts.Add($m)
+        }
+    }
+    return @($conflicts)
+}
+
+# Internal helper function: Attempt unmount and cleanup for a single lingering mount conflict
+function Invoke-WinEaseMountConflictUnmount {
+    param(
+        [object]$Conflict
+    )
+    Write-Host "Resolving lingering DISM mount at '$($Conflict.Path)' (Image: $($Conflict.ImagePath), Status: $($Conflict.MountStatus))..." -ForegroundColor Yellow
+
+    # Unload any registry hives under this mount first
+    @('zCOMPONENTS', 'zDEFAULT', 'zNTUSER', 'zSOFTWARE', 'zSYSTEM') | ForEach-Object {
+        try { [void](Unmount-RegistryHiveWithRetry -Name $_) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
+
+    Set-Location -LiteralPath $scriptDir
+    [GC]::Collect()
+    [GC]::WaitForPendingFinalizers()
+
+    if ($Conflict.MountStatus -in @("Needs Remount", "Invalid")) {
+        & dism.exe /English /Remount-Image "/MountDir:$($Conflict.Path)" > $null 2>&1
+    }
+    & dism.exe /English /Unmount-Image "/MountDir:$($Conflict.Path)" /discard > $null 2>&1
+    $unmountExit = $LASTEXITCODE
+
+    if ($unmountExit -ne 0) {
+        Invoke-WinEaseMountpointCleanup | Out-Null
+    }
+}
+
 # Helper function: Detect and discard conflicting/orphaned DISM mounts (Resolves Error 0xc1420127 & Invalid mount lock)
 function Clear-DismMountConflicts {
     param(
@@ -467,28 +573,7 @@ function Clear-DismMountConflicts {
         return
     }
 
-    if ($normMount -and -not $script:ManagedMountDirs.Contains($normMount)) {
-        $isWorkspaceChild = $false
-        if ($script:MountAllocationRoot) {
-            $normAllocRoot = ConvertTo-WinEaseNormalizedPath -Path $script:MountAllocationRoot
-            if (Test-WinEasePathWithin -Path $normMount -Root $normAllocRoot) {
-                $isWorkspaceChild = $true
-            }
-        }
-        $wsRef = if ($script:BaseWorkDir) { $script:BaseWorkDir } elseif ($baseWorkDir) { $baseWorkDir } elseif ($workingDir) { $workingDir } else { $null }
-        if (-not $isWorkspaceChild -and $wsRef) {
-            $normWorking = ConvertTo-WinEaseNormalizedPath -Path $wsRef
-            if (Test-WinEasePathWithin -Path $normMount -Root $normWorking) {
-                $isWorkspaceChild = $true
-            }
-        }
-
-        if ($isWorkspaceChild) {
-            [void]$script:ManagedMountDirs.Add($normMount)
-        } else {
-            throw "Safety violation: Target mount directory '$normMount' is not in ManagedMountDirs. Refusing to operate on unmanaged paths."
-        }
-    }
+    Confirm-WinEaseMountDirManaged -NormMount $normMount
 
     # Best-effort preliminary unload of orphaned offline hives prior to DISM unmount attempts
     if ($normMount) {
@@ -498,60 +583,14 @@ function Clear-DismMountConflicts {
     # Step 1: Attempt standard DISM unmount / remount retry loop
     for ($attempt = 1; $attempt -le $Retries; $attempt++) {
         $mounted = @(Get-WinEaseMountedImages)
-        $conflicts = @()
-
-        foreach ($m in $mounted) {
-            $mPath = if ($m.Path) { try { [System.IO.Path]::GetFullPath($m.Path).TrimEnd('\') } catch { $null } } else { $null }
-            $mImg  = if ($m.ImagePath) { try { [System.IO.Path]::GetFullPath($m.ImagePath).TrimEnd('\') } catch { $null } } else { $null }
-
-            $matchMount = ($normMount -and $mPath -and ($mPath -ieq $normMount))
-            $matchWim   = ($normWim -and $mImg -and ($mImg -ieq $normWim))
-
-            if ($matchWim -and (-not $matchMount) -and $mPath) {
-                # Check if $mPath or $normWim is located inside workspace root
-                $isWorkspaceMount = (Test-WinEaseMountPathInWorkspace -Path $mPath) -or ($normWim -and (Test-WinEaseMountPathInWorkspace -Path $normWim))
-
-                if ($isWorkspaceMount) {
-                    Write-Host "Detected prior build mount at workspace path '$mPath' for '$normWim'. Adopting for safe cleanup." -ForegroundColor Yellow
-                    [void]$script:ManagedMountDirs.Add($mPath)
-                    [void]$script:AllocatedMountDirs.Add($mPath)
-                    $conflicts += $m
-                    continue
-                } else {
-                    throw "Safety violation: Target image '$normWim' is currently mounted at an external unmanaged directory '$mPath' (Status: $($m.MountStatus)). Refusing to automatically discard."
-                }
-            }
-
-            if ($matchMount -or $matchWim) {
-                $conflicts += $m
-            }
-        }
+        $conflicts = Get-WinEaseMountConflicts -MountedImages $mounted -NormMount $normMount -NormWim $normWim
 
         if ($conflicts.Count -eq 0) {
             break
         }
 
         foreach ($c in $conflicts) {
-            Write-Host "Resolving lingering DISM mount at '$($c.Path)' (Image: $($c.ImagePath), Status: $($c.MountStatus))..." -ForegroundColor Yellow
-
-            # Unload any registry hives under this mount first
-            @('zCOMPONENTS', 'zDEFAULT', 'zNTUSER', 'zSOFTWARE', 'zSYSTEM') | ForEach-Object {
-                try { [void](Unmount-RegistryHiveWithRetry -Name $_) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-            }
-
-            Set-Location -LiteralPath $scriptDir
-            [GC]::Collect()
-            [GC]::WaitForPendingFinalizers()
-
-            if ($c.MountStatus -in @("Needs Remount", "Invalid")) {
-                & dism.exe /English /Remount-Image "/MountDir:$($c.Path)" > $null 2>&1
-            }
-            & dism.exe /English /Unmount-Image "/MountDir:$($c.Path)" /discard > $null 2>&1
-            $unmountExit = $LASTEXITCODE
-
-            if ($unmountExit -ne 0) {
-                Invoke-WinEaseMountpointCleanup | Out-Null
-            }
+            Invoke-WinEaseMountConflictUnmount -Conflict $c
         }
 
         Start-Sleep -Seconds (2 * $attempt)
@@ -560,9 +599,7 @@ function Clear-DismMountConflicts {
     # Step 2: Check if conflict is still lingering
     $finalMounted = @(Get-WinEaseMountedImages)
     $lingeringConflict = $finalMounted | Where-Object {
-        $mPath = if ($_.Path) { try { [System.IO.Path]::GetFullPath($_.Path).TrimEnd('\') } catch { $null } } else { $null }
-        $mImg  = if ($_.ImagePath) { try { [System.IO.Path]::GetFullPath($_.ImagePath).TrimEnd('\') } catch { $null } } else { $null }
-        ($normMount -and $mPath -and ($mPath -ieq $normMount)) -or ($normWim -and $mImg -and ($mImg -ieq $normWim))
+        Test-WinEaseMountedImageMatches -MountedImage $_ -NormMount $normMount -NormWim $normWim
     }
 
     # Step 3: Level 3 Surgical Purge for corrupted / Invalid orphaned WIMMount entries
@@ -589,9 +626,7 @@ function Clear-DismMountConflicts {
     # Step 4: Final verification after all recovery levels
     $verifiedMounted = @(Get-WinEaseMountedImages)
     $stillLingering = $verifiedMounted | Where-Object {
-        $mPath = if ($_.Path) { try { [System.IO.Path]::GetFullPath($_.Path).TrimEnd('\') } catch { $null } } else { $null }
-        $mImg  = if ($_.ImagePath) { try { [System.IO.Path]::GetFullPath($_.ImagePath).TrimEnd('\') } catch { $null } } else { $null }
-        ($normMount -and $mPath -and ($mPath -ieq $normMount)) -or ($normWim -and $mImg -and ($mImg -ieq $normWim))
+        Test-WinEaseMountedImageMatches -MountedImage $_ -NormMount $normMount -NormWim $normWim
     }
 
     # Clean up any lingering offline hives even if mount entry was already clear
