@@ -59,22 +59,21 @@ function ConvertTo-WinEaseHashtable {
 # user preset (config\user\user-tweaks.psd1 and the per-file folder config\user\presets) with its ProfileName
 # as the Label - the window shows its own localized text for the built-ins and the Label for user presets.
 function Get-WinEaseWinUiPresets {
-    $list = @(
-        foreach ($pKey in @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')) {
-            $v = Get-WinEaseGuiPresetValues -Name $pKey
-            if (-not $v) { continue }
-            $v.Key = $pKey
-            $v
-        }
-    )
+    $list = [System.Collections.Generic.List[object]]::new()
+    foreach ($pKey in @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')) {
+        $v = Get-WinEaseGuiPresetValues -Name $pKey
+        if (-not $v) { continue }
+        $v.Key = $pKey
+        $list.Add($v)
+    }
     foreach ($u in @(Get-WinEaseGuiUserPresetChoices)) {
         $v = Get-WinEaseGuiPresetValues -Name $u.Key
         if (-not $v) { continue }
         $v.Key = $u.Key
         $v.Label = $u.Label
-        $list += $v
+        $list.Add($v)
     }
-    return ,$list
+    return ,$list.ToArray()
 }
 
 # The first message: everything the window needs to build itself
@@ -334,8 +333,8 @@ function Invoke-WinEaseWinUiMigrationRequest {
                 $rr = $res.RulesResult
                 if ($rr) {
                     $detail.Add((Get-WinEaseUiString 'Mig.Backup.Rules' -Format @($rr.BackedUpRules).Count, (@($rr.SkipReasons).Count + [int]$rr.SkippedFiles), @($rr.FailedFiles).Count))
-                    foreach ($s in @($rr.SkipReasons)) { $detail.Add(('  {0}: {1}' -f $s.Item, $s.Reason)) }
-                    foreach ($f in @($rr.FailedFiles)) { $detail.Add(('  {0}: {1}' -f $f.Rule, $f.Error)) }
+                    foreach ($s in $rr.SkipReasons) { if ($s) { $detail.Add(('  {0}: {1}' -f $s.Item, $s.Reason)) } }
+                    foreach ($f in $rr.FailedFiles) { if ($f) { $detail.Add(('  {0}: {1}' -f $f.Rule, $f.Error)) } }
                 }
                 $udFailed = @($res.UserData.FailedFiles | Where-Object { $_ }).Count
                 if ($udFailed -gt 0) { $detail.Add((Get-WinEaseUiString 'Mig.Backup.DataFailed' -Format $udFailed)) }
