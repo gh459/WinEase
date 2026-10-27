@@ -627,13 +627,13 @@ $scripts = @(
 & {
   [float] $complete = 0;
   [float] $increment = 100 / $scripts.Count;
-  $flErrors = @();
+  $flErrors = [System.Collections.Generic.List[string]]::new();
   foreach( $script in $scripts ) {
     Write-Progress -Activity 'Running scripts to finalize your Windows installation. Do not close this window.' -PercentComplete $complete;
     try {
       & $script;
     } catch {
-      $flErrors += ("Script block failed: {0}" -f $_);
+      $flErrors.Add(("Script block failed: {0}" -f $_));
     }
     $complete += $increment;
   }
