@@ -174,6 +174,21 @@ Describe "WinEase builder - end-to-end DryRun" -Tags 'slow' {
 }
 
 Describe "WinEase setup scripts - Custom Scripts Logging" {
+    BeforeAll {
+        $userOncePath = Join-Path $script:RepoRoot "scripts\UserOnce.ps1"
+        $userOnceContent = [System.IO.File]::ReadAllText($userOncePath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $userOnceAst = [System.Management.Automation.Language.Parser]::ParseInput($userOnceContent, [ref]$tokens, [ref]$parseErrors)
+        $userOnceFuncs = @($userOnceAst.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -in @('Redact-WinEaseUserSecret', 'Write-UserScriptLog')
+        }, $true))
+        foreach ($fnNode in $userOnceFuncs) {
+            . ([scriptblock]::Create($fnNode.Extent.Text))
+        }
+    }
+
     It "scripts/FirstLogon.ps1 contains dual-log recording and stop preference wrapper" {
         $firstLogonPath = Join-Path $script:RepoRoot "scripts\FirstLogon.ps1"
         $content = [System.IO.File]::ReadAllText($firstLogonPath, [System.Text.Encoding]::UTF8)
@@ -192,6 +207,97 @@ Describe "WinEase setup scripts - Custom Scripts Logging" {
         $content | Should Match "Redact-WinEaseUserSecret"
         $content | Should Match "Duration:"
         $content.Contains("escapedScriptPath = `$scriptPath -replace") | Should Be $true
+    }
+
+    It "Write-UserScriptLog writes formatted timestamped entry to user log file via AppendAllText" {
+        $tmpFile = [System.IO.Path]::GetTempFileName()
+        try {
+            $userLogFile = $tmpFile
+            Write-UserScriptLog -Message "Test pipeline execution started"
+            $lines = @(Get-Content -LiteralPath $tmpFile)
+            $lines.Count | Should Be 1
+            $lines[0] | Should Match '^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] Test pipeline execution started$'
+        } finally {
+            Remove-Item -LiteralPath $tmpFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "Write-UserScriptLog redacts passwords, tokens, and product keys in log entries" {
+        $tmpFile = [System.IO.Path]::GetTempFileName()
+        try {
+            $userLogFile = $tmpFile
+            Write-UserScriptLog -Message 'Setting password: SecretPass123! with "token": "secret_token_val" and key VK7JG-NPHTM-C97JM-9MPGT-3V66T'
+            $content = Get-Content -LiteralPath $tmpFile -Raw
+            $content | Should Not Match 'SecretPass123!'
+            $content | Should Not Match 'secret_token_val'
+            $content | Should Not Match 'VK7JG-NPHTM-C97JM-9MPGT-3V66T'
+            $content | Should Match '\[REDACTED\]'
+            $content | Should Match 'XXXXX-XXXXX-XXXXX-XXXXX-XXXXX'
+        } finally {
+            Remove-Item -LiteralPath $tmpFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "Write-UserScriptLog falls back to Add-Content when File::AppendAllText fails" {
+        $nonExistentLog = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "nonexistent_dir_12345\user_custom.log"
+        $script:addContentCalled = $false
+        $script:capturedLogPath = $null
+        $script:capturedValue = $null
+
+        function Add-Content {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'Mock Add-Content to test fallback path')]
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'Mock parameter signature parity')]
+            param($LiteralPath, $Value, $Encoding, $ErrorAction)
+            $script:addContentCalled = $true
+            $script:capturedLogPath = $LiteralPath
+            $script:capturedValue = $Value
+        }
+
+        try {
+            $userLogFile = $nonExistentLog
+            Write-UserScriptLog -Message "Fallback test entry"
+            $script:addContentCalled | Should Be $true
+            $script:capturedLogPath | Should Be $nonExistentLog
+            $script:capturedValue | Should Match '^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] Fallback test entry$'
+        } finally {
+            Remove-Item Function:\Add-Content -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "Write-UserScriptLog emits warning when both AppendAllText and Add-Content fail" {
+        $nonExistentLog = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "nonexistent_dir_12345\user_custom.log"
+
+        function Add-Content {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'Mock Add-Content to test error handling path')]
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'Mock parameter signature parity')]
+            param($LiteralPath, $Value, $Encoding, $ErrorAction)
+            throw "Storage medium write error"
+        }
+
+        try {
+            $userLogFile = $nonExistentLog
+            $warns = @(Write-UserScriptLog -Message "Warning test entry" 3>&1 | Where-Object { $_ -is [System.Management.Automation.WarningRecord] -or $_ -is [string] })
+            @($warns).Count | Should BeGreaterThan 0
+            $warnStr = ($warns | Out-String)
+            $warnStr | Should Match '\[USER-SCRIPT-LOG-WARNING\] Failed to write log entry: Storage medium write error'
+        } finally {
+            Remove-Item Function:\Add-Content -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "Write-UserScriptLog handles empty and null messages gracefully" {
+        $tmpFile = [System.IO.Path]::GetTempFileName()
+        try {
+            $userLogFile = $tmpFile
+            Write-UserScriptLog -Message $null
+            Write-UserScriptLog -Message ""
+            $lines = @(Get-Content -LiteralPath $tmpFile)
+            $lines.Count | Should Be 2
+            $lines[0] | Should Match '^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] $'
+            $lines[1] | Should Match '^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] $'
+        } finally {
+            Remove-Item -LiteralPath $tmpFile -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
