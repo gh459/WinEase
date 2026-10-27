@@ -887,11 +887,13 @@ function Get-WinEasePluginAppxPatterns {
     [CmdletBinding()]
     [OutputType([string[]])]
     param([hashtable]$Settings = @{})
-    $patterns = @()
-    foreach ($appx in @(Get-WinEasePluginContributions -Kind Appx)) { $patterns += [string]$appx.Pattern }
+    $patterns = [System.Collections.Generic.List[string]]::new()
+    foreach ($appx in @(Get-WinEasePluginContributions -Kind Appx)) { $patterns.Add([string]$appx.Pattern) }
     $rules = @(Get-WinEasePluginContributions -Kind AppxRule)
     if ($rules.Count -gt 0 -and (Get-Command -Name Get-WinEaseAppxRemovalPatterns -ErrorAction SilentlyContinue)) {
-        $patterns += @(Get-WinEaseAppxRemovalPatterns -Settings $Settings -Definitions $rules)
+        foreach ($pattern in @(Get-WinEaseAppxRemovalPatterns -Settings $Settings -Definitions $rules)) {
+            $patterns.Add([string]$pattern)
+        }
     }
     return @($patterns | Select-Object -Unique)
 }

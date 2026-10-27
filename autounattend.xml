@@ -896,11 +896,12 @@ $scripts = @(
 
 		# Setup keeps copies of the answer file (they hold the account password in clear text) and the
 		# OOBE helper carries the password as Base64. Delete them; a failure is logged, never fatal.
-		$secretFiles = @();
-		foreach ($answerDir in @('C:\Windows\Panther', 'C:\Windows\Panther\unattend', 'C:\Windows\Panther\UnattendGC', 'C:\Windows\System32\Sysprep')) {
-			foreach ($answerName in @('unattend.xml', 'autounattend.xml')) { $secretFiles += (Join-Path -Path $answerDir -ChildPath $answerName); }
-		}
-		$secretFiles += 'C:\Windows\Setup\Scripts\WinEase-oobe-autologon-repair.ps1';
+		$secretFiles = @(
+			foreach ($answerDir in @('C:\Windows\Panther', 'C:\Windows\Panther\unattend', 'C:\Windows\Panther\UnattendGC', 'C:\Windows\System32\Sysprep')) {
+				foreach ($answerName in @('unattend.xml', 'autounattend.xml')) { Join-Path -Path $answerDir -ChildPath $answerName; }
+			}
+			'C:\Windows\Setup\Scripts\WinEase-oobe-autologon-repair.ps1';
+		);
 		foreach ($secretFile in $secretFiles) {
 			try {
 				if (Test-Path -LiteralPath $secretFile) {

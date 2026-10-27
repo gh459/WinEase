@@ -255,9 +255,9 @@ function Invoke-WinEaseWinUiPresetRequest {
             return @{ Data = $data }
         }
         'presetDiff' {
-            $resolved = @()
+            $resolved = [System.Collections.Generic.List[object]]::new()
             foreach ($name in @("$($a.From)", "$($a.To)")) {
-                if ($name -eq '__current__') { $resolved += , $a.Config } else { $resolved += , $name }
+                if ($name -eq '__current__') { $resolved.Add($a.Config) } else { $resolved.Add($name) }
             }
             $diff = Compare-WinEaseConfig -ReferenceConfig $resolved[0] -DifferenceConfig $resolved[1]
             return @{ Text = "$(Format-WinEaseConfigDiff -DiffResult $diff)" }
