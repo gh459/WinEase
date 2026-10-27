@@ -319,18 +319,18 @@ function Invoke-WinEaseWinUiMigrationRequest {
             # The message has to say what the rules actually did: a rule whose application
             # is still running is skipped (its files would be restored uselessly), and a
             # broken user rules file is reported instead of being silently ignored.
-            $detail = @()
+            $detail = [System.Collections.Generic.List[string]]::new()
             if (-not $o.Error -and $o.Result) {
                 $res = $o.Result
                 $rr = $res.RulesResult
                 if ($rr) {
-                    $detail += (Get-WinEaseUiString 'Mig.Backup.Rules' -Format @($rr.BackedUpRules).Count, (@($rr.SkipReasons).Count + [int]$rr.SkippedFiles), @($rr.FailedFiles).Count)
-                    foreach ($s in @($rr.SkipReasons)) { $detail += ('  {0}: {1}' -f $s.Item, $s.Reason) }
-                    foreach ($f in @($rr.FailedFiles)) { $detail += ('  {0}: {1}' -f $f.Rule, $f.Error) }
+                    $detail.Add((Get-WinEaseUiString 'Mig.Backup.Rules' -Format @($rr.BackedUpRules).Count, (@($rr.SkipReasons).Count + [int]$rr.SkippedFiles), @($rr.FailedFiles).Count))
+                    foreach ($s in @($rr.SkipReasons)) { $detail.Add(('  {0}: {1}' -f $s.Item, $s.Reason)) }
+                    foreach ($f in @($rr.FailedFiles)) { $detail.Add(('  {0}: {1}' -f $f.Rule, $f.Error)) }
                 }
                 $udFailed = @($res.UserData.FailedFiles | Where-Object { $_ }).Count
-                if ($udFailed -gt 0) { $detail += (Get-WinEaseUiString 'Mig.Backup.DataFailed' -Format $udFailed) }
-                foreach ($e in @($res.RuleErrors)) { $detail += (Get-WinEaseUiString 'Mig.Rules.LoadErrors' -Format ("$e")) }
+                if ($udFailed -gt 0) { $detail.Add((Get-WinEaseUiString 'Mig.Backup.DataFailed' -Format $udFailed)) }
+                foreach ($e in @($res.RuleErrors)) { $detail.Add((Get-WinEaseUiString 'Mig.Rules.LoadErrors' -Format ("$e"))) }
             }
             $done = Get-WinEaseUiString 'Mig.Backup.Done' -Format $root
             if ($detail.Count -gt 0) { $done += "`n`n" + ($detail -join "`n") }
