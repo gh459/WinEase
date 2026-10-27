@@ -174,6 +174,18 @@ Describe "WinEase builder - end-to-end DryRun" -Tags 'slow' {
 }
 
 Describe "WinEase setup scripts - Custom Scripts Logging" {
+    BeforeAll {
+        $userOncePath = Join-Path $script:RepoRoot "scripts\UserOnce.ps1"
+        $tokens = $null; $errors = $null
+        $userOnceAst = [System.Management.Automation.Language.Parser]::ParseFile($userOncePath, [ref]$tokens, [ref]$errors)
+
+        $redactFn = $userOnceAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Redact-WinEaseUserSecret' }, $true)
+        $logFn = $userOnceAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Write-UserScriptLog' }, $true)
+
+        . ([scriptblock]::Create($redactFn.Extent.Text))
+        . ([scriptblock]::Create($logFn.Extent.Text))
+    }
+
     It "scripts/FirstLogon.ps1 contains dual-log recording and stop preference wrapper" {
         $firstLogonPath = Join-Path $script:RepoRoot "scripts\FirstLogon.ps1"
         $content = [System.IO.File]::ReadAllText($firstLogonPath, [System.Text.Encoding]::UTF8)
@@ -192,6 +204,38 @@ Describe "WinEase setup scripts - Custom Scripts Logging" {
         $content | Should Match "Redact-WinEaseUserSecret"
         $content | Should Match "Duration:"
         $content.Contains("escapedScriptPath = `$scriptPath -replace") | Should Be $true
+    }
+
+    It "Write-UserScriptLog appends log entry using System.IO.File::AppendAllText on happy path" {
+        $tempFile = [System.IO.Path]::GetTempFileName()
+        try {
+            $userLogFile = $tempFile
+            Write-UserScriptLog "Happy path test message"
+            $content = Get-Content -LiteralPath $tempFile -Raw
+            $content | Should Match "Happy path test message"
+        } finally {
+            if (Test-Path -LiteralPath $tempFile) { Remove-Item -LiteralPath $tempFile -Force }
+        }
+    }
+
+    It "Write-UserScriptLog falls back to Add-Content when System.IO.File::AppendAllText throws" {
+        Mock Add-Content -MockWith { }
+        $userLogFile = Join-Path ([System.IO.Path]::GetTempPath()) "nonexistent_dir_12345\UserOnce-custom.log"
+
+        Write-UserScriptLog "Fallback path test message"
+
+        Assert-MockCalled Add-Content -Exactly 1 -Scope It -ParameterFilter { $Value -match "Fallback path test message" }
+    }
+
+    It "Write-UserScriptLog writes warning when both AppendAllText and Add-Content throw" {
+        Mock Add-Content -MockWith { throw "Mocked Add-Content error" }
+        Mock Write-Warning -MockWith { }
+        $userLogFile = Join-Path ([System.IO.Path]::GetTempPath()) "nonexistent_dir_12345\UserOnce-custom.log"
+
+        Write-UserScriptLog "Double failure test message"
+
+        Assert-MockCalled Add-Content -Exactly 1 -Scope It
+        Assert-MockCalled Write-Warning -Exactly 1 -Scope It -ParameterFilter { $Message -match '\[USER-SCRIPT-LOG-WARNING\] Failed to write log entry: Mocked Add-Content error' }
     }
 }
 
