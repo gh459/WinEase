@@ -2748,6 +2748,28 @@ Describe "C1 - build plan (Get-WinEaseBuildPlan, the final confirmation and the 
         $c3.Mismatches[0].Key | Should Be 'AdvancedDebloatStandard'
     }
 
+    It "Write-WinEaseBuildPlanSummary creates directory if missing and writes JSON and TXT summary files" {
+        $plan = Get-C1Plan (New-C1Result 'balanced')
+        $targetDir = Join-Path $TestDrive 'nested_plan_summary'
+        (Test-Path -LiteralPath $targetDir) | Should Be $false
+
+        $paths = Write-WinEaseBuildPlanSummary -Plan $plan -Directory $targetDir -BaseName 'Summary_Test'
+        $paths.Count | Should Be 2
+        $paths[0] | Should Be (Join-Path $targetDir 'Summary_Test.plan.json')
+        $paths[1] | Should Be (Join-Path $targetDir 'Summary_Test.plan.txt')
+
+        (Test-Path -LiteralPath $paths[0]) | Should Be $true
+        (Test-Path -LiteralPath $paths[1]) | Should Be $true
+
+        $jsonObj = Get-Content -LiteralPath $paths[0] -Raw | ConvertFrom-Json
+        $jsonObj.Mode | Should Be 'RealBuild'
+        $jsonObj.PresetKey | Should Be 'balanced'
+
+        $txtContent = Get-Content -LiteralPath $paths[1] -Raw
+        $txtContent | Should Match 'REAL BUILD'
+        $txtContent | Should Match '== Overview =='
+    }
+
     It "Invoke-WinEaseBuildPlanCheck writes the plan summary, warns on a mismatch and throws on a critical one" {
         $plan = Get-C1Plan (New-C1Result 'balanced')
         $res = [ordered]@{ PayloadFormat = 'WIM'; UseVHDX = $false; DryRun = $false }
