@@ -95,6 +95,61 @@ Describe "PC Migration & Backup Engine (tools/migrator/WinEaseMigration.ps1)" -T
         Test-WinEaseSecretPath -FilePath 'id_rsa' -SecretPatterns $patterns | Should Be $true
         Test-WinEaseSecretPath -FilePath 'normal.txt' -SecretPatterns $patterns | Should Be $false
     }
+    It "Restore-WinEaseApps returns empty object on missing inventory file" {
+        $nonExistentPath = Join-Path (Get-Location).Path ("non_existent_inventory_" + [guid]::NewGuid().ToString('N') + ".json")
+        $result = Restore-WinEaseApps -InventoryPath $nonExistentPath
+        $result.Installed.Count | Should Be 0
+        $result.Failed.Count | Should Be 0
+        $result.ManualGuidance.Count | Should Be 0
+    }
+    It "Restore-WinEaseApps returns empty object on invalid JSON in inventory file" {
+        $invalidJsonPath = Join-Path (Get-Location).Path ("invalid_inventory_" + [guid]::NewGuid().ToString('N') + ".json")
+        try {
+            Set-Content -LiteralPath $invalidJsonPath -Value "Invalid JSON {{{" -Encoding UTF8
+            $result = Restore-WinEaseApps -InventoryPath $invalidJsonPath
+            $result.Installed.Count | Should Be 0
+            $result.Failed.Count | Should Be 0
+            $result.ManualGuidance.Count | Should Be 0
+        } finally {
+            Remove-Item -LiteralPath $invalidJsonPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+    It "Restore-WinEaseApps restores apps in DryRun mode and filters selected apps" {
+        $validJsonPath = Join-Path (Get-Location).Path ("valid_inventory_" + [guid]::NewGuid().ToString('N') + ".json")
+        $inv = [PSCustomObject]@{
+            Apps = @(
+                [PSCustomObject]@{
+                    Name = 'App1'
+                    AutoReinstallable = $true
+                    ReinstallCommand = 'winget install --id App1'
+                    PackageIdentifier = 'App1'
+                    ManualHint = $null
+                },
+                [PSCustomObject]@{
+                    Name = 'App2'
+                    AutoReinstallable = $false
+                    ReinstallCommand = $null
+                    PackageIdentifier = 'App2'
+                    ManualHint = 'Manual install hint'
+                }
+            )
+        }
+        try {
+            $inv | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $validJsonPath -Encoding UTF8
+            $result = Restore-WinEaseApps -InventoryPath $validJsonPath -DryRun
+            $result.Installed.Count | Should Be 1
+            $result.Installed[0].Name | Should Be 'App1'
+            $result.ManualGuidance.Count | Should Be 1
+            $result.ManualGuidance[0].Name | Should Be 'App2'
+
+            $filtered = Restore-WinEaseApps -InventoryPath $validJsonPath -SelectedAppNames @('App2') -DryRun
+            $filtered.Installed.Count | Should Be 0
+            $filtered.ManualGuidance.Count | Should Be 1
+            $filtered.ManualGuidance[0].Name | Should Be 'App2'
+        } finally {
+            Remove-Item -LiteralPath $validJsonPath -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 Describe "Restore-WinEaseApps (tools/migrator/WinEaseMigration.ps1)" {
