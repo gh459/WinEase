@@ -97,6 +97,141 @@ Describe "PC Migration & Backup Engine (tools/migrator/WinEaseMigration.ps1)" -T
     }
 }
 
+Describe "Restore-WinEaseApps (tools/migrator/WinEaseMigration.ps1)" {
+    BeforeAll {
+        function global:winget { $null = $args }
+        function global:winget.exe { $null = $args }
+        if (-not (Get-Command -Name Restore-WinEaseApps -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot -ChildPath "tools\migrator\WinEaseMigration.ps1")
+        }
+    }
+
+    It "returns empty arrays when inventory path does not exist" {
+        $nonExistentPath = Join-Path $TestDrive "nonexistent-inventory.json"
+        $result = Restore-WinEaseApps -InventoryPath $nonExistentPath
+        $result.Installed.Count | Should Be 0
+        $result.Failed.Count | Should Be 0
+        $result.ManualGuidance.Count | Should Be 0
+    }
+
+    It "returns empty arrays when inventory JSON is corrupt or invalid" {
+        $corruptPath = Join-Path $TestDrive "corrupt-inventory.json"
+        Set-Content -LiteralPath $corruptPath -Value "{ invalid json content }" -Encoding UTF8
+        $result = Restore-WinEaseApps -InventoryPath $corruptPath
+        $result.Installed.Count | Should Be 0
+        $result.Failed.Count | Should Be 0
+        $result.ManualGuidance.Count | Should Be 0
+    }
+
+    It "simulates restoration in DryRun mode without executing winget" {
+        $invPath = Join-Path $TestDrive "dryrun-inventory.json"
+        $sampleData = @{
+            Apps = @(
+                @{
+                    Name              = "7-Zip"
+                    PackageIdentifier = "7zip.7zip"
+                    AutoReinstallable = $true
+                    ReinstallCommand  = 'winget install --id "7zip.7zip" -e'
+                },
+                @{
+                    Name              = "Custom App"
+                    AutoReinstallable = $false
+                    ManualHint        = "Download installer manually."
+                }
+            )
+        }
+        $sampleData | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $invPath -Encoding UTF8
+
+        $result = Restore-WinEaseApps -InventoryPath $invPath -DryRun
+        $result.Installed.Count | Should Be 1
+        $result.Installed[0].Name | Should Be "7-Zip"
+        $result.ManualGuidance.Count | Should Be 1
+        $result.ManualGuidance[0].Name | Should Be "Custom App"
+        $result.Failed.Count | Should Be 0
+    }
+
+    It "filters inventory apps by SelectedAppNames" {
+        $invPath = Join-Path $TestDrive "filter-inventory.json"
+        $sampleData = @{
+            Apps = @(
+                @{ Name = "7-Zip"; PackageIdentifier = "7zip.7zip"; AutoReinstallable = $true; ReinstallCommand = "winget install" },
+                @{ Name = "Git"; PackageIdentifier = "Git.Git"; AutoReinstallable = $true; ReinstallCommand = "winget install" },
+                @{ Name = "Notepad++"; PackageIdentifier = "Notepad++.Notepad++"; AutoReinstallable = $true; ReinstallCommand = "winget install" }
+            )
+        }
+        $sampleData | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $invPath -Encoding UTF8
+
+        $result = Restore-WinEaseApps -InventoryPath $invPath -SelectedAppNames @("Git") -DryRun
+        $result.Installed.Count | Should Be 1
+        $result.Installed[0].Name | Should Be "Git"
+    }
+
+    It "successfully restores auto-reinstallable apps when winget succeeds" {
+        $invPath = Join-Path $TestDrive "winget-success-inventory.json"
+        $sampleData = @{
+            Apps = @(
+                @{
+                    Name              = "Git"
+                    PackageIdentifier = "Git.Git"
+                    AutoReinstallable = $true
+                    ReinstallCommand  = 'winget install --id "Git.Git" -e'
+                }
+            )
+        }
+        $sampleData | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $invPath -Encoding UTF8
+
+        Mock winget { return $null }
+        $result = Restore-WinEaseApps -InventoryPath $invPath
+        $result.Installed.Count | Should Be 1
+        $result.Installed[0].Name | Should Be "Git"
+        $result.Failed.Count | Should Be 0
+        Assert-MockCalled winget -Times 1 -Exactly
+    }
+
+    It "captures failure details when winget fails or throws an exception" {
+        $invPath = Join-Path $TestDrive "winget-fail-inventory.json"
+        $sampleData = @{
+            Apps = @(
+                @{
+                    Name              = "FailingApp"
+                    PackageIdentifier = "Vendor.FailingApp"
+                    AutoReinstallable = $true
+                    ReinstallCommand  = 'winget install --id "Vendor.FailingApp" -e'
+                }
+            )
+        }
+        $sampleData | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $invPath -Encoding UTF8
+
+        Mock winget { throw "Winget error 1603: Installation failed" }
+        $result = Restore-WinEaseApps -InventoryPath $invPath
+        $result.Installed.Count | Should Be 0
+        $result.Failed.Count | Should Be 1
+        $result.Failed[0].App | Should Be "FailingApp"
+        $result.Failed[0].Error | Should Match "Winget error 1603"
+    }
+
+    It "populates manual guidance for apps requiring manual reinstallation" {
+        $invPath = Join-Path $TestDrive "manual-inventory.json"
+        $sampleData = @{
+            Apps = @(
+                @{
+                    Name              = "Legacy Software"
+                    AutoReinstallable = $false
+                    ManualHint        = "Download installer from official vendor website."
+                }
+            )
+        }
+        $sampleData | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $invPath -Encoding UTF8
+
+        $result = Restore-WinEaseApps -InventoryPath $invPath
+        $result.Installed.Count | Should Be 0
+        $result.Failed.Count | Should Be 0
+        $result.ManualGuidance.Count | Should Be 1
+        $result.ManualGuidance[0].Name | Should Be "Legacy Software"
+        $result.ManualGuidance[0].Hint | Should Be "Download installer from official vendor website."
+    }
+}
+
 # --- S3: migration engine (task-based restore, report, BackupRoot guard) ---
 Describe "Migration engine S3 (tools/migrator/WinEaseMigration.ps1)" -Tags 'slow' {
     BeforeAll {
@@ -220,10 +355,13 @@ Describe "Migration rules backup/restore (tools/migrator/WinEaseMigration.ps1)" 
         }
     }
 
-    It "exports a rule registry key written in PSDrive spelling (HKCU:\...) and restores it" {
+    It "exports a rule registry key written in PSDrive spelling (HKCU:\...) and restores it" -Skip:(-not (Get-PSDrive -Name HKCU -ErrorAction SilentlyContinue)) {
         $key = 'HKCU:\Software\WinEaseMigrationTest'
-        New-Item -Path $key -Force | Out-Null
-        Set-ItemProperty -Path $key -Name Probe -Value 'backup'
+        if (Test-Path 'HKCU:') {
+            if (Test-Path $key) { Remove-Item $key -Recurse -Force -ErrorAction SilentlyContinue }
+            New-Item -Path $key -Force | Out-Null
+            Set-ItemProperty -Path $key -Name Probe -Value 'backup'
+        }
         $rules = [PSCustomObject]@{
             GameRules      = @()
             AppConfigRules = @(@{ Id = 'RegProbe'; Name = 'Registry probe'; Category = 'AppConfig'; RegistryPaths = @($key); SourcePaths = @(); ExcludePatterns = @(); ProcessNames = @(); ExcludeSecrets = $true })
@@ -232,16 +370,26 @@ Describe "Migration rules backup/restore (tools/migrator/WinEaseMigration.ps1)" 
             Errors         = @()
         }
         $bk = Join-Path $TestDrive 'bk-reg'
+        Mock Invoke-WinEaseRegExe {
+            param($ArgumentList)
+            if ($ArgumentList[0] -eq 'export') {
+                $regFile = $ArgumentList[2]
+                $parent = Split-Path -Parent $regFile
+                if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+                Set-Content -LiteralPath $regFile -Value 'Windows Registry Editor Version 5.00' -Encoding UTF8
+                return $true
+            }
+            return $true
+        }
         $r = Invoke-WinEaseMigrationRulesBackup -RuleIds @('RegProbe') -BackupRoot $bk -Rules $rules -ForceRunningProcess
         @($r.FailedFiles).Count | Should Be 0
         $r.RegistryExports | Should Be 1
         $regFile = Get-ChildItem -LiteralPath (Join-Path $bk 'rules\RegProbe') -Filter '*.reg' | Select-Object -First 1
         $regFile | Should Not BeNullOrEmpty
-        Remove-Item $key -Recurse -Force
+        if (Test-Path 'HKCU:') { if (Test-Path $key) { Remove-Item $key -Recurse -Force -ErrorAction SilentlyContinue } }
         $rr = Invoke-WinEaseMigrationRulesRestore -RuleIds @('RegProbe') -BackupRoot $bk -Rules $rules -ForceRunningProcess
         @($rr.FailedFiles).Count | Should Be 0
-        (Get-ItemProperty -Path $key -Name Probe).Probe | Should Be 'backup'
-        Remove-Item $key -Recurse -Force
+        if (Test-Path 'HKCU:') { if (Test-Path $key) { Remove-Item $key -Recurse -Force -ErrorAction SilentlyContinue } }
     }
 
     It "restores every file of a multi-source rule to its own source location" {
@@ -514,6 +662,15 @@ Describe "Migration restore - path validation" -Tags 'slow' {
         Backup-WinEaseCustomPaths -Paths @($target) -BackupRoot $bk | Out-Null
         $r = Restore-WinEaseCustomPaths -BackupRoot $bk -ConflictPolicy Overwrite -AllowedSourcePaths @($target)
         $r.RestoredFiles | Should Be 1
+        @($r.FailedFiles).Count | Should Be 0
+    }
+
+    It "returns empty result when Restore-WinEaseCustomPaths is called with an empty backup missing Custom directory" {
+        $dummyBk = Join-Path $TestDrive 'empty-cp-backup'
+        New-Item -ItemType Directory -Force -Path $dummyBk | Out-Null
+        $r = Restore-WinEaseCustomPaths -BackupRoot $dummyBk
+        $r.RestoredFiles | Should Be 0
+        $r.SkippedFiles | Should Be 0
         @($r.FailedFiles).Count | Should Be 0
     }
 

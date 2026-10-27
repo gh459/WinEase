@@ -42,7 +42,7 @@ jobs:
           # lint results depend on whatever PSGallery served that day and let a new rule
           # set appear without a code change. Bump this version deliberately, in its own
           # pull request, so the rule change is reviewed like a code change.
-          $analyzerVersion = '1.22.0'
+          $analyzerVersion = '1.25.0'
           if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer | Where-Object { $_.Version -eq $analyzerVersion })) {
             $attempts = 0
             while ($attempts -lt 3) {
@@ -63,7 +63,7 @@ jobs:
           # Load exactly the pinned version, so a different preinstalled copy on the
           # runner image is not picked up silently.
           Import-Module PSScriptAnalyzer -RequiredVersion $analyzerVersion -Force
-          $results = @(Get-ChildItem -Path . -Recurse -Include '*.ps1', '*.psd1', '*.psm1' -File | Invoke-ScriptAnalyzer -Settings .\PSScriptAnalyzerSettings.psd1)
+          $results = Invoke-ScriptAnalyzer -Path . -Recurse -Settings .\PSScriptAnalyzerSettings.psd1
           $results | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize -Wrap
           foreach ($r in $results) {
             $level = if ($r.Severity -eq 'Error') { 'error' } else { 'warning' }
