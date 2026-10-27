@@ -235,4 +235,51 @@ Describe "Autologon - cleanup after the first logon" {
     }
 }
 
+Describe "Autologon - RunFirstLogon logging" {
+    BeforeAll {
+        $runFlPath = Join-Path $script:RepoRoot 'scripts\setup\RunFirstLogon.ps1'
+        $scriptText = [System.IO.File]::ReadAllText($runFlPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($scriptText, [ref]$tokens, [ref]$errors)
+        $funcAst = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Write-FirstLogonLog' }, $true)
+        . ([scriptblock]::Create($funcAst.Extent.Text))
+    }
+
+    BeforeEach {
+        $script:TestLogDir = Join-Path ([System.IO.Path]::GetTempPath()) ('winease_log_test_' + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $script:TestLogDir | Out-Null
+    }
+
+    AfterEach {
+        if (Test-Path -LiteralPath $script:TestLogDir) {
+            Remove-Item -Recurse -Force -LiteralPath $script:TestLogDir -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "writes log entries using AppendAllText on the happy path" {
+        $wrapperLogFile = Join-Path $script:TestLogDir 'firstlogon-wrapper.log'
+        Write-FirstLogonLog -Message 'Happy path log entry' -Level 'INFO'
+        (Test-Path -LiteralPath $wrapperLogFile) | Should Be $true
+        $content = Get-Content -LiteralPath $wrapperLogFile -Raw
+        $content | Should Match '\[INFO\] Happy path log entry'
+    }
+
+    It "falls back to Add-Content when AppendAllText throws an exception" {
+        $wrapperLogFile = Join-Path $script:TestLogDir 'invalid_dir_as_file'
+        New-Item -ItemType Directory -Force -Path $wrapperLogFile | Out-Null
+
+        $capturedCalls = [System.Collections.Generic.List[object]]::new()
+        Mock Add-Content {
+            $capturedCalls.Add(@{ LiteralPath = $LiteralPath; Value = $Value })
+        }
+
+        Write-FirstLogonLog -Message 'Fallback path log entry' -Level 'ERROR'
+
+        Assert-MockCalled Add-Content -Exactly 1 -Scope It
+        $capturedCalls.Count | Should Be 1
+        $capturedCalls[0].LiteralPath | Should Be $wrapperLogFile
+        $capturedCalls[0].Value | Should Match '\[ERROR\] Fallback path log entry'
+    }
+}
+
 Remove-Item Function:\reg.exe -ErrorAction SilentlyContinue
