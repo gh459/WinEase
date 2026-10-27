@@ -235,4 +235,187 @@ Describe "Autologon - cleanup after the first logon" {
     }
 }
 
+Describe "ApplyDefaultUser.ps1 - hive unload error handling and retries" {
+    BeforeAll {
+        function Invoke-TestApplyDefaultUser {
+            param(
+                [string]$TestDir,
+                [scriptblock]$RegHandler,
+                [scriptblock]$TestPathHandler = { param($Path) return $false }
+            )
+
+            $markerDir = Join-Path -Path $TestDir -ChildPath 'ProgramData\WinEase'
+            $ntUserDat = Join-Path -Path $TestDir -ChildPath 'Users\Default\NTUSER.DAT'
+            $defUserScript = Join-Path -Path $TestDir -ChildPath 'Windows\Setup\Scripts\DefaultUser.ps1'
+
+            $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ntUserDat) -ErrorAction SilentlyContinue
+            $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $defUserScript) -ErrorAction SilentlyContinue
+            Set-Content -LiteralPath $ntUserDat -Value 'dummy' -Encoding ascii
+            Set-Content -LiteralPath $defUserScript -Value 'Write-Host "DefaultUser.ps1"' -Encoding ascii
+
+            $rawText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'scripts\setup\ApplyDefaultUser.ps1'), [System.Text.Encoding]::UTF8)
+
+            $testText = $rawText -replace [regex]::Escape('C:\ProgramData\WinEase'), ($markerDir -replace '\\', '\\')
+            $testText = $testText -replace [regex]::Escape('C:\Users\Default\NTUSER.DAT'), ($ntUserDat -replace '\\', '\\')
+            $testText = $testText -replace [regex]::Escape('C:\Windows\Setup\Scripts\DefaultUser.ps1'), ($defUserScript -replace '\\', '\\')
+            $testText = $testText -replace '(?m)^\s*exit\s+([0-9]+)', '$script:TestApplyExitCode = $1; return'
+
+            function global:Start-Sleep { param([int]$Seconds) }
+            function global:powershell.exe { $global:LASTEXITCODE = 0 }
+            function global:Get-ItemProperty {
+                param($LiteralPath, $Name)
+                return [pscustomobject]@{ UnattendedSetup = 'C:\Windows\Setup\Scripts\UnattendedSetup.cmd' }
+            }
+
+            $script:RegHandlerRef = $RegHandler
+            function global:reg.exe {
+                if ($script:RegHandlerRef) {
+                    & $script:RegHandlerRef @args
+                } else {
+                    $global:LASTEXITCODE = 0
+                }
+            }
+
+            $script:TestPathHandlerRef = $TestPathHandler
+            function global:Test-Path {
+                param([string]$LiteralPath, [string]$Path)
+                $p = if ($LiteralPath) { $LiteralPath } else { $Path }
+                if ($p -eq 'Registry::HKU\DefaultUser') {
+                    return (& $script:TestPathHandlerRef -Path $p)
+                }
+                return (Microsoft.PowerShell.Management\Test-Path -LiteralPath $p)
+            }
+
+            $script:TestApplyExitCode = $null
+            try {
+                $sb = [scriptblock]::Create($testText)
+                . $sb
+            } finally {
+                Remove-Item Function:\global:Start-Sleep -ErrorAction SilentlyContinue
+                Remove-Item Function:\global:powershell.exe -ErrorAction SilentlyContinue
+                Remove-Item Function:\global:Get-ItemProperty -ErrorAction SilentlyContinue
+                Remove-Item Function:\global:reg.exe -ErrorAction SilentlyContinue
+                Remove-Item Function:\global:Test-Path -ErrorAction SilentlyContinue
+                $script:RegHandlerRef = $null
+                $script:TestPathHandlerRef = $null
+            }
+
+            $logContent = if (Test-Path -LiteralPath "$markerDir\Logs\defaultuser.log") {
+                [System.IO.File]::ReadAllText("$markerDir\Logs\defaultuser.log")
+            } else { '' }
+
+            return [pscustomobject]@{
+                ExitCode            = $script:TestApplyExitCode
+                MarkerDir           = $markerDir
+                LogContent          = $logContent
+                Succeeded           = (Test-Path -LiteralPath "$markerDir\defaultuser.succeeded")
+                Failed              = (Test-Path -LiteralPath "$markerDir\defaultuser.failed")
+                UnloadFailed        = (Test-Path -LiteralPath "$markerDir\defaultuser_unload.failed")
+                UnloadFailedContent = if (Test-Path -LiteralPath "$markerDir\defaultuser_unload.failed") { [System.IO.File]::ReadAllText("$markerDir\defaultuser_unload.failed").Trim() } else { $null }
+            }
+        }
+    }
+
+    It "reports error and writes failure marker when all 5 unload attempts fail" {
+        $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $null = New-Item -ItemType Directory -Force -Path $tempDir
+        try {
+            $script:unloadAttempts = 0
+            $res = Invoke-TestApplyDefaultUser -TestDir $tempDir -RegHandler {
+                param([string]$cmd, [string]$key)
+                if ($cmd -eq 'load') {
+                    $global:LASTEXITCODE = 0
+                } elseif ($cmd -eq 'unload') {
+                    $script:unloadAttempts++
+                    $global:LASTEXITCODE = 1
+                }
+            }
+
+            $res.ExitCode | Should Be 1
+            $res.UnloadFailed | Should Be $true
+            $res.UnloadFailedContent | Should BeExactly "Failed to unload HKU\DefaultUser"
+            $res.Succeeded | Should Be $false
+            $script:unloadAttempts | Should Be 5
+            $res.LogContent | Should Match "ERROR: Failed to unload HKU\\DefaultUser after 5 attempts\."
+            $res.LogContent | Should Match "Attempt 5 to unload HKU\\DefaultUser returned exit code 1, retrying in 1s\.\.\."
+            $res.LogContent | Should Match "ApplyDefaultUser\.ps1 completed WITH ERRORS\."
+        } finally {
+            Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "retries unload and succeeds when unload succeeds on attempt 3" {
+        $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $null = New-Item -ItemType Directory -Force -Path $tempDir
+        try {
+            $script:unloadAttempts = 0
+            $res = Invoke-TestApplyDefaultUser -TestDir $tempDir -RegHandler {
+                param([string]$cmd, [string]$key)
+                if ($cmd -eq 'load') {
+                    $global:LASTEXITCODE = 0
+                } elseif ($cmd -eq 'unload') {
+                    $script:unloadAttempts++
+                    if ($script:unloadAttempts -lt 3) {
+                        $global:LASTEXITCODE = 1
+                    } else {
+                        $global:LASTEXITCODE = 0
+                    }
+                }
+            } -TestPathHandler { param($p) return $false }
+
+            $res.ExitCode | Should Be 0
+            $res.Succeeded | Should Be $true
+            $res.UnloadFailed | Should Be $false
+            $script:unloadAttempts | Should Be 3
+            $res.LogContent | Should Match "Successfully unloaded HKU\\DefaultUser on attempt 3\."
+            $res.LogContent | Should Match "ApplyDefaultUser\.ps1 completed successfully\."
+        } finally {
+            Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "reports error when hive remains accessible after unload exit code 0" {
+        $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $null = New-Item -ItemType Directory -Force -Path $tempDir
+        try {
+            $res = Invoke-TestApplyDefaultUser -TestDir $tempDir -RegHandler {
+                param([string]$cmd, [string]$key)
+                $global:LASTEXITCODE = 0
+            } -TestPathHandler { param($p) return $true }
+
+            $res.ExitCode | Should Be 1
+            $res.UnloadFailed | Should Be $true
+            $res.UnloadFailedContent | Should BeExactly "Hive still mounted after unload"
+            $res.Succeeded | Should Be $false
+            $res.LogContent | Should Match "ERROR: Post-verification failed: HKU\\DefaultUser hive is still accessible after unload!"
+            $res.LogContent | Should Match "ApplyDefaultUser\.ps1 completed WITH ERRORS\."
+        } finally {
+            Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "executes happy path successfully on attempt 1" {
+        $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $null = New-Item -ItemType Directory -Force -Path $tempDir
+        try {
+            $script:unloadAttempts = 0
+            $res = Invoke-TestApplyDefaultUser -TestDir $tempDir -RegHandler {
+                param([string]$cmd, [string]$key)
+                if ($cmd -eq 'unload') { $script:unloadAttempts++ }
+                $global:LASTEXITCODE = 0
+            } -TestPathHandler { param($p) return $false }
+
+            $res.ExitCode | Should Be 0
+            $res.Succeeded | Should Be $true
+            $res.UnloadFailed | Should Be $false
+            $res.Failed | Should Be $false
+            $script:unloadAttempts | Should Be 1
+            $res.LogContent | Should Match "Successfully unloaded HKU\\DefaultUser on attempt 1\."
+            $res.LogContent | Should Match "ApplyDefaultUser\.ps1 completed successfully\."
+        } finally {
+            Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 Remove-Item Function:\reg.exe -ErrorAction SilentlyContinue
