@@ -1393,11 +1393,15 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
     }
     # Literal keys of the WinUI 3 window: _s.Get("Key" / _s.Format("Key" in gui\winui\WinEaseGui\*.cs (and the preset labels)
     function Get-UiKeyUsedWinUi {
-        $keys = @()
+        $keys = [System.Collections.Generic.List[string]]::new()
         foreach ($f in Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot 'gui\winui\WinEaseGui') -Filter '*.cs') {
             $src = [System.IO.File]::ReadAllText($f.FullName)
-            $keys += @([regex]::Matches($src, '_s\.(?:Get|Format)\("([^"{}]+)"') | ForEach-Object { $_.Groups[1].Value })
-            $keys += @([regex]::Matches($src, '"(Media\.Preset\.[A-Za-z0-9]+)"') | ForEach-Object { $_.Groups[1].Value })
+            foreach ($m in [regex]::Matches($src, '_s\.(?:Get|Format)\("([^"{}]+)"')) {
+                $keys.Add($m.Groups[1].Value)
+            }
+            foreach ($m in [regex]::Matches($src, '"(Media\.Preset\.[A-Za-z0-9]+)"')) {
+                $keys.Add($m.Groups[1].Value)
+            }
         }
         return $keys
     }
