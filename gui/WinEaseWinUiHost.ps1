@@ -460,11 +460,11 @@ function Invoke-WinEaseWinUiCustomScriptRequest {
         'customScriptPreview' {
             $engine = Join-Path $repo 'lib\WinEaseExtensions.ps1'
             if (-not (Get-Command -Name Get-WinEaseCustomScriptPreview -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $engine)) { . $engine }
-            $lines = @()
+            $lines = [System.Collections.Generic.List[string]]::new()
             foreach ($p in @(Get-WinEaseCustomScriptPreview -RepoRoot $repo)) {
-                $lines += ("{0}  {1}  ({2})" -f $p.Stage, $p.ImagePath, $p.RunsAs)
+                $lines.Add(("{0}  {1}  ({2})" -f $p.Stage, $p.ImagePath, $p.RunsAs))
             }
-            if ($lines.Count -eq 0) { $lines = @((Get-WinEaseUiString 'CS.Msg.Empty')) }
+            if ($lines.Count -eq 0) { $lines.Add((Get-WinEaseUiString 'CS.Msg.Empty')) }
             return @{ Title = (Get-WinEaseUiString 'CS.Msg.PreviewTitle'); Text = ($lines -join "`n") }
         }
         'customScriptOpenFolder' {
