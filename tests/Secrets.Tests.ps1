@@ -182,3 +182,80 @@ Describe "Secrets - registry (Winlogon DefaultPassword)" {
         [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8) | Should Match "'WinEaseSecrets\.ps1'"
     }
 }
+
+Describe "Secrets - Redact-WinEaseUserSecret" {
+    BeforeAll {
+        $userOncePath = Join-Path $script:RepoRoot "scripts\UserOnce.ps1"
+        $content = [System.IO.File]::ReadAllText($userOncePath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcNode = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Redact-WinEaseUserSecret'
+        }, $true)
+        . ([scriptblock]::Create($funcNode.Extent.Text))
+    }
+
+    It "returns null or empty string untouched when input is null or empty" {
+        (Redact-WinEaseUserSecret -Text $null) | Should BeNullOrEmpty
+        (Redact-WinEaseUserSecret -Text '') | Should Be ''
+    }
+
+    It "redacts double-quoted JSON secret values containing spaces or special characters" {
+        $input = '{"password": "my secret password 123!", "user": "admin"}'
+        $expected = '{"password": [REDACTED], "user": "admin"}'
+        (Redact-WinEaseUserSecret -Text $input) | Should Be $expected
+    }
+
+    It "redacts single-quoted assignment secret values" {
+        $input = "`$apikey = '12345-abcde-secret'"
+        $expected = "`$apikey = [REDACTED]"
+        (Redact-WinEaseUserSecret -Text $input) | Should Be $expected
+    }
+
+    It "redacts unquoted key-value secret pairs" {
+        (Redact-WinEaseUserSecret -Text "password: mySuperSecretPassword") | Should Be "password: [REDACTED]"
+        (Redact-WinEaseUserSecret -Text "apikey=9876543210") | Should Be "apikey: [REDACTED]"
+        (Redact-WinEaseUserSecret -Text "secret = topsecretvalue") | Should Be "secret: [REDACTED]"
+        (Redact-WinEaseUserSecret -Text "token: bearer-token-xyz") | Should Be "token: [REDACTED]"
+    }
+
+    It "redacts secrets case-insensitively" {
+        (Redact-WinEaseUserSecret -Text "PASSWORD: mySecretPassword") | Should Be "PASSWORD: [REDACTED]"
+        (Redact-WinEaseUserSecret -Text '{"APIKEY": "secret_key_val"}') | Should Be '{"APIKEY": [REDACTED]}'
+        (Redact-WinEaseUserSecret -Text "TOKEN: myToken123") | Should Be "TOKEN: [REDACTED]"
+    }
+
+    It "masks 5x5 product key license patterns" {
+        $input = "Installing product key VK7JG-NPHTM-C97JM-9MPGT-3V66T into registry"
+        $expected = "Installing product key XXXXX-XXXXX-XXXXX-XXXXX-XXXXX into registry"
+        (Redact-WinEaseUserSecret -Text $input) | Should Be $expected
+    }
+
+    It "handles multiple secret patterns in a single log message without double-redacting" {
+        $input = 'Log: password: "my secret" and key VK7JG-NPHTM-C97JM-9MPGT-3V66T'
+        $expected = 'Log: password: [REDACTED] and key XXXXX-XXXXX-XXXXX-XXXXX-XXXXX'
+        (Redact-WinEaseUserSecret -Text $input) | Should Be $expected
+    }
+
+    It "leaves non-secret strings completely untouched" {
+        $input = "Process completed successfully in 2.34s with exit code 0"
+        (Redact-WinEaseUserSecret -Text $input) | Should Be $input
+    }
+
+    It "maintains implementation parity between scripts/UserOnce.ps1 and autounattend.xml" {
+        $userOnceContent = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "scripts\UserOnce.ps1"), [System.Text.Encoding]::UTF8)
+        $unattendContent = [System.IO.File]::ReadAllText($script:UnattendPath, [System.Text.Encoding]::UTF8)
+
+        $ast1 = [System.Management.Automation.Language.Parser]::ParseInput($userOnceContent, [ref]$null, [ref]$null)
+        $ast2 = [System.Management.Automation.Language.Parser]::ParseInput($unattendContent, [ref]$null, [ref]$null)
+
+        $fn1 = $ast1.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Redact-WinEaseUserSecret' }, $true)
+        $fn2 = $ast2.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Redact-WinEaseUserSecret' }, $true)
+
+        $fn1 | Should Not BeNullOrEmpty
+        $fn2 | Should Not BeNullOrEmpty
+        $fn1.Body.Extent.Text.Trim() | Should Be $fn2.Body.Extent.Text.Trim()
+    }
+}
