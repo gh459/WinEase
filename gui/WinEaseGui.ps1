@@ -921,14 +921,15 @@ function Update-WinEaseGuiPresetList {
     if ($Gui.Preset.SelectedIndex -ge 0 -and $Gui.Preset.SelectedIndex -lt $Gui.PresetKeyMap.Count) {
         $selectedKey = "$($Gui.PresetKeyMap[$Gui.Preset.SelectedIndex])"
     }
-    $newMap = @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')
+    $newMap = [System.Collections.Generic.List[string]]::new()
+    $newMap.AddRange([string[]]@('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio'))
     $script:updatingPreset = $true
     try {
         $Gui.Preset.Items.Clear()
         foreach ($k in $newMap) { [void]$Gui.Preset.Items.Add((Get-WinEaseGuiPresetLabel -Key $k)) }
         foreach ($u in @(Update-WinEaseGuiUserPresets)) {
             [void]$Gui.Preset.Items.Add($u.Label)
-            $newMap += $u.Key
+            $newMap.Add($u.Key)
         }
         [void]$Gui.Preset.Items.Add((Get-WinEaseUiString 'Media.Preset.Custom'))
         $Gui.PresetKeyMap = $newMap
