@@ -18,6 +18,8 @@ GitHub repository (or contact the maintainer) instead of a public issue.
 * A password you set is written, in clear text, into the answer file of the image
   (`autounattend.xml`, `<PlainText>true</PlainText>`, in the ISO and in the image). That is how unattended Windows
   Setup takes it. Anyone who gets the ISO can read it.
+* `<AdministratorPassword>` in `autounattend.xml` defaults to an empty value (`<Value></Value>`) with
+  `<PlainText>true</PlainText>`. This explicitly leaves the built-in Administrator account disabled without storing a hardcoded password, while satisfying Windows Setup unattended schema requirements.
 * The network use of a blank password is blocked in every build
   (`LimitBlankPasswordUse = 1`); an empty password only works at the console.
 * The password is **not saved in profiles**: `-SaveProfile` and the GUI never write
