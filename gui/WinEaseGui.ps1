@@ -2073,9 +2073,9 @@ function New-WinEaseCustomScriptsListGroup {
     [void](New-WinEaseButton -Text (Get-WinEaseUiString 'CS.Button.Preview') -X 530 -Y 288 -Width 140 -Height 30 -Parent $grpList -OnClick {
         try {
             $rows = @(Get-WinEaseCustomScriptPreview -RepoRoot $script:WinEaseGuiRepoRoot)
-            $lines = @()
-            foreach ($r in $rows) { $lines += ("{0}  {1}  ({2})" -f $r.Stage, $r.ImagePath, $r.RunsAs) }
-            if ($lines.Count -eq 0) { $lines = @((Get-WinEaseUiString 'CS.Msg.Empty')) }
+            $lines = [System.Collections.Generic.List[string]]::new()
+            foreach ($r in $rows) { $lines.Add(("{0}  {1}  ({2})" -f $r.Stage, $r.ImagePath, $r.RunsAs)) }
+            if ($lines.Count -eq 0) { $lines.Add((Get-WinEaseUiString 'CS.Msg.Empty')) }
             Show-WinEaseGuiTextDialog -Title (Get-WinEaseUiString 'CS.Msg.PreviewTitle') -Text ($lines -join "`r`n")
         } catch {
             Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'CS.Button.Preview') -Kind Error
