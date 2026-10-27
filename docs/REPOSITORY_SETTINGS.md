@@ -3,24 +3,29 @@
 These settings live in GitHub, not in the repository, so a pull request cannot enforce them.
 This file records what they should be. **Nothing here is applied by code in this repository.**
 
-## Verified state (read-only, 2026-10-25, `gh` authenticated as `gh459`)
+## Verified state (read-only, 2026-10-27, `gh` authenticated as `gh459`)
 
 | Query (read-only `gh api`) | Result |
 |---|---|
-| `repos/gh459/WinEase/branches/main/protection` | HTTP 404 "Branch not protected" |
-| `repos/gh459/WinEase/branches/main` (`.protected`) | `false` |
-| `repos/gh459/WinEase/rulesets` | `[]` (no rulesets) |
-| `repos/gh459/WinEase/actions/permissions/workflow` | `default_workflow_permissions: read`, `can_approve_pull_request_reviews: false` |
-| `repos/gh459/WinEase` | public, default branch `main` |
+| `repos/gh459/WinEase/rulesets` | one ruleset, `test` (id 25870780), enforcement `active` |
+| ruleset target | `~DEFAULT_BRANCH` (`main`) only |
+| ruleset rules | pull request required (0 approvals), required status checks (below, not strict), no force push (`non_fast_forward`), no deletion, `copilot_code_review` |
+| ruleset required checks | `Pester test suite`, `PSScriptAnalyzer`, `Self-test (powershell)`, `Self-test (pwsh)`, `.NET binaries (x64)`, `.NET binaries (arm64)`, `Rust engine (cargo build + test)`, `Plugin contract (dotnet build + xUnit)`, `Release package (dry run)` |
+| `repos/gh459/WinEase/branches/main/protection` | HTTP 404 "Branch not protected" (classic protection unused; the ruleset covers `main`) |
+| `repos/gh459/WinEase` | public, default branch `main`, `allow_auto_merge: true`, `delete_branch_on_merge: true` |
+| `repos/gh459/WinEase/actions/permissions/workflow` | `default_workflow_permissions: read`, `can_approve_pull_request_reviews: false` (2026-10-25) |
 
-Consequence: **`main` is currently not protected.** The write-capable Claude agent
-(`claude-issue-agent.yml`) and every collaborator can push to `main` directly; the workflow only
-keeps the agent off `main` through its tool allow-list and prompt, which are not a boundary.
-Enable the protection below.
+Required check names must match the check run names exactly as reported on a PR (no `CI / `
+prefix, no unexpanded `${{ matrix.* }}`). A required name that is never reported leaves the PR
+waiting forever and auto-merge never fires. `actionlint` / `zizmor` run only for `.github/**`
+changes and `Dry-run ...` is a profile matrix, so none of them are required.
 
-Not verified (not queried or not readable with this token): required-review counts of any future
-rule, secret-scanning / push-protection, Dependabot alerts, environments, the list of
-collaborators, fork-PR workflow approval policy.
+Known gaps: the ruleset requires no approving review and has a broad bypass list (repository
+roles and several GitHub Apps with `always`), so it does not bind those actors. The ruleset
+name is still `test`. A `v*` tag ruleset does not exist.
+
+Not verified (not queried or not readable with this token): secret-scanning / push-protection,
+Dependabot alerts, environments, the list of collaborators, fork-PR workflow approval policy.
 
 ## Intended branch protection (or an equivalent ruleset) for `main`
 
@@ -29,6 +34,9 @@ collaborators, fork-PR workflow approval policy.
 - Require status checks to pass, branch up to date. Required checks (names as shown in the
   Checks tab): `WinEase CI` jobs (self-test, Pester test suite, dry-run, binaries, Rust engine,
   plugin contract), `PSScriptAnalyzer`, `Workflow security audit` (actionlint, zizmor).
+- Enable "Allow auto-merge" in the repository settings: `auto-resolve-conflicts.yml` enables
+  auto-merge (squash) after resolving conflicts, and GitHub merges only once the required checks and
+  reviews above pass.
 - Block force pushes and branch deletion; require linear history (optional); apply to
   administrators too (no bypass for the agent's token or app).
 - Restrict who can push to matching branches; the agent pushes only `claude/*` branches.
@@ -41,7 +49,7 @@ collaborators, fork-PR workflow approval policy.
   approve pull requests" off (already the case) unless the agent's draft PRs need it.
 - Fork pull requests: require approval for all outside collaborators.
 - Allow only actions pinned by SHA (all are; Dependabot keeps pins current).
-- Secrets: `ANTHROPIC_API_KEY` only as a repository secret; no environment-less deploy secrets.
+- Secrets: `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`, uses the Claude subscription quota) only as a repository secret; no environment-less deploy secrets.
 
 ## Automated agent security boundary (`claude-issue-agent.yml`)
 
