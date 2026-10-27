@@ -31,14 +31,14 @@ try {
         'C:\Windows\Setup\Scripts\RunFirstLogon.ps1',
         'C:\Windows\Setup\Scripts\SetupComplete.cmd'
     )
-    $missingPreStaged = @()
+    $missingPreStaged = [System.Collections.Generic.List[string]]::new()
     foreach ($rs in $requiredScripts) {
         if (-not (Test-Path -LiteralPath $rs)) {
-            $missingPreStaged += $rs
+            $missingPreStaged.Add($rs)
         } else {
             $item = Get-Item -LiteralPath $rs -ErrorAction SilentlyContinue
             if ($null -eq $item -or $item.Length -eq 0) {
-                $missingPreStaged += "$rs (0 bytes)"
+                $missingPreStaged.Add("$rs (0 bytes)")
             }
         }
     }
@@ -115,9 +115,9 @@ try {
     }
 
     # Verify again after fallback extraction attempt
-    $stillMissing = @()
+    $stillMissing = [System.Collections.Generic.List[string]]::new()
     foreach ($rs in $requiredScripts) {
-        if (-not (Test-Path -LiteralPath $rs)) { $stillMissing += $rs }
+        if (-not (Test-Path -LiteralPath $rs)) { $stillMissing.Add($rs) }
     }
     if ($stillMissing.Count -gt 0) {
         throw "Fallback extraction failed: required scripts still missing: $($stillMissing -join ', ')"
