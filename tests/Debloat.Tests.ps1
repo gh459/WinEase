@@ -26,6 +26,55 @@ Describe "WinEase - the Defender stays usable unless its removal was asked for" 
         $script:DefenderEnforce | Should Not Match 'DisableRealtimeMonitoring'
     }
 
+    Context "Write-EnfLog error handling and logging" {
+        BeforeAll {
+            $defenderScriptPath = Join-Path $script:RepoRoot 'scripts\WinEase-DefenderEnforce.ps1'
+            $content = [System.IO.File]::ReadAllText($defenderScriptPath, [System.Text.Encoding]::UTF8)
+            $tokens = $null; $parseErrors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+
+            $funcAst = $ast.Find({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq 'Write-EnfLog'
+            }, $true)
+
+            . ([scriptblock]::Create($funcAst.Extent.Text))
+        }
+
+        It "logs messages to the log path successfully when Add-Content succeeds" {
+            $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ('WriteEnfLogTest_' + [guid]::NewGuid().ToString('N'))
+            $null = New-Item -ItemType Directory -Path $tmpDir -Force
+            try {
+                $logPath = Join-Path $tmpDir 'defender-enforce.log'
+                $script:QuietMode = $true
+
+                Write-EnfLog -Message "Test log entry" -Level "INFO"
+
+                (Test-Path -LiteralPath $logPath) | Should Be $true
+                $logContent = Get-Content -LiteralPath $logPath -Raw
+                $logContent | Should Match '\[INFO\] Test log entry'
+            } finally {
+                Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It "catches Add-Content exception and writes a verbose warning without throwing" {
+            $logPath = Join-Path ([System.IO.Path]::GetTempPath()) 'defender-enforce-fail.log'
+            $script:QuietMode = $true
+
+            Mock Add-Content { throw "Access denied to log file" }
+            Mock Write-Verbose { }
+
+            { Write-EnfLog -Message "Failed log test" -Level "WARN" } | Should Not Throw
+
+            Assert-MockCalled Add-Content -Exactly 1 -Scope It
+            Assert-MockCalled Write-Verbose -Exactly 1 -Scope It -ParameterFilter {
+                $Message -match 'Best-effort enforcement step failed: Access denied to log file'
+            }
+        }
+    }
+
     It "phase 10 only disables the Defender services when the Defender is removed on purpose" {
         # The "Physical: Defender" target of the Advanced Debloat tab disables the
         # Defender services. It must never do that on its own: the conflict matrix
