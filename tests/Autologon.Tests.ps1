@@ -235,4 +235,97 @@ Describe "Autologon - cleanup after the first logon" {
     }
 }
 
+Describe "Autologon - transition watchdog Test-InteractiveSession" {
+    BeforeAll {
+        $watchdogPath = Join-Path $script:RepoRoot 'scripts\setup\WinEase-transition-watchdog.ps1'
+        $watchdogText = [System.IO.File]::ReadAllText($watchdogPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($watchdogText, [ref]$tokens, [ref]$errors)
+        $funcAst = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Test-InteractiveSession' }, $true)
+        . ([scriptblock]::Create($funcAst.Extent.Text))
+    }
+
+    AfterEach {
+        Remove-Item Function:\quser.exe -ErrorAction SilentlyContinue
+        Remove-Item Function:\Get-Process -ErrorAction SilentlyContinue
+    }
+
+    It "returns true when quser succeeds with 2 or more rows" {
+        function quser.exe {
+            $global:LASTEXITCODE = 0
+            return @(
+                " USERNAME              SESSIONNAME        ID  STATE   IDLE TIME  LOGON TIME",
+                ">admin                 console             1  Active      .  10/24/2023 08:00"
+            )
+        }
+        Test-InteractiveSession | Should Be $true
+    }
+
+    It "falls back to Get-Process and returns true when quser fails (non-zero exit code) but explorer is active in SessionId > 0" {
+        function quser.exe {
+            $global:LASTEXITCODE = 1
+            return "No User exists in the system"
+        }
+        function Get-Process {
+            param([string]$Name, $ErrorAction)
+            if ($Name -eq 'explorer') {
+                return @([PSCustomObject]@{ Name = 'explorer'; SessionId = 1 })
+            }
+            return $null
+        }
+        Test-InteractiveSession | Should Be $true
+    }
+
+    It "falls back to Get-Process and returns false when quser fails and no active explorer exists" {
+        function quser.exe {
+            $global:LASTEXITCODE = 1
+            return "No User exists in the system"
+        }
+        function Get-Process {
+            param([string]$Name, $ErrorAction)
+            if ($Name -eq 'explorer') {
+                return @([PSCustomObject]@{ Name = 'explorer'; SessionId = 0 })
+            }
+            return $null
+        }
+        Test-InteractiveSession | Should Be $false
+    }
+
+    It "catches exception when quser throws and falls back to Get-Process returning true when explorer is active" {
+        function quser.exe {
+            throw "quser.exe not found or failed"
+        }
+        function Get-Process {
+            param([string]$Name, $ErrorAction)
+            if ($Name -eq 'explorer') {
+                return @([PSCustomObject]@{ Name = 'explorer'; SessionId = 1 })
+            }
+            return $null
+        }
+        Test-InteractiveSession | Should Be $true
+    }
+
+    It "catches exception when quser throws and returns false when no explorer process exists" {
+        function quser.exe {
+            throw "quser.exe not found or failed"
+        }
+        function Get-Process {
+            param([string]$Name, $ErrorAction)
+            return $null
+        }
+        Test-InteractiveSession | Should Be $false
+    }
+
+    It "catches exceptions when both quser and Get-Process throw, returning false gracefully" {
+        function quser.exe {
+            throw "quser.exe not found"
+        }
+        function Get-Process {
+            param([string]$Name, $ErrorAction)
+            throw "Get-Process exception"
+        }
+        Test-InteractiveSession | Should Be $false
+    }
+}
+
 Remove-Item Function:\reg.exe -ErrorAction SilentlyContinue
