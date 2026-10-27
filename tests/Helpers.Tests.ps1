@@ -275,6 +275,87 @@ Describe "WinEase builder - phase timing telemetry" {
         Remove-Item -LiteralPath $logDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 
+    It "persists phase timings to last_phase_timings.json as valid JSON" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+
+        $funcText = ($ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Save-WinEasePhaseTimings'
+        }, $true)).Extent.Text
+        . ([scriptblock]::Create($funcText))
+
+        $logDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_timings_save_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($logDir) | Out-Null
+        $timingsPath = Join-Path -Path $logDir -ChildPath "last_phase_timings.json"
+
+        $script:PhaseTimings = [ordered]@{
+            "Phase 1" = 12.3
+            "Phase 2" = 45.6
+        }
+
+        Save-WinEasePhaseTimings
+
+        (Test-Path -LiteralPath $timingsPath) | Should Be $true
+        $saved = (Get-Content -LiteralPath $timingsPath -Raw -Encoding UTF8) | ConvertFrom-Json
+        ([double]$saved.'Phase 1') | Should Be 12.3
+        ([double]$saved.'Phase 2') | Should Be 45.6
+
+        $script:PhaseTimings = [ordered]@{}
+        Remove-Item -LiteralPath $logDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It "does not write last_phase_timings.json when PhaseTimings is null or empty" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+
+        $funcText = ($ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Save-WinEasePhaseTimings'
+        }, $true)).Extent.Text
+        . ([scriptblock]::Create($funcText))
+
+        $logDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_timings_empty_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($logDir) | Out-Null
+        $timingsPath = Join-Path -Path $logDir -ChildPath "last_phase_timings.json"
+
+        # Case 1: $script:PhaseTimings is null
+        $script:PhaseTimings = $null
+        Save-WinEasePhaseTimings
+        (Test-Path -LiteralPath $timingsPath) | Should Be $false
+
+        # Case 2: $script:PhaseTimings is an empty hashtable
+        $script:PhaseTimings = [ordered]@{}
+        Save-WinEasePhaseTimings
+        (Test-Path -LiteralPath $timingsPath) | Should Be $false
+
+        Remove-Item -LiteralPath $logDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It "catches file write errors in Save-WinEasePhaseTimings without throwing an exception" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+
+        $funcText = ($ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Save-WinEasePhaseTimings'
+        }, $true)).Extent.Text
+        . ([scriptblock]::Create($funcText))
+
+        $logDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "nonexistent_dir_12345\sub_dir"
+        $script:PhaseTimings = [ordered]@{ "Phase 1" = 10.5 }
+
+        { Save-WinEasePhaseTimings } | Should Not Throw
+
+        $script:PhaseTimings = [ordered]@{}
+    }
+
     It "sums decimal phase durations from last_phase_timings.json" {
         # Regression: PS 5.1 ConvertFrom-Json yields System.Decimal for JSON decimals, and
         # the old reader only accepted double/int/long - fractional durations were silently
