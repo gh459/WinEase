@@ -548,7 +548,11 @@ switch ($Mode) {
             } else {
                 $failedCount = 0
                 foreach ($part in @($result.UserData, $result.CustomResult, $result.RulesResult)) {
-                    if ($part) { $failedCount += @($part.FailedFiles | Where-Object { $_ }).Count }
+                    if ($part -and $part.FailedFiles) {
+                        foreach ($f in $part.FailedFiles) {
+                            if ($f) { $failedCount++ }
+                        }
+                    }
                 }
                 $verified = @(Get-WinEaseMigrationManifestEntries -BackupRoot $PackagePath | Where-Object { $_ -and $_.Sha256 }).Count
                 $ruleFiles = 0
