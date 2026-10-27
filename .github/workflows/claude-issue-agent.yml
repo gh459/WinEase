@@ -78,6 +78,9 @@ jobs:
       - name: Run Claude Code
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
         with:
+          # Repository secret ANTHROPIC_API_KEY (docs/REPOSITORY_SETTINGS.md). The OAuth token
+          # variant (CLAUDE_CODE_OAUTH_TOKEN, Claude subscription quota) is not configured in
+          # this repository, so an API key input is used instead.
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # Assignment trigger for the issues event. Matches the if: condition above.
           assignee_trigger: ${{ vars.CLAUDE_AGENT_ASSIGNEE || 'claude-agent' }}

@@ -330,6 +330,13 @@ namespace @@NS@@ {
             [void](Import-WinEasePlugins -RepoRoot $script:RepoRoot -BuiltinLockPath (Join-Path $script:PluginWork 'empty-builtin.lock.psd1') -BuiltinDir (Join-Path $script:PluginWork 'emptybuiltin'))
             @(Get-WinEasePluginContributions -Kind Registry).Count | Should Be 0
         }
+        It "returns unique appx patterns via Get-WinEasePluginAppxPatterns" {
+            Mock Get-WinEasePluginContributions {
+                return @([PSCustomObject]@{ PluginId = 'Mock'; Pattern = 'PackageA.*' })
+            } -ParameterFilter { $Kind -eq 'Appx' }
+            $patterns = Get-WinEasePluginAppxPatterns
+            $patterns -contains 'PackageA.*' | Should Be $true
+        }
     }
 
     Context "Lock files, self test and user registration" {

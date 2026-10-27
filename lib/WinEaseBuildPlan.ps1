@@ -80,27 +80,12 @@ function ConvertTo-WinEaseBuildPlanBool {
     return [bool]$Value
 }
 
-# -Result  the GUI result (flat: component keys at the top level, as Show-WinEaseGUI returns it; a nested
-#          'Components' object is accepted too).
-# -FreeSpaceProvider  scriptblock { param($Path) } returning free bytes or $null (default: Get-WinEaseVolumeFreeBytes)
-# -OutputDir / -OutputIsoName / -EditionName  what the builder will use / what is known about the image
-function Get-WinEaseBuildPlan {
+# Extracts flat components, tweaks, payload format, debloat selections, and options from the result object
+function Get-WinEaseBuildPlanFlatSettings {
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Result', Justification = 'Read inside script blocks the analyzer does not follow')]
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]$Result,
-        [scriptblock]$FreeSpaceProvider = { param($Path) Get-WinEaseVolumeFreeBytes -Path $Path },
-        [string]$OutputDir,
-        [string]$OutputIsoName,
-        [string]$EditionName,
-        $DependencyReview
-    )
-    foreach ($need in 'Get-WinEaseGuiPresetValues', 'Get-WinEaseGuiPresetState', 'Get-WinEaseDependencyReview') {
-        if (-not (Get-Command -Name $need -ErrorAction SilentlyContinue)) { throw "Get-WinEaseBuildPlan needs $need (WinEaseGuiCore.ps1 / WinEaseDependencies.ps1)." }
-    }
+    param($Result)
     $g = { param($k) Get-WinEaseBuildPlanValue $Result $k }
 
-    # Flat view of the settings (what the builder applies): components, tweaks, payload, debloat
     $components = [ordered]@{}
     $nested = & $g 'Components'
     if ($nested) {
@@ -123,16 +108,49 @@ function Get-WinEaseBuildPlan {
     $stdSel = @(@(& $g 'AdvancedDebloatStandard') | Where-Object { $_ } | ForEach-Object { "$_" })
     $expSel = @(@(& $g 'AdvancedDebloatExperimental') | Where-Object { $_ } | ForEach-Object { "$_" })
     $engines = & $g 'DebloatEngineSelection'
-
-    $changed = [System.Collections.Generic.List[object]]::new()
-    $unchanged = [System.Collections.Generic.List[string]]::new()
-    $skipped = [System.Collections.Generic.List[object]]::new()
-    $unverified = [System.Collections.Generic.List[object]]::new()
-    $criticals = [System.Collections.Generic.List[object]]::new()
-
-    # --- preset and the Changed / Unchanged split (the rule is Get-WinEaseGuiPresetState) ---
     $baseKey = "$(& $g 'BasePresetKey')".Trim().ToLower()
     $presetKey = "$(& $g 'PresetKey')"
+    $source = "$(& $g 'SourceDrive')".Trim()
+    $workDir = "$(& $g 'WorkDir')".Trim()
+    $index = "$(& $g 'Index')".Trim()
+
+    return [ordered]@{
+        Components                  = $components
+        Tweaks                      = $tweaks
+        PayloadFormat               = $payload
+        IsDryRun                    = $dryRun
+        PhysicalDebloatConsent      = $consent
+        UseVHDX                     = $useVhdx
+        AdvancedDebloatStandard     = $stdSel
+        AdvancedDebloatExperimental = $expSel
+        DebloatEngineSelection      = $engines
+        BasePresetKey               = $baseKey
+        PresetKey                   = $presetKey
+        Source                      = $source
+        WorkDir                     = $workDir
+        Index                       = $index
+    }
+}
+
+# Evaluates base preset values, calculates preset state/diffs, and updates changed/unchanged/skipped/unverified/criticals
+function Get-WinEaseBuildPlanPresetDiff {
+    param(
+        $FlatSettings,
+        $Changed,
+        $Unchanged,
+        $Skipped,
+        $Unverified,
+        $Criticals
+    )
+    $components = $FlatSettings.Components
+    $tweaks = $FlatSettings.Tweaks
+    $payload = $FlatSettings.PayloadFormat
+    $stdSel = $FlatSettings.AdvancedDebloatStandard
+    $expSel = $FlatSettings.AdvancedDebloatExperimental
+    $engines = $FlatSettings.DebloatEngineSelection
+    $baseKey = $FlatSettings.BasePresetKey
+    $consent = $FlatSettings.PhysicalDebloatConsent
+
     $current = @{ Components = $components; TweakSettings = $tweaks; PayloadFormat = $payload; AdvancedDebloatStandard = $stdSel; AdvancedDebloatExperimental = $expSel }
     if ($engines) { $current['DebloatEngineSelection'] = $engines }
     $baseValues = if ($baseKey) { Get-WinEaseGuiPresetValues -Name $baseKey } else { $null }
@@ -143,41 +161,60 @@ function Get-WinEaseBuildPlan {
         $presetState = "$($st.State)"
         $diffCount = @($st.Differences).Count
         foreach ($d in @($st.Differences)) {
-            $changed.Add([ordered]@{ Key = "$($d.Key)"; Kind = "$($d.Kind)"; Preset = "$($d.Preset)"; Current = "$($d.Current)" })
+            $Changed.Add([ordered]@{ Key = "$($d.Key)"; Kind = "$($d.Kind)"; Preset = "$($d.Preset)"; Current = "$($d.Current)" })
         }
         $diffKeys = @($st.DifferingKeys)
-        foreach ($k in $baseValues.Components.Keys) { if ($components.Contains($k) -and ($diffKeys -notcontains $k)) { $unchanged.Add("$k") } }
-        foreach ($k in $baseValues.Tweaks.Keys) { if ($tweaks.Contains($k) -and ($diffKeys -notcontains $k)) { $unchanged.Add("$k") } }
-        if ($diffKeys -notcontains 'PayloadFormat') { $unchanged.Add('PayloadFormat') }
+        foreach ($k in $baseValues.Components.Keys) { if ($components.Contains($k) -and ($diffKeys -notcontains $k)) { $Unchanged.Add("$k") } }
+        foreach ($k in $baseValues.Tweaks.Keys) { if ($tweaks.Contains($k) -and ($diffKeys -notcontains $k)) { $Unchanged.Add("$k") } }
+        if ($diffKeys -notcontains 'PayloadFormat') { $Unchanged.Add('PayloadFormat') }
         foreach ($k in $components.Keys) {
-            if (-not $baseValues.Components.Contains($k)) { $skipped.Add([ordered]@{ Key = "$k"; ReasonKey = 'Plan.Skipped.NotInPreset'; Value = "$($components[$k])" }) }
+            if (-not $baseValues.Components.Contains($k)) { $Skipped.Add([ordered]@{ Key = "$k"; ReasonKey = 'Plan.Skipped.NotInPreset'; Value = "$($components[$k])" }) }
         }
     } else {
-        $unverified.Add([ordered]@{ Key = 'Preset'; ReasonKey = 'Plan.Unverified.NoPreset'; Value = $(if ($baseKey) { $baseKey } else { '' }) })
+        $Unverified.Add([ordered]@{ Key = 'Preset'; ReasonKey = 'Plan.Unverified.NoPreset'; Value = $(if ($baseKey) { $baseKey } else { '' }) })
     }
 
     # --- settings the schema does not know ---
     foreach ($k in $tweaks.Keys) {
-        if (-not $script:AllTweakDefs.Contains($k)) { $unverified.Add([ordered]@{ Key = "$k"; ReasonKey = 'Plan.Unverified.UnknownTweak'; Value = "$($tweaks[$k])" }) }
+        if (-not $script:AllTweakDefs.Contains($k)) { $Unverified.Add([ordered]@{ Key = "$k"; ReasonKey = 'Plan.Unverified.UnknownTweak'; Value = "$($tweaks[$k])" }) }
     }
     $known = @($script:WinEaseDebloatStandardItems) + @($script:WinEaseDebloatExperimentalItems)
     foreach ($i in @($stdSel + $expSel | Select-Object -Unique)) {
-        if ($known -notcontains $i) { $unverified.Add([ordered]@{ Key = "$i"; ReasonKey = 'Plan.Unverified.UnknownDebloat'; Value = '' }) }
+        if ($known -notcontains $i) { $Unverified.Add([ordered]@{ Key = "$i"; ReasonKey = 'Plan.Unverified.UnknownDebloat'; Value = '' }) }
     }
 
     # --- Advanced Debloat without consent is dropped by the build ---
     $debloatCount = $stdSel.Count + $expSel.Count
     $effStd = $stdSel; $effExp = $expSel
     if ($debloatCount -gt 0 -and -not $consent) {
-        foreach ($i in @($stdSel + $expSel)) { $skipped.Add([ordered]@{ Key = "$i"; ReasonKey = 'Plan.Skipped.NoConsent'; Value = '' }) }
+        foreach ($i in @($stdSel + $expSel)) { $Skipped.Add([ordered]@{ Key = "$i"; ReasonKey = 'Plan.Skipped.NoConsent'; Value = '' }) }
         $effStd = @(); $effExp = @()
     } elseif ($debloatCount -gt 0) {
-        $criticals.Add([ordered]@{ Code = 'PhysicalDebloat'; TextKey = 'Plan.Critical.PhysicalDebloat'; Args = @($stdSel.Count, $expSel.Count) })
+        $Criticals.Add([ordered]@{ Code = 'PhysicalDebloat'; TextKey = 'Plan.Critical.PhysicalDebloat'; Args = @($stdSel.Count, $expSel.Count) })
     }
 
-    # --- dependency review (B2) of what will really run ---
-    $cfg = @{ TweakSettings = $tweaks; AdvancedDebloatStandard = $effStd; AdvancedDebloatExperimental = $effExp }
-    foreach ($k in $components.Keys) { $cfg[$k] = $components[$k] }
+    return [ordered]@{
+        PresetState  = $presetState
+        DiffCount    = $diffCount
+        EffStd       = $effStd
+        EffExp       = $effExp
+        DebloatCount = $debloatCount
+    }
+}
+
+# Processes dependency review results and returns danger/critical mappings while updating unverified and criticals
+function Get-WinEaseBuildPlanDependencyAssessment {
+    param(
+        $Components,
+        $Tweaks,
+        $EffStd,
+        $EffExp,
+        $DependencyReview,
+        $Unverified,
+        $Criticals
+    )
+    $cfg = @{ TweakSettings = $Tweaks; AdvancedDebloatStandard = $EffStd; AdvancedDebloatExperimental = $EffExp }
+    foreach ($k in $Components.Keys) { $cfg[$k] = $Components[$k] }
     $review = if ($DependencyReview) { $DependencyReview } else { Get-WinEaseDependencyReview -Config $cfg }
     $dangerous = [System.Collections.Generic.List[object]]::new()
     foreach ($row in @($review.Critical) + @($review.Impact)) {
@@ -194,26 +231,44 @@ function Get-WinEaseBuildPlan {
             Reversibility = $rev; Recovery = $recovery
         })
         if ("$($row.Kind)" -eq 'Unknown') {
-            $unverified.Add([ordered]@{ Key = "$($row.Source)"; ReasonKey = 'Plan.Unverified.DependencyUnknown'; Value = "$($row.Text)" })
+            $Unverified.Add([ordered]@{ Key = "$($row.Source)"; ReasonKey = 'Plan.Unverified.DependencyUnknown'; Value = "$($row.Text)" })
         }
     }
-    if ($review.HasCritical) { $criticals.Add([ordered]@{ Code = 'DependencyCritical'; TextKey = 'Plan.Critical.Dependency'; Args = @(@($review.Critical).Count) }) }
+    if ($review.HasCritical) { $Criticals.Add([ordered]@{ Code = 'DependencyCritical'; TextKey = 'Plan.Critical.Dependency'; Args = @(@($review.Critical).Count) }) }
     if (@($dangerous | Where-Object { $_.Reversibility -eq 'Irreversible' }).Count -gt 0) {
-        $criticals.Add([ordered]@{ Code = 'Irreversible'; TextKey = 'Plan.Critical.Irreversible'; Args = @((@($dangerous | Where-Object { $_.Reversibility -eq 'Irreversible' }) | ForEach-Object { $_.Key }) -join ', ') })
+        $Criticals.Add([ordered]@{ Code = 'Irreversible'; TextKey = 'Plan.Critical.Irreversible'; Args = @((@($dangerous | Where-Object { $_.Reversibility -eq 'Irreversible' }) | ForEach-Object { $_.Key }) -join ', ') })
     }
 
-    # --- paths, output, disk ---
-    $source = "$(& $g 'SourceDrive')".Trim()
-    $workDir = "$(& $g 'WorkDir')".Trim()
+    return [ordered]@{
+        Review    = $review
+        Dangerous = $dangerous
+    }
+}
+
+# Calculates required disk space, checks available space via FreeSpaceProvider, and updates disk/unverified/criticals
+function Get-WinEaseBuildPlanDiskAssessment {
+    param(
+        [string]$WorkDir,
+        [string]$OutputDir,
+        [string]$PresetKey,
+        [string]$OutputIsoName,
+        $Components,
+        [string]$Payload,
+        [scriptblock]$FreeSpaceProvider,
+        $Unverified,
+        $Criticals
+    )
     $workIsDefault = $false
-    if (-not $workDir) { $workDir = if (Get-Command -Name Get-WinEaseGuiDefaultWorkDir -ErrorAction SilentlyContinue) { Get-WinEaseGuiDefaultWorkDir } else { '' }; $workIsDefault = $true }
-    if (-not $OutputDir) { $OutputDir = if ($script:WinEaseGuiRepoRoot) { $script:WinEaseGuiRepoRoot } else { (Get-Location).Path } }
-    $slug = if ($presetKey) { ($presetKey -replace '[^\w\-]', '_').Trim('_') } else { 'custom' }
+    $effectiveWorkDir = $WorkDir
+    if (-not $effectiveWorkDir) { $effectiveWorkDir = if (Get-Command -Name Get-WinEaseGuiDefaultWorkDir -ErrorAction SilentlyContinue) { Get-WinEaseGuiDefaultWorkDir } else { '' }; $workIsDefault = $true }
+    $effectiveOutputDir = $OutputDir
+    if (-not $effectiveOutputDir) { $effectiveOutputDir = if ($script:WinEaseGuiRepoRoot) { $script:WinEaseGuiRepoRoot } else { (Get-Location).Path } }
+    $slug = if ($PresetKey) { ($PresetKey -replace '[^\w\-]', '_').Trim('_') } else { 'custom' }
     $outputName = if ($OutputIsoName) { $(if ($OutputIsoName.EndsWith('.iso', [System.StringComparison]::OrdinalIgnoreCase)) { $OutputIsoName } else { "$OutputIsoName.iso" }) } else { "WinEase_${slug}_<timestamp>.iso" }
-    $estimateGB = [math]::Round((Get-WinEaseBuildSizeEstimateMB -Components $components -PayloadFormat $payload) / 1024, 2)
+    $estimateGB = [math]::Round((Get-WinEaseBuildSizeEstimateMB -Components $Components -PayloadFormat $Payload) / 1024, 2)
     $needs = @(
-        [ordered]@{ Role = 'Work'; Path = $workDir; RequiredGB = [double](Get-WinEaseRecommendedFreeGB) }
-        [ordered]@{ Role = 'Output'; Path = $OutputDir; RequiredGB = $estimateGB }
+        [ordered]@{ Role = 'Work'; Path = $effectiveWorkDir; RequiredGB = [double](Get-WinEaseRecommendedFreeGB) }
+        [ordered]@{ Role = 'Output'; Path = $effectiveOutputDir; RequiredGB = $estimateGB }
     )
     # Needs on the same volume add up
     $disk = [System.Collections.Generic.List[object]]::new()
@@ -230,47 +285,92 @@ function Get-WinEaseBuildPlan {
         $freeGB = if ($null -ne $free) { [math]::Round([double]$free / 1GB, 1) } else { $null }
         $status = if ($null -eq $freeGB) { 'Unknown' } elseif ($freeGB -lt $v.RequiredGB) { 'Insufficient' } else { 'Ok' }
         $disk.Add([ordered]@{ Volume = $v.Volume; Roles = @($v.Roles); Paths = @($v.Paths); RequiredGB = [math]::Round($v.RequiredGB, 1); FreeGB = $freeGB; Status = $status })
-        if ($status -eq 'Unknown') { $unverified.Add([ordered]@{ Key = "Disk $($v.Volume)"; ReasonKey = 'Plan.Unverified.DiskUnknown'; Value = '' }) }
-        elseif ($status -eq 'Insufficient') { $criticals.Add([ordered]@{ Code = 'DiskInsufficient'; TextKey = 'Plan.Critical.Disk'; Args = @($v.Volume, $freeGB, [math]::Round($v.RequiredGB, 1)) }) }
+        if ($status -eq 'Unknown') { $Unverified.Add([ordered]@{ Key = "Disk $($v.Volume)"; ReasonKey = 'Plan.Unverified.DiskUnknown'; Value = '' }) }
+        elseif ($status -eq 'Insufficient') { $Criticals.Add([ordered]@{ Code = 'DiskInsufficient'; TextKey = 'Plan.Critical.Disk'; Args = @($v.Volume, $freeGB, [math]::Round($v.RequiredGB, 1)) }) }
     }
+
+    return [ordered]@{
+        WorkDir          = $effectiveWorkDir
+        WorkDirIsDefault = $workIsDefault
+        OutputDir        = $effectiveOutputDir
+        OutputName       = $outputName
+        EstimatedSizeGB  = $estimateGB
+        Disk             = $disk
+    }
+}
+
+# -Result  the GUI result (flat: component keys at the top level, as Show-WinEaseGUI returns it; a nested
+#          'Components' object is accepted too).
+# -FreeSpaceProvider  scriptblock { param($Path) } returning free bytes or $null (default: Get-WinEaseVolumeFreeBytes)
+# -OutputDir / -OutputIsoName / -EditionName  what the builder will use / what is known about the image
+function Get-WinEaseBuildPlan {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Result,
+        [scriptblock]$FreeSpaceProvider = { param($Path) Get-WinEaseVolumeFreeBytes -Path $Path },
+        [string]$OutputDir,
+        [string]$OutputIsoName,
+        [string]$EditionName,
+        $DependencyReview
+    )
+    foreach ($need in 'Get-WinEaseGuiPresetValues', 'Get-WinEaseGuiPresetState', 'Get-WinEaseDependencyReview') {
+        if (-not (Get-Command -Name $need -ErrorAction SilentlyContinue)) { throw "Get-WinEaseBuildPlan needs $need (WinEaseGuiCore.ps1 / WinEaseDependencies.ps1)." }
+    }
+
+    $flat = Get-WinEaseBuildPlanFlatSettings -Result $Result
+
+    $changed = [System.Collections.Generic.List[object]]::new()
+    $unchanged = [System.Collections.Generic.List[string]]::new()
+    $skipped = [System.Collections.Generic.List[object]]::new()
+    $unverified = [System.Collections.Generic.List[object]]::new()
+    $criticals = [System.Collections.Generic.List[object]]::new()
+
+    $presetDiff = Get-WinEaseBuildPlanPresetDiff -FlatSettings $flat -Changed $changed -Unchanged $unchanged -Skipped $skipped -Unverified $unverified -Criticals $criticals
+
+    $depAssessment = Get-WinEaseBuildPlanDependencyAssessment -Components $flat.Components -Tweaks $flat.Tweaks -EffStd $presetDiff.EffStd -EffExp $presetDiff.EffExp -DependencyReview $DependencyReview -Unverified $unverified -Criticals $criticals
+
+    $diskAssessment = Get-WinEaseBuildPlanDiskAssessment -WorkDir $flat.WorkDir -OutputDir $OutputDir -PresetKey $flat.PresetKey -OutputIsoName $OutputIsoName -Components $flat.Components -Payload $flat.PayloadFormat -FreeSpaceProvider $FreeSpaceProvider -Unverified $unverified -Criticals $criticals
 
     # Something that is not verified is never reported as unchanged / OK
     $unverifiedKeys = @($unverified | ForEach-Object { $_.Key })
     $unchangedKept = @($unchanged | Where-Object { $unverifiedKeys -notcontains $_ })
 
+    $dryRun = $flat.IsDryRun
+    $review = $depAssessment.Review
+
     return [ordered]@{
         IsDryRun          = $dryRun
         Mode              = $(if ($dryRun) { 'DryRun' } else { 'RealBuild' })
-        Source            = $source
-        Index             = "$(& $g 'Index')".Trim()
+        Source            = $flat.Source
+        Index             = $flat.Index
         EditionName       = $EditionName
-        WorkDir           = $workDir
-        WorkDirIsDefault  = $workIsDefault
-        OutputDir         = $OutputDir
-        OutputName        = $outputName
-        PayloadFormat     = $payload
-        UseVHDX           = $useVhdx
-        PresetKey         = $presetKey
-        BasePresetKey     = $baseKey
-        PresetState       = $presetState
-        DifferenceCount   = $diffCount
+        WorkDir           = $diskAssessment.WorkDir
+        WorkDirIsDefault  = $diskAssessment.WorkDirIsDefault
+        OutputDir         = $diskAssessment.OutputDir
+        OutputName        = $diskAssessment.OutputName
+        PayloadFormat     = $flat.PayloadFormat
+        UseVHDX           = $flat.UseVHDX
+        PresetKey         = $flat.PresetKey
+        BasePresetKey     = $flat.BasePresetKey
+        PresetState       = $presetDiff.PresetState
+        DifferenceCount   = $presetDiff.DiffCount
         Changed           = @($changed)
         Unchanged         = $unchangedKept
         Skipped           = @($skipped)
         Unverified        = @($unverified)
-        Dangerous         = @($dangerous)
+        Dangerous         = @($depAssessment.Dangerous)
         Dependency        = [ordered]@{ HasIssues = [bool]$review.HasIssues; HasCritical = [bool]$review.HasCritical; CriticalCount = @($review.Critical).Count; ImpactCount = @($review.Impact).Count }
-        Disk              = @($disk)
-        EstimatedSizeGB   = $estimateGB
+        Disk              = @($diskAssessment.Disk)
+        EstimatedSizeGB   = $diskAssessment.EstimatedSizeGB
         Criticals         = @($criticals)
         HasCritical       = ($criticals.Count -gt 0)
         # A dry run changes nothing, so it never needs the acknowledgement; a real build does when anything is critical
         RequiresAck       = ((-not $dryRun) -and $criticals.Count -gt 0)
         # What the builder must end up with (Compare-WinEaseBuildPlanToSettings); a declined consent already dropped the debloat lists
         Effective         = [ordered]@{
-            Components = $components; TweakSettings = $tweaks; PayloadFormat = $payload; UseVHDX = $useVhdx; DryRun = $dryRun
-            AllowPhysicalDebloat = ($consent -and $debloatCount -gt 0)
-            AdvancedDebloatStandard = @($effStd); AdvancedDebloatExperimental = @($effExp)
+            Components = $flat.Components; TweakSettings = $flat.Tweaks; PayloadFormat = $flat.PayloadFormat; UseVHDX = $flat.UseVHDX; DryRun = $dryRun
+            AllowPhysicalDebloat = ($flat.PhysicalDebloatConsent -and $presetDiff.DebloatCount -gt 0)
+            AdvancedDebloatStandard = @($presetDiff.EffStd); AdvancedDebloatExperimental = @($presetDiff.EffExp)
         }
     }
 }

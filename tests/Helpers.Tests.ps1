@@ -275,6 +275,87 @@ Describe "WinEase builder - phase timing telemetry" {
         Remove-Item -LiteralPath $logDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 
+    It "persists phase timings to last_phase_timings.json as valid JSON" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+
+        $funcText = ($ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Save-WinEasePhaseTimings'
+        }, $true)).Extent.Text
+        . ([scriptblock]::Create($funcText))
+
+        $logDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_timings_save_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($logDir) | Out-Null
+        $timingsPath = Join-Path -Path $logDir -ChildPath "last_phase_timings.json"
+
+        $script:PhaseTimings = [ordered]@{
+            "Phase 1" = 12.3
+            "Phase 2" = 45.6
+        }
+
+        Save-WinEasePhaseTimings
+
+        (Test-Path -LiteralPath $timingsPath) | Should Be $true
+        $saved = (Get-Content -LiteralPath $timingsPath -Raw -Encoding UTF8) | ConvertFrom-Json
+        ([double]$saved.'Phase 1') | Should Be 12.3
+        ([double]$saved.'Phase 2') | Should Be 45.6
+
+        $script:PhaseTimings = [ordered]@{}
+        Remove-Item -LiteralPath $logDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It "does not write last_phase_timings.json when PhaseTimings is null or empty" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+
+        $funcText = ($ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Save-WinEasePhaseTimings'
+        }, $true)).Extent.Text
+        . ([scriptblock]::Create($funcText))
+
+        $logDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_timings_empty_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($logDir) | Out-Null
+        $timingsPath = Join-Path -Path $logDir -ChildPath "last_phase_timings.json"
+
+        # Case 1: $script:PhaseTimings is null
+        $script:PhaseTimings = $null
+        Save-WinEasePhaseTimings
+        (Test-Path -LiteralPath $timingsPath) | Should Be $false
+
+        # Case 2: $script:PhaseTimings is an empty hashtable
+        $script:PhaseTimings = [ordered]@{}
+        Save-WinEasePhaseTimings
+        (Test-Path -LiteralPath $timingsPath) | Should Be $false
+
+        Remove-Item -LiteralPath $logDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It "catches file write errors in Save-WinEasePhaseTimings without throwing an exception" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+
+        $funcText = ($ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Save-WinEasePhaseTimings'
+        }, $true)).Extent.Text
+        . ([scriptblock]::Create($funcText))
+
+        $logDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "nonexistent_dir_12345\sub_dir"
+        $script:PhaseTimings = [ordered]@{ "Phase 1" = 10.5 }
+
+        { Save-WinEasePhaseTimings } | Should Not Throw
+
+        $script:PhaseTimings = [ordered]@{}
+    }
+
     It "sums decimal phase durations from last_phase_timings.json" {
         # Regression: PS 5.1 ConvertFrom-Json yields System.Decimal for JSON decimals, and
         # the old reader only accepted double/int/long - fractional durations were silently
@@ -295,6 +376,75 @@ Describe "WinEase builder - phase timing telemetry" {
         $total = Get-WinEaseLastRunTotalSeconds -TimingsPath $jsonPath
         ([math]::Round($total, 1)) | Should Be 27.1
         Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
+    }
+
+    It "ignores non-numeric JSON properties when calculating Get-WinEaseLastRunTotalSeconds" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Get-WinEaseLastRunTotalSeconds'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $jsonPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_timings_edge1_" + [guid]::NewGuid().ToString('N').Substring(0, 8) + ".json")
+        '{ "Phase 1": 10.5, "Text": "invalid", "Flag": true, "Empty": null, "Phase 2": 20 }' | Set-Content -LiteralPath $jsonPath -Encoding utf8
+        $total = Get-WinEaseLastRunTotalSeconds -TimingsPath $jsonPath
+        ([math]::Round($total, 1)) | Should Be 30.5
+        Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
+    }
+
+    It "returns 0 for an empty JSON object in Get-WinEaseLastRunTotalSeconds" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Get-WinEaseLastRunTotalSeconds'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $jsonPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_timings_edge2_" + [guid]::NewGuid().ToString('N').Substring(0, 8) + ".json")
+        '{}' | Set-Content -LiteralPath $jsonPath -Encoding utf8
+        $total = Get-WinEaseLastRunTotalSeconds -TimingsPath $jsonPath
+        $total | Should Be 0
+        Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
+    }
+
+    It "correctly accumulates mixed numeric types in Get-WinEaseLastRunTotalSeconds" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Get-WinEaseLastRunTotalSeconds'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $jsonPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_timings_edge3_" + [guid]::NewGuid().ToString('N').Substring(0, 8) + ".json")
+        '{ "IntVal": 10, "FloatVal": 20.25, "LargeVal": 30.75 }' | Set-Content -LiteralPath $jsonPath -Encoding utf8
+        $total = Get-WinEaseLastRunTotalSeconds -TimingsPath $jsonPath
+        $total | Should Be 61.0
+        Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
+    }
+
+    It "throws an exception when Get-WinEaseLastRunTotalSeconds is called with a non-existent file path" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Get-WinEaseLastRunTotalSeconds'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $nonExistentPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_nonexistent_" + [guid]::NewGuid().ToString('N') + ".json")
+        { Get-WinEaseLastRunTotalSeconds -TimingsPath $nonExistentPath } | Should Throw
     }
 
     It "writes diagnostic JSON and summary text report when Write-WinEaseDiagnosticReport is invoked" {
@@ -409,6 +559,142 @@ Describe "WinEase builder - phase timing telemetry" {
         $script:DiagnosticData = [ordered]@{ BuildId = "err-build" }
 
         { Write-WinEaseDiagnosticReport "Status" -ErrorAction SilentlyContinue } | Should Not Throw
+    }
+
+    It "creates diagnostic directory automatically when script:DiagDir does not exist" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Write-WinEaseDiagnosticReport'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $tempDiagDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_auto_diag_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        if (Test-Path -LiteralPath $tempDiagDir) { Remove-Item -LiteralPath $tempDiagDir -Recurse -Force }
+        $script:DiagDir = $tempDiagDir
+        $script:DiagnosticData = [ordered]@{ BuildId = "auto-created-dir-123"; BuildSucceeded = $true }
+
+        Write-WinEaseDiagnosticReport "Status message"
+
+        (Test-Path -LiteralPath $tempDiagDir) | Should Be $true
+        (Test-Path -LiteralPath (Join-Path $tempDiagDir "build_diagnostic_report.json")) | Should Be $true
+        (Test-Path -LiteralPath (Join-Path $tempDiagDir "build_diagnostic_summary.txt")) | Should Be $true
+
+        Remove-Item -LiteralPath $tempDiagDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It "aggregates loaded plugins, rejected plugins, and plugin runs when Get-WinEaseLoadedPlugins exists" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Write-WinEaseDiagnosticReport'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        function global:Get-WinEaseLoadedPlugins {
+            return @(
+                [pscustomobject]@{ Id = "PluginA"; Version = "1.0.0"; Source = "builtin"; File = "A.dll"; Sha256 = "hashA"; OnError = "Stop" }
+            )
+        }
+
+        $tempDiagDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_diag_plugin_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($tempDiagDir) | Out-Null
+        $script:DiagDir = $tempDiagDir
+        $script:WinEasePluginRejected = @(
+            [pscustomobject]@{ Source = "custom"; File = "B.dll"; Reason = "Untrusted" }
+        )
+        $script:WinEasePluginRunLog = @(
+            [pscustomobject]@{ Plugin = "PluginA"; Phase = "10"; Stage = "Pre"; Status = "Success" }
+        )
+        $script:DiagnosticData = [ordered]@{ BuildId = "plugin-build-789"; BuildSucceeded = $true }
+
+        try {
+            Write-WinEaseDiagnosticReport "Testing plugins"
+
+            $jsonPath = Join-Path -Path $tempDiagDir -ChildPath "build_diagnostic_report.json"
+            $txtPath = Join-Path -Path $tempDiagDir -ChildPath "build_diagnostic_summary.txt"
+
+            $reportJson = (Get-Content -LiteralPath $jsonPath -Raw -Encoding UTF8) | ConvertFrom-Json
+            @($reportJson.Plugins).Count | Should Be 1
+            $reportJson.Plugins[0].Id | Should Be "PluginA"
+            @($reportJson.PluginsRejected).Count | Should Be 1
+            $reportJson.PluginsRejected[0].Reason | Should Be "Untrusted"
+            @($reportJson.PluginRuns).Count | Should Be 1
+            $reportJson.PluginRuns[0].Plugin | Should Be "PluginA"
+
+            $summaryTxt = Get-Content -LiteralPath $txtPath -Raw -Encoding UTF8
+            $summaryTxt | Should Match "Plugins loaded:\s+PluginA 1\.0\.0 \[hashA\]"
+            $summaryTxt | Should Match "Plugins refused:\s+B\.dll: Untrusted"
+        } finally {
+            Remove-Item Function:\Get-WinEaseLoadedPlugins -ErrorAction SilentlyContinue
+            $script:WinEasePluginRejected = $null
+            $script:WinEasePluginRunLog = $null
+            Remove-Item -LiteralPath $tempDiagDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "formats plugins loaded and refused as (none) when plugin collections are empty or null" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Write-WinEaseDiagnosticReport'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        function global:Get-WinEaseLoadedPlugins { return @() }
+
+        $tempDiagDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_diag_noplugin_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($tempDiagDir) | Out-Null
+        $script:DiagDir = $tempDiagDir
+        $script:WinEasePluginRejected = $null
+        $script:WinEasePluginRunLog = $null
+        $script:DiagnosticData = [ordered]@{ BuildId = "noplugin-build-101"; BuildSucceeded = $true }
+
+        try {
+            Write-WinEaseDiagnosticReport "No plugins"
+
+            $txtPath = Join-Path -Path $tempDiagDir -ChildPath "build_diagnostic_summary.txt"
+            $summaryTxt = Get-Content -LiteralPath $txtPath -Raw -Encoding UTF8
+            $summaryTxt | Should Match "Plugins loaded:\s+\(none\)"
+            $summaryTxt | Should Match "Plugins refused:\s+\(none\)"
+        } finally {
+            Remove-Item Function:\Get-WinEaseLoadedPlugins -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempDiagDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "logs warning when writing diagnostic report fails" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcTexts = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Write-WinEaseDiagnosticReport'
+        }, $true))
+        . ([scriptblock]::Create($funcTexts[0].Extent.Text))
+
+        $tempFile = [System.IO.Path]::GetTempFileName()
+        try {
+            $script:DiagDir = $tempFile
+            $script:DiagnosticData = [ordered]@{ BuildId = "warning-test" }
+
+            $warns = @(Write-WinEaseDiagnosticReport "Fail write" 3>&1)
+
+            @($warns).Count | Should BeGreaterThan 0
+            $warns[0].Message | Should Match "Failed writing diagnostic report:"
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -581,6 +867,10 @@ Describe "WinEase helpers - DISM wrapper (Invoke-Dism)" {
 Describe "WinEase helpers - registry hive unmounting (Unmount-RegistryHiveWithRetry)" {
     BeforeAll {
         . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+    }
+
+    AfterEach {
+        Remove-Item Function:\reg.exe -ErrorAction SilentlyContinue
     }
 
     It "returns true immediately when hive is not mounted (reg query fails)" {
@@ -1212,11 +1502,21 @@ Describe "WinEase helpers - Path and Directory Safety Guards" {
         Test-IsSafePathToDelete -Path (Join-Path $script:RepoRoot "WinEasehelpers.ps1") | Should Be $false
     }
 
-    It "Get-WinEaseVolumeFreeSpaceGB returns positive value for valid drive and throws on invalid" {
-        $freeGB = Get-WinEaseVolumeFreeSpaceGB -Path "C:\"
-        $freeGB | Should BeGreaterThan 0
-        { Get-WinEaseVolumeFreeSpaceGB -Path "" } | Should Throw
-        { Get-WinEaseVolumeFreeSpaceGB -Path "Z:\NonExistentDriveXYZ" } | Should Throw
+    It "Get-WinEaseVolumeFreeSpaceGB returns positive or zero free space value for valid path" {
+        $tempPath = [System.IO.Path]::GetTempPath()
+        $freeGB = Get-WinEaseVolumeFreeSpaceGB -Path $tempPath
+        ($freeGB -ge 0) | Should Be $true
+    }
+
+    It "Get-WinEaseVolumeFreeSpaceGB throws exception when path is null, empty, or whitespace" {
+        { Get-WinEaseVolumeFreeSpaceGB -Path $null } | Should Throw "Path cannot be null or empty when querying volume free space."
+        { Get-WinEaseVolumeFreeSpaceGB -Path "" } | Should Throw "Path cannot be null or empty when querying volume free space."
+        { Get-WinEaseVolumeFreeSpaceGB -Path "   " } | Should Throw "Path cannot be null or empty when querying volume free space."
+    }
+
+    It "Get-WinEaseVolumeFreeSpaceGB throws exception when drive root is invalid or unavailable" {
+        $invalidPath = [string]::Concat("C:\test", [char]0, "invalid")
+        { Get-WinEaseVolumeFreeSpaceGB -Path $invalidPath } | Should Throw "Failed to query volume free space"
     }
 
     It "Test-CanSafelyDeleteDirectory refuses to delete workspace base directory itself" {
@@ -1289,13 +1589,35 @@ Describe "WinEase helpers - Test-CanSafelyDeleteVhdx" {
         }
     }
 
-    It "returns false when VhdxPath is null, empty, or whitespace" {
+    It "returns false when VhdxPath is null, empty, or whitespace across parameter combinations" {
         $savedBuildSucceeded = $script:BuildSucceeded
         try {
             $script:BuildSucceeded = $true
-            Test-CanSafelyDeleteVhdx -VhdxPath $null -VhdxDetached $true | Should Be $false
-            Test-CanSafelyDeleteVhdx -VhdxPath "" -VhdxDetached $true | Should Be $false
-            Test-CanSafelyDeleteVhdx -VhdxPath "   " -VhdxDetached $true | Should Be $false
+            $preserved = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            [void]$preserved.Add("C:\Workspace\disk.vhdx")
+
+            foreach ($p in @($null, "", "   ")) {
+                Test-CanSafelyDeleteVhdx -VhdxPath $p -VhdxDetached $true | Should Be $false
+                Test-CanSafelyDeleteVhdx -VhdxPath $p -VhdxDetached $false | Should Be $false
+                Test-CanSafelyDeleteVhdx -VhdxPath $p -VhdxDetached $true -ExpectedBaseDir "C:\Workspace" | Should Be $false
+                Test-CanSafelyDeleteVhdx -VhdxPath $p -VhdxDetached $true -ExpectedBaseDir "C:\Workspace" -PreservedDirs $preserved | Should Be $false
+            }
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns true when ExpectedBaseDir is null or empty" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { param($Path) return $Path }
+            Mock Test-IsPathPreserved { return $false }
+
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\disk.vhdx" -VhdxDetached $true -ExpectedBaseDir $null | Should Be $true
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\disk.vhdx" -VhdxDetached $true -ExpectedBaseDir "" | Should Be $true
         } finally {
             $script:BuildSucceeded = $savedBuildSucceeded
         }
@@ -1576,6 +1898,7 @@ Describe "WinEase helpers - oscdimg integrity (Test-OscdimgIntegrity)" {
     It "returns `$false for null, empty, or whitespace paths" {
         Test-OscdimgIntegrity -OscdimgPath $null | Should Be $false
         Test-OscdimgIntegrity -OscdimgPath "" | Should Be $false
+        Test-OscdimgIntegrity -OscdimgPath "   " | Should Be $false
     }
 
     It "returns `$false for a non-existent file path" {
@@ -1632,6 +1955,60 @@ Describe "WinEase helpers - oscdimg integrity (Test-OscdimgIntegrity)" {
         try {
             Mock Get-AuthenticodeSignature { return $null }
             Mock Get-FileHash { return [PSCustomObject]@{ Hash = '0000000000000000000000000000000000000000000000000000000000000000' } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "falls through to hash check when Authenticode signature is invalid or non-Microsoft" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_inval_sig_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        $pinnedHash = 'F5129F313ED7EB46F2677CF522E64264A225F226307ED0DDB52BB14C46E7CFDD'
+        try {
+            # Case A: Signature status is NotSigned
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{ Status = 'NotSigned'; SignerCertificate = $null }
+            }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = $pinnedHash } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $true
+
+            # Case B: Signature status is Valid but Subject is non-Microsoft
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{
+                    Status            = 'Valid'
+                    SignerCertificate = [PSCustomObject]@{ Subject = 'CN=Unknown Vendor' }
+                }
+            }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = '0000000000000000000000000000000000000000000000000000000000000000' } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "falls back to pinned hash check when Get-AuthenticodeSignature throws an exception" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_sig_ex_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        $pinnedHash = 'F5129F313ED7EB46F2677CF522E64264A225F226307ED0DDB52BB14C46E7CFDD'
+        try {
+            Mock Get-AuthenticodeSignature { throw "Authenticode check error" }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = $pinnedHash } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $true
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "returns `$false when Get-FileHash throws an exception or returns null hash" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_hash_err_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        try {
+            Mock Get-AuthenticodeSignature { return $null }
+            Mock Get-FileHash { return $null }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
+
+            Mock Get-FileHash { throw "File hash error" }
             Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
         } finally {
             Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
@@ -1838,8 +2215,9 @@ Describe "WinEase helpers - split module layout (R2)" {
         # (Get-WinEaseDependencyStringDefaults/String/Field/View/Review, New-...Result, Format-...ItemLine).
         # G1 added ConvertTo-WinEaseRealPath and Test-WinEaseProtectedLexicalPath (path safety).
         # P1-01 added Test-WinEaseUnattendXmlStructure (unattend template safety).
-        # Refactoring decomposed Reset-DirectoryWithRobocopy into 6 modular helpers (+6 functions).
-        $functions.Count | Should Be 65
+        # Refactored Test-WinEaseDependencies added 8 modular dependency helpers.
+        # Refactored Reset-DirectoryWithRobocopy added 6 modular file-system helpers.
+        $functions.Count | Should Be 73
         $duplicates = @($functions | Group-Object Name | Where-Object Count -gt 1)
         $duplicates.Count | Should Be 0
         @($ast.FindAll({

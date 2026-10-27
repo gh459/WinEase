@@ -126,7 +126,7 @@ path tests). Verified that R3 and R4 tests fail against the unfixed builder.
 - The release workflow: needs a `v*` tag. Manual check: push a test tag such as `v0.0.0-rc.test`
   on a fork or delete the resulting release afterwards; expect CI → package → publish, a
   `.sha256` asset, and `gh attestation verify WinEase-<tag>.zip -R gh459/WinEase` to succeed.
-- The AI review and agent workflows: need `ANTHROPIC_API_KEY` and a PR / comment event.
+- The AI review and agent workflows: need `CLAUDE_CODE_OAUTH_TOKEN` and a PR / comment event.
 
 ## 6. Release pipeline
 
@@ -144,7 +144,7 @@ attestation (free on public repositories) binds the ZIP to this workflow run and
 
 ## 7. Open items, costs and settings outside the repository
 
-- **Secrets:** `ANTHROPIC_API_KEY` (already used by the agent) is reused by the reviewer. No new service.
+- **Secrets:** `CLAUDE_CODE_OAUTH_TOKEN` (already used by the agent) is reused by the reviewer. No new service.
 - **Cost:** one Claude review per push to a same-repository PR. To limit it, change the trigger
   to `ready_for_review` + `reopened` or add a label condition.
 - **Branch protection / rulesets (GitHub settings):** require "WinEase CI", "PSScriptAnalyzer"
@@ -155,3 +155,18 @@ attestation (free on public repositories) binds the ZIP to this workflow run and
 - **Actions settings:** keep "Allow GitHub Actions to create and approve pull requests" off.
 - **Residual risk:** the agent is write-capable with `Bash`; a trusted user can still feed it
   hostile text. Review its draft PRs like any external contribution.
+
+## 8. Current state (2026-10-27)
+
+Snapshot after the GitHub automation cleanup of 2026-10-27. Sections 1-7 are kept as the
+point-in-time record above; items they describe may no longer exist (for example
+`claude-pr-review.yml` was removed, and the Claude workflows now use a different secret).
+
+| Item | State |
+|---|---|
+| Workflows | `ci.yml`, `lint.yml`, `workflow-audit.yml`, `release.yml`, `integration-vm.yml`, `auto-resolve-conflicts.yml`, `claude-issue-agent.yml`, `close-failed-agent-prs.yml` |
+| Secret for the Claude steps | `ANTHROPIC_API_KEY` (passed as `anthropic_api_key`); `CLAUDE_CODE_OAUTH_TOKEN` is not configured in this repository |
+| `auto-resolve-conflicts.yml` | merges `main` into conflicting PRs and starts CI; it **no longer enables auto-merge**, because that made `main` advance by itself and re-ran CI for every open PR on each push |
+| `close-failed-agent-prs.yml` | matches the branches the agents actually push (`AGENT_BRANCH_PATTERN`: `claude/`, `jules-`, `perf*`, `refactor*`, `test*`, `bolt-`, `code-health/`) instead of `claude/*` only, which never matched in this repository |
+| Agent journals | `.jules/{bolt,sentinel,palette}.md` with `.jules/README.md` defining the entry format |
+| Observed run history before the cleanup | `close-failed-agent-prs.yml` 15 runs, all `skipped`; `auto-resolve-conflicts.yml` 13 runs (1 success, 2 failures, rest skipped/cancelled); 21 open PRs kept 21 `WinEase CI` runs queued |

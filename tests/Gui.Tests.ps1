@@ -453,8 +453,7 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
     function Get-DebloatItemFromGuiSource {
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiCorePath, [ref]$null, [ref]$null)
         $assigns = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in '$script:WinEaseDebloatStandardItems', '$script:WinEaseDebloatExperimentalItems' }, $true)
-        $items = @()
-        foreach ($a in $assigns) { $items += @($a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value }) }
+        $items = foreach ($a in $assigns) { $a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value } }
         return @($items | Select-Object -Unique)
     }
 
@@ -1280,6 +1279,14 @@ Describe "S10 - GUI and migrator cleanup (shared parts)" -Tags 'slow' {
         }
     }
 
+    It "Initialize-WinEaseGuiContent is short: header, bottom panel and preset sync are built by helper functions" {
+        $initContent = $script:S10GuiAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Initialize-WinEaseGuiContent' }, $true)
+        ($initContent.Extent.EndLineNumber - $initContent.Extent.StartLineNumber) | Should BeLessThan 50
+        foreach ($fnName in 'New-WinEaseHeaderPanel', 'New-WinEaseBottomPanel', 'Initialize-WinEaseGuiPresetSync') {
+            $script:S10GuiAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $fnName }, $true) | Should Not BeNullOrEmpty
+        }
+    }
+
     It "Invoke-WinEaseGuiBackgroundJob returns output and errors, and restores the button and cursor" {
         . $script:S10Gui
         $form = New-Object System.Windows.Forms.Form
@@ -1398,8 +1405,7 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
     function Get-DebloatItemFromSource {
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiCorePath, [ref]$null, [ref]$null)
         $assigns = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in '$script:WinEaseDebloatStandardItems', '$script:WinEaseDebloatExperimentalItems' }, $true)
-        $items = @()
-        foreach ($a in $assigns) { $items += @($a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value }) }
+        $items = foreach ($a in $assigns) { $a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value } }
         return @($items | Select-Object -Unique)
     }
     function Get-AllControls($ctl) { foreach ($c in $ctl.Controls) { $c; Get-AllControls $c } }
@@ -1440,14 +1446,14 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
 
     It "the Japanese table translates every tweak, component switch and Advanced Debloat item, with no orphan entries" {
         $ja = Read-UiTable 'ja'
-        $missing = @()
-        foreach ($t in $settingsDef.Tweaks) { if (-not $ja.ContainsKey("Tweak.$($t.Key).Description")) { $missing += "Tweak.$($t.Key)" } }
+        $missing = [System.Collections.Generic.List[string]]::new()
+        foreach ($t in $settingsDef.Tweaks) { if (-not $ja.ContainsKey("Tweak.$($t.Key).Description")) { $missing.Add("Tweak.$($t.Key)") } }
         foreach ($c in @($settingsDef.Components | Where-Object { $_.Gui })) {
-            foreach ($f in 'Text', 'Description') { if (-not $ja.ContainsKey("Component.$($c.Key).$f")) { $missing += "Component.$($c.Key).$f" } }
+            foreach ($f in 'Text', 'Description') { if (-not $ja.ContainsKey("Component.$($c.Key).$f")) { $missing.Add("Component.$($c.Key).$f") } }
         }
         $items = Get-DebloatItemFromSource
         $items.Count | Should BeGreaterThan 40
-        foreach ($i in $items) { if (-not $ja.ContainsKey("Debloat:$i")) { $missing += "Debloat:$i" } }
+        foreach ($i in $items) { if (-not $ja.ContainsKey("Debloat:$i")) { $missing.Add("Debloat:$i") } }
         ($missing -join "`n") | Should Be ''
         $tweakKeys = @($settingsDef.Tweaks | ForEach-Object { $_.Key })
         $compKeys = @($settingsDef.Components | Where-Object { $_.Gui } | ForEach-Object { $_.Key })
@@ -1478,8 +1484,9 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
         ([int[]][char[]]$ja['Language.Name'] -join ',') | Should Be '26085,26412,35486'
         foreach ($k in $ja.Keys) { $ja[$k].Contains([string][char]0xFFFD) | Should Be $false | Out-Null }
         # a fresh Windows PowerShell 5.1 process that only dot-sources the GUI file and asks for the string
+        $psExe = if (Get-Command 'powershell.exe' -ErrorAction SilentlyContinue) { 'powershell.exe' } else { 'pwsh' }
         $cmd = ". '$($script:GuiPath)'; `$s = Get-WinEaseUiString 'Button.SelectAll' -Language ja; ([int[]][char[]]`$s) -join ','"
-        $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command $cmd
+        $out = & $psExe -NoProfile -ExecutionPolicy Bypass -Command $cmd
         (@($out)[-1]) | Should Be '12377,12409,12390,36984,25246'
     }
 
@@ -2157,10 +2164,11 @@ Describe "GUI core (lib\WinEaseGuiCore.ps1)" {
     }
 
     It "works in a fresh process that loads only the core and the WinUI host (no WinForms window functions)" {
+        $psExe = if (Get-Command 'powershell.exe' -ErrorAction SilentlyContinue) { 'powershell.exe' } else { 'pwsh' }
         $cmd = ". '$($script:GuiCorePath)'; . '$(Join-Path $script:RepoRoot 'gui\WinEaseWinUiHost.ps1')'; " +
             "(Get-WinEaseUiString 'Button.SelectAll' -Language ja).Length; (Get-Command Get-WinEaseGuiDraftConfig).Name; " +
             "[bool](Get-Command Show-WinEaseGUI -ErrorAction SilentlyContinue); [bool](Get-Command New-WinEaseForm -ErrorAction SilentlyContinue)"
-        $out = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -Command $cmd)
+        $out = @(& $psExe -NoProfile -ExecutionPolicy Bypass -Command $cmd)
         $out[-4] | Should Be '5'
         $out[-3] | Should Be 'Get-WinEaseGuiDraftConfig'
         $out[-2] | Should Be 'False'
@@ -2172,6 +2180,61 @@ Describe "GUI core (lib\WinEaseGuiCore.ps1)" {
         [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'tools\migrator\WinEase-Migrator.ps1')) | Should Match 'WinEaseGuiCore\.ps1'
         [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\11-unattend.ps1')) | Should Match 'lib\\WinEaseGuiCore\.ps1'
         [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot '.github\scripts\verify-release-zip.py')) | Should Match 'lib/WinEaseGuiCore\.ps1'
+    }
+
+    It "Get-WinEaseGuiRecoveryReadiness calls Get-WinEaseGuiDraftConfig and passes result to Test-WinEaseRecoveryReadiness" {
+        . (Join-Path -Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')
+        if (-not (Get-Command Test-WinEaseRecoveryReadiness -ErrorAction SilentlyContinue)) {
+            . (Join-Path -Path $script:RepoRoot 'WinEasehelpers.ps1')
+        }
+
+        $dummyGui = @{
+            ComponentCheckboxes = @{
+                'RemoveDefender' = [PSCustomObject]@{ Checked = $true }
+            }
+        }
+
+        $script:capturedConfig = $null
+        Mock Test-WinEaseRecoveryReadiness {
+            param($Config)
+            $script:capturedConfig = $Config
+            return [PSCustomObject]@{ ReadinessScore = 100; Status = 'Ready' }
+        }
+
+        $result = Get-WinEaseGuiRecoveryReadiness -Gui $dummyGui
+        $result.ReadinessScore | Should Be 100
+        $result.Status | Should Be 'Ready'
+        $script:capturedConfig['RemoveDefender'] | Should Be $true
+        Assert-MockCalled Test-WinEaseRecoveryReadiness -Exactly 1 -Scope It
+    }
+
+    It "Get-WinEaseGuiRecoveryReadiness forwards Gui hashtable and returns Test-WinEaseRecoveryReadiness output" {
+        . (Join-Path -Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')
+
+        $mockDraft = @{ FeatureEnabled = $true }
+        $script:passedGui = $null
+        $script:passedConfig = $null
+
+        Mock Get-WinEaseGuiDraftConfig {
+            param($Gui)
+            $script:passedGui = $Gui
+            return $mockDraft
+        }
+
+        Mock Test-WinEaseRecoveryReadiness {
+            param($Config)
+            $script:passedConfig = $Config
+            return @{ Assessment = 'Passed' }
+        }
+
+        $testGui = @{ ComponentCheckboxes = @{} }
+        $res = Get-WinEaseGuiRecoveryReadiness -Gui $testGui
+
+        $res.Assessment | Should Be 'Passed'
+        $script:passedGui | Should Be $testGui
+        $script:passedConfig | Should Be $mockDraft
+        Assert-MockCalled Get-WinEaseGuiDraftConfig -Exactly 1 -Scope It
+        Assert-MockCalled Test-WinEaseRecoveryReadiness -Exactly 1 -Scope It
     }
 }
 
@@ -2683,6 +2746,28 @@ Describe "C1 - build plan (Get-WinEaseBuildPlan, the final confirmation and the 
         $c3 = Compare-WinEaseBuildPlanToSettings -Plan $plan -Resolved $res
         $c3.HasCritical | Should Be $true
         $c3.Mismatches[0].Key | Should Be 'AdvancedDebloatStandard'
+    }
+
+    It "Write-WinEaseBuildPlanSummary creates directory if missing and writes JSON and TXT summary files" {
+        $plan = Get-C1Plan (New-C1Result 'balanced')
+        $targetDir = Join-Path $TestDrive 'nested_plan_summary'
+        (Test-Path -LiteralPath $targetDir) | Should Be $false
+
+        $paths = Write-WinEaseBuildPlanSummary -Plan $plan -Directory $targetDir -BaseName 'Summary_Test'
+        $paths.Count | Should Be 2
+        $paths[0] | Should Be (Join-Path $targetDir 'Summary_Test.plan.json')
+        $paths[1] | Should Be (Join-Path $targetDir 'Summary_Test.plan.txt')
+
+        (Test-Path -LiteralPath $paths[0]) | Should Be $true
+        (Test-Path -LiteralPath $paths[1]) | Should Be $true
+
+        $jsonObj = Get-Content -LiteralPath $paths[0] -Raw | ConvertFrom-Json
+        $jsonObj.Mode | Should Be 'RealBuild'
+        $jsonObj.PresetKey | Should Be 'balanced'
+
+        $txtContent = Get-Content -LiteralPath $paths[1] -Raw
+        $txtContent | Should Match 'REAL BUILD'
+        $txtContent | Should Match '== Overview =='
     }
 
     It "Invoke-WinEaseBuildPlanCheck writes the plan summary, warns on a mismatch and throws on a critical one" {
