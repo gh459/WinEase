@@ -133,7 +133,7 @@ jobs:
         if: steps.merge.outputs.conflicts == 'true'
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
           # No Bash beyond read-only git: the agent only edits files. Committing and pushing
           # are done by the next steps, so the agent never holds push credentials.
