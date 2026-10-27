@@ -2112,23 +2112,17 @@ function New-WinEaseCustomScriptsTab {
 # Main window content. Everything here is added to $Gui.Form and can be removed and built again, which is how
 # the display language is switched: -InitialSettings carries the state to show (see Switch-WinEaseGuiLanguage).
 # =========================================================================
-function Initialize-WinEaseGuiContent {
+
+# Top header panel with window titles and display language selector
+function New-WinEaseHeaderPanel {
     param(
         [hashtable]$Gui,
-        [hashtable]$InitialSettings,
         [string]$UiFontName
     )
     $form = $Gui.Form
-    $form.Text = Get-WinEaseUiString 'Main.WindowTitle'
-
-    $toolTip = New-Object System.Windows.Forms.ToolTip
-    # the shared tooltip of the window; the GUI context keeps it, so the help texts of
-    # the controls can be read (and checked) from the outside
-    $Gui.ToolTip = $toolTip
     $accent = $script:WinEaseGuiColors.Accent
     $headerBack = $script:WinEaseGuiColors.Header
 
-    # Header Panel
     $headerPanel = New-WinEaseButtonBar -Parent $form -Height 65 -BackColor $headerBack
     [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Main.Title') -X 16 -Y 10 -AutoSize -ForeColor $accent `
         -Font (New-Object System.Drawing.Font($UiFontName, 14, [System.Drawing.FontStyle]::Bold)) -Parent $headerPanel)
@@ -2160,9 +2154,18 @@ function Initialize-WinEaseGuiContent {
     })
     $cmbLang.Anchor = 'Top, Right'
     $Gui.Language = $cmbLang
+}
 
-    # Bottom Button & Estimate Panel. Two rows (Dry Run + estimate, then the buttons), so a long estimate text never
-    # runs under a button; the panel scrolls when the form is narrower than the buttons (small screen).
+# Bottom panel holding Dry Run, size estimate, and main action buttons
+function New-WinEaseBottomPanel {
+    param(
+        [hashtable]$Gui,
+        [string]$UiFontName,
+        [System.Windows.Forms.ToolTip]$ToolTip
+    )
+    $form = $Gui.Form
+    $headerBack = $script:WinEaseGuiColors.Header
+
     $bottomPanel = New-WinEaseButtonBar -Parent $form -Dock Bottom -Height 106 -BackColor $headerBack
     $bottomPanel.AutoScroll = $true
     $bottomPanel.AutoScrollMinSize = New-Object System.Drawing.Size(880, 0)
@@ -2230,8 +2233,8 @@ function Initialize-WinEaseGuiContent {
     }
     $btnCancel = New-WinEaseButton -Text (Get-WinEaseUiString 'Button.Cancel') -X 750 -Y 56 -Width 110 -Height 40 -Font (New-Object System.Drawing.Font($UiFontName, 9.5)) -Parent $bottomPanel
     $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
-    # Keyboard: Enter = Start (its handler checks the input first and asks for the final confirmation),
-    # Escape = Cancel. Tab goes Dry Run, Preset Diff, Dependencies, Start, Cancel.
+
+    # Keyboard: Enter = Start, Escape = Cancel. Tab goes Dry Run, Preset Diff, Dependencies, Start, Cancel.
     $form.AcceptButton = $btnStart
     $form.CancelButton = $btnCancel
     $Gui.StartButton = $btnStart
@@ -2244,26 +2247,22 @@ function Initialize-WinEaseGuiContent {
     foreach ($b in @($btnPresetDiff, $btnDependencies, $btnStart, $btnCancel)) { $b.Anchor = 'Top, Right' }
     $Gui.Estimate.Anchor = 'Top, Left, Right'
 
-    # Main Tab Control
-    $tabControl = New-WinEaseTabControl -Fill -Font (New-Object System.Drawing.Font($UiFontName, 9)) -Parent $form
-    $tabControl.BringToFront()
-    $Gui.Tabs = $tabControl
+    if ($ToolTip) {
+        $ToolTip.SetToolTip($btnPresetDiff, (Get-WinEaseUiString 'Button.PresetDiff.Help'))
+        $ToolTip.SetToolTip($btnDependencies, (Get-WinEaseUiString 'Button.CheckDependencies.Help'))
+        $ToolTip.SetToolTip($btnStart, (Get-WinEaseUiString 'Button.StartBuild.Help'))
+        $ToolTip.SetToolTip($btnCancel, (Get-WinEaseUiString 'Button.Cancel.Help'))
+    }
+}
 
-    # =========================================================================
-    # Tabs 1-9 (one function each, above)
-    # =========================================================================
-    New-WinEaseMediaTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings
-    New-WinEaseTweakTabs -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
-    New-WinEaseServicesTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
-    New-WinEaseDebloatTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -UiFontName $UiFontName -ToolTip $toolTip
-    New-WinEaseMigrationTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
-    New-WinEaseUserTweaksTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
-    New-WinEaseCustomScriptsTab -Gui $Gui -TabControl $tabControl
+# Initial preset selection and preset / format change event bindings
+function Initialize-WinEaseGuiPresetSync {
+    param(
+        [hashtable]$Gui,
+        [hashtable]$InitialSettings
+    )
     $cmbPreset = $Gui.Preset
 
-    # =========================================================================
-    # Synchronization & Presets Handling
-    # =========================================================================
     $initPresetKeys = @('extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')
     $initPresetName = "$($InitialSettings.PresetKey)".Trim().ToLower()
     $initPresetIdx = [array]::IndexOf($initPresetKeys, $initPresetName)
@@ -2306,14 +2305,49 @@ function Initialize-WinEaseGuiContent {
         })
     }
     Update-WinEaseGuiEstimate -Gui $Gui
+}
+
+function Initialize-WinEaseGuiContent {
+    param(
+        [hashtable]$Gui,
+        [hashtable]$InitialSettings,
+        [string]$UiFontName
+    )
+    $form = $Gui.Form
+    $form.Text = Get-WinEaseUiString 'Main.WindowTitle'
+
+    $toolTip = New-Object System.Windows.Forms.ToolTip
+    # the shared tooltip of the window; the GUI context keeps it, so the help texts of
+    # the controls can be read (and checked) from the outside
+    $Gui.ToolTip = $toolTip
+
+    New-WinEaseHeaderPanel -Gui $Gui -UiFontName $UiFontName
+    New-WinEaseBottomPanel -Gui $Gui -UiFontName $UiFontName -ToolTip $toolTip
+
+    # Main Tab Control
+    $tabControl = New-WinEaseTabControl -Fill -Font (New-Object System.Drawing.Font($UiFontName, 9)) -Parent $form
+    $tabControl.BringToFront()
+    $Gui.Tabs = $tabControl
+
+    # =========================================================================
+    # Tabs 1-10 (one function each, above)
+    # =========================================================================
+    New-WinEaseMediaTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings
+    New-WinEaseTweakTabs -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
+    New-WinEaseServicesTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
+    New-WinEaseDebloatTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -UiFontName $UiFontName -ToolTip $toolTip
+    New-WinEaseMigrationTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
+    New-WinEaseUserTweaksTab -Gui $Gui -TabControl $tabControl -InitialSettings $InitialSettings -ToolTip $toolTip
+    New-WinEaseCustomScriptsTab -Gui $Gui -TabControl $tabControl
+
+    # =========================================================================
+    # Synchronization & Presets Handling
+    # =========================================================================
+    Initialize-WinEaseGuiPresetSync -Gui $Gui -InitialSettings $InitialSettings
 
     $form.AccessibleName = Get-WinEaseUiString 'Main.WindowTitle'
-    $toolTip.SetToolTip($btnPresetDiff, (Get-WinEaseUiString 'Button.PresetDiff.Help'))
-    $toolTip.SetToolTip($btnDependencies, (Get-WinEaseUiString 'Button.CheckDependencies.Help'))
-    $toolTip.SetToolTip($btnStart, (Get-WinEaseUiString 'Button.StartBuild.Help'))
-    $toolTip.SetToolTip($btnCancel, (Get-WinEaseUiString 'Button.Cancel.Help'))
     $toolTip.SetToolTip($Gui.DryRun, (Get-WinEaseUiString 'Main.DryRun.Help'))
-    $toolTip.SetToolTip($cmbLang, (Get-WinEaseUiString 'Main.Language.Help'))
+    $toolTip.SetToolTip($Gui.Language, (Get-WinEaseUiString 'Main.Language.Help'))
     Set-WinEaseAccessibleNames -Control $form -ToolTip $toolTip
 
     Disable-WinEaseMnemonic -Control $form

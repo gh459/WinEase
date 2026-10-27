@@ -1279,6 +1279,14 @@ Describe "S10 - GUI and migrator cleanup (shared parts)" -Tags 'slow' {
         }
     }
 
+    It "Initialize-WinEaseGuiContent is short: header, bottom panel and preset sync are built by helper functions" {
+        $initContent = $script:S10GuiAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Initialize-WinEaseGuiContent' }, $true)
+        ($initContent.Extent.EndLineNumber - $initContent.Extent.StartLineNumber) | Should BeLessThan 50
+        foreach ($fnName in 'New-WinEaseHeaderPanel', 'New-WinEaseBottomPanel', 'Initialize-WinEaseGuiPresetSync') {
+            $script:S10GuiAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $fnName }, $true) | Should Not BeNullOrEmpty
+        }
+    }
+
     It "Invoke-WinEaseGuiBackgroundJob returns output and errors, and restores the button and cursor" {
         . $script:S10Gui
         $form = New-Object System.Windows.Forms.Form
