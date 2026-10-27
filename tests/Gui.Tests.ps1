@@ -2239,6 +2239,7 @@ Describe "GUI core (lib\WinEaseGuiCore.ps1)" {
 
     It "Open-WinEaseFileSafe returns false when path is null, empty or whitespace" {
         . (Join-Path -Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')
+        Open-WinEaseFileSafe -Path $null | Should Be $false
         Open-WinEaseFileSafe -Path '' | Should Be $false
         Open-WinEaseFileSafe -Path '   ' | Should Be $false
     }

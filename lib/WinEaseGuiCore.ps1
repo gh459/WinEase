@@ -181,7 +181,11 @@ $script:WinEaseDebloatDisplayText = { param($item) Get-WinEaseDebloatItemText -I
 # (no browser or Markdown viewer registered) must not crash a button handler: fall back
 # to showing the file in Explorer. Returns $true when the file itself was opened.
 function Open-WinEaseFileSafe {
-    param([Parameter(Mandatory = $true)][string]$Path)
+    param(
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Path
+    )
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
         return $false
     }
