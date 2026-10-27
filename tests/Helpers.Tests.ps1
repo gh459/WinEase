@@ -2094,6 +2094,77 @@ Describe "WinEase helpers - oscdimg integrity (Test-OscdimgIntegrity)" {
             Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
         }
     }
+
+    It "returns `$true when Get-FileHash returns a lowercase SHA256 string for oscdimg" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_lower_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        $lowerHash = 'f5129f313ed7eb46f2677cf522e64264a225f226307ed0ddb52bb14c46e7cfdd'
+        try {
+            Mock Get-AuthenticodeSignature { return $null }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = $lowerHash } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $true
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "falls back to oscdimg hash check when Authenticode signature has null certificate or null subject" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_nullsig_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        $pinnedHash = '8DC3FB38E75C42127BE0A29D64CA6D79DFDDFDCBEE4A3BA8B36CFEBDCC1689E2'
+        try {
+            # Case A: SignerCertificate is null
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{ Status = 'Valid'; SignerCertificate = $null }
+            }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = $pinnedHash } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $true
+
+            # Case B: SignerCertificate.Subject is null or empty
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{
+                    Status            = 'Valid'
+                    SignerCertificate = [PSCustomObject]@{ Subject = $null }
+                }
+            }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $true
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "falls through to oscdimg hash check when certificate subject is non-Microsoft and matches pinned hash" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_nonms_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        $pinnedHash = 'CE53D1C8C08FF54B4B91D2DFDE80F9D86427BC8C78FA6BBDE278456CDD2E2B85'
+        try {
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{
+                    Status            = 'Valid'
+                    SignerCertificate = [PSCustomObject]@{ Subject = 'CN=Other Vendor Corp' }
+                }
+            }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = $pinnedHash } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $true
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "returns `$false when Get-FileHash returns object with empty or whitespace Hash property for oscdimg" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_emptyhash_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        try {
+            Mock Get-AuthenticodeSignature { return $null }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = '' } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
+
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = '   ' } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 Describe "WinEase helpers - Statistical Analysis and Benchmark Comparison" {
