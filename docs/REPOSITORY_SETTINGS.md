@@ -46,7 +46,7 @@ Dependabot alerts, environments, the list of collaborators, fork-PR workflow app
   approve pull requests" off (already the case) unless the agent's draft PRs need it.
 - Fork pull requests: require approval for all outside collaborators.
 - Allow only actions pinned by SHA (all are; Dependabot keeps pins current).
-- Secrets: `ANTHROPIC_API_KEY` only as a repository secret; no environment-less deploy secrets.
+- Secrets: `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`, uses the Claude subscription quota) only as a repository secret; no environment-less deploy secrets.
 
 ## Automated agent security boundary (`claude-issue-agent.yml`)
 
