@@ -1985,6 +1985,17 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
         { Invoke-WinEaseWinUiRequest -Op 'no-such-request' -Arguments $null } | Should Throw
     }
 
+    It "requests: 'guide' request validates path safety and opens the guide file or throws on missing guide" {
+        # Test guide request when docs exist
+        Mock Start-Process {}
+        $res = Invoke-WinEaseWinUiRequest -Op 'guide' -Arguments $null
+        ($res -is [hashtable]) | Should Be $true
+        Assert-MockCalled Start-Process -Times 1 -Scope It
+
+        # Test guide request when repo root is missing guide doc
+        { Invoke-WinEaseWinUiGeneralRequest -Op 'guide' -Arguments $null -RepoRoot ([System.IO.Path]::GetTempPath()) } | Should Throw
+    }
+
     It "the builder prefers the WinUI 3 window, keeps -ClassicGui and falls back to WinForms" {
         $builder = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'WinEasebuilder.ps1'))
         $guiSession = [System.IO.File]::ReadAllText($script:GuiSessionPath)

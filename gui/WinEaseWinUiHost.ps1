@@ -211,14 +211,23 @@ function Invoke-WinEaseWinUiGeneralRequest {
             return @{ Data = @{ Issues = $rows; HasError = (Test-WinEaseInputHasError -Issues $issues) } }
         }
         'guide' {
-            $guide = Join-Path $RepoRoot 'docs\EXTENSIBILITY_GUIDE.md'
+            $docsDir = Join-Path $RepoRoot 'docs'
+            $allowedGuideEn = [System.IO.Path]::GetFullPath((Join-Path $docsDir 'EXTENSIBILITY_GUIDE.md'))
+            $allowedGuideJa = [System.IO.Path]::GetFullPath((Join-Path $docsDir 'EXTENSIBILITY_GUIDE.ja.md'))
+
+            $targetGuide = $allowedGuideEn
             if ($script:WinEaseUiLanguage -eq 'ja') {
-                $guideJa = Join-Path $RepoRoot 'docs\EXTENSIBILITY_GUIDE.ja.md'
-                if (Test-Path -LiteralPath $guideJa) { $guide = $guideJa }
+                if (Test-Path -LiteralPath $allowedGuideJa) { $targetGuide = $allowedGuideJa }
             }
-            if (-not (Test-Path -LiteralPath $guide)) { throw (Get-WinEaseUiString 'Mig.Guide.NotFound' -Format $guide) }
-            try { Start-Process -FilePath $guide -ErrorAction Stop }
-            catch { Start-Process -FilePath 'explorer.exe' -ArgumentList "/select,`"$guide`"" }
+
+            $fullGuide = [System.IO.Path]::GetFullPath($targetGuide)
+            if ($fullGuide -ne $allowedGuideEn -and $fullGuide -ne $allowedGuideJa) {
+                throw (Get-WinEaseUiString 'Mig.Guide.NotFound' -Format $targetGuide)
+            }
+            if (-not (Test-Path -LiteralPath $fullGuide)) { throw (Get-WinEaseUiString 'Mig.Guide.NotFound' -Format $fullGuide) }
+
+            try { Start-Process -FilePath $fullGuide -ErrorAction Stop }
+            catch { Start-Process -FilePath 'explorer.exe' -ArgumentList "/select,`"$fullGuide`"" -ErrorAction Stop }
             return @{}
         }
         default { throw "Unknown request '$Op'" }
