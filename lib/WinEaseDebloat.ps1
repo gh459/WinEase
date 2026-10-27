@@ -271,6 +271,62 @@ function Test-WinEaseAppxPackageRemovable {
 }
 
 # --- the safe (PowerShell) handlers ---------------------------------------------------
+function Remove-WinEaseDebloatLanguagePacks {
+    # The language of the image is always kept. A language whose option is off is
+    # protected as well (RemoveLanguage<xx> = off means the pack stays).
+    $protected = @('ja-JP', 'en-US')
+    $imageLang = "$script:detectedImageLanguage"
+    if ($imageLang) { $protected += $imageLang }
+    try {
+        $langPacks = & dism.exe /image:$scratchDir /Get-Packages /Format:Table 2>&1 | Select-String -Pattern 'LanguagePack'
+        foreach ($lp in $langPacks) {
+            $pkgName = ($lp -split '\s+')[0]
+            if (-not $pkgName) { continue }
+            $pkgLang = $null
+            if ($pkgName -like '*ja-JP*') { $pkgLang = 'ja-JP' }
+            elseif ($pkgName -like '*ko-KR*') { $pkgLang = 'ko-KR' }
+            elseif ($pkgName -like '*zh-CN*') { $pkgLang = 'zh-CN' }
+            elseif ($pkgName -like '*zh-TW*') { $pkgLang = 'zh-TW' }
+            if (-not $pkgLang) { continue }
+            if ($protected -contains $pkgLang) { continue }
+            $allow = $true
+            switch ($pkgLang) {
+                'ja-JP' { $allow = (Test-TweakEnabled 'RemoveLanguageJaJP' $true) }
+                'ko-KR' { $allow = (Test-TweakEnabled 'RemoveLanguageKoKR' $true) }
+                'zh-CN' { $allow = (Test-TweakEnabled 'RemoveLanguageZhCN' $true) }
+                'zh-TW' { $allow = (Test-TweakEnabled 'RemoveLanguageZhTW' $true) }
+            }
+            if (-not $allow) {
+                Write-Host "    [SKIP] $pkgLang language pack: protected by its option" -ForegroundColor Gray
+                continue
+            }
+            if ($isDryRunMode) { Write-Host "    [DRY] Would remove: $pkgName" -ForegroundColor Yellow; continue }
+            & dism.exe /image:$scratchDir /Remove-Package /PackageName:$pkgName /NoRestart 2>&1 | Out-Null
+            Write-Host "    [OK] Removed: $pkgName" -ForegroundColor Green
+        }
+    } catch { Write-Host "    [WARN] Language pack removal failed: $_" -ForegroundColor Yellow }
+}
+
+function Remove-WinEaseDebloatProvisionedAppx {
+    # Second pass over the Phase 05 pattern list (same protection whitelist) for the
+    # packages that survived it. The decision is the shared one, so the installed
+    # and the provisioned packages are treated exactly the same.
+    if ($appxRegex -and $protectedAppxRegex) {
+        $leftoverAppx = @(Get-AppxProvisionedPackage -Path $scratchDir -ErrorAction SilentlyContinue | Where-Object {
+            Test-WinEaseAppxPackageRemovable -Name $_.PackageName -DisplayName $_.DisplayName -RemovalRegex $appxRegex -ProtectedRegex $protectedAppxRegex
+        })
+        if ($leftoverAppx.Count -eq 0) { Write-Host "    [OK] No listed provisioned AppX packages remain" -ForegroundColor Green }
+        foreach ($pkg in $leftoverAppx) {
+            if ($isDryRunMode) { Write-Host "    [DRY] Would remove provisioned AppX: $($pkg.DisplayName)" -ForegroundColor Yellow; continue }
+            & dism.exe /English "/image:$scratchDir" /Remove-ProvisionedAppxPackage "/PackageName:$($pkg.PackageName)" > $null 2>&1
+            if ($LASTEXITCODE -eq 0) { Write-Host "    [OK] Removed provisioned AppX: $($pkg.DisplayName)" -ForegroundColor Green }
+            else { Write-Host "    [WARN] Could not remove provisioned AppX: $($pkg.DisplayName)" -ForegroundColor Yellow }
+        }
+    } else {
+        Write-Host "    [WARN] Phase 05 AppX pattern list unavailable; provisioned AppX pass skipped" -ForegroundColor Yellow
+    }
+}
+
 function Invoke-WinEaseDebloatFeatureRemoval {
     # Disable/remove optional features of the mounted image (DISM).
     param([string[]]$FeatureNames = @())
@@ -440,39 +496,7 @@ function Invoke-WinEaseDebloatTarget {
             }
         }
         'Remove non-Japanese language packs (DISM) [200-500MB]' {
-            # The language of the image is always kept. A language whose option is off is
-            # protected as well (RemoveLanguage<xx> = off means the pack stays).
-            $protected = @('ja-JP', 'en-US')
-            $imageLang = "$script:detectedImageLanguage"
-            if ($imageLang) { $protected += $imageLang }
-            try {
-                $langPacks = & dism.exe /image:$scratchDir /Get-Packages /Format:Table 2>&1 | Select-String -Pattern 'LanguagePack'
-                foreach ($lp in $langPacks) {
-                    $pkgName = ($lp -split '\s+')[0]
-                    if (-not $pkgName) { continue }
-                    $pkgLang = $null
-                    if ($pkgName -like '*ja-JP*') { $pkgLang = 'ja-JP' }
-                    elseif ($pkgName -like '*ko-KR*') { $pkgLang = 'ko-KR' }
-                    elseif ($pkgName -like '*zh-CN*') { $pkgLang = 'zh-CN' }
-                    elseif ($pkgName -like '*zh-TW*') { $pkgLang = 'zh-TW' }
-                    if (-not $pkgLang) { continue }
-                    if ($protected -contains $pkgLang) { continue }
-                    $allow = $true
-                    switch ($pkgLang) {
-                        'ja-JP' { $allow = (Test-TweakEnabled 'RemoveLanguageJaJP' $true) }
-                        'ko-KR' { $allow = (Test-TweakEnabled 'RemoveLanguageKoKR' $true) }
-                        'zh-CN' { $allow = (Test-TweakEnabled 'RemoveLanguageZhCN' $true) }
-                        'zh-TW' { $allow = (Test-TweakEnabled 'RemoveLanguageZhTW' $true) }
-                    }
-                    if (-not $allow) {
-                        Write-Host "    [SKIP] $pkgLang language pack: protected by its option" -ForegroundColor Gray
-                        continue
-                    }
-                    if ($isDryRunMode) { Write-Host "    [DRY] Would remove: $pkgName" -ForegroundColor Yellow; continue }
-                    & dism.exe /image:$scratchDir /Remove-Package /PackageName:$pkgName /NoRestart 2>&1 | Out-Null
-                    Write-Host "    [OK] Removed: $pkgName" -ForegroundColor Green
-                }
-            } catch { Write-Host "    [WARN] Language pack removal failed: $_" -ForegroundColor Yellow }
+            Remove-WinEaseDebloatLanguagePacks
         }
         'Remove Windows Sandbox [10-20MB]' {
             Invoke-WinEaseDebloatFeatureRemoval -FeatureNames @('Containers-DisposableClientVM')
@@ -521,23 +545,7 @@ function Invoke-WinEaseDebloatTarget {
             [void](Remove-WinEaseDebloatPath -Path (Join-Path -Path $scratchDir -ChildPath "ProgramData\Microsoft\Diagnosis") -Label 'Diagnosis (telemetry) dir')
         }
         'Remove Provisioned AppX (list-based) [100-300MB]' {
-            # Second pass over the Phase 05 pattern list (same protection whitelist) for the
-            # packages that survived it. The decision is the shared one, so the installed
-            # and the provisioned packages are treated exactly the same.
-            if ($appxRegex -and $protectedAppxRegex) {
-                $leftoverAppx = @(Get-AppxProvisionedPackage -Path $scratchDir -ErrorAction SilentlyContinue | Where-Object {
-                    Test-WinEaseAppxPackageRemovable -Name $_.PackageName -DisplayName $_.DisplayName -RemovalRegex $appxRegex -ProtectedRegex $protectedAppxRegex
-                })
-                if ($leftoverAppx.Count -eq 0) { Write-Host "    [OK] No listed provisioned AppX packages remain" -ForegroundColor Green }
-                foreach ($pkg in $leftoverAppx) {
-                    if ($isDryRunMode) { Write-Host "    [DRY] Would remove provisioned AppX: $($pkg.DisplayName)" -ForegroundColor Yellow; continue }
-                    & dism.exe /English "/image:$scratchDir" /Remove-ProvisionedAppxPackage "/PackageName:$($pkg.PackageName)" > $null 2>&1
-                    if ($LASTEXITCODE -eq 0) { Write-Host "    [OK] Removed provisioned AppX: $($pkg.DisplayName)" -ForegroundColor Green }
-                    else { Write-Host "    [WARN] Could not remove provisioned AppX: $($pkg.DisplayName)" -ForegroundColor Yellow }
-                }
-            } else {
-                Write-Host "    [WARN] Phase 05 AppX pattern list unavailable; provisioned AppX pass skipped" -ForegroundColor Yellow
-            }
+            Remove-WinEaseDebloatProvisionedAppx
         }
         # The targets below are the ones the Rust engine removes with the forced physical
         # deletion. The safe engine removes the same payload (config\schema.psd1 ->
