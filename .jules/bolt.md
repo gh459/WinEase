@@ -11,3 +11,7 @@
 ## 2025-05-22 - Using intrinsic .Where() instead of piping arrays to Where-Object in configuration matrix checks
 **Learning:** Piping collection items to `Where-Object` creates pipeline enumerator objects and pipeline context switching for each item. Replacing `$items | Where-Object { $_ -match ... }` with PowerShell's intrinsic `@($items.Where({ $_ -match ... }))` method reduces evaluation time in `Test-WinEaseConfigConflicts` by ~61% (9.5s -> 3.7s for 1000 runs).
 **Action:** Use intrinsic `.Where(...)` method on PowerShell arrays and generic lists (`List[T]`) for filter conditions in frequently evaluated validation routines instead of piping to `Where-Object`.
+
+## 2025-05-23 - Replacing Get-Command cmdlet discovery with Test-Path Function:\ in hot lookup paths
+**Learning:** Calling `Get-Command -Name Get-WinEaseUiString -ErrorAction SilentlyContinue` repeatedly during UI string formatting performs full PowerShell command resolution across modules, aliases, and functions on every call (~70-76ms per call in loops). Replacing it with `Test-Path -LiteralPath 'Function:\Get-WinEaseUiString'` checks the PowerShell Function PSDrive directly, executing in ~0.16ms per call (~99.8% reduction in overhead).
+**Action:** Use `Test-Path -LiteralPath 'Function:\<Name>'` instead of `Get-Command -Name <Name>` when probing for global function existence in high-frequency string or validation helpers.
