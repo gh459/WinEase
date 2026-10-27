@@ -2251,6 +2251,60 @@ Describe "GUI core (lib\WinEaseGuiCore.ps1)" {
         Assert-MockCalled Get-WinEaseGuiDraftConfig -Exactly 1 -Scope It
         Assert-MockCalled Test-WinEaseRecoveryReadiness -Exactly 1 -Scope It
     }
+
+    It "Open-WinEaseFileSafe returns false when path is null, empty or whitespace" {
+        . (Join-Path -Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')
+        Open-WinEaseFileSafe -Path $null | Should Be $false
+        Open-WinEaseFileSafe -Path '' | Should Be $false
+        Open-WinEaseFileSafe -Path '   ' | Should Be $false
+    }
+
+    It "Open-WinEaseFileSafe returns false for a non-existent file" {
+        . (Join-Path -Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')
+        $nonExistent = Join-Path -Path $env:TEMP -ChildPath "non_existent_file_$([guid]::NewGuid().ToString('N')).txt"
+        Open-WinEaseFileSafe -Path $nonExistent | Should Be $false
+    }
+
+    It "Open-WinEaseFileSafe validates existing path and launches process safely" {
+        . (Join-Path -Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')
+        $tmp = [System.IO.Path]::GetTempFileName()
+        try {
+            $script:startedFile = $null
+            Mock Start-Process {
+                param($FilePath)
+                $script:startedFile = $FilePath
+            }
+            $res = Open-WinEaseFileSafe -Path $tmp
+            $res | Should Be $true
+            $script:startedFile | Should Not BeNullOrEmpty
+            Assert-MockCalled Start-Process -Exactly 1 -Scope It
+        } finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "Open-WinEaseFileSafe falls back to explorer.exe with escaped double quotes when default app launch fails" {
+        . (Join-Path -Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')
+        $tmp = [System.IO.Path]::GetTempFileName()
+        try {
+            $script:explorerArgs = $null
+            Mock Start-Process {
+                param($FilePath, $ArgumentList)
+                if ($FilePath -eq 'explorer.exe') {
+                    $script:explorerArgs = $ArgumentList
+                    return
+                }
+                throw "No application associated"
+            }
+            $res = Open-WinEaseFileSafe -Path $tmp
+            $res | Should Be $false
+            $script:explorerArgs | Should Not BeNullOrEmpty
+            $script:explorerArgs[0] | Should Match '/select,'
+            Assert-MockCalled Start-Process -Scope It
+        } finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    }
 }
 
 Describe "Send-WinEaseGuiProgress in gui\WinEaseWinUiHost.ps1" {
