@@ -195,6 +195,257 @@ Describe "WinEase setup scripts - Custom Scripts Logging" {
     }
 }
 
+Describe "WinEase setup scripts - ExtractUnattend.ps1 fallback logic" {
+    BeforeAll {
+        $script:ExtractUnattendPath = Join-Path $script:RepoRoot "scripts\setup\ExtractUnattend.ps1"
+
+        function Invoke-ExtractUnattendModel {
+            param(
+                [string]$MarkerDir,
+                [string[]]$RequiredScripts,
+                [string[]]$Candidates,
+                [string[]]$AllowedRoots
+            )
+
+            $rawContent = [System.IO.File]::ReadAllText($script:ExtractUnattendPath, [System.Text.Encoding]::UTF8)
+
+            # Replace exit calls so Pester process does not exit
+            $scriptContent = $rawContent -replace '(?m)^\s*exit\s+0\s*$', 'return 0'
+            $scriptContent = $scriptContent -replace '(?m)^\s*exit\s+1\s*$', 'return 1'
+
+            if ($MarkerDir) {
+                $escapedMarker = $MarkerDir.Replace("'", "''")
+                $scriptContent = $scriptContent -replace '(?m)^\$markerDir = ".*"', "`$markerDir = '$escapedMarker'"
+            }
+            if ($RequiredScripts) {
+                $formattedReq = "@(" + (($RequiredScripts | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ', ') + ")"
+                $scriptContent = $scriptContent -replace '(?m)\$requiredScripts = @\([\s\S]*?\)', "`$requiredScripts = $formattedReq"
+            }
+            if ($Candidates) {
+                $formattedCand = "@(" + (($Candidates | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ', ') + ")"
+                $scriptContent = $scriptContent -replace '(?m)\$candidates = @\([\s\S]*?\)', "`$candidates = $formattedCand"
+            }
+            if ($AllowedRoots) {
+                $formattedRoots = "@(" + (($AllowedRoots | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ', ') + ")"
+                $scriptContent = $scriptContent -replace '(?m)\$allowedExtractRoots = @\([\s\S]*?\)', "`$allowedExtractRoots = $formattedRoots"
+            }
+
+            $sb = [scriptblock]::Create($scriptContent)
+            return (& $sb)
+        }
+    }
+
+    It "parses ExtractUnattend.ps1 with zero parser errors" {
+        $content = [System.IO.File]::ReadAllText($script:ExtractUnattendPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $errors = $null
+        [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$errors) | Out-Null
+        $errors.Count | Should Be 0
+    }
+
+    It "skips extraction when all required scripts exist with non-zero size" {
+        $base = Join-Path $TestDrive "eu_skip_$([guid]::NewGuid().ToString('N'))"
+        $markerDir = Join-Path $base "Marker"
+        $scriptsDir = Join-Path $base "Scripts"
+        New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null
+
+        $req = @()
+        foreach ($name in @('s1.ps1', 's2.ps1')) {
+            $p = Join-Path $scriptsDir $name
+            Set-Content -LiteralPath $p -Value "Write-Host '$name'" -Encoding UTF8
+            $req += $p
+        }
+
+        $exitCode = Invoke-ExtractUnattendModel -MarkerDir $markerDir -RequiredScripts $req
+        $exitCode | Should Be 0
+        Test-Path -LiteralPath (Join-Path $markerDir "extract.skipped") | Should Be $true
+        Test-Path -LiteralPath (Join-Path $markerDir "extract.succeeded") | Should Be $false
+        Test-Path -LiteralPath (Join-Path $markerDir "extract.failed") | Should Be $false
+        $log = Get-Content -LiteralPath (Join-Path $markerDir "Logs\extract.log") -Raw
+        $log | Should Match "pre-staged with non-zero size. Extraction skipped."
+    }
+
+    It "detects missing and 0-byte pre-staged scripts and fails when fallback extraction cannot find unattend candidates" {
+        $base = Join-Path $TestDrive "eu_missing_$([guid]::NewGuid().ToString('N'))"
+        $markerDir = Join-Path $base "Marker"
+        $scriptsDir = Join-Path $base "Scripts"
+        New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null
+
+        $s1 = Join-Path $scriptsDir "s1.ps1"
+        [System.IO.File]::WriteAllBytes($s1, [byte[]]@()) # strictly 0 bytes
+        $s2 = Join-Path $scriptsDir "s2.ps1" # missing
+
+        $exitCode = Invoke-ExtractUnattendModel -MarkerDir $markerDir -RequiredScripts @($s1, $s2) -Candidates @((Join-Path $base "nonexistent.xml"))
+        $exitCode | Should Be 1
+        Test-Path -LiteralPath (Join-Path $markerDir "extract.failed") | Should Be $true
+        $failedContent = Get-Content -LiteralPath (Join-Path $markerDir "extract.failed") -Raw
+        $failedContent | Should Match "Fallback extraction failed"
+        $log = Get-Content -LiteralPath (Join-Path $markerDir "Logs\extract.log") -Raw
+        $log | Should Match "Missing scripts detected:"
+        $log | Should Match "0 bytes"
+    }
+
+    It "extracts missing scripts from unattend XML with proper UTF-8 and UTF-16 encodings" {
+        $base = Join-Path $TestDrive "eu_extract_$([guid]::NewGuid().ToString('N'))"
+        $markerDir = Join-Path $base "Marker"
+        $scriptsDir = Join-Path $base "Scripts"
+        $pantherDir = Join-Path $base "Panther"
+        New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null
+        New-Item -ItemType Directory -Path $pantherDir -Force | Out-Null
+
+        $ps1Path = Join-Path $scriptsDir "test.ps1"
+        $regPath = Join-Path $scriptsDir "test.reg"
+
+        $xmlContent = @"
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:ext="https://schneegans.de/windows/unattend-generator/">
+  <Extensions>
+    <ext:File path="$ps1Path">
+      Write-Host "Extracted PS1"
+    </ext:File>
+    <ext:File path="$regPath">
+      Windows Registry Editor Version 5.00
+    </ext:File>
+  </Extensions>
+</unattend>
+"@
+        $xmlFile = Join-Path $pantherDir "unattend.xml"
+        Set-Content -LiteralPath $xmlFile -Value $xmlContent -Encoding UTF8
+
+        [void](Invoke-ExtractUnattendModel -MarkerDir $markerDir -RequiredScripts @($ps1Path, $regPath) -Candidates @($xmlFile) -AllowedRoots @($scriptsDir))
+        Test-Path -LiteralPath (Join-Path $markerDir "extract.succeeded") | Should Be $true
+        Test-Path -LiteralPath (Join-Path $markerDir "extract.failed") | Should Be $false
+        Test-Path -LiteralPath $ps1Path | Should Be $true
+        Test-Path -LiteralPath $regPath | Should Be $true
+
+        (Get-Content -LiteralPath $ps1Path -Raw) | Should Match 'Write-Host "Extracted PS1"'
+        (Get-Content -LiteralPath $regPath -Raw) | Should Match 'Windows Registry Editor Version 5.00'
+
+        # Verify .reg file was written as UTF-16 LE (Unicode) with BOM
+        $regBytes = [System.IO.File]::ReadAllBytes($regPath)
+        $regBytes.Length | Should BeGreaterThan 2
+        $regBytes[0] | Should Be 0xFF
+        $regBytes[1] | Should Be 0xFE
+    }
+
+    It "refuses security violation when embedded file path attempts path traversal outside allowed extract roots" {
+        $base = Join-Path $TestDrive "eu_sec_$([guid]::NewGuid().ToString('N'))"
+        $markerDir = Join-Path $base "Marker"
+        $scriptsDir = Join-Path $base "Scripts"
+        $outsideDir = Join-Path $base "Outside"
+        $pantherDir = Join-Path $base "Panther"
+        New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null
+        New-Item -ItemType Directory -Path $outsideDir -Force | Out-Null
+        New-Item -ItemType Directory -Path $pantherDir -Force | Out-Null
+
+        $validScript = Join-Path $scriptsDir "valid.ps1"
+        $maliciousPath = Join-Path $outsideDir "malicious.exe"
+
+        $xmlContent = @"
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:ext="https://schneegans.de/windows/unattend-generator/">
+  <Extensions>
+    <ext:File path="$maliciousPath">
+      malicious payload
+    </ext:File>
+    <ext:File path="$validScript">
+      Write-Host "Valid Script"
+    </ext:File>
+  </Extensions>
+</unattend>
+"@
+        $xmlFile = Join-Path $pantherDir "unattend.xml"
+        Set-Content -LiteralPath $xmlFile -Value $xmlContent -Encoding UTF8
+
+        [void](Invoke-ExtractUnattendModel -MarkerDir $markerDir -RequiredScripts @($validScript) -Candidates @($xmlFile) -AllowedRoots @($scriptsDir))
+        Test-Path -LiteralPath (Join-Path $markerDir "extract.succeeded") | Should Be $true
+        Test-Path -LiteralPath $maliciousPath | Should Be $false
+        Test-Path -LiteralPath $validScript | Should Be $true
+        $log = Get-Content -LiteralPath (Join-Path $markerDir "Logs\extract.log") -Raw
+        $log | Should Match "\[SECURITY REFUSAL\] Skipped embedded file outside the allowed folder"
+    }
+
+    It "refuses embedded file with unresolvable path without failing valid extraction" {
+        $base = Join-Path $TestDrive "eu_unres_$([guid]::NewGuid().ToString('N'))"
+        $markerDir = Join-Path $base "Marker"
+        $scriptsDir = Join-Path $base "Scripts"
+        $pantherDir = Join-Path $base "Panther"
+        New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null
+        New-Item -ItemType Directory -Path $pantherDir -Force | Out-Null
+
+        $validScript = Join-Path $scriptsDir "valid.ps1"
+
+        $xmlDoc = [xml]@"
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:ext="https://schneegans.de/windows/unattend-generator/">
+  <Extensions>
+    <ext:File path="placeholder1">
+      bad content
+    </ext:File>
+    <ext:File path="placeholder2">
+      Write-Host "Valid Script"
+    </ext:File>
+  </Extensions>
+</unattend>
+"@
+        $nsmgr = New-Object System.Xml.XmlNamespaceManager($xmlDoc.NameTable)
+        $nsmgr.AddNamespace("ext", "https://schneegans.de/windows/unattend-generator/")
+        $nodes = $xmlDoc.SelectNodes("//ext:File", $nsmgr)
+
+        if ($env:OS -eq 'Windows_NT' -or $env:OS -like '*Win*') {
+            $nodes[0].SetAttribute("path", "C:\invalid|path.ps1")
+        } else {
+            $nodes[0].SetAttribute("path", "bad" + [char]0 + "file.ps1")
+        }
+        $nodes[1].SetAttribute("path", $validScript)
+
+        $xmlFile = Join-Path $pantherDir "unattend.xml"
+        $xmlDoc.Save($xmlFile)
+
+        [void](Invoke-ExtractUnattendModel -MarkerDir $markerDir -RequiredScripts @($validScript) -Candidates @($xmlFile) -AllowedRoots @($scriptsDir))
+        Test-Path -LiteralPath (Join-Path $markerDir "extract.succeeded") | Should Be $true
+        Test-Path -LiteralPath $validScript | Should Be $true
+        $log = Get-Content -LiteralPath (Join-Path $markerDir "Logs\extract.log") -Raw
+        $log | Should Match "\[SECURITY REFUSAL\] Skipped embedded file with an unresolvable path"
+    }
+
+    It "preserves already present target files during fallback extraction" {
+        $base = Join-Path $TestDrive "eu_present_$([guid]::NewGuid().ToString('N'))"
+        $markerDir = Join-Path $base "Marker"
+        $scriptsDir = Join-Path $base "Scripts"
+        $pantherDir = Join-Path $base "Panther"
+        New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null
+        New-Item -ItemType Directory -Path $pantherDir -Force | Out-Null
+
+        $existingScript = Join-Path $scriptsDir "existing.ps1"
+        Set-Content -LiteralPath $existingScript -Value "Original Content" -Encoding UTF8
+
+        $missingScript = Join-Path $scriptsDir "missing.ps1"
+
+        $xmlContent = @"
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:ext="https://schneegans.de/windows/unattend-generator/">
+  <Extensions>
+    <ext:File path="$existingScript">
+      New Content
+    </ext:File>
+    <ext:File path="$missingScript">
+      Extracted Content
+    </ext:File>
+  </Extensions>
+</unattend>
+"@
+        $xmlFile = Join-Path $pantherDir "unattend.xml"
+        Set-Content -LiteralPath $xmlFile -Value $xmlContent -Encoding UTF8
+
+        [void](Invoke-ExtractUnattendModel -MarkerDir $markerDir -RequiredScripts @($existingScript, $missingScript) -Candidates @($xmlFile) -AllowedRoots @($scriptsDir))
+        Test-Path -LiteralPath (Join-Path $markerDir "extract.succeeded") | Should Be $true
+        (Get-Content -LiteralPath $existingScript -Raw) | Should Match "Original Content"
+        (Get-Content -LiteralPath $missingScript -Raw) | Should Match "Extracted Content"
+        $log = Get-Content -LiteralPath (Join-Path $markerDir "Logs\extract.log") -Raw
+        $log | Should Match "Already present:"
+    }
+}
+
 Describe "Builder cleanup S11" {
     BeforeAll {
         $script:S11Root = $script:RepoRoot
