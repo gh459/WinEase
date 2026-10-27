@@ -811,13 +811,35 @@ Describe "Test-CanSafelyDeleteVhdx" {
         Test-CanSafelyDeleteVhdx -VhdxPath $script:VhdxFile -VhdxDetached $false -ExpectedBaseDir $script:Ws | Should Be $false
     }
 
-    It "refuses null, empty, whitespace and non-existent VhdxPath" {
-        Test-CanSafelyDeleteVhdx -VhdxPath $null -VhdxDetached $true -ExpectedBaseDir $script:Ws | Should Be $false
-        Test-CanSafelyDeleteVhdx -VhdxPath '' -VhdxDetached $true -ExpectedBaseDir $script:Ws | Should Be $false
-        Test-CanSafelyDeleteVhdx -VhdxPath '   ' -VhdxDetached $true -ExpectedBaseDir $script:Ws | Should Be $false
+    It "refuses null, empty, whitespace and non-existent VhdxPath across various parameter combinations" {
+        $preserved = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        [void]$preserved.Add($script:VhdxFile)
+
+        foreach ($p in @($null, '', '   ')) {
+            Test-CanSafelyDeleteVhdx -VhdxPath $p -VhdxDetached $true -ExpectedBaseDir $script:Ws | Should Be $false
+            Test-CanSafelyDeleteVhdx -VhdxPath $p -VhdxDetached $false -ExpectedBaseDir $script:Ws | Should Be $false
+            Test-CanSafelyDeleteVhdx -VhdxPath $p -VhdxDetached $true -ExpectedBaseDir $script:Ws -PreservedDirs $preserved | Should Be $false
+            Test-CanSafelyDeleteVhdx -VhdxPath $p -VhdxDetached $true | Should Be $false
+        }
 
         $nonExistent = "C:\TestWorkspace\missing.vhdx"
         Test-CanSafelyDeleteVhdx -VhdxPath $nonExistent -VhdxDetached $true -ExpectedBaseDir $script:Ws | Should Be $false
+    }
+
+    It "refuses relative path and drive root input for VhdxPath" {
+        Test-CanSafelyDeleteVhdx -VhdxPath 'relative\disk.vhdx' -VhdxDetached $true -ExpectedBaseDir $script:Ws | Should Be $false
+        Test-CanSafelyDeleteVhdx -VhdxPath 'C:\' -VhdxDetached $true -ExpectedBaseDir $script:Ws | Should Be $false
+    }
+
+    It "handles null, empty, or whitespace ExpectedBaseDir gracefully" {
+        Test-CanSafelyDeleteVhdx -VhdxPath $script:VhdxFile -VhdxDetached $true -ExpectedBaseDir $null | Should Be $true
+        Test-CanSafelyDeleteVhdx -VhdxPath $script:VhdxFile -VhdxDetached $true -ExpectedBaseDir '' | Should Be $true
+        Test-CanSafelyDeleteVhdx -VhdxPath $script:VhdxFile -VhdxDetached $true -ExpectedBaseDir '   ' | Should Be $false
+        Test-CanSafelyDeleteVhdx -VhdxPath '' -VhdxDetached $true -ExpectedBaseDir $null | Should Be $false
+    }
+
+    It "handles null PreservedDirs gracefully" {
+        Test-CanSafelyDeleteVhdx -VhdxPath $script:VhdxFile -VhdxDetached $true -ExpectedBaseDir $script:Ws -PreservedDirs $null | Should Be $true
     }
 
     It "refuses deletion of a VHXD file in protected locations" {

@@ -484,13 +484,13 @@ function Import-WinEasePlugins {
     $script:WinEasePluginRejected = [System.Collections.Generic.List[object]]::new()
     $script:WinEasePluginRunLog = [System.Collections.Generic.List[object]]::new()
 
-    $work = @()
+    $work = [System.Collections.Generic.List[object]]::new()
     foreach ($set in @(
             @{ Source = 'Builtin'; Lock = $BuiltinLockPath; Dir = $BuiltinDir },
             @{ Source = 'User'; Lock = $UserLockPath; Dir = $UserDir })) {
         $entries = @()
         try { $entries = @(Read-WinEasePluginLock -Path $set.Lock) } catch { Add-WinEasePluginRejection $set.Source (Split-Path -Leaf $set.Lock) "the lock file could not be read: $($_.Exception.Message)" }
-        foreach ($e in $entries) { $work += , @{ Entry = $e; Dir = $set.Dir; Source = $set.Source } }
+        foreach ($e in $entries) { $work.Add(@{ Entry = $e; Dir = $set.Dir; Source = $set.Source }) }
         # DLLs next to the lock that it does not list are never loaded; say so.
         if (Test-Path -LiteralPath $set.Dir -PathType Container) {
             $listed = @($entries | ForEach-Object { $_.File.ToLowerInvariant() })

@@ -275,6 +275,87 @@ Describe "WinEase builder - phase timing telemetry" {
         Remove-Item -LiteralPath $logDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 
+    It "persists phase timings to last_phase_timings.json as valid JSON" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+
+        $funcText = ($ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Save-WinEasePhaseTimings'
+        }, $true)).Extent.Text
+        . ([scriptblock]::Create($funcText))
+
+        $logDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_timings_save_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($logDir) | Out-Null
+        $timingsPath = Join-Path -Path $logDir -ChildPath "last_phase_timings.json"
+
+        $script:PhaseTimings = [ordered]@{
+            "Phase 1" = 12.3
+            "Phase 2" = 45.6
+        }
+
+        Save-WinEasePhaseTimings
+
+        (Test-Path -LiteralPath $timingsPath) | Should Be $true
+        $saved = (Get-Content -LiteralPath $timingsPath -Raw -Encoding UTF8) | ConvertFrom-Json
+        ([double]$saved.'Phase 1') | Should Be 12.3
+        ([double]$saved.'Phase 2') | Should Be 45.6
+
+        $script:PhaseTimings = [ordered]@{}
+        Remove-Item -LiteralPath $logDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It "does not write last_phase_timings.json when PhaseTimings is null or empty" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+
+        $funcText = ($ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Save-WinEasePhaseTimings'
+        }, $true)).Extent.Text
+        . ([scriptblock]::Create($funcText))
+
+        $logDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_timings_empty_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [System.IO.Directory]::CreateDirectory($logDir) | Out-Null
+        $timingsPath = Join-Path -Path $logDir -ChildPath "last_phase_timings.json"
+
+        # Case 1: $script:PhaseTimings is null
+        $script:PhaseTimings = $null
+        Save-WinEasePhaseTimings
+        (Test-Path -LiteralPath $timingsPath) | Should Be $false
+
+        # Case 2: $script:PhaseTimings is an empty hashtable
+        $script:PhaseTimings = [ordered]@{}
+        Save-WinEasePhaseTimings
+        (Test-Path -LiteralPath $timingsPath) | Should Be $false
+
+        Remove-Item -LiteralPath $logDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It "catches file write errors in Save-WinEasePhaseTimings without throwing an exception" {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+
+        $funcText = ($ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Save-WinEasePhaseTimings'
+        }, $true)).Extent.Text
+        . ([scriptblock]::Create($funcText))
+
+        $logDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "nonexistent_dir_12345\sub_dir"
+        $script:PhaseTimings = [ordered]@{ "Phase 1" = 10.5 }
+
+        { Save-WinEasePhaseTimings } | Should Not Throw
+
+        $script:PhaseTimings = [ordered]@{}
+    }
+
     It "sums decimal phase durations from last_phase_timings.json" {
         # Regression: PS 5.1 ConvertFrom-Json yields System.Decimal for JSON decimals, and
         # the old reader only accepted double/int/long - fractional durations were silently
@@ -1429,13 +1510,35 @@ Describe "WinEase helpers - Test-CanSafelyDeleteVhdx" {
         }
     }
 
-    It "returns false when VhdxPath is null, empty, or whitespace" {
+    It "returns false when VhdxPath is null, empty, or whitespace across parameter combinations" {
         $savedBuildSucceeded = $script:BuildSucceeded
         try {
             $script:BuildSucceeded = $true
-            Test-CanSafelyDeleteVhdx -VhdxPath $null -VhdxDetached $true | Should Be $false
-            Test-CanSafelyDeleteVhdx -VhdxPath "" -VhdxDetached $true | Should Be $false
-            Test-CanSafelyDeleteVhdx -VhdxPath "   " -VhdxDetached $true | Should Be $false
+            $preserved = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            [void]$preserved.Add("C:\Workspace\disk.vhdx")
+
+            foreach ($p in @($null, "", "   ")) {
+                Test-CanSafelyDeleteVhdx -VhdxPath $p -VhdxDetached $true | Should Be $false
+                Test-CanSafelyDeleteVhdx -VhdxPath $p -VhdxDetached $false | Should Be $false
+                Test-CanSafelyDeleteVhdx -VhdxPath $p -VhdxDetached $true -ExpectedBaseDir "C:\Workspace" | Should Be $false
+                Test-CanSafelyDeleteVhdx -VhdxPath $p -VhdxDetached $true -ExpectedBaseDir "C:\Workspace" -PreservedDirs $preserved | Should Be $false
+            }
+        } finally {
+            $script:BuildSucceeded = $savedBuildSucceeded
+        }
+    }
+
+    It "returns true when ExpectedBaseDir is null or empty" {
+        $savedBuildSucceeded = $script:BuildSucceeded
+        try {
+            $script:BuildSucceeded = $true
+            Mock Test-Path { return $true }
+            Mock Test-IsSafePathToDelete { return $true }
+            Mock ConvertTo-WinEaseNormalizedPath { param($Path) return $Path }
+            Mock Test-IsPathPreserved { return $false }
+
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\disk.vhdx" -VhdxDetached $true -ExpectedBaseDir $null | Should Be $true
+            Test-CanSafelyDeleteVhdx -VhdxPath "C:\Workspace\disk.vhdx" -VhdxDetached $true -ExpectedBaseDir "" | Should Be $true
         } finally {
             $script:BuildSucceeded = $savedBuildSucceeded
         }
@@ -1716,6 +1819,7 @@ Describe "WinEase helpers - oscdimg integrity (Test-OscdimgIntegrity)" {
     It "returns `$false for null, empty, or whitespace paths" {
         Test-OscdimgIntegrity -OscdimgPath $null | Should Be $false
         Test-OscdimgIntegrity -OscdimgPath "" | Should Be $false
+        Test-OscdimgIntegrity -OscdimgPath "   " | Should Be $false
     }
 
     It "returns `$false for a non-existent file path" {
@@ -1772,6 +1876,60 @@ Describe "WinEase helpers - oscdimg integrity (Test-OscdimgIntegrity)" {
         try {
             Mock Get-AuthenticodeSignature { return $null }
             Mock Get-FileHash { return [PSCustomObject]@{ Hash = '0000000000000000000000000000000000000000000000000000000000000000' } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "falls through to hash check when Authenticode signature is invalid or non-Microsoft" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_inval_sig_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        $pinnedHash = 'F5129F313ED7EB46F2677CF522E64264A225F226307ED0DDB52BB14C46E7CFDD'
+        try {
+            # Case A: Signature status is NotSigned
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{ Status = 'NotSigned'; SignerCertificate = $null }
+            }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = $pinnedHash } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $true
+
+            # Case B: Signature status is Valid but Subject is non-Microsoft
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{
+                    Status            = 'Valid'
+                    SignerCertificate = [PSCustomObject]@{ Subject = 'CN=Unknown Vendor' }
+                }
+            }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = '0000000000000000000000000000000000000000000000000000000000000000' } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "falls back to pinned hash check when Get-AuthenticodeSignature throws an exception" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_sig_ex_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        $pinnedHash = 'F5129F313ED7EB46F2677CF522E64264A225F226307ED0DDB52BB14C46E7CFDD'
+        try {
+            Mock Get-AuthenticodeSignature { throw "Authenticode check error" }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = $pinnedHash } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $true
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "returns `$false when Get-FileHash throws an exception or returns null hash" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_hash_err_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        try {
+            Mock Get-AuthenticodeSignature { return $null }
+            Mock Get-FileHash { return $null }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
+
+            Mock Get-FileHash { throw "File hash error" }
             Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
         } finally {
             Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
