@@ -537,7 +537,7 @@ try {
     if (-not $scrub.Passed) {
         $failed = $true
         $result.overall = 'failed'
-        $result.problems += @($scrub.Findings | ForEach-Object { "Secret rule '$($_.Rule)' matched in $($_.File); file removed" })
+        $result.problems += @(foreach ($f in $scrub.Findings) { "Secret rule '$($f.Rule)' matched in $($f.File); file removed" })
     }
     Set-WinEaseIntegrationStage $result 'scrub' $(if ($scrub.Passed) { 'passed' } else { 'failed' }) ("{0} finding(s)" -f @($scrub.Findings).Count)
     ($result | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $resultPath -Encoding UTF8

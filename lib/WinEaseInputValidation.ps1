@@ -83,6 +83,203 @@ function Test-WinEaseInputWritableFolder {
     return @($issues)
 }
 
+function Test-WinEaseInputSourceValidation {
+    param(
+        [string]$SourceDrive,
+        [bool]$RequireSource,
+        [bool]$BoundHasSource,
+        [bool]$WantSource,
+        [scriptblock]$Add
+    )
+    $srcText = "$SourceDrive".Trim().Trim('"')
+    $srcIso = $null      # full path of the source ISO
+    $srcRoot = $null     # root of the source drive (E:\)
+    if ($WantSource) {
+        if ($BoundHasSource -or $RequireSource) {
+            if (-not $srcText) {
+                if ($RequireSource) { & $Add 'SourceDrive' 'Error' 'Msg.SourceRequired.Text' @() $false }
+            } elseif ($srcText.EndsWith('.iso', [System.StringComparison]::OrdinalIgnoreCase)) {
+                if (-not (Test-Path -LiteralPath $srcText -PathType Leaf)) { & $Add 'SourceDrive' 'Error' 'Val.Source.IsoMissing' @($srcText) $false }
+            } elseif ($srcText -match '^([A-Za-z]):?(\\.*)?$') {
+                $letter = $Matches[1]
+                if (-not (Test-Path -LiteralPath "${letter}:\sources\install.wim") -and -not (Test-Path -LiteralPath "${letter}:\sources\install.esd")) {
+                    & $Add 'SourceDrive' 'Error' 'Val.Source.NoImage' @("${letter}:") $false
+                }
+            } else {
+                & $Add 'SourceDrive' 'Error' 'Val.Source.Invalid' @($srcText) $false
+            }
+        }
+    }
+    if ($srcText) {
+        if ($srcText.EndsWith('.iso', [System.StringComparison]::OrdinalIgnoreCase)) { $srcIso = ConvertTo-WinEaseInputFullPath $srcText }
+        elseif ($srcText -match '^([A-Za-z]):?(\\.*)?$') { $srcRoot = "$($Matches[1].ToUpper()):\" }
+    }
+    return @{ SrcIso = $srcIso; SrcRoot = $srcRoot }
+}
+
+function Test-WinEaseInputFolderValidation {
+    param(
+        [string]$WorkDir,
+        [string]$OutputDir,
+        [bool]$BoundHasWorkDir,
+        [bool]$WantWorkDir,
+        [bool]$WantOutputDir,
+        [bool]$Probe,
+        $Issues
+    )
+    $workText = "$WorkDir".Trim()
+    if ($BoundHasWorkDir -and -not $workText) {
+        $workText = if (Get-Command -Name Get-WinEaseGuiDefaultWorkDir -ErrorAction SilentlyContinue) { Get-WinEaseGuiDefaultWorkDir }
+                    else {
+                        $docs = [Environment]::GetFolderPath('MyDocuments')
+                        if (-not $docs) { $docs = Join-Path $env:USERPROFILE 'Documents' }
+                        Join-Path -Path $docs -ChildPath 'WinEase_workspace'
+                    }
+    }
+    $workFull = if ($workText) { ConvertTo-WinEaseInputFullPath $workText } else { $null }
+    $outText = "$OutputDir".Trim()
+    $outFull = if ($outText) { ConvertTo-WinEaseInputFullPath $outText } else { $null }
+    if ($workText -and $WantWorkDir) {
+        foreach ($i in @(Test-WinEaseInputWritableFolder -Field 'WorkDir' -Path $workText -Full $workFull -Probe $Probe)) { $Issues.Add($i) }
+    }
+    if ($outText -and $WantOutputDir) {
+        foreach ($i in @(Test-WinEaseInputWritableFolder -Field 'OutputDir' -Path $outText -Full $outFull -Probe $Probe)) { $Issues.Add($i) }
+    }
+    return @{ WorkFull = $workFull; OutFull = $outFull }
+}
+
+function Test-WinEaseInputCollisionValidation {
+    param(
+        [string]$WorkFull,
+        [string]$OutFull,
+        [string]$SrcIso,
+        [string]$SrcRoot,
+        [string]$OutputIsoName,
+        [bool]$WantCollisions,
+        [bool]$WantIsoName,
+        [scriptblock]$Add
+    )
+    if ($WantCollisions) {
+        if ($WorkFull -and $OutFull) {
+            if ($WorkFull.Equals($OutFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+                & $Add 'OutputDir' 'Error' 'Val.Collision.WorkOutputSame' @($WorkFull) $false
+            } elseif (Test-WinEaseInputPathWithin -Child $OutFull -Parent $WorkFull) {
+                & $Add 'OutputDir' 'Error' 'Val.Collision.OutputInWork' @($OutFull, $WorkFull) $false
+            } elseif (Test-WinEaseInputPathWithin -Child $WorkFull -Parent $OutFull) {
+                & $Add 'WorkDir' 'Warning' 'Val.Collision.WorkInOutput' @($WorkFull, $OutFull) $false
+            }
+        }
+        if ($SrcIso) {
+            if ($WorkFull -and (Test-WinEaseInputPathWithin -Child $SrcIso -Parent $WorkFull)) {
+                & $Add 'SourceDrive' 'Error' 'Val.Collision.SourceInWork' @($SrcIso, $WorkFull) $false
+            }
+        }
+        if ($SrcRoot) {
+            foreach ($pair in @(@('WorkDir', $WorkFull), @('OutputDir', $OutFull))) {
+                if ($pair[1] -and ($pair[1].TrimEnd('\') + '\').Equals($SrcRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    & $Add $pair[0] 'Error' 'Val.Collision.SourceIsFolder' @($pair[1]) $false
+                }
+            }
+        }
+    }
+    if ("$OutputIsoName".Trim() -and $WantIsoName) {
+        $isoName = "$OutputIsoName".Trim()
+        if (-not $isoName.EndsWith('.iso', [System.StringComparison]::OrdinalIgnoreCase)) { $isoName += '.iso' }
+        if ($isoName.IndexOfAny([System.IO.Path]::GetInvalidFileNameChars()) -ge 0) {
+            & $Add 'OutputDir' 'Error' 'Val.OutputName.Invalid' @($OutputIsoName) $false
+        } elseif ($SrcIso -and $OutFull) {
+            $target = ConvertTo-WinEaseInputFullPath (Join-Path -Path $OutFull -ChildPath $isoName)
+            if ($target -and $target.Equals($SrcIso, [System.StringComparison]::OrdinalIgnoreCase)) {
+                & $Add 'OutputDir' 'Error' 'Val.Collision.OutputIsSource' @($target) $false
+            }
+        }
+    }
+}
+
+function Test-WinEaseInputDriversValidation {
+    param(
+        [string]$InjectDrivers,
+        [bool]$WantDrivers,
+        [scriptblock]$Add
+    )
+    if ($WantDrivers -and "$InjectDrivers".Trim()) {
+        $drv = "$InjectDrivers".Trim().Trim('"')
+        if (Test-Path -LiteralPath $drv -PathType Leaf) { & $Add 'InjectDrivers' 'Error' 'Val.Drivers.NotDirectory' @($drv) $false }
+        elseif (-not (Test-Path -LiteralPath $drv -PathType Container)) { & $Add 'InjectDrivers' 'Error' 'Val.Drivers.Missing' @($drv) $false }
+    }
+}
+
+function Test-WinEaseInputNamesValidation {
+    param(
+        [string]$UserName,
+        [string]$ComputerName,
+        [bool]$BoundHasUserName,
+        [bool]$BoundHasComputerName,
+        [bool]$WantUserName,
+        [bool]$WantComputerName,
+        [scriptblock]$Add
+    )
+    if ($WantUserName -and $BoundHasUserName) {
+        if ("$UserName" -notmatch (Get-WinEaseInputPattern -Name UserName)) { & $Add 'UserName' 'Error' 'Msg.InvalidUserName.Text' @() $false }
+    }
+    if ($WantComputerName -and $BoundHasComputerName) {
+        $cn = if ("$ComputerName".Trim()) { "$ComputerName".Trim() } else { '*' }
+        if ($cn -notmatch (Get-WinEaseInputPattern -Name ComputerName)) { & $Add 'ComputerName' 'Error' 'Msg.InvalidComputerName.Text' @() $false }
+    }
+}
+
+function Test-WinEaseInputIndexValidation {
+    param(
+        [string]$Index,
+        [string[]]$AvailableIndices,
+        [bool]$BoundHasIndex,
+        [bool]$WantIndex,
+        [scriptblock]$Add
+    )
+    if ($WantIndex -and $BoundHasIndex) {
+        $ix = "$Index".Trim()
+        if (-not $ix) {
+            & $Add 'Index' 'Warning' 'Val.Index.Unspecified' @() $true
+        } elseif ($ix -notmatch '^[0-9]{1,4}$' -or [int]$ix -lt 1) {
+            & $Add 'Index' 'Error' 'Val.Index.NotNumeric' @($ix) $false
+        } elseif ($AvailableIndices -and (@($AvailableIndices | ForEach-Object { "$_".Trim() }) -notcontains $ix.TrimStart('0'))) {
+            & $Add 'Index' 'Error' 'Val.Index.NotAvailable' @($ix, (@($AvailableIndices) -join ', ')) $false
+        }
+    }
+}
+
+function Test-WinEaseInputDiskSpaceValidation {
+    param(
+        [bool]$CheckDiskSpace,
+        [string]$WorkFull,
+        [string]$OutFull,
+        $Components,
+        [string]$PayloadFormat,
+        [scriptblock]$FreeSpaceProvider,
+        [bool]$WantDiskSpace,
+        [scriptblock]$Add
+    )
+    if ($CheckDiskSpace -and $WorkFull -and $OutFull -and $WantDiskSpace `
+            -and (Get-Command -Name Get-WinEaseBuildSizeEstimateMB -ErrorAction SilentlyContinue)) {
+        $provider = if ($FreeSpaceProvider) { $FreeSpaceProvider } else { { param($p) Get-WinEaseVolumeFreeBytes -Path $p } }
+        $estimateGB = [math]::Round((Get-WinEaseBuildSizeEstimateMB -Components $Components -PayloadFormat $PayloadFormat) / 1024, 2)
+        $byVolume = [ordered]@{}
+        foreach ($n in @(@{ Path = $WorkFull; GB = [double](Get-WinEaseRecommendedFreeGB) }, @{ Path = $OutFull; GB = $estimateGB })) {
+            $vol = [System.IO.Path]::GetPathRoot($n.Path).ToUpper()
+            if (-not $byVolume.Contains($vol)) { $byVolume[$vol] = @{ Path = $n.Path; GB = 0.0 } }
+            $byVolume[$vol].GB += $n.GB
+        }
+        foreach ($vol in $byVolume.Keys) {
+            $free = $null
+            try { $free = & $provider $byVolume[$vol].Path } catch { $free = $null }
+            if ($null -eq $free) { continue }   # unknown is reported by the build plan, not here
+            $freeGB = [math]::Round([double]$free / 1GB, 1)
+            $need = [math]::Round($byVolume[$vol].GB, 1)
+            if ($freeGB -lt $need) { & $Add 'WorkDir' 'Warning' 'Val.Disk.Insufficient' @($vol, $freeGB, $need) $false }
+        }
+    }
+}
+
 # -SourceDrive   an ISO file, a drive letter (E: / E:\) or a path on a drive that holds sources\install.wim|esd
 # -WorkDir       empty = the builder's default workspace (Documents\WinEase_workspace)
 # -OutputDir     the folder the ISO is written to (the builder: its own folder); empty = not checked
@@ -97,6 +294,7 @@ function Test-WinEaseInputWritableFolder {
 # A parameter that is not passed is not checked (Apply-WinEaseGuiResult is called with partial results).
 function Test-WinEaseBuildInputs {
     [CmdletBinding()]
+    [OutputType([object[]])]
     param(
         [string]$SourceDrive,
         [string]$WorkDir,
@@ -121,137 +319,13 @@ function Test-WinEaseBuildInputs {
     $probe = -not $SkipWriteProbe.IsPresent
     $want = { param($names) (-not $Only) -or (@($names | Where-Object { $Only -contains $_ }).Count -gt 0) }
 
-    # --- source ---
-    $srcText = "$SourceDrive".Trim().Trim('"')
-    $srcIso = $null      # full path of the source ISO
-    $srcRoot = $null     # root of the source drive (E:\)
-    if (& $want @('SourceDrive')) {
-        if ($bound.ContainsKey('SourceDrive') -or $RequireSource) {
-            if (-not $srcText) {
-                if ($RequireSource) { & $add 'SourceDrive' 'Error' 'Msg.SourceRequired.Text' @() $false }
-            } elseif ($srcText.EndsWith('.iso', [System.StringComparison]::OrdinalIgnoreCase)) {
-                if (-not (Test-Path -LiteralPath $srcText -PathType Leaf)) { & $add 'SourceDrive' 'Error' 'Val.Source.IsoMissing' @($srcText) $false }
-            } elseif ($srcText -match '^([A-Za-z]):?(\\.*)?$') {
-                $letter = $Matches[1]
-                if (-not (Test-Path -LiteralPath "${letter}:\sources\install.wim") -and -not (Test-Path -LiteralPath "${letter}:\sources\install.esd")) {
-                    & $add 'SourceDrive' 'Error' 'Val.Source.NoImage' @("${letter}:") $false
-                }
-            } else {
-                & $add 'SourceDrive' 'Error' 'Val.Source.Invalid' @($srcText) $false
-            }
-        }
-    }
-    if ($srcText) {
-        if ($srcText.EndsWith('.iso', [System.StringComparison]::OrdinalIgnoreCase)) { $srcIso = ConvertTo-WinEaseInputFullPath $srcText }
-        elseif ($srcText -match '^([A-Za-z]):?(\\.*)?$') { $srcRoot = "$($Matches[1].ToUpper()):\" }
-    }
-
-    # --- work / output folders ---
-    $workText = "$WorkDir".Trim()
-    $workChecked = $bound.ContainsKey('WorkDir')
-    if ($workChecked -and -not $workText) {
-        $workText = if (Get-Command -Name Get-WinEaseGuiDefaultWorkDir -ErrorAction SilentlyContinue) { Get-WinEaseGuiDefaultWorkDir }
-                    else {
-                        $docs = [Environment]::GetFolderPath('MyDocuments')
-                        if (-not $docs) { $docs = Join-Path $env:USERPROFILE 'Documents' }
-                        Join-Path -Path $docs -ChildPath 'WinEase_workspace'
-                    }
-    }
-    $workFull = if ($workText) { ConvertTo-WinEaseInputFullPath $workText } else { $null }
-    $outText = "$OutputDir".Trim()
-    $outFull = if ($outText) { ConvertTo-WinEaseInputFullPath $outText } else { $null }
-    if ($workText -and (& $want @('WorkDir'))) {
-        foreach ($i in @(Test-WinEaseInputWritableFolder -Field 'WorkDir' -Path $workText -Full $workFull -Probe $probe)) { $issues.Add($i) }
-    }
-    if ($outText -and (& $want @('OutputDir'))) {
-        foreach ($i in @(Test-WinEaseInputWritableFolder -Field 'OutputDir' -Path $outText -Full $outFull -Probe $probe)) { $issues.Add($i) }
-    }
-
-    # --- collisions (a folder the build empties or writes into must not hold another input or output) ---
-    if (& $want @('SourceDrive', 'WorkDir', 'OutputDir')) {
-        if ($workFull -and $outFull) {
-            if ($workFull.Equals($outFull, [System.StringComparison]::OrdinalIgnoreCase)) {
-                & $add 'OutputDir' 'Error' 'Val.Collision.WorkOutputSame' @($workFull) $false
-            } elseif (Test-WinEaseInputPathWithin -Child $outFull -Parent $workFull) {
-                & $add 'OutputDir' 'Error' 'Val.Collision.OutputInWork' @($outFull, $workFull) $false
-            } elseif (Test-WinEaseInputPathWithin -Child $workFull -Parent $outFull) {
-                & $add 'WorkDir' 'Warning' 'Val.Collision.WorkInOutput' @($workFull, $outFull) $false
-            }
-        }
-        if ($srcIso) {
-            if ($workFull -and (Test-WinEaseInputPathWithin -Child $srcIso -Parent $workFull)) {
-                & $add 'SourceDrive' 'Error' 'Val.Collision.SourceInWork' @($srcIso, $workFull) $false
-            }
-        }
-        if ($srcRoot) {
-            foreach ($pair in @(@('WorkDir', $workFull), @('OutputDir', $outFull))) {
-                if ($pair[1] -and ($pair[1].TrimEnd('\') + '\').Equals($srcRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-                    & $add $pair[0] 'Error' 'Val.Collision.SourceIsFolder' @($pair[1]) $false
-                }
-            }
-        }
-    }
-    if ("$OutputIsoName".Trim() -and (& $want @('SourceDrive', 'OutputDir'))) {
-        $isoName = "$OutputIsoName".Trim()
-        if (-not $isoName.EndsWith('.iso', [System.StringComparison]::OrdinalIgnoreCase)) { $isoName += '.iso' }
-        if ($isoName.IndexOfAny([System.IO.Path]::GetInvalidFileNameChars()) -ge 0) {
-            & $add 'OutputDir' 'Error' 'Val.OutputName.Invalid' @($OutputIsoName) $false
-        } elseif ($srcIso -and $outFull) {
-            $target = ConvertTo-WinEaseInputFullPath (Join-Path -Path $outFull -ChildPath $isoName)
-            if ($target -and $target.Equals($srcIso, [System.StringComparison]::OrdinalIgnoreCase)) {
-                & $add 'OutputDir' 'Error' 'Val.Collision.OutputIsSource' @($target) $false
-            }
-        }
-    }
-
-    # --- drivers ---
-    if ((& $want @('InjectDrivers')) -and "$InjectDrivers".Trim()) {
-        $drv = "$InjectDrivers".Trim().Trim('"')
-        if (Test-Path -LiteralPath $drv -PathType Leaf) { & $add 'InjectDrivers' 'Error' 'Val.Drivers.NotDirectory' @($drv) $false }
-        elseif (-not (Test-Path -LiteralPath $drv -PathType Container)) { & $add 'InjectDrivers' 'Error' 'Val.Drivers.Missing' @($drv) $false }
-    }
-
-    # --- names (same patterns as the builder's [ValidatePattern]) ---
-    if ((& $want @('UserName')) -and ($bound.ContainsKey('UserName'))) {
-        if ("$UserName" -notmatch (Get-WinEaseInputPattern -Name UserName)) { & $add 'UserName' 'Error' 'Msg.InvalidUserName.Text' @() $false }
-    }
-    if ((& $want @('ComputerName')) -and ($bound.ContainsKey('ComputerName'))) {
-        $cn = if ("$ComputerName".Trim()) { "$ComputerName".Trim() } else { '*' }
-        if ($cn -notmatch (Get-WinEaseInputPattern -Name ComputerName)) { & $add 'ComputerName' 'Error' 'Msg.InvalidComputerName.Text' @() $false }
-    }
-
-    # --- edition index: never guessed ---
-    if ((& $want @('Index')) -and ($bound.ContainsKey('Index'))) {
-        $ix = "$Index".Trim()
-        if (-not $ix) {
-            & $add 'Index' 'Warning' 'Val.Index.Unspecified' @() $true
-        } elseif ($ix -notmatch '^[0-9]{1,4}$' -or [int]$ix -lt 1) {
-            & $add 'Index' 'Error' 'Val.Index.NotNumeric' @($ix) $false
-        } elseif ($AvailableIndices -and (@($AvailableIndices | ForEach-Object { "$_".Trim() }) -notcontains $ix.TrimStart('0'))) {
-            & $add 'Index' 'Error' 'Val.Index.NotAvailable' @($ix, (@($AvailableIndices) -join ', ')) $false
-        }
-    }
-
-    # --- free space (Warning only: the builder itself redirects the workspace when a volume is too small) ---
-    if ($CheckDiskSpace -and $workFull -and $outFull -and (& $want @('WorkDir', 'OutputDir')) `
-            -and (Get-Command -Name Get-WinEaseBuildSizeEstimateMB -ErrorAction SilentlyContinue)) {
-        $provider = if ($FreeSpaceProvider) { $FreeSpaceProvider } else { { param($p) Get-WinEaseVolumeFreeBytes -Path $p } }
-        $estimateGB = [math]::Round((Get-WinEaseBuildSizeEstimateMB -Components $Components -PayloadFormat $PayloadFormat) / 1024, 2)
-        $byVolume = [ordered]@{}
-        foreach ($n in @(@{ Path = $workFull; GB = [double](Get-WinEaseRecommendedFreeGB) }, @{ Path = $outFull; GB = $estimateGB })) {
-            $vol = [System.IO.Path]::GetPathRoot($n.Path).ToUpper()
-            if (-not $byVolume.Contains($vol)) { $byVolume[$vol] = @{ Path = $n.Path; GB = 0.0 } }
-            $byVolume[$vol].GB += $n.GB
-        }
-        foreach ($vol in $byVolume.Keys) {
-            $free = $null
-            try { $free = & $provider $byVolume[$vol].Path } catch { $free = $null }
-            if ($null -eq $free) { continue }   # unknown is reported by the build plan, not here
-            $freeGB = [math]::Round([double]$free / 1GB, 1)
-            $need = [math]::Round($byVolume[$vol].GB, 1)
-            if ($freeGB -lt $need) { & $add 'WorkDir' 'Warning' 'Val.Disk.Insufficient' @($vol, $freeGB, $need) $false }
-        }
-    }
+    $srcRes = Test-WinEaseInputSourceValidation -SourceDrive $SourceDrive -RequireSource $RequireSource.IsPresent -BoundHasSource ($bound.ContainsKey('SourceDrive')) -WantSource (& $want @('SourceDrive')) -Add $add
+    $folderRes = Test-WinEaseInputFolderValidation -WorkDir $WorkDir -OutputDir $OutputDir -BoundHasWorkDir ($bound.ContainsKey('WorkDir')) -WantWorkDir (& $want @('WorkDir')) -WantOutputDir (& $want @('OutputDir')) -Probe $probe -Issues $issues
+    Test-WinEaseInputCollisionValidation -WorkFull $folderRes.WorkFull -OutFull $folderRes.OutFull -SrcIso $srcRes.SrcIso -SrcRoot $srcRes.SrcRoot -OutputIsoName $OutputIsoName -WantCollisions (& $want @('SourceDrive', 'WorkDir', 'OutputDir')) -WantIsoName (& $want @('SourceDrive', 'OutputDir')) -Add $add
+    Test-WinEaseInputDriversValidation -InjectDrivers $InjectDrivers -WantDrivers (& $want @('InjectDrivers')) -Add $add
+    Test-WinEaseInputNamesValidation -UserName $UserName -ComputerName $ComputerName -BoundHasUserName ($bound.ContainsKey('UserName')) -BoundHasComputerName ($bound.ContainsKey('ComputerName')) -WantUserName (& $want @('UserName')) -WantComputerName (& $want @('ComputerName')) -Add $add
+    Test-WinEaseInputIndexValidation -Index $Index -AvailableIndices $AvailableIndices -BoundHasIndex ($bound.ContainsKey('Index')) -WantIndex (& $want @('Index')) -Add $add
+    Test-WinEaseInputDiskSpaceValidation -CheckDiskSpace $CheckDiskSpace.IsPresent -WorkFull $folderRes.WorkFull -OutFull $folderRes.OutFull -Components $Components -PayloadFormat $PayloadFormat -FreeSpaceProvider $FreeSpaceProvider -WantDiskSpace (& $want @('WorkDir', 'OutputDir')) -Add $add
 
     return @($issues.ToArray())
 }
