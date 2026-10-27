@@ -295,7 +295,158 @@ function Remove-ProtectedDirectory {
     }
 }
 
-# Helper function: Check if a path resides on an NTFS volume (DISM requirement for reparse points)
+# Helper function: Check if foreign DISM activity is running and terminate dismhost/wimserv workers if safe
+function Stop-WinEaseDismProcesses {
+    param(
+        [int]$Attempt
+    )
+    $foreignDismActive = $false
+    if (Get-Process -Name "dism" -ErrorAction SilentlyContinue) {
+        $foreignDismActive = $true
+    } else {
+        try {
+            $foreignMounts = @(Get-WinEaseMountedImages | Where-Object {
+                $_.Path -and -not (
+                    (Test-WinEasePathWithin -Path $_.Path -Root $script:BaseWorkDir) -or
+                    (Test-WinEasePathWithin -Path $_.Path -Root $script:MountAllocationRoot)
+                )
+            })
+            if ($foreignMounts.Count -gt 0) { $foreignDismActive = $true }
+        } catch {
+            $foreignDismActive = $true
+        }
+    }
+    if ($foreignDismActive) {
+        Write-Warning "Reset attempt ${Attempt}: Other DISM activity detected outside the WinEase workspace. Not terminating dismhost/wimserv."
+    } else {
+        Get-Process -Name "dismhost", "wimserv" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    }
+    [GC]::Collect()
+    [GC]::WaitForPendingFinalizers()
+}
+
+# Helper function: Queue-based reparse point pruning without following links into targets
+function Remove-WinEaseReparsePoints {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [int]$Attempt = 1
+    )
+    $queue = [System.Collections.Generic.Queue[string]]::new()
+    $queue.Enqueue($Path)
+    $linkError = $false
+    while ($queue.Count -gt 0) {
+        $curr = $queue.Dequeue()
+        try {
+            $children = @(Get-ChildItem -LiteralPath $curr -Force -ErrorAction Stop)
+        } catch {
+            Write-Warning "Reset attempt ${Attempt}: Could not enumerate '$curr': $_"
+            return $false
+        }
+        foreach ($child in $children) {
+            if ($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                try {
+                    if ($child.PSIsContainer) {
+                        [System.IO.Directory]::Delete($child.FullName, $false)
+                    } else {
+                        [System.IO.File]::Delete($child.FullName)
+                    }
+                } catch {
+                    Write-Warning "Reset attempt ${Attempt}: Failed to remove reparse point '$($child.FullName)': $_"
+                    $linkError = $true
+                }
+            } elseif ($child.PSIsContainer) {
+                $queue.Enqueue($child.FullName)
+            }
+        }
+    }
+    return (-not $linkError)
+}
+
+# Helper function: Strip ReadOnly, Hidden, and System attributes across root and children
+function Clear-WinEaseDirectoryAttributes {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path
+    )
+    $null = & attrib.exe -r -s -h $Path 2>&1
+    $lastAttribExit = $LASTEXITCODE
+    $childPattern = Join-Path -Path $Path -ChildPath '*'
+    $null = & attrib.exe -r -s -h $childPattern /s /d 2>&1
+    return $lastAttribExit
+}
+
+# Helper function: Run robocopy mirror against an empty temp directory
+function Invoke-WinEaseRobocopyMirror {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [int]$Attempt = 1
+    )
+    $lastRoboOutput = $null
+    $lastRoboExit = $null
+    $emptyTemp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "WinEase_empty_$([System.IO.Path]::GetRandomFileName())"
+    try {
+        New-Item -Path $emptyTemp -ItemType Directory -Force -ErrorAction Stop | Out-Null
+        Assert-WinEaseDirectoryEmpty -Path $emptyTemp
+        $lastRoboOutput = & robocopy.exe $emptyTemp $Path /MIR /XJ /R:0 /W:0 /NFL /NDL /NP /NJH /NJS 2>&1
+        $lastRoboExit = $LASTEXITCODE
+    } finally {
+        if (Test-Path -LiteralPath $emptyTemp) {
+            Remove-Item -LiteralPath $emptyTemp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    if ($lastRoboExit -ge 8) {
+        Write-Warning "Reset attempt ${Attempt}: Robocopy error (Exit code: $lastRoboExit): $lastRoboOutput"
+    }
+
+    return [PSCustomObject]@{
+        ExitCode = $lastRoboExit
+        Output   = $lastRoboOutput
+    }
+}
+
+# Helper function: Directly sweep remaining items in a directory post-robocopy
+function Remove-WinEaseLingeringItems {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path
+    )
+    $lingering = @(Get-ChildItem -LiteralPath $Path -Force -ErrorAction Stop)
+    foreach ($item in $lingering) {
+        try {
+            if ($item.PSIsContainer) {
+                [System.IO.Directory]::Delete($item.FullName, $true)
+            } else {
+                [System.IO.File]::Delete($item.FullName)
+            }
+        } catch {
+            Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction Stop
+        }
+    }
+}
+
+# Helper function: Build diagnostic failure report string for Reset-DirectoryWithRobocopy
+function Get-WinEaseResetDiagnosticDetails {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [int]$Retries,
+        $LastException,
+        $LastRoboExit,
+        $LastAttribExit
+    )
+    $remainingItems = @(Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue)
+    $remainingDetails = ($remainingItems | ForEach-Object { "$($_.FullName) [$($_.Attributes)]" }) -join "`n    "
+    $hivesInfo = ""
+    if ($script:ManagedMountDirs.Contains($Path)) {
+        try {
+            $leftoverHives = @(Get-WinEaseDismOfflineHives -TargetMountDir $Path)
+            if ($leftoverHives.Count -gt 0) {
+                $hivesInfo = "`nLingering DISM offline registry hives:`n    " + (($leftoverHives | ForEach-Object { "$($_.KeyName) -> $($_.HivePath)" }) -join "`n    ")
+            }
+        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
+
+    return "Reset-DirectoryWithRobocopy failed to empty directory '$Path' after $Retries attempts.$hivesInfo`nRemaining items ($($remainingItems.Count)):`n    $remainingDetails`nLast error: $LastException`nRobocopy Exit Code: $LastRoboExit`nAttrib Exit Code: $LastAttribExit`nPlease close any process locking these files or restart Windows before retrying."
+}
+
 # Helper function: Fast and reliable directory reset using robocopy mirror trick (Guaranteed Empty)
 function Reset-DirectoryWithRobocopy {
     param(
@@ -319,38 +470,13 @@ function Reset-DirectoryWithRobocopy {
 
     $lastEx = $null
     $lastRoboExit = $null
-    $lastRoboOutput = $null
     $lastAttribExit = $null
 
     for ($attempt = 1; $attempt -le $Retries; $attempt++) {
         Assert-WinEaseDirectorySafety -Path $full -Operation 'Reset'
 
         if ($attempt -gt 1) {
-            # Terminate lingering dismhost/wimserv workers to release file locks, but only when no other
-            # DISM activity is visible (our dism.exe calls are synchronous, so a running dism.exe is foreign)
-            $foreignDismActive = $false
-            if (Get-Process -Name "dism" -ErrorAction SilentlyContinue) {
-                $foreignDismActive = $true
-            } else {
-                try {
-                    $foreignMounts = @(Get-WinEaseMountedImages | Where-Object {
-                        $_.Path -and -not (
-                            (Test-WinEasePathWithin -Path $_.Path -Root $script:BaseWorkDir) -or
-                            (Test-WinEasePathWithin -Path $_.Path -Root $script:MountAllocationRoot)
-                        )
-                    })
-                    if ($foreignMounts.Count -gt 0) { $foreignDismActive = $true }
-                } catch {
-                    $foreignDismActive = $true
-                }
-            }
-            if ($foreignDismActive) {
-                Write-Warning "Reset attempt ${attempt}: Other DISM activity detected outside the WinEase workspace. Not terminating dismhost/wimserv."
-            } else {
-                Get-Process -Name "dismhost", "wimserv" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-            }
-            [GC]::Collect()
-            [GC]::WaitForPendingFinalizers()
+            Stop-WinEaseDismProcesses -Attempt $attempt
             Start-Sleep -Seconds ($attempt * 2)
         }
 
@@ -359,83 +485,28 @@ function Reset-DirectoryWithRobocopy {
             throw "Safety violation: Target directory '$full' is itself a reparse point. Refusing to reset directly."
         }
 
-        # Queue-based reparse point pruning without following links into targets
-        $queue = [System.Collections.Generic.Queue[string]]::new()
-        $queue.Enqueue($full)
-        $linkError = $false
-        while ($queue.Count -gt 0) {
-            $curr = $queue.Dequeue()
-            try {
-                $children = @(Get-ChildItem -LiteralPath $curr -Force -ErrorAction Stop)
-            } catch {
-                Write-Warning "Reset attempt ${attempt}: Could not enumerate '$curr': $_"
-                $linkError = $true
-                break
-            }
-            foreach ($child in $children) {
-                if ($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-                    try {
-                        if ($child.PSIsContainer) {
-                            [System.IO.Directory]::Delete($child.FullName, $false)
-                        } else {
-                            [System.IO.File]::Delete($child.FullName)
-                        }
-                    } catch {
-                        Write-Warning "Reset attempt ${attempt}: Failed to remove reparse point '$($child.FullName)': $_"
-                        $linkError = $true
-                    }
-                } elseif ($child.PSIsContainer) {
-                    $queue.Enqueue($child.FullName)
-                }
-            }
-        }
+        $linkClean = Remove-WinEaseReparsePoints -Path $full -Attempt $attempt
 
-        if (-not $linkError) {
+        if ($linkClean) {
             try {
                 Set-ItemOwnershipAndAccess -Path $full -Recurse -Strict
             } catch {
                 Write-Warning "Reset attempt ${attempt}: Ownership adjustment warning: $_"
             }
 
-            # Strip ReadOnly, Hidden, and System attributes across root and children
-            $null = & attrib.exe -r -s -h $full 2>&1
-            $lastAttribExit = $LASTEXITCODE
-            $childPattern = Join-Path -Path $full -ChildPath '*'
-            $null = & attrib.exe -r -s -h $childPattern /s /d 2>&1
+            $lastAttribExit = Clear-WinEaseDirectoryAttributes -Path $full
 
-            $emptyTemp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "WinEase_empty_$([System.IO.Path]::GetRandomFileName())"
-            try {
-                New-Item -Path $emptyTemp -ItemType Directory -Force -ErrorAction Stop | Out-Null
-                Assert-WinEaseDirectoryEmpty -Path $emptyTemp
-                $lastRoboOutput = & robocopy.exe $emptyTemp $full /MIR /XJ /R:0 /W:0 /NFL /NDL /NP /NJH /NJS 2>&1
-                $lastRoboExit = $LASTEXITCODE
-            } finally {
-                if (Test-Path -LiteralPath $emptyTemp) {
-                    Remove-Item -LiteralPath $emptyTemp -Recurse -Force -ErrorAction SilentlyContinue
-                }
-            }
-
-            if ($lastRoboExit -ge 8) {
-                Write-Warning "Reset attempt ${attempt}: Robocopy error (Exit code: $lastRoboExit): $lastRoboOutput"
-            }
+            $roboRes = Invoke-WinEaseRobocopyMirror -Path $full -Attempt $attempt
+            $lastRoboExit = $roboRes.ExitCode
 
             # Sweep remaining items directly
             try {
-                $lingering = @(Get-ChildItem -LiteralPath $full -Force -ErrorAction Stop)
-                foreach ($item in $lingering) {
-                    try {
-                        if ($item.PSIsContainer) {
-                            [System.IO.Directory]::Delete($item.FullName, $true)
-                        } else {
-                            [System.IO.File]::Delete($item.FullName)
-                        }
-                    } catch {
-                        Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction Stop
-                    }
-                }
+                Remove-WinEaseLingeringItems -Path $full
             } catch {
                 $lastEx = $_
             }
+        } else {
+            $lastEx = "Failed to clear reparse points within directory"
         }
 
         # Validate directory is strictly empty
@@ -454,19 +525,8 @@ function Reset-DirectoryWithRobocopy {
     }
 
     # Final attempt failed - build rich diagnostic failure report
-    $remainingItems = @(Get-ChildItem -LiteralPath $full -Force -ErrorAction SilentlyContinue)
-    $remainingDetails = ($remainingItems | ForEach-Object { "$($_.FullName) [$($_.Attributes)]" }) -join "`n    "
-    $hivesInfo = ""
-    if ($script:ManagedMountDirs.Contains($full)) {
-        try {
-            $leftoverHives = @(Get-WinEaseDismOfflineHives -TargetMountDir $full)
-            if ($leftoverHives.Count -gt 0) {
-                $hivesInfo = "`nLingering DISM offline registry hives:`n    " + (($leftoverHives | ForEach-Object { "$($_.KeyName) -> $($_.HivePath)" }) -join "`n    ")
-            }
-        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-    }
-
-    throw "Reset-DirectoryWithRobocopy failed to empty directory '$full' after $Retries attempts.$hivesInfo`nRemaining items ($($remainingItems.Count)):`n    $remainingDetails`nLast error: $lastEx`nRobocopy Exit Code: $lastRoboExit`nAttrib Exit Code: $lastAttribExit`nPlease close any process locking these files or restart Windows before retrying."
+    $diagMsg = Get-WinEaseResetDiagnosticDetails -Path $full -Retries $Retries -LastException $lastEx -LastRoboExit $lastRoboExit -LastAttribExit $lastAttribExit
+    throw $diagMsg
 }
 
 # Helper function: Safe mountpoint cleanup guarded against modifying unmanaged external mounts

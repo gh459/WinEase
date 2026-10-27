@@ -2216,7 +2216,8 @@ Describe "WinEase helpers - split module layout (R2)" {
         # G1 added ConvertTo-WinEaseRealPath and Test-WinEaseProtectedLexicalPath (path safety).
         # P1-01 added Test-WinEaseUnattendXmlStructure (unattend template safety).
         # Refactored Test-WinEaseDependencies added 8 modular dependency helpers.
-        $functions.Count | Should Be 67
+        # Refactored Reset-DirectoryWithRobocopy added 6 modular file-system helpers.
+        $functions.Count | Should Be 73
         $duplicates = @($functions | Group-Object Name | Where-Object Count -gt 1)
         $duplicates.Count | Should Be 0
         @($ast.FindAll({
