@@ -234,3 +234,5 @@ Describe "Autologon - cleanup after the first logon" {
         $script:FlText | Should Not Match '/passwordreq:no'
     }
 }
+
+Remove-Item Function:\reg.exe -ErrorAction SilentlyContinue
