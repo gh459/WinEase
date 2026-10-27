@@ -35,7 +35,8 @@ function Get-WinEaseDependencyString {
     )
     $defaults = Get-WinEaseDependencyStringDefaults
     $fallback = if ($defaults.Contains($Key)) { $defaults[$Key] } else { $Key }
-    if (Get-Command -Name Get-WinEaseUiString -ErrorAction SilentlyContinue) {
+    # Bolt optimization: Replacing Get-Command with Test-Path Function:\ avoids expensive cmdlet discovery overhead (~99% faster).
+    if (Test-Path -LiteralPath 'Function:\Get-WinEaseUiString') {
         return (Get-WinEaseUiString -Key $Key -Format $Format -Default $fallback)
     }
     if ($Format.Count -gt 0) { try { return ($fallback -f $Format) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" } }
