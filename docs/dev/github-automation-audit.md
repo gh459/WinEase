@@ -126,7 +126,7 @@ path tests). Verified that R3 and R4 tests fail against the unfixed builder.
 - The release workflow: needs a `v*` tag. Manual check: push a test tag such as `v0.0.0-rc.test`
   on a fork or delete the resulting release afterwards; expect CI → package → publish, a
   `.sha256` asset, and `gh attestation verify WinEase-<tag>.zip -R gh459/WinEase` to succeed.
-- The AI review and agent workflows: need `ANTHROPIC_API_KEY` and a PR / comment event.
+- The AI review and agent workflows: need `CLAUDE_CODE_OAUTH_TOKEN` and a PR / comment event.
 
 ## 6. Release pipeline
 
@@ -144,7 +144,7 @@ attestation (free on public repositories) binds the ZIP to this workflow run and
 
 ## 7. Open items, costs and settings outside the repository
 
-- **Secrets:** `ANTHROPIC_API_KEY` (already used by the agent) is reused by the reviewer. No new service.
+- **Secrets:** `CLAUDE_CODE_OAUTH_TOKEN` (already used by the agent) is reused by the reviewer. No new service.
 - **Cost:** one Claude review per push to a same-repository PR. To limit it, change the trigger
   to `ready_for_review` + `reopened` or add a label condition.
 - **Branch protection / rulesets (GitHub settings):** require "WinEase CI", "PSScriptAnalyzer"
