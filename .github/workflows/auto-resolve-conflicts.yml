@@ -13,6 +13,10 @@ name: Auto-resolve merge conflicts
 # checks have to be re-run by pushing again or closing/reopening it. A resolution that touches
 # .github/workflows cannot be pushed with this token either; that job fails and says so.
 #
+# After a resolution is pushed the workflow starts CI on the branch and enables auto-merge
+# (squash), so the pull request is merged by GitHub as soon as the required checks pass.
+# Requires "Allow auto-merge" and required status checks on the default branch.
+#
 # Manual run: Actions -> "Auto-resolve merge conflicts" -> Run workflow (optionally one PR number).
 
 on:
@@ -53,19 +57,27 @@ jobs:
           for attempt in 1 2 3 4 5; do
             # GitHub computes "mergeable" lazily after a push; retry while it is UNKNOWN.
             json="$(gh pr list --repo "$REPO" --state open --limit 100 \
-              --json number,mergeable,isCrossRepository,authorAssociation,author)"
+              --json number,mergeable,isCrossRepository,author)"
             if ! jq -e 'any(.[]; .mergeable == "UNKNOWN")' <<<"$json" >/dev/null; then break; fi
             echo "mergeable state still being computed (attempt $attempt)"
             sleep 15
           done
-          prs="$(jq -c --arg only "$ONLY_PR" '
-            [ .[]
-              | select(.mergeable == "CONFLICTING")
-              | select(.isCrossRepository | not)
-              | select(.author.is_bot | not)
-              | select(.authorAssociation | IN("OWNER","MEMBER","COLLABORATOR"))
-              | select($only == "" or (.number | tostring) == $only)
-              | .number ]' <<<"$json")"
+          candidates="$(jq -r --arg only "$ONLY_PR" '
+            .[]
+            | select(.mergeable == "CONFLICTING")
+            | select(.isCrossRepository | not)
+            | select(.author.is_bot | not)
+            | select($only == "" or (.number | tostring) == $only)
+            | .number' <<<"$json")"
+          # `gh pr list` has no author-association field; ask the REST API per candidate.
+          prs="[]"
+          for number in $candidates; do
+            assoc="$(gh api "repos/${REPO}/pulls/${number}" --jq '.author_association')"
+            case "$assoc" in
+              OWNER|MEMBER|COLLABORATOR) prs="$(jq -c --argjson n "$number" '. + [$n]' <<<"$prs")" ;;
+              *) echo "skipping #${number}: author association ${assoc}" ;;
+            esac
+          done
           echo "Conflicting pull requests: $prs"
           echo "prs=$prs" >> "$GITHUB_OUTPUT"
 
@@ -82,7 +94,8 @@ jobs:
         pr: ${{ fromJSON(needs.find.outputs.prs) }}
     permissions:
       contents: write        # push the merge commit to the pull request's own branch
-      pull-requests: write   # comment on the pull request
+      pull-requests: write   # comment on the pull request, enable auto-merge
+      actions: write         # start the CI workflow on the pushed branch (GITHUB_TOKEN pushes start none)
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
@@ -125,7 +138,7 @@ jobs:
         if: steps.merge.outputs.conflicts == 'true'
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
           # No Bash beyond read-only git: the agent only edits files. Committing and pushing
           # are done by the next steps, so the agent never holds push credentials.
@@ -172,6 +185,23 @@ jobs:
           auth="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 -w0)"
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}" \
             push origin "HEAD:refs/heads/${HEAD_REF}"
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Run CI and enable auto-merge
+        # Merging is left to GitHub: auto-merge (squash) only completes once every required check
+        # and review of the branch protection passes, so a bad resolution is never merged by this
+        # workflow alone. Needs "Allow auto-merge" in the repository settings; if it is off, the
+        # step fails and the comment below tells a human to merge manually.
+        if: steps.push.outputs.pushed == 'true'
+        env:
+          HEAD_REF: ${{ steps.pr.outputs.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Pushes made with the GITHUB_TOKEN start no workflows; dispatch CI on the branch so the
+          # required checks get reported on the new head commit.
+          gh workflow run ci.yml --repo "$REPO" --ref "$HEAD_REF"
+          gh pr merge "$PR" --repo "$REPO" --auto --squash
 
       - name: Comment on the pull request
         if: always() && steps.pr.outcome == 'success'
@@ -181,7 +211,7 @@ jobs:
         shell: bash
         run: |
           if [ "$JOB_STATUS" = "success" ]; then
-            body="Merged \`${DEFAULT_BRANCH}\` into this branch (conflicts resolved automatically where needed). Please review the merge commit and re-run the checks."
+            body="Merged \`${DEFAULT_BRANCH}\` into this branch (conflicts resolved automatically where needed), started CI and enabled auto-merge: the pull request merges by itself once all required checks and reviews pass."
           else
             body="Automatic conflict resolution failed and needs a human: ${RUN_URL}"
           fi
