@@ -1462,6 +1462,8 @@ function New-WinEaseDebloatTab {
     $engineHelpMark = New-WinEaseLabel -Text '?' -X 431 -Y 11 -Width 16 -Height 20 `
         -ForeColor $script:WinEaseGuiColors.Accent -Font (New-Object System.Drawing.Font($uiFontName, 9, [System.Drawing.FontStyle]::Bold)) -Parent $barDeb
     $engineHelpMark.Name = 'WinEaseEngineHelp'
+    $engineHelpMark.AccessibleName = $engineHelpText
+    $engineHelpMark.AccessibleRole = [System.Windows.Forms.AccessibleRole]::PushButton
     [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Debloat.Engine.All') -X 455 -Y 11 -Width 135 -Height 20 `
         -ForeColor $script:WinEaseGuiColors.Text -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $barDeb)
     $cmbAllEngine = New-WinEaseComboBox -Items @('PowerShell', 'Rust') -DropList -SelectedIndex 0 `
