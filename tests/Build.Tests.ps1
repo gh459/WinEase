@@ -193,6 +193,54 @@ Describe "WinEase setup scripts - Custom Scripts Logging" {
         $content | Should Match "Duration:"
         $content.Contains("escapedScriptPath = `$scriptPath -replace") | Should Be $true
     }
+
+    It "scripts/UserOnce.ps1 skips pipeline execution block when custom scripts directory is empty or contains only non-supported files" {
+        if ([string]::IsNullOrEmpty($env:TEMP)) {
+            $env:TEMP = [System.IO.Path]::GetTempPath().TrimEnd('\', '/')
+        }
+        $userOncePath = Join-Path $script:RepoRoot "scripts\UserOnce.ps1"
+        $rawContent = [System.IO.File]::ReadAllText($userOncePath, [System.Text.Encoding]::UTF8)
+
+        $tmpDir = [System.IO.Path]::GetTempPath()
+        $testCustomDir = Join-Path $tmpDir ([System.IO.Path]::GetRandomFileName())
+        $testLogFile = Join-Path $tmpDir ([System.IO.Path]::GetRandomFileName() + ".log")
+
+        New-Item -ItemType Directory -Path $testCustomDir -Force | Out-Null
+
+        try {
+            $code = $rawContent -replace '(?m)^\s*exit\s+0\s*;\s*$', ''
+            $code = $code -replace '(?m)^\s*\$userCustomDir\s*=.*$', "`$userCustomDir = '$testCustomDir';"
+            $code = $code -replace '(?m)^\s*\$userLogFile\s*=.*$', "`$userLogFile = '$testLogFile';"
+            $sb = [scriptblock]::Create($code)
+
+            # Scenario A: Empty custom scripts directory
+            & $sb
+            (Test-Path -LiteralPath $testLogFile) | Should Be $false
+
+            # Scenario B: Directory containing only non-supported / non-script files
+            New-Item -ItemType File -Path (Join-Path $testCustomDir "unsupported.txt") -Value "sample text" | Out-Null
+            New-Item -ItemType File -Path (Join-Path $testCustomDir "document.pdf") -Value "sample pdf" | Out-Null
+
+            & $sb
+
+            (Test-Path -LiteralPath $testLogFile) | Should Be $true
+            $logContent = Get-Content -LiteralPath $testLogFile -Raw
+            $logContent | Should Match "\[SKIPPED\] File: unsupported\.txt"
+            $logContent | Should Match "\[SKIPPED\] File: document\.pdf"
+            $logContent | Should Not Match "User Custom Scripts Pipeline Started"
+
+            # Scenario C: Directory containing supported script files
+            New-Item -ItemType File -Path (Join-Path $testCustomDir "01-custom.ps1") -Value "Write-Output Hi" | Out-Null
+
+            & $sb
+
+            $logContent2 = Get-Content -LiteralPath $testLogFile -Raw
+            $logContent2 | Should Match "User Custom Scripts Pipeline Started"
+        } finally {
+            if (Test-Path -LiteralPath $testCustomDir) { Remove-Item -LiteralPath $testCustomDir -Recurse -Force -ErrorAction SilentlyContinue }
+            if (Test-Path -LiteralPath $testLogFile) { Remove-Item -LiteralPath $testLogFile -Force -ErrorAction SilentlyContinue }
+        }
+    }
 }
 
 Describe "Builder cleanup S11" {
