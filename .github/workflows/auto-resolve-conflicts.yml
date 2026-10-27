@@ -13,9 +13,10 @@ name: Auto-resolve merge conflicts
 # checks have to be re-run by pushing again or closing/reopening it. A resolution that touches
 # .github/workflows cannot be pushed with this token either; that job fails and says so.
 #
-# After a resolution is pushed the workflow starts CI on the branch and enables auto-merge
-# (squash), so the pull request is merged by GitHub as soon as the required checks pass.
-# Requires "Allow auto-merge" and required status checks on the default branch.
+# After a resolution is pushed the workflow starts CI on the branch. It does not enable
+# auto-merge: the pull request waits for a human to merge it once the checks pass. (2026-10-27:
+# enabling auto-merge on every push made main advance on its own and re-ran CI for every open
+# pull request on each push.)
 #
 # Manual run: Actions -> "Auto-resolve merge conflicts" -> Run workflow (optionally one PR number).
 
@@ -94,7 +95,7 @@ jobs:
         pr: ${{ fromJSON(needs.find.outputs.prs) }}
     permissions:
       contents: write        # push the merge commit to the pull request's own branch
-      pull-requests: write   # comment on the pull request, enable auto-merge
+      pull-requests: write   # comment on the pull request
       actions: write         # start the CI workflow on the pushed branch (GITHUB_TOKEN pushes start none)
     env:
       GH_TOKEN: ${{ github.token }}
@@ -138,7 +139,9 @@ jobs:
         if: steps.merge.outputs.conflicts == 'true'
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
         with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Repository secret ANTHROPIC_API_KEY (docs/REPOSITORY_SETTINGS.md); the
+          # CLAUDE_CODE_OAUTH_TOKEN variant is not configured in this repository.
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
           # No Bash beyond read-only git: the agent only edits files. Committing and pushing
           # are done by the next steps, so the agent never holds push credentials.
@@ -187,11 +190,10 @@ jobs:
             push origin "HEAD:refs/heads/${HEAD_REF}"
           echo "pushed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Run CI and enable auto-merge
-        # Merging is left to GitHub: auto-merge (squash) only completes once every required check
-        # and review of the branch protection passes, so a bad resolution is never merged by this
-        # workflow alone. Needs "Allow auto-merge" in the repository settings; if it is off, the
-        # step fails and the comment below tells a human to merge manually.
+      - name: Run CI on the updated branch
+        # Merging is left to a human: the workflow only reports the result. Enabling auto-merge
+        # here made every push to main merge a batch of pull requests by itself, which advanced
+        # main again and re-ran CI for every open pull request (2026-10-27 change).
         if: steps.push.outputs.pushed == 'true'
         env:
           HEAD_REF: ${{ steps.pr.outputs.ref }}
@@ -201,7 +203,6 @@ jobs:
           # Pushes made with the GITHUB_TOKEN start no workflows; dispatch CI on the branch so the
           # required checks get reported on the new head commit.
           gh workflow run ci.yml --repo "$REPO" --ref "$HEAD_REF"
-          gh pr merge "$PR" --repo "$REPO" --auto --squash
 
       - name: Comment on the pull request
         if: always() && steps.pr.outcome == 'success'
@@ -211,7 +212,7 @@ jobs:
         shell: bash
         run: |
           if [ "$JOB_STATUS" = "success" ]; then
-            body="Merged \`${DEFAULT_BRANCH}\` into this branch (conflicts resolved automatically where needed), started CI and enabled auto-merge: the pull request merges by itself once all required checks and reviews pass."
+            body="Merged \`${DEFAULT_BRANCH}\` into this branch (conflicts resolved automatically where needed) and started CI. The pull request is not merged automatically: merge it once the checks pass."
           else
             body="Automatic conflict resolution failed and needs a human: ${RUN_URL}"
           fi

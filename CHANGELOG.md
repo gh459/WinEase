@@ -5,6 +5,12 @@ WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
 ## Unreleased (local fork, 2026-10-26) - the migration rules back up what they promise, and the backup is fast
 
+### GitHub automation cleanup (2026-10-27)
+- **The Claude workflows can authenticate again.** `claude-issue-agent.yml` and `auto-resolve-conflicts.yml` read `secrets.CLAUDE_CODE_OAUTH_TOKEN`, which this repository does not have (only `ANTHROPIC_API_KEY` is configured), so every agent step would have failed. Both now pass `anthropic_api_key`.
+- **`auto-resolve-conflicts.yml` no longer enables auto-merge.** On every push to `main` it merged `main` into every conflicting pull request, started CI and enabled squash auto-merge, so `main` advanced on its own and every open pull request re-ran CI. It still resolves conflicts and starts CI; merging is left to a person.
+- **`close-failed-agent-prs.yml` matches the agents that exist.** It only reacted to `claude/*` branches, which this repository never had (15 runs, all `skipped`). It now checks `AGENT_BRANCH_PATTERN` (`claude/`, `jules-`, `perf*`, `refactor*`, `test*`, `bolt-`, `code-health/`).
+- **Agent journals organised.** `.jules/README.md` documents the format; `bolt.md`, `sentinel.md` and `palette.md` share one layout (newest first, titled entries). `docs/REPOSITORY_SETTINGS.md` and `docs/dev/github-automation-audit.md` now describe the workflows that actually exist.
+
 ### Fixed
 - **The migration rules now really back up app settings and game saves.** Three defects made selected rules produce nothing while the backup still reported success:
   - Registry rules (7-Zip, PuTTY) exported nothing: `reg.exe export` was called with the PowerShell PSDrive spelling (`HKCU:\...`), which reg.exe rejects as an invalid key name, and both the exit code and the output were discarded. The key is passed without the colon now, the exit code is checked (`Invoke-WinEaseRegExe`), and a failed export is a reported failure. Each key gets its own `<key>.reg` file (a rule with several keys no longer overwrites the first export), and the restore imports every `.reg` file. The same helper stops the success message on stderr from throwing a false failure under `-ErrorActionPreference Stop` on import.

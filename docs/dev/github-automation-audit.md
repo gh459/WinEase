@@ -155,3 +155,18 @@ attestation (free on public repositories) binds the ZIP to this workflow run and
 - **Actions settings:** keep "Allow GitHub Actions to create and approve pull requests" off.
 - **Residual risk:** the agent is write-capable with `Bash`; a trusted user can still feed it
   hostile text. Review its draft PRs like any external contribution.
+
+## 8. Current state (2026-10-27)
+
+Snapshot after the GitHub automation cleanup of 2026-10-27. Sections 1-7 are kept as the
+point-in-time record above; items they describe may no longer exist (for example
+`claude-pr-review.yml` was removed, and the Claude workflows now use a different secret).
+
+| Item | State |
+|---|---|
+| Workflows | `ci.yml`, `lint.yml`, `workflow-audit.yml`, `release.yml`, `integration-vm.yml`, `auto-resolve-conflicts.yml`, `claude-issue-agent.yml`, `close-failed-agent-prs.yml` |
+| Secret for the Claude steps | `ANTHROPIC_API_KEY` (passed as `anthropic_api_key`); `CLAUDE_CODE_OAUTH_TOKEN` is not configured in this repository |
+| `auto-resolve-conflicts.yml` | merges `main` into conflicting PRs and starts CI; it **no longer enables auto-merge**, because that made `main` advance by itself and re-ran CI for every open PR on each push |
+| `close-failed-agent-prs.yml` | matches the branches the agents actually push (`AGENT_BRANCH_PATTERN`: `claude/`, `jules-`, `perf*`, `refactor*`, `test*`, `bolt-`, `code-health/`) instead of `claude/*` only, which never matched in this repository |
+| Agent journals | `.jules/{bolt,sentinel,palette}.md` with `.jules/README.md` defining the entry format |
+| Observed run history before the cleanup | `close-failed-agent-prs.yml` 15 runs, all `skipped`; `auto-resolve-conflicts.yml` 13 runs (1 success, 2 failures, rest skipped/cancelled); 21 open PRs kept 21 `WinEase CI` runs queued |
