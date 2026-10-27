@@ -325,18 +325,21 @@ function Get-WinEaseCustomScriptFiles {
         [switch]$IncludeLegacy
     )
     $base = Join-Path -Path $RepoRoot -ChildPath 'tools\custom-scripts'
-    $dirs = @(Join-Path -Path $base -ChildPath $Stage)
+    $dirs = [System.Collections.Generic.List[string]]::new()
+    $dirs.Add((Join-Path -Path $base -ChildPath $Stage))
     if ($IncludeLegacy) {
-        if ($Stage -eq 'FirstLogon') { $dirs += $base }
-        elseif ($Stage -eq 'UserOnce') { $dirs += (Join-Path -Path $base -ChildPath 'user') }
+        if ($Stage -eq 'FirstLogon') { $dirs.Add($base) }
+        elseif ($Stage -eq 'UserOnce') { $dirs.Add((Join-Path -Path $base -ChildPath 'user')) }
     }
-    $found = @()
+    $found = [System.Collections.Generic.List[object]]::new()
     foreach ($d in $dirs) {
         if (-not (Test-Path -LiteralPath $d)) { continue }
-        $found += @(Get-ChildItem -LiteralPath $d -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -ne 'README.md' -and $_.Name -ne '.gitkeep' })
+        foreach ($file in @(Get-ChildItem -LiteralPath $d -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ne 'README.md' -and $_.Name -ne '.gitkeep' })) {
+            $found.Add($file)
+        }
     }
-    return $found
+    return @($found)
 }
 
 # The four stages of the custom script pipeline: where the scripts live in the repository, where
