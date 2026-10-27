@@ -19,8 +19,24 @@ Describe "Plugin host" {
         return $Default
     }
 
+    $script:CanCompileCSharp = $false
+    try {
+        $p = New-Object -TypeName Microsoft.CSharp.CSharpCodeProvider
+        $o = New-Object -TypeName System.CodeDom.Compiler.CompilerParameters
+        $o.GenerateExecutable = $false
+        $o.GenerateInMemory = $true
+        $r = $p.CompileAssemblyFromSource($o, "public class Probe {}")
+        if ($null -ne $r -and -not $r.Errors.HasErrors) { $script:CanCompileCSharp = $true }
+    } catch {
+        $script:CanCompileCSharp = $false
+    }
+
     function New-TestAbstractions {
         param([string]$Path, [string]$Version = '1.0.0.0')
+        if (-not $script:CanCompileCSharp) {
+            Set-Content -LiteralPath $Path -Value 'dummy abstractions'
+            return $Path
+        }
         $srcDir = Join-Path -Path $script:RepoRoot -ChildPath 'src\WinEase.Plugins.Abstractions'
         $sources = @(Get-ChildItem -LiteralPath $srcDir -Filter '*.cs' -File | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) })
         $sources += "[assembly: System.Reflection.AssemblyVersion(`"$Version`")]"
@@ -38,6 +54,11 @@ Describe "Plugin host" {
             [string]$Describe = '',
             [string]$Reference = $script:AbstractionsDll
         )
+        $path = Join-Path -Path $script:PluginWork -ChildPath "$Name.dll"
+        if (-not $script:CanCompileCSharp) {
+            Set-Content -LiteralPath $path -Value 'dummy plugin'
+            return $path
+        }
         $source = @'
 using System;
 using System.Collections;
@@ -66,7 +87,6 @@ namespace @@NS@@ {
 }
 '@
         $source = $source.Replace('@@NS@@', $Name).Replace('@@ONPHASE@@', $OnPhase).Replace('@@DESCRIBE@@', $Describe)
-        $path = Join-Path -Path $script:PluginWork -ChildPath "$Name.dll"
         [void](New-WinEaseCSharpAssembly -Source @($source) -OutputPath $path -References @($Reference))
         return $path
     }
@@ -115,8 +135,110 @@ namespace @@NS@@ {
         if ($PassThru) { return $true }
     }
 
+    Context "New-WinEaseCSharpAssembly" {
+        It "compiles valid C# source into a DLL and returns OutputPath" -Skip:(-not $script:CanCompileCSharp) {
+            $outPath = Join-Path -Path $script:PluginWork -ChildPath 'TestAssemblyValid.dll'
+            $source = 'public class TestValid { public int Add(int a, int b) { return a + b; } }'
+            $res = New-WinEaseCSharpAssembly -Source @($source) -OutputPath $outPath
+            $res | Should Be $outPath
+            Test-Path -LiteralPath $outPath | Should Be $true
+            (Get-Item -LiteralPath $outPath).Length | Should BeGreaterThan 0
+        }
+
+        It "compiles C# source with additional assembly references" -Skip:(-not $script:CanCompileCSharp) {
+            $outPath = Join-Path -Path $script:PluginWork -ChildPath 'TestAssemblyRef.dll'
+            $source = 'using System.Data; public class TestRef { public DataTable GetTable() { return new DataTable(); } }'
+            $res = New-WinEaseCSharpAssembly -Source @($source) -OutputPath $outPath -References @('System.Data.dll')
+            $res | Should Be $outPath
+            Test-Path -LiteralPath $outPath | Should Be $true
+        }
+
+        It "throws formatted exception on C# compilation error" -Skip:(-not $script:CanCompileCSharp) {
+            $outPath = Join-Path -Path $script:PluginWork -ChildPath 'TestAssemblyBroken.dll'
+            $source = 'public class Broken { invalid c# syntax here }'
+            { New-WinEaseCSharpAssembly -Source @($source) -OutputPath $outPath } | Should Throw 'C# compile failed:'
+        }
+
+        It "configures compiler options, assembly references, and resource flags correctly" {
+            $script:capturedOptions = $null
+            $script:disposed = $false
+            Mock New-Object {
+                $obj = [PSCustomObject]@{}
+                $obj | Add-Member -MemberType ScriptMethod -Name CompileAssemblyFromSource -Value {
+                    param($options, $source)
+                    $script:capturedOptions = $options
+                    $errs = New-Object System.CodeDom.Compiler.CompilerErrorCollection
+                    return [PSCustomObject]@{ Errors = $errs }
+                }
+                $obj | Add-Member -MemberType ScriptMethod -Name Dispose -Value {
+                    $script:disposed = $true
+                }
+                return $obj
+            } -ParameterFilter { $TypeName -eq 'Microsoft.CSharp.CSharpCodeProvider' }
+
+            $dummyResFile = Join-Path $script:PluginWork 'res1.txt'
+            'resource content' | Set-Content -LiteralPath $dummyResFile
+            $outPath = Join-Path $script:PluginWork 'MockTarget.dll'
+
+            $res = New-WinEaseCSharpAssembly -Source @('class C {}') -OutputPath $outPath -References @('System.Xml.dll') -Resources @("$dummyResFile,My.Resource.Name")
+            $res | Should Be $outPath
+            $script:disposed | Should Be $true
+            $script:capturedOptions.GenerateExecutable | Should Be $false
+            $script:capturedOptions.GenerateInMemory | Should Be $false
+            $script:capturedOptions.OutputAssembly | Should Be $outPath
+            $script:capturedOptions.CompilerOptions | Should Match '/optimize\+'
+            $script:capturedOptions.CompilerOptions | Should Match '/resource:"'
+            $script:capturedOptions.CompilerOptions | Should Match 'My\.Resource\.Name'
+            $script:capturedOptions.ReferencedAssemblies -contains 'System.dll' | Should Be $true
+            $script:capturedOptions.ReferencedAssemblies -contains 'System.Core.dll' | Should Be $true
+            $script:capturedOptions.ReferencedAssemblies -contains 'System.Xml.dll' | Should Be $true
+        }
+
+        It "formats error messages with error number, line, and error text when compiler reports errors" {
+            $script:disposed = $false
+            Mock New-Object {
+                $obj = [PSCustomObject]@{}
+                $obj | Add-Member -MemberType ScriptMethod -Name CompileAssemblyFromSource -Value {
+                    param($options, $source)
+                    $errs = New-Object System.CodeDom.Compiler.CompilerErrorCollection
+                    $err = New-Object System.CodeDom.Compiler.CompilerError('CS1002', 5, 10, 'CS1002', '; expected')
+                    $err.IsWarning = $false
+                    [void]$errs.Add($err)
+                    return [PSCustomObject]@{ Errors = $errs }
+                }
+                $obj | Add-Member -MemberType ScriptMethod -Name Dispose -Value {
+                    $script:disposed = $true
+                }
+                return $obj
+            } -ParameterFilter { $TypeName -eq 'Microsoft.CSharp.CSharpCodeProvider' }
+
+            $outPath = Join-Path $script:PluginWork 'MockError.dll'
+            { New-WinEaseCSharpAssembly -Source @('class C') -OutputPath $outPath } | Should Throw 'C# compile failed: CS1002 line 5: ; expected'
+            $script:disposed | Should Be $true
+        }
+
+        It "ensures compiler provider is disposed even when CompileAssemblyFromSource throws an exception" {
+            $script:disposed = $false
+            Mock New-Object {
+                $obj = [PSCustomObject]@{}
+                $obj | Add-Member -MemberType ScriptMethod -Name CompileAssemblyFromSource -Value {
+                    param($options, $source)
+                    throw 'Unexpected compiler invocation error'
+                }
+                $obj | Add-Member -MemberType ScriptMethod -Name Dispose -Value {
+                    $script:disposed = $true
+                }
+                return $obj
+            } -ParameterFilter { $TypeName -eq 'Microsoft.CSharp.CSharpCodeProvider' }
+
+            $outPath = Join-Path $script:PluginWork 'MockException.dll'
+            { New-WinEaseCSharpAssembly -Source @('class C {}') -OutputPath $outPath } | Should Throw 'Unexpected compiler invocation error'
+            $script:disposed | Should Be $true
+        }
+    }
+
     Context "Loading and the allow list" {
-        It "loads a DLL whose SHA256 matches the lock file" {
+        It "loads a DLL whose SHA256 matches the lock file" -Skip:(-not $script:CanCompileCSharp) {
             $dll = New-TestPluginDll -Name 'LoadOk'
             $r = Import-TestPlugin -Dll $dll
             $r.LoadedCount | Should Be 1
@@ -128,7 +250,7 @@ namespace @@NS@@ {
             (Get-WinEaseLoadedPlugins)[0].Contributions -contains 'Registry' | Should Be $true
         }
 
-        It "does not load a DLL whose hash differs from the lock file" {
+        It "does not load a DLL whose hash differs from the lock file" -Skip:(-not $script:CanCompileCSharp) {
             $dll = New-TestPluginDll -Name 'HashBad'
             $r = Import-TestPlugin -Dll $dll -Sha256 ('0' * 64) 3>$null
             $r.LoadedCount | Should Be 0
@@ -137,7 +259,7 @@ namespace @@NS@@ {
             @([System.AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GetName().Name -eq 'HashBad' }).Count | Should Be 0
         }
 
-        It "does not load a DLL that is not in the lock file" {
+        It "does not load a DLL that is not in the lock file" -Skip:(-not $script:CanCompileCSharp) {
             $dll = New-TestPluginDll -Name 'NotListed'
             $r = Import-TestPlugin -Dll $dll -NotInLock 3>$null
             $r.LoadedCount | Should Be 0
@@ -145,7 +267,7 @@ namespace @@NS@@ {
             @([System.AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GetName().Name -eq 'NotListed' }).Count | Should Be 0
         }
 
-        It "refuses a lock entry whose file name leaves the plugin folder" {
+        It "refuses a lock entry whose file name leaves the plugin folder" -Skip:(-not $script:CanCompileCSharp) {
             $dir = Join-Path $script:PluginWork 'trav'
             New-Item -ItemType Directory -Force -Path $dir | Out-Null
             $lock = Join-Path $dir 'l.psd1'
@@ -155,7 +277,7 @@ namespace @@NS@@ {
             $r.Rejected[0].Reason | Should Match 'plain .dll name'
         }
 
-        It "does not load a DLL built for another major version of the contract" {
+        It "does not load a DLL built for another major version of the contract" -Skip:(-not $script:CanCompileCSharp) {
             New-Item -ItemType Directory -Force -Path (Join-Path $script:PluginWork 'v2') | Out-Null
             $abs2 = New-TestAbstractions -Path (Join-Path $script:PluginWork 'v2\WinEase.Plugins.Abstractions.dll') -Version '2.0.0.0'
             $dll = New-TestPluginDll -Name 'MajorTwo' -Reference $abs2
@@ -164,7 +286,7 @@ namespace @@NS@@ {
             $r.Rejected[0].Reason | Should Match 'major version 2'
         }
 
-        It "refuses a plugin that asks to replace a phase" {
+        It "refuses a plugin that asks to replace a phase" -Skip:(-not $script:CanCompileCSharp) {
             $dll = New-TestPluginDll -Name 'Replacer' -Describe 'd.ReplacesPhases = new string[] { "09-physical-debloat" };'
             $r = Import-TestPlugin -Dll $dll 3>$null
             $r.LoadedCount | Should Be 0
@@ -186,7 +308,7 @@ namespace @@NS@@ {
     }
 
     Context "Hooks around a phase" {
-        It "calls Before then After with the phase name" {
+        It "calls Before then After with the phase name" -Skip:(-not $script:CanCompileCSharp) {
             $dll = New-TestPluginDll -Name 'Order'
             [void](Import-TestPlugin -Dll $dll)
             Clear-TestRecEvents -Namespace 'Order'
@@ -195,7 +317,7 @@ namespace @@NS@@ {
             (Get-TestRecEvents -Namespace 'Order') -join ',' | Should Be '05-appx:Before,05-appx:After'
         }
 
-        It "skips a plugin whose phase list does not contain the phase" {
+        It "skips a plugin whose phase list does not contain the phase" -Skip:(-not $script:CanCompileCSharp) {
             $dll = New-TestPluginDll -Name 'OnlyFod' -Describe 'd.Phases = new string[] { "06-fod" };'
             [void](Import-TestPlugin -Dll $dll)
             Clear-TestRecEvents -Namespace 'OnlyFod'
@@ -204,7 +326,7 @@ namespace @@NS@@ {
             (Get-TestRecEvents -Namespace 'OnlyFod') -join ',' | Should Be '06-fod:Before'
         }
 
-        It "skips a plugin outside its build range and runs it inside" {
+        It "skips a plugin outside its build range and runs it inside" -Skip:(-not $script:CanCompileCSharp) {
             $dll = New-TestPluginDll -Name 'Ranged' -Describe 'd.MinBuild = 26100; d.MaxBuild = 26199;'
             [void](Import-TestPlugin -Dll $dll)
             Clear-TestRecEvents -Namespace 'Ranged'
@@ -231,20 +353,20 @@ namespace @@NS@@ {
 
     Context "OnError" {
         $throwing = 'throw new InvalidOperationException("boom");'
-        It "Warn reports the failure and goes on" {
+        It "Warn reports the failure and goes on" -Skip:(-not $script:CanCompileCSharp) {
             $dll = New-TestPluginDll -Name 'ThrowWarn' -OnPhase $throwing
             [void](Import-TestPlugin -Dll $dll -OnError Warn)
             $w = $null
             { Invoke-WinEasePluginHook -Phase '05-appx' -Stage Before -WarningVariable w 3>$null } | Should Not Throw
             @($script:WinEasePluginRunLog)[-1].Status | Should Be 'Failed'
         }
-        It "Ignore goes on" {
+        It "Ignore goes on" -Skip:(-not $script:CanCompileCSharp) {
             $dll = New-TestPluginDll -Name 'ThrowIgnore' -OnPhase $throwing
             [void](Import-TestPlugin -Dll $dll -OnError Ignore)
             { Invoke-WinEasePluginHook -Phase '05-appx' -Stage Before } | Should Not Throw
             @($script:WinEasePluginRunLog)[-1].Status | Should Be 'Failed'
         }
-        It "Stop ends the build" {
+        It "Stop ends the build" -Skip:(-not $script:CanCompileCSharp) {
             $dll = New-TestPluginDll -Name 'ThrowStop' -OnPhase $throwing
             [void](Import-TestPlugin -Dll $dll -OnError Stop)
             { Invoke-WinEasePluginHook -Phase '05-appx' -Stage Before } | Should Throw 'boom'
@@ -253,7 +375,7 @@ namespace @@NS@@ {
 
     Context "Host services and DryRun" {
         $touch = 'c.Host.SetOfflineRegistry("zSOFTWARE", "Software\\Plugin", "Flag", "REG_DWORD", "1"); c.Host.WriteImageFile("note.txt", new byte[] { 1 }); Rec.Events.Add("dryrun=" + c.Host.DryRun);'
-        It "writes the registry value through Invoke-WinEaseReg when it is not a DryRun" {
+        It "writes the registry value through Invoke-WinEaseReg when it is not a DryRun" -Skip:(-not $script:CanCompileCSharp) {
             $dll = New-TestPluginDll -Name 'HostReal' -OnPhase $touch
             [void](Import-TestPlugin -Dll $dll)
             $scratch = Join-Path $script:PluginWork 'scratch_real'
@@ -261,7 +383,7 @@ namespace @@NS@@ {
             @($script:RegCalls | Where-Object { $_ -like 'Add|HKLM\zSOFTWARE\Software\Plugin|Flag|REG_DWORD|1|*' }).Count | Should Be 1
             Test-Path -LiteralPath (Join-Path $scratch 'Windows\Setup\Scripts\Plugins\HostReal\note.txt') | Should Be $true
         }
-        It "only records the write operations in a DryRun" {
+        It "only records the write operations in a DryRun" -Skip:(-not $script:CanCompileCSharp) {
             $dll = New-TestPluginDll -Name 'HostDry' -OnPhase $touch
             [void](Import-TestPlugin -Dll $dll)
             $scratch = Join-Path $script:PluginWork 'scratch_dry'
@@ -270,13 +392,13 @@ namespace @@NS@@ {
             Test-Path -LiteralPath $scratch | Should Be $false
             (Get-TestRecEvents -Namespace 'HostDry') -contains 'dryrun=True' | Should Be $true
         }
-        It "refuses a registry hive that is not an offline hive" {
+        It "refuses a registry hive that is not an offline hive" -Skip:(-not $script:CanCompileCSharp) {
             $dll = New-TestPluginDll -Name 'HostHive' -OnPhase 'c.Host.SetOfflineRegistry("HKLM", "Software\\Evil", "V", "REG_DWORD", "1");'
             [void](Import-TestPlugin -Dll $dll -OnError Stop)
             { Invoke-WinEasePluginHook -Phase '10-registry' -Stage Before } | Should Throw
             $script:RegCalls.Count | Should Be 0
         }
-        It "does not let a plugin run DISM verbs that change the mount" {
+        It "does not let a plugin run DISM verbs that change the mount" -Skip:(-not $script:CanCompileCSharp) {
             $dll = New-TestPluginDll -Name 'HostDism' -OnPhase 'c.Host.RunDism(new string[] { "/Unmount-Image", "/MountDir:C:\\x", "/Discard" });'
             [void](Import-TestPlugin -Dll $dll -OnError Stop)
             { Invoke-WinEasePluginHook -Phase '10-registry' -Stage Before -ScratchDir $script:PluginWork } | Should Throw
@@ -284,7 +406,7 @@ namespace @@NS@@ {
     }
 
     Context "Contributions" {
-        It "returns registry entries in the table shape and drops invalid ones" {
+        It "returns registry entries in the table shape and drops invalid ones" -Skip:(-not $script:CanCompileCSharp) {
             $dll = New-TestPluginDll -Name 'ContribReg'
             [void](Import-TestPlugin -Dll $dll)
             $entries = @(Get-WinEasePluginContributions -Kind Registry 3>$null)
@@ -292,7 +414,7 @@ namespace @@NS@@ {
             $entries[0].Hive | Should Be 'zSYSTEM'
             $entries[0].PluginId | Should Be 'ContribReg'
         }
-        It "runs plugin registry entries through Invoke-WinEaseRegistryTable with the tweak gate" {
+        It "runs plugin registry entries through Invoke-WinEaseRegistryTable with the tweak gate" -Skip:(-not $script:CanCompileCSharp) {
             $dll = New-TestPluginDll -Name 'ContribTable'
             [void](Import-TestPlugin -Dll $dll)
             $entries = @(Get-WinEasePluginContributions -Kind Registry 3>$null)
@@ -303,7 +425,7 @@ namespace @@NS@@ {
             Invoke-WinEaseRegistryTable -Entries $entries
             $script:RegCalls.Count | Should Be 0
         }
-        It "returns appx, fod, service and image file contributions and drops invalid ones" {
+        It "returns appx, fod, service and image file contributions and drops invalid ones" -Skip:(-not $script:CanCompileCSharp) {
             $dll = New-TestPluginDll -Name 'ContribAll'
             [void](Import-TestPlugin -Dll $dll)
             @(Get-WinEasePluginContributions -Kind Appx)[0].Pattern | Should Be 'Contoso.*'
@@ -316,7 +438,7 @@ namespace @@NS@@ {
             $files.Count | Should Be 1
             $files[0].RelativePath | Should Be 'run.cmd'
         }
-        It "writes image files below Windows\Setup\Scripts\Plugins\<id> and not in a DryRun" {
+        It "writes image files below Windows\Setup\Scripts\Plugins\<id> and not in a DryRun" -Skip:(-not $script:CanCompileCSharp) {
             $dll = New-TestPluginDll -Name 'ContribFiles'
             [void](Import-TestPlugin -Dll $dll)
             $scratch = Join-Path $script:PluginWork 'scratch_files'
@@ -333,7 +455,7 @@ namespace @@NS@@ {
     }
 
     Context "Lock files, self test and user registration" {
-        It "Test-WinEasePluginLocks reports Ok, Mismatch and Missing" {
+        It "Test-WinEasePluginLocks reports Ok, Mismatch and Missing" -Skip:(-not $script:CanCompileCSharp) {
             $root = Join-Path $script:PluginWork 'repo'
             New-Item -ItemType Directory -Force -Path (Join-Path $root 'plugins\user'), (Join-Path $root 'plugins\builtin'), (Join-Path $root 'config\user') | Out-Null
             $good = New-TestPluginDll -Name 'LockGood'
@@ -353,7 +475,7 @@ namespace @@NS@@ {
             $result = Test-WinEaseSelfCheck22PluginLocks -ScriptRoot $script:RepoRoot
             $result.Passed | Should Be $true
         }
-        It "Add-WinEaseUserPlugin registers a file only with the hash the user confirmed" {
+        It "Add-WinEaseUserPlugin registers a file only with the hash the user confirmed" -Skip:(-not $script:CanCompileCSharp) {
             $root = Join-Path $script:PluginWork 'repo_add'
             New-Item -ItemType Directory -Force -Path $root | Out-Null
             $dll = New-TestPluginDll -Name 'UserAdd'
@@ -375,13 +497,14 @@ namespace @@NS@@ {
     }
 
     Context "WinUI host requests (plugins.list, plugins.addUser)" {
-        It "lists nothing, shows the hash first and registers only after the confirmation" {
+        It "lists nothing, shows the hash first and registers only after the confirmation" -Skip:(-not $script:CanCompileCSharp) {
             $root = Join-Path $script:PluginWork 'repo_host'
             New-Item -ItemType Directory -Force -Path (Join-Path $root 'config') | Out-Null
             Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'config\ui-strings') -Destination (Join-Path $root 'config\ui-strings') -Recurse
             $dll = New-TestPluginDll -Name 'HostReq'
             $hash = (Get-WinEasePluginFileInfo -Path $dll).Sha256
             $runner = Join-Path -Path $script:PluginWork -ChildPath 'host_requests.ps1'
+            $psExe = if (Get-Command 'powershell.exe' -ErrorAction SilentlyContinue) { 'powershell.exe' } else { 'pwsh' }
             $lines = @(
                 ". '$($script:GuiCorePath)'"
                 ". '$(Join-Path $script:RepoRoot 'gui\WinEaseWinUiHost.ps1')'"
@@ -396,7 +519,7 @@ namespace @@NS@@ {
                 "'RESULT ' + (@(`$list0, `$step1.Data.NeedsConfirm, `$step1.Data.Sha256, `$locked, `$step2.Data.NeedsConfirm, `$list1.Count, `$list1[0].Status) -join '|')"
             )
             [System.IO.File]::WriteAllText($runner, ($lines -join "`r`n"), (New-Object System.Text.UTF8Encoding($true)))
-            $out = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runner)
+            $out = @(& $psExe -NoProfile -ExecutionPolicy Bypass -File $runner)
             $out[-1] | Should Be "RESULT 0|True|$hash|False|False|1|Ok"
         }
     }
