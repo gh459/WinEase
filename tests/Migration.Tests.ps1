@@ -357,11 +357,9 @@ Describe "Migration rules backup/restore (tools/migrator/WinEaseMigration.ps1)" 
 
     It "exports a rule registry key written in PSDrive spelling (HKCU:\...) and restores it" -Skip:(-not (Get-PSDrive -Name HKCU -ErrorAction SilentlyContinue)) {
         $key = 'HKCU:\Software\WinEaseMigrationTest'
-        if (Test-Path 'HKCU:') {
-            if (Test-Path $key) { Remove-Item $key -Recurse -Force -ErrorAction SilentlyContinue }
-            New-Item -Path $key -Force | Out-Null
-            Set-ItemProperty -Path $key -Name Probe -Value 'backup'
-        }
+        New-Item -Path $key -Force | Out-Null
+        Set-ItemProperty -Path $key -Name Probe -Value 'backup'
+        try { [Microsoft.Win32.Registry]::CurrentUser.Flush() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         $rules = [PSCustomObject]@{
             GameRules      = @()
             AppConfigRules = @(@{ Id = 'RegProbe'; Name = 'Registry probe'; Category = 'AppConfig'; RegistryPaths = @($key); SourcePaths = @(); ExcludePatterns = @(); ProcessNames = @(); ExcludeSecrets = $true })
@@ -386,10 +384,13 @@ Describe "Migration rules backup/restore (tools/migrator/WinEaseMigration.ps1)" 
         $r.RegistryExports | Should Be 1
         $regFile = Get-ChildItem -LiteralPath (Join-Path $bk 'rules\RegProbe') -Filter '*.reg' | Select-Object -First 1
         $regFile | Should Not BeNullOrEmpty
-        if (Test-Path 'HKCU:') { if (Test-Path $key) { Remove-Item $key -Recurse -Force -ErrorAction SilentlyContinue } }
+        Remove-Item $key -Recurse -Force
+        try { [Microsoft.Win32.Registry]::CurrentUser.Flush() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
         $rr = Invoke-WinEaseMigrationRulesRestore -RuleIds @('RegProbe') -BackupRoot $bk -Rules $rules -ForceRunningProcess
         @($rr.FailedFiles).Count | Should Be 0
-        if (Test-Path 'HKCU:') { if (Test-Path $key) { Remove-Item $key -Recurse -Force -ErrorAction SilentlyContinue } }
+        (Get-ItemProperty -Path $key -Name Probe).Probe | Should Be 'backup'
+        Remove-Item $key -Recurse -Force
+        try { [Microsoft.Win32.Registry]::CurrentUser.Flush() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
     }
 
     It "restores every file of a multi-source rule to its own source location" {
