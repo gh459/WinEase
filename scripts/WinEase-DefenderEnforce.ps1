@@ -212,13 +212,13 @@ foreach ($shortcut in @(
 
 # 9. Report the real state. The service keys can survive until the next reboot after
 #    sc delete, so the report distinguishes "absent" from "pending deletion".
-$remainingServices = @()
+$remainingServices = [System.Collections.Generic.List[string]]::new()
 foreach ($svc in $services) {
-    if (Get-Service -Name $svc -ErrorAction SilentlyContinue) { $remainingServices += $svc }
+    if (Get-Service -Name $svc -ErrorAction SilentlyContinue) { $remainingServices.Add($svc) }
 }
-$remainingProcesses = @()
+$remainingProcesses = [System.Collections.Generic.List[string]]::new()
 foreach ($proc in @('MsMpEng', 'MpCmdRun', 'NisSrv', 'Sense', 'SecurityHealthService', 'SecurityHealthSystray', 'SecurityHealthHost', 'SecHealthUI')) {
-    if (Get-Process -Name $proc -ErrorAction SilentlyContinue) { $remainingProcesses += $proc }
+    if (Get-Process -Name $proc -ErrorAction SilentlyContinue) { $remainingProcesses.Add($proc) }
 }
 $remainingPackages = @()
 try {
@@ -229,10 +229,10 @@ $remainingDirs = [System.Collections.Generic.List[string]]::new()
 foreach ($dir in $payloadDirs) {
     if ($dir -and (Test-Path -LiteralPath $dir)) { $remainingDirs.Add($dir) }
 }
-$ifeoPresent = @()
+$ifeoPresent = [System.Collections.Generic.List[string]]::new()
 foreach ($ifeoName in @('MsMpEng.exe', 'SecurityHealthService.exe', 'SecurityHealthSystray.exe')) {
     $ifeoKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\' + $ifeoName
-    if (Test-Path -LiteralPath $ifeoKey) { $ifeoPresent += $ifeoName }
+    if (Test-Path -LiteralPath $ifeoKey) { $ifeoPresent.Add($ifeoName) }
 }
 
 $status = @(
