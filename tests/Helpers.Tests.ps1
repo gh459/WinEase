@@ -1716,6 +1716,7 @@ Describe "WinEase helpers - oscdimg integrity (Test-OscdimgIntegrity)" {
     It "returns `$false for null, empty, or whitespace paths" {
         Test-OscdimgIntegrity -OscdimgPath $null | Should Be $false
         Test-OscdimgIntegrity -OscdimgPath "" | Should Be $false
+        Test-OscdimgIntegrity -OscdimgPath "   " | Should Be $false
     }
 
     It "returns `$false for a non-existent file path" {
@@ -1772,6 +1773,60 @@ Describe "WinEase helpers - oscdimg integrity (Test-OscdimgIntegrity)" {
         try {
             Mock Get-AuthenticodeSignature { return $null }
             Mock Get-FileHash { return [PSCustomObject]@{ Hash = '0000000000000000000000000000000000000000000000000000000000000000' } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "falls through to hash check when Authenticode signature is invalid or non-Microsoft" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_inval_sig_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        $pinnedHash = 'F5129F313ED7EB46F2677CF522E64264A225F226307ED0DDB52BB14C46E7CFDD'
+        try {
+            # Case A: Signature status is NotSigned
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{ Status = 'NotSigned'; SignerCertificate = $null }
+            }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = $pinnedHash } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $true
+
+            # Case B: Signature status is Valid but Subject is non-Microsoft
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{
+                    Status            = 'Valid'
+                    SignerCertificate = [PSCustomObject]@{ Subject = 'CN=Unknown Vendor' }
+                }
+            }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = '0000000000000000000000000000000000000000000000000000000000000000' } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "falls back to pinned hash check when Get-AuthenticodeSignature throws an exception" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_sig_ex_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        $pinnedHash = 'F5129F313ED7EB46F2677CF522E64264A225F226307ED0DDB52BB14C46E7CFDD'
+        try {
+            Mock Get-AuthenticodeSignature { throw "Authenticode check error" }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = $pinnedHash } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $true
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "returns `$false when Get-FileHash throws an exception or returns null hash" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_hash_err_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        try {
+            Mock Get-AuthenticodeSignature { return $null }
+            Mock Get-FileHash { return $null }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
+
+            Mock Get-FileHash { throw "File hash error" }
             Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
         } finally {
             Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
