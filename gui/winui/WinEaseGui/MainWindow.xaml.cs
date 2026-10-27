@@ -356,7 +356,9 @@ public sealed partial class MainWindow : Window
         foreach (var (tag, text, glyph) in items)
         {
             string cleanText = CleanTabText(text);
-            var item = new NavigationViewItem { Content = cleanText, Tag = tag, Icon = new FontIcon { Glyph = glyph } };
+            var icon = new FontIcon { Glyph = glyph };
+            AutomationProperties.SetAccessibilityView(icon, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
+            var item = new NavigationViewItem { Content = cleanText, Tag = tag, Icon = icon };
             AutomationProperties.SetName(item, cleanText);
             ToolTipService.SetToolTip(item, cleanText);
             Nav.MenuItems.Add(item);
@@ -505,6 +507,7 @@ public sealed partial class MainWindow : Window
         if (glyph != null)
         {
             var icon = new FontIcon { Glyph = glyph, FontSize = 18, VerticalAlignment = VerticalAlignment.Center };
+            AutomationProperties.SetAccessibilityView(icon, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
             grid.Children.Add(icon);
         }
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
@@ -1350,6 +1353,8 @@ public sealed partial class MainWindow : Window
         {
             string name = f;
             var cb = new CheckBox { Content = f, IsChecked = _migFolders.Contains(f) };
+            AutomationProperties.SetName(cb, f);
+            ToolTipService.SetToolTip(cb, f);
             cb.Checked += (_, _) => _migFolders.Add(name);
             cb.Unchecked += (_, _) => _migFolders.Remove(name);
             folders.Children.Add(cb);
@@ -1494,7 +1499,10 @@ public sealed partial class MainWindow : Window
         foreach (var (id, name) in _migRules)
         {
             string ruleId = id;
-            var cb = new CheckBox { Content = $"{id} - {name}", IsChecked = _migRuleIds.Contains(id) };
+            string ruleLabel = $"{id} - {name}";
+            var cb = new CheckBox { Content = ruleLabel, IsChecked = _migRuleIds.Contains(id) };
+            AutomationProperties.SetName(cb, ruleLabel);
+            ToolTipService.SetToolTip(cb, ruleLabel);
             cb.Checked += (_, _) => _migRuleIds.Add(ruleId);
             cb.Unchecked += (_, _) => _migRuleIds.Remove(ruleId);
             host.Children.Add(cb);
