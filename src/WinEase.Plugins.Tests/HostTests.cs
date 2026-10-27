@@ -55,6 +55,39 @@ namespace WinEase.Plugins.Tests
             Assert.Equal(0, calls[2]);
         }
 
+        [Theory]
+        [InlineData("file.txt")]
+        [InlineData("subfolder/file.txt")]
+        [InlineData("subfolder\\file.txt")]
+        [InlineData("a/b/c.txt")]
+        [InlineData("a\\b\\c.txt")]
+        [InlineData(".hiddenfile")]
+        [InlineData("folder..name/file.txt")]
+        public void CheckRelativePathAcceptsValidRelativePaths(string path)
+        {
+            DelegateWinEaseHost.CheckRelativePath(path);
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        [InlineData("   ")]
+        [InlineData("\t")]
+        [InlineData("C:\\path\\file.txt")]
+        [InlineData("d:file.txt")]
+        [InlineData("\\leadingbackslash\\file.txt")]
+        [InlineData("/leadingslash/file.txt")]
+        [InlineData("..")]
+        [InlineData("..\\evil.txt")]
+        [InlineData("../evil.txt")]
+        [InlineData("a/b/../evil.txt")]
+        [InlineData("a\\b\\..\\evil.txt")]
+        public void CheckRelativePathRejectsInvalidRelativePaths(string path)
+        {
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => DelegateWinEaseHost.CheckRelativePath(path));
+            Assert.Equal("relativePath", ex.ParamName);
+        }
+
         [Fact]
         public void IsTweakEnabledFallsBackToTheDefault()
         {
