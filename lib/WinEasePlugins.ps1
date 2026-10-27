@@ -211,7 +211,7 @@ function Initialize-WinEaseBuiltinPlugins {
     $paths = Get-WinEasePluginPaths -RepoRoot $RepoRoot
     $entries = @()
     try { $entries = @(Read-WinEasePluginLock -Path $paths.BuiltinLock) } catch { Write-Verbose "Built-in lock not readable: $($_.Exception.Message)" }
-    $todo = [System.Collections.Generic.List[string]]::new()
+    $pluginsToBuild = [System.Collections.Generic.List[string]]::new()
     foreach ($name in $script:WinEaseBuiltinPluginNames) {
         $file = Get-WinEaseBuiltinPluginFileName -Name $name
         $entry = @($entries | Where-Object { $_.File -ieq $file })[0]
@@ -232,9 +232,9 @@ function Initialize-WinEaseBuiltinPlugins {
             Write-Warning "[Plugins] Built-in plugin '$name' is not available: no $file in plugins\builtin and no source in src\. Its tweaks are not applied."
             continue
         }
-        $todo.Add($name)
+        $pluginsToBuild.Add($name)
     }
-    if ($todo.Count -eq 0) { return @() }
+    if ($pluginsToBuild.Count -eq 0) { return @() }
 
     $built = [System.Collections.Generic.List[string]]::new()
     $work = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEaseBuiltin_{0}" -f [guid]::NewGuid().ToString('N'))
@@ -249,7 +249,7 @@ function Initialize-WinEaseBuiltinPlugins {
             $sources += '[assembly: System.Reflection.AssemblyVersion("1.0.0.0")]'
             [void](New-WinEaseCSharpAssembly -Source $sources -OutputPath $abstractionsRef)
         }
-        foreach ($name in $todo) {
+        foreach ($name in $pluginsToBuild) {
             $srcDir = Join-Path -Path $paths.RepoRoot -ChildPath "src\WinEase.Plugins.Builtin.$name"
             $out = Join-Path -Path $paths.BuiltinDir -ChildPath (Get-WinEaseBuiltinPluginFileName -Name $name)
             try {
