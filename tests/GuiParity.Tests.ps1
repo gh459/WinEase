@@ -559,11 +559,7 @@ Describe "GUI parity (WinUI 3 / WinForms / command line)" {
             ($script:CliSnapshot -contains "engine.$($script:FxEngineItem)=Rust") | Should Be $true
             ($script:CliSnapshot -contains ('debloatStd=' + ((@($script:FixtureStd) | Sort-Object) -join '|'))) | Should Be $true
             ($script:CliSnapshot -contains ('debloatExp=' + ((@($script:FixtureExp) | Sort-Object) -join '|'))) | Should Be $true
-            $bad = @(
-                foreach ($k in $script:FixtureTweaks.Keys) {
-                    if ($script:CliSnapshot -notcontains "tweak.$k=$($script:FixtureTweaks[$k])") { $k }
-                }
-            )
+            $bad = @(foreach ($k in $script:FixtureTweaks.Keys) { if ($script:CliSnapshot -notcontains "tweak.$k=$($script:FixtureTweaks[$k])") { $k } })
             ($bad -join ',') | Should BeNullOrEmpty
             foreach ($cd in $script:ComponentDefs.Values) {
                 if ($cd.Type -eq 'Bool' -and $cd.Gui) {
