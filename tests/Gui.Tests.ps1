@@ -453,8 +453,7 @@ $schemaText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\
     function Get-DebloatItemFromGuiSource {
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiCorePath, [ref]$null, [ref]$null)
         $assigns = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in '$script:WinEaseDebloatStandardItems', '$script:WinEaseDebloatExperimentalItems' }, $true)
-        $items = @()
-        foreach ($a in $assigns) { $items += @($a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value }) }
+        $items = foreach ($a in $assigns) { $a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value } }
         return @($items | Select-Object -Unique)
     }
 
@@ -1398,8 +1397,7 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
     function Get-DebloatItemFromSource {
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiCorePath, [ref]$null, [ref]$null)
         $assigns = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in '$script:WinEaseDebloatStandardItems', '$script:WinEaseDebloatExperimentalItems' }, $true)
-        $items = @()
-        foreach ($a in $assigns) { $items += @($a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value }) }
+        $items = foreach ($a in $assigns) { $a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value } }
         return @($items | Select-Object -Unique)
     }
     function Get-AllControls($ctl) { foreach ($c in $ctl.Controls) { $c; Get-AllControls $c } }

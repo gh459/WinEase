@@ -166,14 +166,9 @@ function Get-WinEaseWinUiJobReply {
     return @{ Kind = $kind; Text = $text }
 }
 
-# One window request -> reply hashtable (Kind / Title / Text for a message, Data for values)
-function Invoke-WinEaseWinUiRequest {
-    param([string]$Op, $Arguments)
-    $a = ConvertTo-WinEaseHashtable $Arguments
-    if (-not $a) { $a = @{} }
-    $repo = $script:WinEaseGuiRepoRoot
-    $root = "$($a.BackupRoot)".Trim()
-    if (-not $root) { $root = Get-WinEaseDefaultMigrationBackupPath }
+function Invoke-WinEaseWinUiGeneralRequest {
+    param([string]$Op, $Arguments, [string]$RepoRoot)
+    $a = $Arguments
     switch ($Op) {
         'sources' { return @{ Data = (Get-WinEaseGuiSourceCandidates) } }
         'saveLanguage' {
@@ -215,6 +210,25 @@ function Invoke-WinEaseWinUiRequest {
             $rows = @($issues | ForEach-Object { @{ Field = "$($_.Field)"; Severity = "$($_.Severity)"; MessageKey = "$($_.MessageKey)"; Text = (Get-WinEaseInputIssueText -Issue $_); Confirm = [bool]$_.Confirm } })
             return @{ Data = @{ Issues = $rows; HasError = (Test-WinEaseInputHasError -Issues $issues) } }
         }
+        'guide' {
+            $guide = Join-Path $RepoRoot 'docs\EXTENSIBILITY_GUIDE.md'
+            if ($script:WinEaseUiLanguage -eq 'ja') {
+                $guideJa = Join-Path $RepoRoot 'docs\EXTENSIBILITY_GUIDE.ja.md'
+                if (Test-Path -LiteralPath $guideJa) { $guide = $guideJa }
+            }
+            if (-not (Test-Path -LiteralPath $guide)) { throw (Get-WinEaseUiString 'Mig.Guide.NotFound' -Format $guide) }
+            try { Start-Process -FilePath $guide -ErrorAction Stop }
+            catch { Start-Process -FilePath 'explorer.exe' -ArgumentList "/select,`"$guide`"" }
+            return @{}
+        }
+        default { throw "Unknown request '$Op'" }
+    }
+}
+
+function Invoke-WinEaseWinUiPresetRequest {
+    param([string]$Op, $Arguments)
+    $a = $Arguments
+    switch ($Op) {
         'presetState' {
             # Is the window still the base preset? Rules: Get-WinEaseGuiPresetState (lib\WinEaseGuiCore.ps1)
             $st = Get-WinEaseGuiPresetState -BasePresetKey "$($a.BasePresetKey)" -Current $a.Config
@@ -248,6 +262,16 @@ function Invoke-WinEaseWinUiRequest {
             $diff = Compare-WinEaseConfig -ReferenceConfig $resolved[0] -DifferenceConfig $resolved[1]
             return @{ Text = "$(Format-WinEaseConfigDiff -DiffResult $diff)" }
         }
+        default { throw "Unknown request '$Op'" }
+    }
+}
+
+function Invoke-WinEaseWinUiMigrationRequest {
+    param([string]$Op, $Arguments, [string]$RepoRoot, [string]$BackupRoot)
+    $a = $Arguments
+    $repo = $RepoRoot
+    $root = $BackupRoot
+    switch ($Op) {
         'readiness' {
             $rr = Test-WinEaseRecoveryReadiness -Config $a.Config
             $msg = Get-WinEaseUiString 'Mig.Readiness.Message' -Format $rr.ReadinessScore, ($rr.SecondaryDrives -join ', '), $rr.SystemRestoreEnabled, $rr.WinReEnabledOnTarget, ($rr.Recommendations -join "`n")
@@ -268,7 +292,7 @@ function Invoke-WinEaseWinUiRequest {
             $ruleErrors = @(
                 try {
                     if ($data) { @($data.Errors | ForEach-Object { "$_" }) }
-                } catch { }
+                } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
             )
             return @{ Data = $rules; Errors = $ruleErrors }
         }
@@ -364,18 +388,15 @@ function Invoke-WinEaseWinUiRequest {
             Start-Process powershell.exe -ArgumentList $migratorArgs -WindowStyle Normal
             return @{}
         }
-        'guide' {
-            $guide = Join-Path $repo 'docs\EXTENSIBILITY_GUIDE.md'
-            if ($script:WinEaseUiLanguage -eq 'ja') {
-                $guideJa = Join-Path $repo 'docs\EXTENSIBILITY_GUIDE.ja.md'
-                if (Test-Path -LiteralPath $guideJa) { $guide = $guideJa }
-            }
-            if (-not (Test-Path -LiteralPath $guide)) { throw (Get-WinEaseUiString 'Mig.Guide.NotFound' -Format $guide) }
-            try { Start-Process -FilePath $guide -ErrorAction Stop }
-            catch { Start-Process -FilePath 'explorer.exe' -ArgumentList "/select,`"$guide`"" }
-            return @{}
-        }
-        # --- custom scripts (tools\custom-scripts\<Stage>) ---
+        default { throw "Unknown request '$Op'" }
+    }
+}
+
+function Invoke-WinEaseWinUiCustomScriptRequest {
+    param([string]$Op, $Arguments, [string]$RepoRoot)
+    $a = $Arguments
+    $repo = $RepoRoot
+    switch ($Op) {
         'customScripts' {
             $stage = "$($a.Stage)".Trim()
             if (-not $stage) { $stage = 'FirstLogon' }
@@ -458,7 +479,15 @@ function Invoke-WinEaseWinUiRequest {
             Start-Process -FilePath 'explorer.exe' -ArgumentList "`"$folder`""
             return @{}
         }
-        # --- plugins (plugins\builtin, plugins\user; allow lists: the two *.lock.psd1 files) ---
+        default { throw "Unknown request '$Op'" }
+    }
+}
+
+function Invoke-WinEaseWinUiPluginRequest {
+    param([string]$Op, $Arguments, [string]$RepoRoot)
+    $a = $Arguments
+    $repo = $RepoRoot
+    switch ($Op) {
         'plugins.list' {
             $pluginEngine = Join-Path $repo 'lib\WinEasePlugins.ps1'
             if (-not (Get-Command -Name Get-WinEasePluginInventory -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $pluginEngine)) { . $pluginEngine }
@@ -496,6 +525,35 @@ function Invoke-WinEaseWinUiRequest {
             $onErrorValue = if ("$($a.OnError)") { "$($a.OnError)" } else { 'Warn' }
             $added = Add-WinEaseUserPlugin -Path $pluginPath -ExpectedSha256 $confirm -OnError $onErrorValue -Description "$($a.Description)" -RepoRoot $repo
             return @{ Kind = 'Info'; Title = $pluginTitle; Text = (Get-WinEaseUiString 'Plugins.Added' -Format $added.File, $added.Sha256); Data = @{ NeedsConfirm = $false; File = $added.File; Sha256 = $added.Sha256 } }
+        }
+        default { throw "Unknown request '$Op'" }
+    }
+}
+
+# One window request -> reply hashtable (Kind / Title / Text for a message, Data for values)
+function Invoke-WinEaseWinUiRequest {
+    param([string]$Op, $Arguments)
+    $a = ConvertTo-WinEaseHashtable $Arguments
+    if (-not $a) { $a = @{} }
+    $repo = $script:WinEaseGuiRepoRoot
+    $root = "$($a.BackupRoot)".Trim()
+    if (-not $root) { $root = Get-WinEaseDefaultMigrationBackupPath }
+
+    switch ($Op) {
+        { $_ -in 'sources', 'saveLanguage', 'dependencies', 'buildPlan', 'validate', 'guide' } {
+            return Invoke-WinEaseWinUiGeneralRequest -Op $Op -Arguments $a -RepoRoot $repo
+        }
+        { $_ -in 'presetState', 'presets', 'savePreset', 'presetDiff' } {
+            return Invoke-WinEaseWinUiPresetRequest -Op $Op -Arguments $a
+        }
+        { $_ -in 'readiness', 'migrationRules', 'exportApps', 'estimate', 'backup', 'verify', 'restore', 'backupCustom', 'restoreCustom', 'wizard' } {
+            return Invoke-WinEaseWinUiMigrationRequest -Op $Op -Arguments $a -RepoRoot $repo -BackupRoot $root
+        }
+        { $_ -in 'customScripts', 'customScriptAdd', 'customScriptRemove', 'customScriptMeta', 'customScriptReorder', 'customScriptPreview', 'customScriptOpenFolder' } {
+            return Invoke-WinEaseWinUiCustomScriptRequest -Op $Op -Arguments $a -RepoRoot $repo
+        }
+        { $_ -in 'plugins.list', 'plugins.addUser' } {
+            return Invoke-WinEaseWinUiPluginRequest -Op $Op -Arguments $a -RepoRoot $repo
         }
         default { throw "Unknown request '$Op'" }
     }
@@ -632,6 +690,7 @@ function Show-WinEaseWinUiGUI {
 # see docs\PROGRESS_PROTOCOL.md. A window that does not know an event ignores it.
 # A no-op without an open window; a closed window drops the channel and never stops the build.
 function Send-WinEaseGuiProgress {
+    [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidAssignmentToAutomaticVariable', '', Justification = 'Event parameter name matches progress protocol specification')]
     param(
         [Parameter(Mandatory)][ValidateSet('hello', 'state', 'phase', 'log', 'failure', 'done')][string]$Event,
         [hashtable]$Data = @{}
