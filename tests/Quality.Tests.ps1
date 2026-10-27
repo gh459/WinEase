@@ -40,6 +40,7 @@ Describe "Documentation S12" {
         'gui\winui\bin\WinEaseGui.exe', # WinUI build output (gui\winui\build.ps1); git-ignored, absent from a clean checkout
         'gui\winui\bin',                # the WinUI folder of the full release package (build output, git-ignored)
         'plugins\builtin',              # built-in plugin DLLs of the full release package (build output, git-ignored)
+        'builtin.lock.psd1',            # built-in plugin lock file (build output, git-ignored)
         'implementation_plan.md'        # planning note outside the repository
     )
 
@@ -47,28 +48,32 @@ Describe "Documentation S12" {
         param([string]$Text, [string]$RepoRoot, [string[]]$Files, [string[]]$Exclude = @())
         $topDirs = 'config|lib|phases|gui|tools|docs|scripts|templates|profiles|tests|\.github'
         $fileExt = 'ps1|psd1|psm1|json|md|xml|txt|cmd|bat|yml|yaml'
-        $missing = @()
+        $missing = [System.Collections.Generic.List[string]]::new()
         foreach ($m in [regex]::Matches($Text, '`([^`\r\n]+)`')) {
             $p = ($m.Groups[1].Value -replace '/', '\').TrimEnd('\')
             if ($p -notmatch '^[A-Za-z0-9_.\\-]+$') { continue }
             if ($Exclude -contains $p) { continue }
             if ($p -match ('^(' + $topDirs + ')(\\|$)')) {
-                if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot $p))) { $missing += $p }
+                if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot $p))) {
+                    if ($Files.Where({ $_.Equals($p, [System.StringComparison]::OrdinalIgnoreCase) -or $_.StartsWith(($p + '\'), [System.StringComparison]::OrdinalIgnoreCase) }, 'First').Count -eq 0) { $null = $missing.Add($p) }
+                }
             }
             elseif ($p -match ('^[A-Za-z0-9_.\-]+\.(' + $fileExt + ')$')) {
                 # a bare file name may live anywhere in the repo
-                if (-not (@($Files | Where-Object { $_ -eq $p -or $_.EndsWith('\' + $p) }).Count -gt 0)) { $missing += $p }
+                if ($Files.Where({ $_.Equals($p, [System.StringComparison]::OrdinalIgnoreCase) -or $_.EndsWith('\' + $p, [System.StringComparison]::OrdinalIgnoreCase) }, 'First').Count -eq 0) { $null = $missing.Add($p) }
             }
         }
         $missing | Select-Object -Unique
     }
 
     It "repo file paths in backticks in README, CHANGELOG and the extensibility guide exist" {
-        $files = @(Get-ChildItem -LiteralPath $script:RepoRoot -Recurse -File | Where-Object { $_.FullName -notmatch '[\/](\.git|\.claude|logs)[\/]' } | ForEach-Object { $_.FullName.Substring($script:RepoRoot.Length).TrimStart('\') })
-        $missing = @()
+        $files = @(Get-ChildItem -LiteralPath $script:RepoRoot -Recurse -File -Force | Where-Object { $_.FullName -notmatch '[\/](\.git|\.claude|logs)[\/]' } | ForEach-Object { $_.FullName.Substring($script:RepoRoot.Length).TrimStart('\').TrimStart('/') -replace '/', '\' })
+        $missing = [System.Collections.Generic.List[string]]::new()
         foreach ($doc in @('README.md', 'CHANGELOG.md', 'docs\EXTENSIBILITY_GUIDE.md', 'docs\EXTENSIBILITY_GUIDE.ja.md')) {
             $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot $doc))
-            foreach ($p in @(Get-MissingDocPath -Text $text -RepoRoot $script:RepoRoot -Files $files -Exclude $script:DocPathExclusions)) { $missing += "${doc}: $p" }
+            foreach ($p in Get-MissingDocPath -Text $text -RepoRoot $script:RepoRoot -Files $files -Exclude $script:DocPathExclusions) {
+                $null = $missing.Add("${doc}: $p")
+            }
         }
         ($missing | Select-Object -Unique) -join "`n" | Should Be ''
     }
