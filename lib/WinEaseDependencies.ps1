@@ -35,7 +35,8 @@ function Get-WinEaseDependencyString {
     )
     $defaults = Get-WinEaseDependencyStringDefaults
     $fallback = if ($defaults.Contains($Key)) { $defaults[$Key] } else { $Key }
-    if (Get-Command -Name Get-WinEaseUiString -ErrorAction SilentlyContinue) {
+    # Bolt optimization: Replacing Get-Command with Test-Path Function:\ avoids expensive cmdlet discovery overhead (~99% faster).
+    if (Test-Path -LiteralPath 'Function:\Get-WinEaseUiString') {
         return (Get-WinEaseUiString -Key $Key -Format $Format -Default $fallback)
     }
     if ($Format.Count -gt 0) { try { return ($fallback -f $Format) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" } }
@@ -92,61 +93,56 @@ function Import-WinEaseDependencyCatalog {
     return $catalog
 }
 
-function Test-WinEaseDependencies {
-    [CmdletBinding()]
-    [OutputType([hashtable])]
-    param(
-        # The builder and phase 18 pass a PSCustomObject; older callers pass a
-        # hashtable. Normalize here instead of requiring the caller to know the
-        # internal representation.
-        [object]$Config
-    )
+function Get-WinEaseNormalizedDependencyConfig {
+    param([object]$Config)
     if ($null -ne $Config -and -not ($Config -is [System.Collections.IDictionary])) {
         $normalizedConfig = @{}
         foreach ($prop in $Config.PSObject.Properties) { $normalizedConfig[$prop.Name] = $prop.Value }
-        $Config = $normalizedConfig
+        return $normalizedConfig
     } elseif ($null -ne $Config -and -not ($Config -is [hashtable])) {
         $normalizedConfig = @{}
         foreach ($key in $Config.Keys) { $normalizedConfig[$key] = $Config[$key] }
-        $Config = $normalizedConfig
+        return $normalizedConfig
     }
-    if (-not $script:WinEaseDependencyCatalog) {
-        try { $null = Import-WinEaseDependencyCatalog } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-    }
-    $cat = $script:WinEaseDependencyCatalog
-    $conflicts = [System.Collections.Generic.List[object]]::new()
-    $impacts = [System.Collections.Generic.List[object]]::new()
-    $unknowns = [System.Collections.Generic.List[object]]::new()
-    $seenConflicts = @{}
+    return $Config
+}
 
-    $addConflict = {
-        param($category, $source, $summary, $conflictingWith, $keptFeature = $false)
-        $key = "$source|$conflictingWith"
-        if ($seenConflicts.ContainsKey($key)) { return }
-        $seenConflicts[$key] = $true
-        $conflicts.Add([pscustomobject]@{
-            Category       = $category
-            Source         = $source
-            Summary        = $summary
-            ConflictingWith = $conflictingWith
-            KeptFeature    = [bool]$keptFeature
-        })
-    }
+function Test-WinEaseSettingIsRemoved {
+    param($Entry, $Value)
+    if ($null -eq $Entry -or $null -eq $Entry.TriggerValue) { return $false }
+    $tv = $Entry.TriggerValue
+    if ($tv -is [bool]) { return ([bool]$Value -eq $tv) }
+    return ("$Value" -eq "$tv")
+}
 
-    if ($null -eq $cat) {
-        return (New-WinEaseDependencyResult -Conflicts $conflicts -Impacts $impacts -Unknowns $unknowns)
-    }
+function Add-WinEaseDependencyConflict {
+    param(
+        $Conflicts,
+        $SeenConflicts,
+        [string]$Category,
+        [string]$Source,
+        [string]$Summary,
+        [string]$ConflictingWith,
+        [bool]$KeptFeature = $false
+    )
+    $key = "$Source|$ConflictingWith"
+    if ($SeenConflicts.ContainsKey($key)) { return }
+    $SeenConflicts[$key] = $true
+    $Conflicts.Add([pscustomobject]@{
+        Category        = $Category
+        Source          = $Source
+        Summary         = $Summary
+        ConflictingWith = $ConflictingWith
+        KeptFeature     = $KeptFeature
+    })
+}
 
-    # helper: is a given setting "removed / disabled"?
-    $isRemoved = {
-        param($entry, $value)
-        if ($null -eq $entry -or $null -eq $entry.TriggerValue) { return $false }
-        $tv = $entry.TriggerValue
-        if ($tv -is [bool]) { return ([bool]$value -eq $tv) }
-        return ("$value" -eq "$tv")
-    }
-
-    # Cross-rule conflicts (explicit)
+function Test-WinEaseCrossRuleConflicts {
+    param(
+        $Config,
+        $Conflicts,
+        $SeenConflicts
+    )
     $wuKept = $false
     if ($Config -and $Config.ContainsKey('DisableWindowsUpdate')) { $wuKept = -not [bool]$Config['DisableWindowsUpdate'] }
     $expSelected = @()
@@ -179,183 +175,258 @@ function Test-WinEaseDependencies {
     $searchRemoved = ($expSelected -contains 'Physical: Cortana / Search (complete removal) [~100MB]') -or ($expSelected -contains 'Physical: Windows Search index (complete removal) [varies]')
 
     if ($wuKept -and $expSelected.Count -gt 0) {
-        & $addConflict 'Component' 'DisableWindowsUpdate' 'Windows Update is kept but Experimental physical debloat is selected, which breaks WinSxS/CBS integrity.' 'AdvancedDebloatExperimental' $true
+        Add-WinEaseDependencyConflict -Conflicts $Conflicts -SeenConflicts $SeenConflicts -Category 'Component' -Source 'DisableWindowsUpdate' -Summary 'Windows Update is kept but Experimental physical debloat is selected, which breaks WinSxS/CBS integrity.' -ConflictingWith 'AdvancedDebloatExperimental' -KeptFeature $true
     }
     if ($safeMode -and $expSelected.Count -gt 0) {
-        & $addConflict 'Component' 'SafeDebloatMode' 'Safe WinSxS mode is enabled but Experimental physical debloat is selected, which breaks CBS/WinSxS integrity.' 'AdvancedDebloatExperimental' $true
+        Add-WinEaseDependencyConflict -Conflicts $Conflicts -SeenConflicts $SeenConflicts -Category 'Component' -Source 'SafeDebloatMode' -Summary 'Safe WinSxS mode is enabled but Experimental physical debloat is selected, which breaks CBS/WinSxS integrity.' -ConflictingWith 'AdvancedDebloatExperimental' -KeptFeature $true
     }
     if ($keepBT -and $btRemoved) {
-        & $addConflict 'Component' 'KeepBluetooth' 'Bluetooth is kept but a Bluetooth stack removal item is selected.' 'Bluetooth removal item' $true
+        Add-WinEaseDependencyConflict -Conflicts $Conflicts -SeenConflicts $SeenConflicts -Category 'Component' -Source 'KeepBluetooth' -Summary 'Bluetooth is kept but a Bluetooth stack removal item is selected.' -ConflictingWith 'Bluetooth removal item' -KeptFeature $true
     }
     if ($wsl -and ($noHyp -or $wslRemoved)) {
-        & $addConflict 'Component' 'WSLSupport' 'WSL support is enabled but hypervisor is disabled or WSL/Hyper-V removal is selected.' 'NoHypervisor / WSL removal' $true
+        Add-WinEaseDependencyConflict -Conflicts $Conflicts -SeenConflicts $SeenConflicts -Category 'Component' -Source 'WSLSupport' -Summary 'WSL support is enabled but hypervisor is disabled or WSL/Hyper-V removal is selected.' -ConflictingWith 'NoHypervisor / WSL removal' -KeptFeature $true
     }
     if ($keepSearch -and ($disableSearch -or $searchRemoved)) {
-        & $addConflict 'Component' 'KeepSearchIndex' 'Search indexing is kept but search disabling/removal is selected.' 'DisableWindowsSearchIndexing / search removal' $true
+        Add-WinEaseDependencyConflict -Conflicts $Conflicts -SeenConflicts $SeenConflicts -Category 'Component' -Source 'KeepSearchIndex' -Summary 'Search indexing is kept but search disabling/removal is selected.' -ConflictingWith 'DisableWindowsSearchIndexing / search removal' -KeptFeature $true
     }
     if ($keepXbox -and ($removeStore -or $disableGameDVR)) {
-        & $addConflict 'Component' 'KeepXboxServices' 'Xbox services are kept but Store removal or GameDVR disable is selected.' 'RemoveStore / DisableGameDVR' $true
+        Add-WinEaseDependencyConflict -Conflicts $Conflicts -SeenConflicts $SeenConflicts -Category 'Component' -Source 'KeepXboxServices' -Summary 'Xbox services are kept but Store removal or GameDVR disable is selected.' -ConflictingWith 'RemoveStore / DisableGameDVR' -KeptFeature $true
     }
+}
+
+function Test-WinEaseComponentDependencies {
+    param(
+        $Config,
+        $Cat,
+        $Conflicts,
+        $Impacts,
+        $Unknowns,
+        $SeenConflicts,
+        $StdSelected,
+        $ExpSelected
+    )
+    if (-not ($Cat -and $Cat.Components)) { return }
+
+    foreach ($key in $Cat.Components.Keys) {
+        if (-not $Config.ContainsKey($key)) { continue }
+        $entry = $Cat.Components[$key]
+        if ($null -eq $entry) { continue }
+        $val = $Config[$key]
+        $removed = Test-WinEaseSettingIsRemoved -Entry $entry -Value $val
+        if (-not $removed) { continue }
+        if ($entry.Status -eq 'Safe') { continue }
+        if ($entry.Status -eq 'Known') {
+            $Impacts.Add([pscustomobject]@{ Category = 'Component'; Source = $key; Summary = $entry.Summary; AffectedFeatures = @($entry.AffectedFeatures) })
+        } elseif ($entry.Status -eq 'Unknown') {
+            $Unknowns.Add([pscustomobject]@{ Category = 'Component'; Source = $key; Summary = $entry.Summary; Reason = (Get-WinEaseDependencyString 'Dep.Reason.CatalogUnknown'); ReasonKey = 'Dep.Reason.CatalogUnknown' })
+        }
+        if ($entry.ConflictsWith) {
+            foreach ($cw in $entry.ConflictsWith) {
+                $targetRemoved = $false
+                if ($Config.ContainsKey($cw)) {
+                    if ($Cat.Components.ContainsKey($cw)) { $targetRemoved = Test-WinEaseSettingIsRemoved -Entry $Cat.Components[$cw] -Value $Config[$cw] }
+                    elseif ($Cat.Tweaks.ContainsKey($cw)) { $targetRemoved = Test-WinEaseSettingIsRemoved -Entry $Cat.Tweaks[$cw] -Value $Config[$cw] }
+                    else { $targetRemoved = [bool]$Config[$cw] }
+                } elseif ($StdSelected -contains $cw -or $ExpSelected -contains $cw) {
+                    $targetRemoved = $true
+                }
+                if ($targetRemoved) {
+                    Add-WinEaseDependencyConflict -Conflicts $Conflicts -SeenConflicts $SeenConflicts -Category 'Component' -Source $key -Summary "$($entry.Summary)" -ConflictingWith $cw
+                }
+            }
+        }
+    }
+}
+
+function Test-WinEaseTweakDependencies {
+    param(
+        $Config,
+        $Cat,
+        $TweakSettings,
+        $Conflicts,
+        $Impacts,
+        $Unknowns,
+        $SeenConflicts,
+        $StdSelected,
+        $ExpSelected
+    )
+    if (-not ($Cat -and $Cat.Tweaks)) { return }
+
+    foreach ($key in $Cat.Tweaks.Keys) {
+        $entry = $Cat.Tweaks[$key]
+        if ($null -eq $entry) { continue }
+        $val = $null
+        if ($TweakSettings) {
+            if ($TweakSettings -is [System.Collections.IDictionary]) {
+                if ($TweakSettings.Contains($key)) { $val = $TweakSettings[$key] }
+            } elseif ($TweakSettings.PSObject -and $TweakSettings.PSObject.Properties[$key]) {
+                $val = $TweakSettings.PSObject.Properties[$key].Value
+            }
+        }
+        if ($null -eq $val -and $Config.ContainsKey($key)) { $val = $Config[$key] }
+        if ($null -eq $val) { continue }
+        $removed = Test-WinEaseSettingIsRemoved -Entry $entry -Value $val
+        if (-not $removed) { continue }
+        if ($entry.Status -eq 'Safe') { continue }
+        if ($entry.Status -eq 'Known') {
+            $Impacts.Add([pscustomobject]@{ Category = 'Tweak'; Source = $key; Summary = $entry.Summary; AffectedFeatures = @($entry.AffectedFeatures) })
+        } elseif ($entry.Status -eq 'Unknown') {
+            $Unknowns.Add([pscustomobject]@{ Category = 'Tweak'; Source = $key; Summary = $entry.Summary; Reason = (Get-WinEaseDependencyString 'Dep.Reason.CatalogUnknown'); ReasonKey = 'Dep.Reason.CatalogUnknown' })
+        }
+        if ($entry.ConflictsWith) {
+            foreach ($cw in $entry.ConflictsWith) {
+                $targetRemoved = $false
+                if ($Config.ContainsKey($cw)) {
+                    if ($Cat.Components.ContainsKey($cw)) { $targetRemoved = Test-WinEaseSettingIsRemoved -Entry $Cat.Components[$cw] -Value $Config[$cw] }
+                    elseif ($Cat.Tweaks.ContainsKey($cw)) { $targetRemoved = Test-WinEaseSettingIsRemoved -Entry $Cat.Tweaks[$cw] -Value $Config[$cw] }
+                    else { $targetRemoved = [bool]$Config[$cw] }
+                } elseif ($StdSelected -contains $cw -or $ExpSelected -contains $cw) {
+                    $targetRemoved = $true
+                }
+                if ($targetRemoved) {
+                    Add-WinEaseDependencyConflict -Conflicts $Conflicts -SeenConflicts $SeenConflicts -Category 'Tweak' -Source $key -Summary "$($entry.Summary)" -ConflictingWith $cw
+                }
+            }
+        }
+    }
+}
+
+function Test-WinEaseUserTweakDependencies {
+    param(
+        $Config,
+        $TweakSettings,
+        $Impacts,
+        $Unknowns
+    )
+    $userDefs = $null
+    if (Get-Variable -Name UserTweakDefs -Scope Script -ErrorAction SilentlyContinue) { $userDefs = $script:UserTweakDefs }
+    if (-not ($userDefs -and $userDefs.Count -gt 0)) { return }
+
+    foreach ($ukey in @($userDefs.Keys)) {
+        $uval = $null
+        if ($TweakSettings) {
+            if ($TweakSettings -is [System.Collections.IDictionary]) {
+                if ($TweakSettings.Contains($ukey)) { $uval = $TweakSettings[$ukey] }
+            } elseif ($TweakSettings.PSObject -and $TweakSettings.PSObject.Properties[$ukey]) {
+                $uval = $TweakSettings.PSObject.Properties[$ukey].Value
+            }
+        }
+        if ($null -eq $uval -and $Config.ContainsKey($ukey)) { $uval = $Config[$ukey] }
+        if ($null -eq $uval -or $uval -ne $true) { continue }
+
+        $udef = $userDefs[$ukey]
+        $impact = $null
+        if ($udef -is [System.Collections.IDictionary]) {
+            if ($udef.Contains('Impact')) { $impact = $udef['Impact'] }
+        } elseif ($udef -and $udef.PSObject.Properties['Impact']) {
+            $impact = $udef.PSObject.Properties['Impact'].Value
+        }
+
+        if ($impact -is [System.Collections.IDictionary]) {
+            $feat = @()
+            if ($impact.Contains('AffectedFeatures')) { $feat = @($impact['AffectedFeatures']) }
+            $reason = ''
+            if ($impact.Contains('Reason')) { $reason = "$($impact['Reason'])" }
+            $sev = ''
+            if ($impact.Contains('Severity')) { $sev = "$($impact['Severity'])" }
+            $Impacts.Add([pscustomobject]@{ Category = 'UserTweak'; Source = $ukey; Summary = $reason; AffectedFeatures = $feat; Severity = $sev })
+        } elseif ($impact -is [string] -and $impact -eq 'Safe') {
+            continue
+        } else {
+            $Unknowns.Add([pscustomobject]@{ Category = 'UserTweak'; Source = $ukey; Summary = (Get-WinEaseDependencyString 'Dep.Summary.UserTweakNoImpact'); SummaryKey = 'Dep.Summary.UserTweakNoImpact'; Reason = (Get-WinEaseDependencyString 'Dep.Reason.ImpactUndefined'); ReasonKey = 'Dep.Reason.ImpactUndefined' })
+        }
+    }
+}
+
+function Test-WinEaseAdvancedDebloatDependencies {
+    param(
+        $Config,
+        $Cat,
+        $Conflicts,
+        $Impacts,
+        $Unknowns,
+        $SeenConflicts,
+        $StdSelected,
+        $ExpSelected
+    )
+    if (-not ($Cat -and $Cat.AdvancedDebloat)) { return }
+
+    foreach ($listName in @('AdvancedDebloatStandard','AdvancedDebloatExperimental')) {
+        $items = @()
+        if ($Config.ContainsKey($listName)) { $items = @($Config[$listName]) }
+        foreach ($item in $items) {
+            if ($Cat.AdvancedDebloat.ContainsKey($item)) {
+                $entry = $Cat.AdvancedDebloat[$item]
+                if ($entry.Status -eq 'Safe') { continue }
+                if ($entry.Status -eq 'Known') {
+                    $Impacts.Add([pscustomobject]@{ Category = 'AdvancedDebloat'; Source = $item; Summary = $entry.Summary; AffectedFeatures = @($entry.AffectedFeatures) })
+                } elseif ($entry.Status -eq 'Unknown') {
+                    $Unknowns.Add([pscustomobject]@{ Category = 'AdvancedDebloat'; Source = $item; Summary = $entry.Summary; Reason = (Get-WinEaseDependencyString 'Dep.Reason.CatalogUnknown'); ReasonKey = 'Dep.Reason.CatalogUnknown' })
+                }
+                if ($entry.ConflictsWith) {
+                    foreach ($cw in $entry.ConflictsWith) {
+                        $targetRemoved = $false
+                        if ($Config.ContainsKey($cw)) {
+                            if ($Cat.Components.ContainsKey($cw)) { $targetRemoved = Test-WinEaseSettingIsRemoved -Entry $Cat.Components[$cw] -Value $Config[$cw] }
+                            elseif ($Cat.Tweaks.ContainsKey($cw)) { $targetRemoved = Test-WinEaseSettingIsRemoved -Entry $Cat.Tweaks[$cw] -Value $Config[$cw] }
+                            else { $targetRemoved = [bool]$Config[$cw] }
+                        } elseif ($StdSelected -contains $cw -or $ExpSelected -contains $cw) {
+                            $targetRemoved = $true
+                        }
+                        if ($targetRemoved) {
+                            Add-WinEaseDependencyConflict -Conflicts $Conflicts -SeenConflicts $SeenConflicts -Category 'AdvancedDebloat' -Source $item -Summary "$($entry.Summary)" -ConflictingWith $cw
+                        }
+                    }
+                }
+            } else {
+                # fail-safe: unregistered item -> Unknown
+                $Unknowns.Add([pscustomobject]@{ Category = 'AdvancedDebloat'; Source = $item; Summary = (Get-WinEaseDependencyString 'Dep.Summary.Unregistered'); SummaryKey = 'Dep.Summary.Unregistered'; Reason = (Get-WinEaseDependencyString 'Dep.Reason.Unregistered'); ReasonKey = 'Dep.Reason.Unregistered' })
+            }
+        }
+    }
+}
+
+function Test-WinEaseDependencies {
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param(
+        # The builder and phase 18 pass a PSCustomObject; older callers pass a
+        # hashtable. Normalize here instead of requiring the caller to know the
+        # internal representation.
+        [object]$Config
+    )
+    $Config = Get-WinEaseNormalizedDependencyConfig -Config $Config
+
+    if (-not $script:WinEaseDependencyCatalog) {
+        try { $null = Import-WinEaseDependencyCatalog } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    }
+    $cat = $script:WinEaseDependencyCatalog
+    $conflicts = [System.Collections.Generic.List[object]]::new()
+    $impacts = [System.Collections.Generic.List[object]]::new()
+    $unknowns = [System.Collections.Generic.List[object]]::new()
+    $seenConflicts = @{}
+
+    if ($null -eq $cat) {
+        return (New-WinEaseDependencyResult -Conflicts $conflicts -Impacts $impacts -Unknowns $unknowns)
+    }
+
+    Test-WinEaseCrossRuleConflicts -Config $Config -Conflicts $conflicts -SeenConflicts $seenConflicts
 
     if (-not $Config) {
         return (New-WinEaseDependencyResult -Conflicts $conflicts -Impacts $impacts -Unknowns $unknowns)
     }
 
-    # Step 2: per-item ConflictsWith (generic) + Impacts/Unknowns
-    # Components
-    if ($cat -and $cat.Components) {
-        foreach ($key in $cat.Components.Keys) {
-            if (-not $Config.ContainsKey($key)) { continue }
-            $entry = $cat.Components[$key]
-            if ($null -eq $entry) { continue }
-            $val = $Config[$key]
-            $removed = & $isRemoved $entry $val
-            if (-not $removed) { continue }
-            if ($entry.Status -eq 'Safe') { continue }
-            if ($entry.Status -eq 'Known') {
-                $impacts.Add([pscustomobject]@{ Category = 'Component'; Source = $key; Summary = $entry.Summary; AffectedFeatures = @($entry.AffectedFeatures) })
-            } elseif ($entry.Status -eq 'Unknown') {
-                $unknowns.Add([pscustomobject]@{ Category = 'Component'; Source = $key; Summary = $entry.Summary; Reason = (Get-WinEaseDependencyString 'Dep.Reason.CatalogUnknown'); ReasonKey = 'Dep.Reason.CatalogUnknown' })
-            }
-            # ConflictsWith generic
-            if ($entry.ConflictsWith) {
-                foreach ($cw in $entry.ConflictsWith) {
-                    # determine if conflicting target is also removed/enabled
-                    $targetRemoved = $false
-                    if ($Config.ContainsKey($cw)) {
-                        if ($cat.Components.ContainsKey($cw)) { $targetRemoved = & $isRemoved $cat.Components[$cw] $Config[$cw] }
-                        elseif ($cat.Tweaks.ContainsKey($cw)) { $targetRemoved = & $isRemoved $cat.Tweaks[$cw] $Config[$cw] }
-                        else { $targetRemoved = [bool]$Config[$cw] }
-                    } elseif ($stdSelected -contains $cw -or $expSelected -contains $cw) {
-                        $targetRemoved = $true
-                    }
-                    if ($targetRemoved) {
-                        & $addConflict 'Component' $key "$($entry.Summary)" $cw
-                    }
-                }
-            }
-        }
-    }
+    $stdSelected = if ($Config.ContainsKey('AdvancedDebloatStandard')) { @($Config['AdvancedDebloatStandard']) } else { @() }
+    $expSelected = if ($Config.ContainsKey('AdvancedDebloatExperimental')) { @($Config['AdvancedDebloatExperimental']) } else { @() }
+    $tweakSettings = if ($Config.ContainsKey('TweakSettings')) { $Config['TweakSettings'] } else { $null }
 
-    # Tweaks
-    $tweakSettings = $null
-    if ($Config.ContainsKey('TweakSettings')) { $tweakSettings = $Config['TweakSettings'] }
-    if ($cat -and $cat.Tweaks) {
-        foreach ($key in $cat.Tweaks.Keys) {
-            $entry = $cat.Tweaks[$key]
-            if ($null -eq $entry) { continue }
-            $val = $null
-            if ($tweakSettings) {
-                if ($tweakSettings -is [System.Collections.IDictionary]) {
-                    if ($tweakSettings.Contains($key)) { $val = $tweakSettings[$key] }
-                } elseif ($tweakSettings.PSObject -and $tweakSettings.PSObject.Properties[$key]) {
-                    $val = $tweakSettings.PSObject.Properties[$key].Value
-                }
-            }
-            if ($null -eq $val -and $Config.ContainsKey($key)) { $val = $Config[$key] }
-            if ($null -eq $val) { continue }
-            $removed = & $isRemoved $entry $val
-            if (-not $removed) { continue }
-            if ($entry.Status -eq 'Safe') { continue }
-            if ($entry.Status -eq 'Known') {
-                $impacts.Add([pscustomobject]@{ Category = 'Tweak'; Source = $key; Summary = $entry.Summary; AffectedFeatures = @($entry.AffectedFeatures) })
-            } elseif ($entry.Status -eq 'Unknown') {
-                $unknowns.Add([pscustomobject]@{ Category = 'Tweak'; Source = $key; Summary = $entry.Summary; Reason = (Get-WinEaseDependencyString 'Dep.Reason.CatalogUnknown'); ReasonKey = 'Dep.Reason.CatalogUnknown' })
-            }
-            if ($entry.ConflictsWith) {
-                foreach ($cw in $entry.ConflictsWith) {
-                    $targetRemoved = $false
-                    if ($Config.ContainsKey($cw)) {
-                        if ($cat.Components.ContainsKey($cw)) { $targetRemoved = & $isRemoved $cat.Components[$cw] $Config[$cw] }
-                        elseif ($cat.Tweaks.ContainsKey($cw)) { $targetRemoved = & $isRemoved $cat.Tweaks[$cw] $Config[$cw] }
-                        else { $targetRemoved = [bool]$Config[$cw] }
-                    } elseif ($stdSelected -contains $cw -or $expSelected -contains $cw) {
-                        $targetRemoved = $true
-                    }
-                    if ($targetRemoved) {
-                        & $addConflict 'Tweak' $key "$($entry.Summary)" $cw
-                    }
-                }
-            }
-        }
-    }
+    Test-WinEaseComponentDependencies -Config $Config -Cat $cat -Conflicts $conflicts -Impacts $impacts -Unknowns $unknowns -SeenConflicts $seenConflicts -StdSelected $stdSelected -ExpSelected $expSelected
 
-    # User-defined custom tweaks (lib/WinEaseExtensions.ps1): enabled ones without explicit Impact are Unknown
-    $userDefs = $null
-    if (Get-Variable -Name UserTweakDefs -Scope Script -ErrorAction SilentlyContinue) { $userDefs = $script:UserTweakDefs }
-    if ($userDefs -and $userDefs.Count -gt 0) {
-        foreach ($ukey in @($userDefs.Keys)) {
-            $uval = $null
-            if ($tweakSettings) {
-                if ($tweakSettings -is [System.Collections.IDictionary]) {
-                    if ($tweakSettings.Contains($ukey)) { $uval = $tweakSettings[$ukey] }
-                } elseif ($tweakSettings.PSObject -and $tweakSettings.PSObject.Properties[$ukey]) {
-                    $uval = $tweakSettings.PSObject.Properties[$ukey].Value
-                }
-            }
-            if ($null -eq $uval -and $Config.ContainsKey($ukey)) { $uval = $Config[$ukey] }
-            if ($null -eq $uval -or $uval -ne $true) { continue }
+    Test-WinEaseTweakDependencies -Config $Config -Cat $cat -TweakSettings $tweakSettings -Conflicts $conflicts -Impacts $impacts -Unknowns $unknowns -SeenConflicts $seenConflicts -StdSelected $stdSelected -ExpSelected $expSelected
 
-            $udef = $userDefs[$ukey]
-            $impact = $null
-            if ($udef -is [System.Collections.IDictionary]) {
-                if ($udef.Contains('Impact')) { $impact = $udef['Impact'] }
-            } elseif ($udef -and $udef.PSObject.Properties['Impact']) {
-                $impact = $udef.PSObject.Properties['Impact'].Value
-            }
+    Test-WinEaseUserTweakDependencies -Config $Config -TweakSettings $tweakSettings -Impacts $impacts -Unknowns $unknowns
 
-            if ($impact -is [System.Collections.IDictionary]) {
-                $feat = @()
-                if ($impact.Contains('AffectedFeatures')) { $feat = @($impact['AffectedFeatures']) }
-                $reason = ''
-                if ($impact.Contains('Reason')) { $reason = "$($impact['Reason'])" }
-                $sev = ''
-                if ($impact.Contains('Severity')) { $sev = "$($impact['Severity'])" }
-                $impacts.Add([pscustomobject]@{ Category = 'UserTweak'; Source = $ukey; Summary = $reason; AffectedFeatures = $feat; Severity = $sev })
-            } elseif ($impact -is [string] -and $impact -eq 'Safe') {
-                continue
-            } else {
-                $unknowns.Add([pscustomobject]@{ Category = 'UserTweak'; Source = $ukey; Summary = (Get-WinEaseDependencyString 'Dep.Summary.UserTweakNoImpact'); SummaryKey = 'Dep.Summary.UserTweakNoImpact'; Reason = (Get-WinEaseDependencyString 'Dep.Reason.ImpactUndefined'); ReasonKey = 'Dep.Reason.ImpactUndefined' })
-            }
-        }
-    }
-
-    # AdvancedDebloat items (present in lists)
-    if ($cat -and $cat.AdvancedDebloat) {
-        foreach ($listName in @('AdvancedDebloatStandard','AdvancedDebloatExperimental')) {
-            $items = @()
-            if ($Config.ContainsKey($listName)) { $items = @($Config[$listName]) }
-            foreach ($item in $items) {
-                if ($cat.AdvancedDebloat.ContainsKey($item)) {
-                    $entry = $cat.AdvancedDebloat[$item]
-                    if ($entry.Status -eq 'Safe') { continue }
-                    if ($entry.Status -eq 'Known') {
-                        $impacts.Add([pscustomobject]@{ Category = 'AdvancedDebloat'; Source = $item; Summary = $entry.Summary; AffectedFeatures = @($entry.AffectedFeatures) })
-                    } elseif ($entry.Status -eq 'Unknown') {
-                        $unknowns.Add([pscustomobject]@{ Category = 'AdvancedDebloat'; Source = $item; Summary = $entry.Summary; Reason = (Get-WinEaseDependencyString 'Dep.Reason.CatalogUnknown'); ReasonKey = 'Dep.Reason.CatalogUnknown' })
-                    }
-                    if ($entry.ConflictsWith) {
-                        foreach ($cw in $entry.ConflictsWith) {
-                            $targetRemoved = $false
-                            if ($Config.ContainsKey($cw)) {
-                                if ($cat.Components.ContainsKey($cw)) { $targetRemoved = & $isRemoved $cat.Components[$cw] $Config[$cw] }
-                                elseif ($cat.Tweaks.ContainsKey($cw)) { $targetRemoved = & $isRemoved $cat.Tweaks[$cw] $Config[$cw] }
-                                else { $targetRemoved = [bool]$Config[$cw] }
-                            } elseif ($stdSelected -contains $cw -or $expSelected -contains $cw) {
-                                $targetRemoved = $true
-                            }
-                            if ($targetRemoved) {
-                                & $addConflict 'AdvancedDebloat' $item "$($entry.Summary)" $cw
-                            }
-                        }
-                    }
-                } else {
-                    # fail-safe: unregistered item -> Unknown
-                    $unknowns.Add([pscustomobject]@{ Category = 'AdvancedDebloat'; Source = $item; Summary = (Get-WinEaseDependencyString 'Dep.Summary.Unregistered'); SummaryKey = 'Dep.Summary.Unregistered'; Reason = (Get-WinEaseDependencyString 'Dep.Reason.Unregistered'); ReasonKey = 'Dep.Reason.Unregistered' })
-                }
-            }
-        }
-    }
+    Test-WinEaseAdvancedDebloatDependencies -Config $Config -Cat $cat -Conflicts $conflicts -Impacts $impacts -Unknowns $unknowns -SeenConflicts $seenConflicts -StdSelected $stdSelected -ExpSelected $expSelected
 
     return (New-WinEaseDependencyResult -Conflicts $conflicts -Impacts $impacts -Unknowns $unknowns)
 }

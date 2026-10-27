@@ -756,8 +756,12 @@ Describe "WinEase advanced debloat - every engine can remove its target" {
         # Store cache lives in the user profile, not in the image
         $guiAst = [System.Management.Automation.Language.Parser]::ParseFile($script:GuiCorePath, [ref]$null, [ref]$null)
         $assigns = $guiAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in '$script:WinEaseDebloatStandardItems', '$script:WinEaseDebloatExperimentalItems' }, $true)
-        $guiItems = @()
-        foreach ($a in $assigns) { $guiItems += @($a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value }) }
+        $guiItems = [System.Collections.Generic.List[string]]::new()
+        foreach ($a in $assigns) {
+            foreach ($node in $a.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true)) {
+                $guiItems.Add([string]$node.Value)
+            }
+        }
         $ja = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\ui-strings\ja.json"), (New-Object System.Text.UTF8Encoding($false))) | ConvertFrom-Json
         $depText = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\dependencies.psd1"), [System.Text.Encoding]::UTF8)
         foreach ($gone in @('Remove WinRE (reagentc /disable + file delete) [500-700MB]', 'Remove Windows Store cache [varies]')) {
