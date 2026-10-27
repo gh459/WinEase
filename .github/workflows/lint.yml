@@ -64,7 +64,9 @@ jobs:
           # runner image is not picked up silently.
           Import-Module PSScriptAnalyzer -RequiredVersion $analyzerVersion -Force
           $files = Get-ChildItem -Path . -Recurse -Include *.ps1, *.psd1, *.psm1
-          $results = $files | Invoke-ScriptAnalyzer -Settings .\PSScriptAnalyzerSettings.psd1
+          $results = foreach ($file in $files) {
+            Invoke-ScriptAnalyzer -Path $file.FullName -Settings .\PSScriptAnalyzerSettings.psd1
+          }
           $results | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize -Wrap
           foreach ($r in $results) {
             $level = if ($r.Severity -eq 'Error') { 'error' } else { 'warning' }
