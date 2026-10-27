@@ -274,8 +274,7 @@ function Resolve-WinEaseSafeRelativePath {
         $result.Reason = "the $Label contains an invalid character: '$RelativePath'"
         return $result
     }
-    $segments = @()
-    foreach ($seg in ($clean -split '\\')) { if ($seg -ne '' -and $seg -ne '.') { $segments += $seg } }
+    $segments = @(foreach ($seg in ($clean -split '\\')) { if ($seg -ne '' -and $seg -ne '.') { $seg } })
     if ($segments.Count -eq 0) {
         $result.Reason = "the $Label does not name a file: '$RelativePath'"
         return $result
