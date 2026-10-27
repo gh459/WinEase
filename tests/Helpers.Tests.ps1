@@ -698,6 +698,129 @@ Describe "WinEase builder - phase timing telemetry" {
     }
 }
 
+Describe "WinEase browser installer signature (Test-WinEaseBrowserInstallerSignature)" {
+    BeforeAll {
+        $browserScriptPath = Join-Path $script:RepoRoot "scripts\tools\Install-Browser.ps1"
+        $scriptContent = [System.IO.File]::ReadAllText($browserScriptPath)
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($scriptContent, [ref]$null, [ref]$null)
+        $functionAst = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Test-WinEaseBrowserInstallerSignature' }, $true)
+        if (-not $functionAst) { throw "Test-WinEaseBrowserInstallerSignature function AST not found in $browserScriptPath" }
+        . ([scriptblock]::Create($functionAst.Extent.Text))
+
+        if (-not (Get-Command -Name Get-AuthenticodeSignature -ErrorAction SilentlyContinue)) {
+            function global:Get-AuthenticodeSignature {
+                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+                param($FilePath, [switch]$ErrorAction)
+                return $null
+            }
+        }
+    }
+
+    It "returns `$false and deletes file when Get-AuthenticodeSignature returns `$null" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_browser_nullsig_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        try {
+            Mock Get-AuthenticodeSignature { return $null }
+            $res = Test-WinEaseBrowserInstallerSignature -Path $tempFile -ExpectedSubjectParts @('Google') -DisplayName "Google Chrome"
+            $res | Should Be $false
+            (Test-Path -LiteralPath $tempFile) | Should Be $false
+        } finally {
+            if (Test-Path -LiteralPath $tempFile) { Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "returns `$false and deletes file when signature status is not Valid" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_browser_notsigned_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        try {
+            Mock Get-AuthenticodeSignature { return [PSCustomObject]@{ Status = 'NotSigned' } }
+            $res = Test-WinEaseBrowserInstallerSignature -Path $tempFile -ExpectedSubjectParts @('Google') -DisplayName "Google Chrome"
+            $res | Should Be $false
+            (Test-Path -LiteralPath $tempFile) | Should Be $false
+        } finally {
+            if (Test-Path -LiteralPath $tempFile) { Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "returns `$false and deletes file when SignerCertificate is `$null" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_browser_nullcert_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        try {
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{
+                    Status            = [System.Management.Automation.SignatureStatus]::Valid
+                    SignerCertificate = $null
+                }
+            }
+            $res = Test-WinEaseBrowserInstallerSignature -Path $tempFile -ExpectedSubjectParts @('Google') -DisplayName "Google Chrome"
+            $res | Should Be $false
+            (Test-Path -LiteralPath $tempFile) | Should Be $false
+        } finally {
+            if (Test-Path -LiteralPath $tempFile) { Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "returns `$false and deletes file when signer subject does not match expected subject parts" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_browser_wrongsigner_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        try {
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{
+                    Status            = [System.Management.Automation.SignatureStatus]::Valid
+                    SignerCertificate = [PSCustomObject]@{ Subject = 'CN=Untrusted Publisher, O=Untrusted' }
+                }
+            }
+            $res = Test-WinEaseBrowserInstallerSignature -Path $tempFile -ExpectedSubjectParts @('Google') -DisplayName "Google Chrome"
+            $res | Should Be $false
+            (Test-Path -LiteralPath $tempFile) | Should Be $false
+        } finally {
+            if (Test-Path -LiteralPath $tempFile) { Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "returns `$true and preserves file when signer subject matches a single expected subject part" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_browser_matchsingle_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        try {
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{
+                    Status            = [System.Management.Automation.SignatureStatus]::Valid
+                    SignerCertificate = [PSCustomObject]@{ Subject = 'CN=Google LLC, O=Google LLC, L=Mountain View, S=California, C=US' }
+                }
+            }
+            $res = Test-WinEaseBrowserInstallerSignature -Path $tempFile -ExpectedSubjectParts @('Google') -DisplayName "Google Chrome"
+            $res | Should Be $true
+            (Test-Path -LiteralPath $tempFile) | Should Be $true
+        } finally {
+            if (Test-Path -LiteralPath $tempFile) { Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "returns `$true and preserves file when signer subject matches one of multiple expected subject parts" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_browser_matchmulti_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        try {
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{
+                    Status            = [System.Management.Automation.SignatureStatus]::Valid
+                    SignerCertificate = [PSCustomObject]@{ Subject = 'CN=Ablaze Inc, O=Ablaze Inc' }
+                }
+            }
+            $res = Test-WinEaseBrowserInstallerSignature -Path $tempFile -ExpectedSubjectParts @('Mozilla', 'Ablaze', 'Floorp') -DisplayName "Floorp Browser"
+            $res | Should Be $true
+            (Test-Path -LiteralPath $tempFile) | Should Be $true
+        } finally {
+            if (Test-Path -LiteralPath $tempFile) { Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "throws parameter binding exception when mandatory parameters are omitted" {
+        { Test-WinEaseBrowserInstallerSignature } | Should Throw
+        { Test-WinEaseBrowserInstallerSignature -Path "C:\some.exe" } | Should Throw
+        { Test-WinEaseBrowserInstallerSignature -Path "C:\some.exe" -ExpectedSubjectParts @('Google') } | Should Throw
+    }
+}
+
 Describe "WinEase telemetry - Save-WinEaseTelemetry" {
     BeforeAll {
         . (Join-Path $script:RepoRoot "lib\WinEaseTelemetry.ps1")
