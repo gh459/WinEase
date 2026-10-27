@@ -53,19 +53,27 @@ jobs:
           for attempt in 1 2 3 4 5; do
             # GitHub computes "mergeable" lazily after a push; retry while it is UNKNOWN.
             json="$(gh pr list --repo "$REPO" --state open --limit 100 \
-              --json number,mergeable,isCrossRepository,authorAssociation,author)"
+              --json number,mergeable,isCrossRepository,author)"
             if ! jq -e 'any(.[]; .mergeable == "UNKNOWN")' <<<"$json" >/dev/null; then break; fi
             echo "mergeable state still being computed (attempt $attempt)"
             sleep 15
           done
-          prs="$(jq -c --arg only "$ONLY_PR" '
-            [ .[]
-              | select(.mergeable == "CONFLICTING")
-              | select(.isCrossRepository | not)
-              | select(.author.is_bot | not)
-              | select(.authorAssociation | IN("OWNER","MEMBER","COLLABORATOR"))
-              | select($only == "" or (.number | tostring) == $only)
-              | .number ]' <<<"$json")"
+          candidates="$(jq -r --arg only "$ONLY_PR" '
+            .[]
+            | select(.mergeable == "CONFLICTING")
+            | select(.isCrossRepository | not)
+            | select(.author.is_bot | not)
+            | select($only == "" or (.number | tostring) == $only)
+            | .number' <<<"$json")"
+          # `gh pr list` has no author-association field; ask the REST API per candidate.
+          prs="[]"
+          for number in $candidates; do
+            assoc="$(gh api "repos/${REPO}/pulls/${number}" --jq '.author_association')"
+            case "$assoc" in
+              OWNER|MEMBER|COLLABORATOR) prs="$(jq -c --argjson n "$number" '. + [$n]' <<<"$prs")" ;;
+              *) echo "skipping #${number}: author association ${assoc}" ;;
+            esac
+          done
           echo "Conflicting pull requests: $prs"
           echo "prs=$prs" >> "$GITHUB_OUTPUT"
 
