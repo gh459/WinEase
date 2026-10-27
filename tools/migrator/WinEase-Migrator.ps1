@@ -149,9 +149,13 @@ function Get-MigratorRuleSources {
     param([string[]]$Ids)
     $r = Get-MigratorRules
     $all = @($r.GameRules) + @($r.AppConfigRules) + @($r.CustomPathRules)
-    $paths = @(); $procs = @()
+    $paths = [System.Collections.Generic.List[string]]::new()
+    $procs = [System.Collections.Generic.List[string]]::new()
     foreach ($rule in $all) {
-        if ($Ids -contains $rule.Id) { $paths += @($rule.SourcePaths); $procs += @($rule.ProcessNames) }
+        if ($Ids -contains $rule.Id) {
+            foreach ($sp in @($rule.SourcePaths)) { if ($sp) { $paths.Add($sp) } }
+            foreach ($pn in @($rule.ProcessNames)) { if ($pn) { $procs.Add($pn) } }
+        }
     }
     return [PSCustomObject]@{ Paths = @($paths); ProcessNames = @($procs | Select-Object -Unique) }
 }
@@ -164,19 +168,21 @@ function Test-MigratorBackupIntegrity {
         return [PSCustomObject]@{ Mode = 'Verify'; Success = $false; Checked = 0; Mismatched = @(); Missing = @(); NoHash = 0; Message = "migration-manifest.json not found in '$Root'." }
     }
     $m = Get-Content -LiteralPath $mp -Raw -Encoding UTF8 | ConvertFrom-Json
-    $checked = 0; $nohash = 0; $bad = @(); $missing = @()
+    $checked = 0; $nohash = 0
+    $bad = [System.Collections.Generic.List[string]]::new()
+    $missing = [System.Collections.Generic.List[string]]::new()
     foreach ($e in @($m.Entries)) {
         if (-not $e -or -not $e.RelativePath) { continue }
         $sub = if ($e.Category -eq 'CustomPath') { 'Custom' } else { [string]$e.Category }
         $f = Join-Path (Join-Path $Root $sub) ([string]$e.RelativePath)
-        if (-not (Test-Path -LiteralPath $f)) { $missing += $f; continue }
+        if (-not (Test-Path -LiteralPath $f)) { $missing.Add($f); continue }
         if (-not $e.Sha256) { $nohash++; continue }
         $checked++
-        if ((Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash -ne [string]$e.Sha256) { $bad += $f }
+        if ((Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash -ne [string]$e.Sha256) { $bad.Add($f) }
     }
     $ok = ($bad.Count -eq 0 -and $missing.Count -eq 0)
     $msg = "Verified $checked file(s): $($bad.Count) mismatched, $($missing.Count) missing, $nohash without hash."
-    return [PSCustomObject]@{ Mode = 'Verify'; Success = $ok; Checked = $checked; Mismatched = $bad; Missing = $missing; NoHash = $nohash; Message = $msg }
+    return [PSCustomObject]@{ Mode = 'Verify'; Success = $ok; Checked = $checked; Mismatched = @($bad); Missing = @($missing); NoHash = $nohash; Message = $msg }
 }
 
 function Get-MigratorEstimate {
