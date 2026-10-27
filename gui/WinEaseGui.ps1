@@ -1926,21 +1926,25 @@ function Show-WinEaseGuiCustomScriptMetadataDialog {
     } finally { $dlg.Dispose() }
 }
 
-# Tab 10: Custom scripts sub-group for stage selection
-function New-WinEaseCustomScriptsStageGroup {
+# Tab 10: the custom scripts of the four stages
+function New-WinEaseCustomScriptsTab {
     param(
         [hashtable]$Gui,
-        [object]$Parent
+        [System.Windows.Forms.TabControl]$TabControl
     )
-    $grpStage = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'CS.Group.Stage') -Width 840 -Height 92 -Parent $Parent
+    $tabCs = New-WinEaseTabPage -Text (Get-WinEaseUiString 'Tab.CustomScripts') -TabControl $TabControl
+    $flowCs = New-WinEaseFlowPanel -Parent $tabCs
+
+    # Stage selection
+    $grpStage = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'CS.Group.Stage') -Width 840 -Height 92 -Parent $flowCs
     [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'CS.Label.Stage') -X 15 -Y 26 -Width 70 -Height 20 -Parent $grpStage)
     $cmbStage = New-WinEaseComboBox -Items @('PreBuild', 'OfflineImage', 'FirstLogon', 'UserOnce') -SelectedIndex 2 -DropList -X 90 -Y 23 -Width 170 -Parent $grpStage
-    $Gui.CsStage = $cmbStage
+    $gui.CsStage = $cmbStage
     $cmbStage.Add_SelectedIndexChanged({
         $g = $this.FindForm().Tag
         Update-WinEaseGuiCustomScriptsList -Gui $g
     })
-    $Gui.CsStageInfo = New-WinEaseLabel -Text ' ' -X 275 -Y 24 -Width 470 -Height 44 -Parent $grpStage
+    $gui.CsStageInfo = New-WinEaseLabel -Text ' ' -X 275 -Y 24 -Width 470 -Height 44 -Parent $grpStage
     [void](New-WinEaseButton -Text (Get-WinEaseUiString 'CS.Button.OpenFolder') -X 750 -Y 21 -Width 80 -Height 28 -Parent $grpStage -OnClick {
         $g = $this.FindForm().Tag
         $stage = [string]$g.CsStage.SelectedItem
@@ -1950,15 +1954,9 @@ function New-WinEaseCustomScriptsStageGroup {
         if (-not (Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Force -Path $folder | Out-Null }
         Start-Process -FilePath 'explorer.exe' -ArgumentList "`"$folder`""
     })
-}
 
-# Tab 10: Custom scripts sub-group for script listing and action buttons
-function New-WinEaseCustomScriptsListGroup {
-    param(
-        [hashtable]$Gui,
-        [object]$Parent
-    )
-    $grpList = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'CS.Group.Scripts') -Width 840 -Height 330 -Parent $Parent
+    # The scripts of the stage
+    $grpList = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'CS.Group.Scripts') -Width 840 -Height 330 -Parent $flowCs
     $list = New-Object System.Windows.Forms.ListView
     $list.Location = New-Object System.Drawing.Point(10, 20)
     $list.Size = New-Object System.Drawing.Size(820, 240)
@@ -1986,8 +1984,8 @@ function New-WinEaseCustomScriptsListGroup {
         [void]$list.Columns.Add($col)
     }
     [void]$grpList.Controls.Add($list)
-    $Gui.CsList = $list
-    $Gui.CsCount = New-WinEaseLabel -Text ' ' -X 10 -Y 264 -Width 400 -Height 20 -Parent $grpList
+    $gui.CsList = $list
+    $gui.CsCount = New-WinEaseLabel -Text ' ' -X 10 -Y 264 -Width 400 -Height 20 -Parent $grpList
 
     [void](New-WinEaseButton -Text (Get-WinEaseUiString 'CS.Button.Add') -X 10 -Y 288 -Width 120 -Height 30 -Parent $grpList -OnClick {
         $g = $this.FindForm().Tag
@@ -2081,23 +2079,10 @@ function New-WinEaseCustomScriptsListGroup {
             Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Msg.Error' -Format $_.Exception.Message) -Title (Get-WinEaseUiString 'CS.Button.Preview') -Kind Error
         }
     })
-}
-
-# Tab 10: the custom scripts of the four stages
-function New-WinEaseCustomScriptsTab {
-    param(
-        [hashtable]$Gui,
-        [System.Windows.Forms.TabControl]$TabControl
-    )
-    $tabCs = New-WinEaseTabPage -Text (Get-WinEaseUiString 'Tab.CustomScripts') -TabControl $TabControl
-    $flowCs = New-WinEaseFlowPanel -Parent $tabCs
-
-    New-WinEaseCustomScriptsStageGroup -Gui $Gui -Parent $flowCs
-    New-WinEaseCustomScriptsListGroup -Gui $Gui -Parent $flowCs
 
     # The engine is loaded when the tab is opened for the first time
     $tabCs.Tag = @{ Loaded = $false }
-    $Gui.CsTab = $tabCs
+    $gui.CsTab = $tabCs
     $tabCs.Add_Enter({
         $st = $this.Tag
         if (-not $st.Loaded) {

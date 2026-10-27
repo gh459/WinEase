@@ -78,7 +78,7 @@ jobs:
       - name: Run Claude Code
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
         with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # Assignment trigger for the issues event. Matches the if: condition above.
           assignee_trigger: ${{ vars.CLAUDE_AGENT_ASSIGNEE || 'claude-agent' }}
           # Tools Claude may use while working on the issue. Bash is an explicit allow-list: no

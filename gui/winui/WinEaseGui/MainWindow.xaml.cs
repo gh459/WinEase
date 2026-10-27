@@ -596,7 +596,6 @@ public sealed partial class MainWindow : Window
     {
         var b = new Button { Content = text.Trim() };
         AutomationProperties.SetName(b, text.Trim());
-        ToolTipService.SetToolTip(b, text.Trim());
         if (accent) b.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
         b.Click += click;
         return b;
@@ -2200,46 +2199,22 @@ public sealed partial class MainWindow : Window
         return !string.IsNullOrEmpty(folder) && System.IO.Directory.Exists(folder) ? folder : null;
     }
 
-    // Opens an existing folder or data file with the shell safely.
+    // Opens an existing folder or data file with the shell. The path is the FileName of a ProcessStartInfo with
+    // UseShellExecute; it is never part of a command line, and only the data file types above are opened.
     private static bool TryOpenPath(string? path)
     {
         if (string.IsNullOrWhiteSpace(path) || !System.IO.Path.IsPathRooted(path)) return false;
         try
         {
-            string fullPath = System.IO.Path.GetFullPath(path);
-
-            if (System.IO.Directory.Exists(fullPath))
+            if (!System.IO.Directory.Exists(path))
             {
-                string safeDir = fullPath.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar);
-                if (safeDir.Length == 2 && safeDir[1] == ':')
-                {
-                    safeDir += System.IO.Path.DirectorySeparatorChar;
-                }
-
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = safeDir,
-                    UseShellExecute = true
-                });
-                return true;
+                if (!System.IO.File.Exists(path)) return false;
+                if (!OpenableExtensions.Contains(System.IO.Path.GetExtension(path), StringComparer.OrdinalIgnoreCase)) return false;
             }
-
-            if (System.IO.File.Exists(fullPath))
-            {
-                string ext = System.IO.Path.GetExtension(fullPath);
-                if (!OpenableExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase)) return false;
-
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = fullPath,
-                    UseShellExecute = true
-                });
-                return true;
-            }
-
-            return false;
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = path, UseShellExecute = true });
+            return true;
         }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception || ex is System.IO.IOException || ex is InvalidOperationException || ex is UnauthorizedAccessException || ex is ArgumentException)
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception || ex is System.IO.IOException || ex is InvalidOperationException || ex is UnauthorizedAccessException)
         {
             return false;
         }
