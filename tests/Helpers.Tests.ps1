@@ -845,6 +845,74 @@ Describe "WinEase helpers - DISM wrapper (Invoke-Dism)" {
         $script:LastDismExitCode | Should Be 2
     }
 
+    It "retries on initial failure and succeeds on a subsequent attempt" {
+        $script:DismCalls = 0
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $script:DismCalls++
+            if ($script:DismCalls -eq 1) {
+                $global:LASTEXITCODE = 2
+            } else {
+                $global:LASTEXITCODE = 0
+            }
+        }
+        function Start-Sleep {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'Mock Start-Sleep to avoid delays during tests')]
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([int]$Seconds)
+        }
+
+        $result = Invoke-Dism -DismArgs @('/Get-MountedWimInfo') -Retries 3
+        $result | Should Be $true
+        $script:DismCalls | Should Be 2
+        $script:LastDismExitCode | Should Be 0
+    }
+
+    It "executes at least 1 attempt when Retries is 0 or negative" {
+        $script:DismCalls = 0
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $script:DismCalls++
+            $global:LASTEXITCODE = 0
+        }
+
+        $result = Invoke-Dism -DismArgs @('/Get-MountedWimInfo') -Retries 0
+        $result | Should Be $true
+        $script:DismCalls | Should Be 1
+
+        $script:DismCalls = 0
+        $resultNeg = Invoke-Dism -DismArgs @('/Get-MountedWimInfo') -Retries -5
+        $resultNeg | Should Be $true
+        $script:DismCalls | Should Be 1
+    }
+
+    It "always includes /English as the first DISM argument" {
+        $script:CapturedArgs = $null
+        function dism.exe {
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $script:CapturedArgs = $DismArgs
+            $global:LASTEXITCODE = 0
+        }
+
+        $result = Invoke-Dism -DismArgs @('/Get-MountedWimInfo')
+        $result | Should Be $true
+        $script:CapturedArgs[0] | Should Be '/English'
+    }
+
+    It "defaults exit code to 0 when LASTEXITCODE is null" {
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $global:LASTEXITCODE = $null
+        }
+
+        $result = Invoke-Dism -DismArgs @('/Get-MountedWimInfo')
+        $result | Should Be $true
+        $script:LastDismExitCode | Should Be 0
+    }
+
     It "returns null when CaptureOutput is specified and DISM fails after retries" {
         function dism.exe {
             [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
