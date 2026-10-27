@@ -665,6 +665,15 @@ Describe "Migration restore - path validation" -Tags 'slow' {
         @($r.FailedFiles).Count | Should Be 0
     }
 
+    It "returns empty result when Restore-WinEaseCustomPaths is called with an empty backup missing Custom directory" {
+        $dummyBk = Join-Path $TestDrive 'empty-cp-backup'
+        New-Item -ItemType Directory -Force -Path $dummyBk | Out-Null
+        $r = Restore-WinEaseCustomPaths -BackupRoot $dummyBk
+        $r.RestoredFiles | Should Be 0
+        $r.SkippedFiles | Should Be 0
+        @($r.FailedFiles).Count | Should Be 0
+    }
+
     It "refuses a relative path that climbs out of the profile" {
         $bk = Join-Path $TestDrive 'dotdot-backup'
         $outside = Join-Path $TestDrive 'outside'
