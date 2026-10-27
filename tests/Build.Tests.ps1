@@ -193,6 +193,43 @@ Describe "WinEase setup scripts - Custom Scripts Logging" {
         $content | Should Match "Duration:"
         $content.Contains("escapedScriptPath = `$scriptPath -replace") | Should Be $true
     }
+
+    It "scripts/UserOnce.ps1 logs security warning when custom-scripts-manifest.json contains invalid JSON" {
+        $userOncePath = Join-Path $script:RepoRoot "scripts\UserOnce.ps1"
+        $content = [System.IO.File]::ReadAllText($userOncePath, [System.Text.Encoding]::UTF8)
+
+        $content | Should Match '\[SECURITY WARNING\] Failed to read custom-scripts-manifest\.json:'
+
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$errors)
+        $ifAst = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.IfStatementAst] -and
+            $node.Extent.Text -match 'custom-scripts-manifest\.json'
+        }, $true))[0]
+
+        $loggedMessages = [System.Collections.Generic.List[string]]::new()
+        $testManifestContent = '{ invalid json format }'
+
+        $probe = New-Module -ScriptBlock {
+            param($IfBlockText, $InvalidJson, $LogList)
+
+            $manifestPath = 'C:\fake\custom-scripts-manifest.json'
+            $userCustomDir = 'C:\fake\UserCustom'
+
+            function Test-Path { param($LiteralPath) return $true }
+            function Get-Content { param($LiteralPath, $Raw) return $InvalidJson }
+            function Write-UserScriptLog { param($Message) [void]$LogList.Add($Message) }
+
+            . ([scriptblock]::Create($IfBlockText))
+            return $manifest
+        } -ArgumentList $ifAst.Extent.Text, $testManifestContent, $loggedMessages
+
+        $res = & $probe
+        $res | Should Be $null
+        $loggedMessages.Count | Should Be 1
+        $loggedMessages[0] | Should Match '\[SECURITY WARNING\] Failed to read custom-scripts-manifest\.json:'
+    }
 }
 
 Describe "Builder cleanup S11" {
