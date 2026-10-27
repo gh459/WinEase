@@ -2,6 +2,11 @@
 
 Performance notes from the Bolt agent. Newest entry first; format in `README.md`.
 
+## 2026-10-27 - Zero-allocation path segment scanning and HashSet deduplication in C# launcher/plugins
+
+**Learning:** `LauncherLogic.IsUnderBuildOutput` previously called `path.Split(...)` on every file in the WinUI source tree during startup write-time checks, allocating string arrays and individual segment strings for each file path. Replacing `path.Split` with an index-scanning loop achieves zero-allocation segment evaluation. Additionally, `UpstreamSyncPlugin.TweakKeys()` used linear `List.Contains()` checks during entry aggregation ($O(N^2)$); replacing it with `HashSet<string>` reduces deduplication complexity to $O(N)$.
+**Action:** Use zero-allocation index scanning instead of `string.Split()` in file traversal predicates, and prefer `HashSet<T>` over `List<T>.Contains()` for deduplicating entries.
+
 ## 2025-05-23 - Replacing Get-Command cmdlet discovery with Test-Path Function:\ in hot lookup paths
 
 **Learning:** Calling `Get-Command -Name Get-WinEaseUiString -ErrorAction SilentlyContinue` repeatedly during UI string formatting performs full PowerShell command resolution across modules, aliases, and functions on every call (~70-76ms per call in loops). Replacing it with `Test-Path -LiteralPath 'Function:\Get-WinEaseUiString'` checks the PowerShell Function PSDrive directly, executing in ~0.16ms per call (~99.8% reduction in overhead).

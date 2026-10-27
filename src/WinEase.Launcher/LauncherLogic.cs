@@ -59,10 +59,40 @@ namespace WinEase.Launcher
         /// <summary>gui\winui\WinEaseGui\bin and \obj are build outputs, not sources.</summary>
         public static bool IsUnderBuildOutput(string path)
         {
-            foreach (string part in path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+            if (string.IsNullOrEmpty(path)) return false;
+
+            // Zero-allocation segment scanning to avoid string array allocations when checking source files.
+            int len = path.Length;
+            int start = 0;
+            while (start < len)
             {
-                if (string.Equals(part, "bin", StringComparison.OrdinalIgnoreCase) || string.Equals(part, "obj", StringComparison.OrdinalIgnoreCase)) return true;
+                int end = start;
+                while (end < len && path[end] != '\\' && path[end] != '/')
+                {
+                    end++;
+                }
+
+                int segmentLen = end - start;
+                if (segmentLen == 3)
+                {
+                    char c0 = path[start];
+                    char c1 = path[start + 1];
+                    char c2 = path[start + 2];
+
+                    bool isBin = (c0 == 'b' || c0 == 'B') &&
+                                 (c1 == 'i' || c1 == 'I') &&
+                                 (c2 == 'n' || c2 == 'N');
+
+                    bool isObj = (c0 == 'o' || c0 == 'O') &&
+                                 (c1 == 'b' || c1 == 'B') &&
+                                 (c2 == 'j' || c2 == 'J');
+
+                    if (isBin || isObj) return true;
+                }
+
+                start = end + 1;
             }
+
             return false;
         }
 
