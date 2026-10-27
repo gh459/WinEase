@@ -177,6 +177,34 @@ function Get-WinEaseDebloatItemText {
 }
 $script:WinEaseDebloatDisplayText = { param($item) Get-WinEaseDebloatItemText -Item $item }
 
+# Opens a file with its associated application. A file type nobody is associated with
+# (no browser or Markdown viewer registered) must not crash a button handler: fall back
+# to showing the file in Explorer. Returns $true when the file itself was opened.
+function Open-WinEaseFileSafe {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
+        return $false
+    }
+    $resolvedPath = try {
+        (Resolve-Path -LiteralPath $Path -ErrorAction Stop).ProviderPath
+    } catch {
+        [System.IO.Path]::GetFullPath($Path)
+    }
+    try {
+        Start-Process -FilePath $resolvedPath -ErrorAction Stop
+        return $true
+    } catch {
+        Write-Verbose "Open-WinEaseFileSafe: $($_.Exception.Message)"
+        try {
+            $escapedPath = $resolvedPath -replace '"', '""'
+            Start-Process -FilePath 'explorer.exe' -ArgumentList @("/select,`"$escapedPath`"") -ErrorAction Stop
+        } catch {
+            Write-Verbose "Ignored: $($_.Exception.Message)"
+        }
+        return $false
+    }
+}
+
 # Keeps a WinForms window repainting while a job runs. Without WinForms loaded (WinUI 3 host) there is no
 # window of ours to repaint, so this does nothing.
 function Invoke-WinEaseGuiDoEvents {

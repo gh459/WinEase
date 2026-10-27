@@ -217,8 +217,7 @@ function Invoke-WinEaseWinUiGeneralRequest {
                 if (Test-Path -LiteralPath $guideJa) { $guide = $guideJa }
             }
             if (-not (Test-Path -LiteralPath $guide)) { throw (Get-WinEaseUiString 'Mig.Guide.NotFound' -Format $guide) }
-            try { Start-Process -FilePath $guide -ErrorAction Stop }
-            catch { Start-Process -FilePath 'explorer.exe' -ArgumentList "/select,`"$guide`"" }
+            [void](Open-WinEaseFileSafe -Path $guide)
             return @{}
         }
         default { throw "Unknown request '$Op'" }
