@@ -1456,15 +1456,13 @@ function New-WinEaseDebloatTab {
         -ForeColor $script:WinEaseGuiColors.Warn -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $barDeb)
     # Global engine switch: applies one engine to every target that supports it
     # The help mark next to the label: what the engine choice does is not obvious, so the
-    # mark explains it in a tooltip and dialog when activated.
+    # mark explains it in a tooltip.
     $engineHelpText = Get-WinEaseUiString 'Debloat.Engine.Help'
-    $engineHelpMark = New-WinEaseButton -Text '?' -X 428 -Y 8 -Width 22 -Height 22 `
-        -ForeColor $script:WinEaseGuiColors.Accent -Font (New-Object System.Drawing.Font($uiFontName, 9, [System.Drawing.FontStyle]::Bold)) `
-        -Parent $barDeb -OnClick {
-            Show-WinEaseGuiMessage -Text (Get-WinEaseUiString 'Debloat.Engine.Help') -Title (Get-WinEaseUiString 'Debloat.Engine.All') -Kind Info
-        }
+    $engineHelpMark = New-WinEaseLabel -Text '?' -X 431 -Y 11 -Width 16 -Height 20 `
+        -ForeColor $script:WinEaseGuiColors.Accent -Font (New-Object System.Drawing.Font($uiFontName, 9, [System.Drawing.FontStyle]::Bold)) -Parent $barDeb
     $engineHelpMark.Name = 'WinEaseEngineHelp'
     $engineHelpMark.AccessibleName = $engineHelpText
+    $engineHelpMark.AccessibleRole = [System.Windows.Forms.AccessibleRole]::PushButton
     [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Debloat.Engine.All') -X 455 -Y 11 -Width 135 -Height 20 `
         -ForeColor $script:WinEaseGuiColors.Text -Font (New-Object System.Drawing.Font($uiFontName, 8.5)) -Parent $barDeb)
     $cmbAllEngine = New-WinEaseComboBox -Items @('PowerShell', 'Rust') -DropList -SelectedIndex 0 `
