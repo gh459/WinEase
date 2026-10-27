@@ -51,10 +51,6 @@ Describe "Invoke-WinEaseReg" {
         function reg.exe { $script:RegArgs = @($args | ForEach-Object { [string]$_ }); $global:LASTEXITCODE = 0 }
     }
 
-    AfterAll {
-        Remove-Item Function:\reg.exe -ErrorAction SilentlyContinue
-    }
-
     It "builds reg.exe add with value, type, data and /f" {
         Invoke-WinEaseReg -Action Add -Key 'HKLM\zSOFTWARE\Test' -Name 'Value One' -Type REG_DWORD -Data '1'
         ($script:RegArgs -join '|') | Should Be 'add|HKLM\zSOFTWARE\Test|/v|Value One|/t|REG_DWORD|/d|1|/f'

@@ -39,10 +39,8 @@ function Invoke-ChildScriptWithLog {
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-    # Security: Escape single quotes in path and arguments to prevent command injection when interpolated into single-quoted script block
-    $escapedScriptPath = $ScriptPath -replace "'", "''"
-    $escapedArgPart = if ($Arguments) { " " + ($Arguments -replace "'", "''") } else { "" }
-    $psi.Arguments = "-ExecutionPolicy Bypass -NoProfile -NonInteractive -Command `"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; & '$escapedScriptPath'$escapedArgPart; exit `$LASTEXITCODE`""
+    $argPart = if ($Arguments) { " $Arguments" } else { "" }
+    $psi.Arguments = "-ExecutionPolicy Bypass -NoProfile -NonInteractive -Command `"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; & '$ScriptPath'$argPart; exit `$LASTEXITCODE`""
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
