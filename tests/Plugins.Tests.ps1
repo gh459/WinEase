@@ -19,6 +19,17 @@ Describe "Plugin host" {
         return $Default
     }
 
+    $script:HasCSharpCompiler = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
+    $script:AbstractionsDll = $null
+
+    function Get-TestAbstractionsDll {
+        if (-not $script:HasCSharpCompiler) { return $null }
+        if (-not $script:AbstractionsDll) {
+            $script:AbstractionsDll = New-TestAbstractions -Path (Join-Path $script:PluginWork 'WinEase.Plugins.Abstractions.dll')
+        }
+        return $script:AbstractionsDll
+    }
+
     function New-TestAbstractions {
         param([string]$Path, [string]$Version = '1.0.0.0')
         $srcDir = Join-Path -Path $script:RepoRoot -ChildPath 'src\WinEase.Plugins.Abstractions'
@@ -28,16 +39,17 @@ Describe "Plugin host" {
         return $Path
     }
 
-    $script:AbstractionsDll = New-TestAbstractions -Path (Join-Path $script:PluginWork 'WinEase.Plugins.Abstractions.dll')
-
     # One test plugin per DLL. Rec.Events lists "<phase>:<stage>" for every OnPhase call.
     function New-TestPluginDll {
         param(
             [Parameter(Mandatory = $true)][string]$Name,
             [string]$OnPhase = '',
             [string]$Describe = '',
-            [string]$Reference = $script:AbstractionsDll
+            [string]$Reference = ''
         )
+        if ([string]::IsNullOrWhiteSpace($Reference)) {
+            $Reference = Get-TestAbstractionsDll
+        }
         $source = @'
 using System;
 using System.Collections;
@@ -88,7 +100,7 @@ namespace @@NS@@ {
         $entries = @()
         if (-not $NotInLock) { $entries = @([PSCustomObject]@{ File = $name; Sha256 = $Sha256; OnError = $OnError; Description = ''; Enabled = $true }) }
         Write-WinEasePluginLock -Path $lock -Entries $entries
-        return Import-WinEasePlugins -RepoRoot $script:RepoRoot -UserDir $dir -UserLockPath $lock -BuiltinLockPath (Join-Path $dir 'none.psd1') -BuiltinDir (Join-Path $script:PluginWork 'emptybuiltin') -AbstractionsPath $script:AbstractionsDll
+        return Import-WinEasePlugins -RepoRoot $script:RepoRoot -UserDir $dir -UserLockPath $lock -BuiltinLockPath (Join-Path $dir 'none.psd1') -BuiltinDir (Join-Path $script:PluginWork 'emptybuiltin') -AbstractionsPath (Get-TestAbstractionsDll)
     }
 
     function Get-TestRecEvents {
@@ -115,8 +127,150 @@ namespace @@NS@@ {
         if ($PassThru) { return $true }
     }
 
+    Context "Read-WinEasePluginLock" {
+        It "returns an empty array when the lock file does not exist" {
+            $missingPath = Join-Path -Path $script:PluginWork -ChildPath 'nonexistent_lock.psd1'
+            $entries = Read-WinEasePluginLock -Path $missingPath
+            @($entries).Count | Should Be 0
+        }
+
+        It "returns an empty array when the path is a directory" {
+            $entries = Read-WinEasePluginLock -Path $script:PluginWork
+            @($entries).Count | Should Be 0
+        }
+
+        It "returns an empty array when the lock file has no Plugins key or an empty array" {
+            $emptyLock = Join-Path -Path $script:PluginWork -ChildPath 'empty_schema.psd1'
+            '@{ Version = 1 }' | Set-Content -LiteralPath $emptyLock -Encoding UTF8
+            $entries = Read-WinEasePluginLock -Path $emptyLock
+            @($entries).Count | Should Be 0
+
+            $emptyPluginsLock = Join-Path -Path $script:PluginWork -ChildPath 'empty_plugins.psd1'
+            '@{ Version = 1; Plugins = @() }' | Set-Content -LiteralPath $emptyPluginsLock -Encoding UTF8
+            $entries = Read-WinEasePluginLock -Path $emptyPluginsLock
+            @($entries).Count | Should Be 0
+        }
+
+        It "parses a valid lock file and sets default property values when optional keys are missing" {
+            $lockPath = Join-Path -Path $script:PluginWork -ChildPath 'defaults.lock.psd1'
+            $content = @'
+@{
+    Version = 1
+    Plugins = @(
+        @{
+            File   = 'SamplePlugin.dll'
+            Sha256 = 'a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890'
+        }
+    )
+}
+'@
+            $content | Set-Content -LiteralPath $lockPath -Encoding UTF8
+            $entries = @(Read-WinEasePluginLock -Path $lockPath)
+            $entries.Count | Should Be 1
+
+            $e = $entries[0]
+            $e.File | Should Be 'SamplePlugin.dll'
+            $e.Sha256 | Should Be 'a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890'
+            $e.OnError | Should Be 'Warn'
+            $e.Description | Should Be ''
+            $e.Enabled | Should Be $true
+            $e.SignerThumbprint | Should Be ''
+        }
+
+        It "trims and lowercases Sha256 and parses explicit properties correctly" {
+            $lockPath = Join-Path -Path $script:PluginWork -ChildPath 'explicit.lock.psd1'
+            $content = @'
+@{
+    Version = 1
+    Plugins = @(
+        @{
+            File             = 'ExplicitPlugin.dll'
+            Sha256           = '  1A2B3C4D5E6F78901A2B3C4D5E6F78901A2B3C4D5E6F78901A2B3C4D5E6F7890  '
+            OnError          = 'Stop'
+            Description      = 'Detailed description'
+            Enabled          = $false
+            SignerThumbprint = 'AA11BB22CC33DD44EE55FF667788990011223344'
+        }
+    )
+}
+'@
+            $content | Set-Content -LiteralPath $lockPath -Encoding UTF8
+            $entries = @(Read-WinEasePluginLock -Path $lockPath)
+            $entries.Count | Should Be 1
+
+            $e = $entries[0]
+            $e.File | Should Be 'ExplicitPlugin.dll'
+            $e.Sha256 | Should Be '1a2b3c4d5e6f78901a2b3c4d5e6f78901a2b3c4d5e6f78901a2b3c4d5e6f7890'
+            $e.OnError | Should Be 'Stop'
+            $e.Description | Should Be 'Detailed description'
+            $e.Enabled | Should Be $false
+            $e.SignerThumbprint | Should Be 'AA11BB22CC33DD44EE55FF667788990011223344'
+        }
+
+        It "handles multiple plugin entries and filters out null items" {
+            $lockPath = Join-Path -Path $script:PluginWork -ChildPath 'multiple_nulls.lock.psd1'
+            $content = @'
+@{
+    Version = 1
+    Plugins = @(
+        @{
+            File   = 'First.dll'
+            Sha256 = '1111111111111111111111111111111111111111111111111111111111111111'
+        },
+        $null,
+        @{
+            File   = 'Second.dll'
+            Sha256 = '2222222222222222222222222222222222222222222222222222222222222222'
+        }
+    )
+}
+'@
+            $content | Set-Content -LiteralPath $lockPath -Encoding UTF8
+            $entries = @(Read-WinEasePluginLock -Path $lockPath)
+            $entries.Count | Should Be 2
+            $entries[0].File | Should Be 'First.dll'
+            $entries[1].File | Should Be 'Second.dll'
+        }
+
+        It "round-trips entries written by Write-WinEasePluginLock" {
+            $lockPath = Join-Path -Path $script:PluginWork -ChildPath 'roundtrip.lock.psd1'
+            $originalEntries = @(
+                [PSCustomObject]@{
+                    File        = 'Alpha.dll'
+                    Sha256      = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                    OnError     = 'Warn'
+                    Description = 'Alpha Plugin'
+                    Enabled     = $true
+                },
+                [PSCustomObject]@{
+                    File        = 'Beta.dll'
+                    Sha256      = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+                    OnError     = 'Ignore'
+                    Description = 'Beta Plugin'
+                    Enabled     = $false
+                }
+            )
+
+            Write-WinEasePluginLock -Path $lockPath -Entries $originalEntries
+            $readEntries = @(Read-WinEasePluginLock -Path $lockPath)
+
+            $readEntries.Count | Should Be 2
+            $readEntries[0].File | Should Be 'Alpha.dll'
+            $readEntries[0].Sha256 | Should Be 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+            $readEntries[0].OnError | Should Be 'Warn'
+            $readEntries[0].Description | Should Be 'Alpha Plugin'
+            $readEntries[0].Enabled | Should Be $true
+
+            $readEntries[1].File | Should Be 'Beta.dll'
+            $readEntries[1].Sha256 | Should Be 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+            $readEntries[1].OnError | Should Be 'Ignore'
+            $readEntries[1].Description | Should Be 'Beta Plugin'
+            $readEntries[1].Enabled | Should Be $false
+        }
+    }
+
     Context "Loading and the allow list" {
-        It "loads a DLL whose SHA256 matches the lock file" {
+        It "loads a DLL whose SHA256 matches the lock file" -Skip:(-not $script:HasCSharpCompiler) {
             $dll = New-TestPluginDll -Name 'LoadOk'
             $r = Import-TestPlugin -Dll $dll
             $r.LoadedCount | Should Be 1
@@ -128,7 +282,7 @@ namespace @@NS@@ {
             (Get-WinEaseLoadedPlugins)[0].Contributions -contains 'Registry' | Should Be $true
         }
 
-        It "does not load a DLL whose hash differs from the lock file" {
+        It "does not load a DLL whose hash differs from the lock file" -Skip:(-not $script:HasCSharpCompiler) {
             $dll = New-TestPluginDll -Name 'HashBad'
             $r = Import-TestPlugin -Dll $dll -Sha256 ('0' * 64) 3>$null
             $r.LoadedCount | Should Be 0
@@ -137,7 +291,7 @@ namespace @@NS@@ {
             @([System.AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GetName().Name -eq 'HashBad' }).Count | Should Be 0
         }
 
-        It "does not load a DLL that is not in the lock file" {
+        It "does not load a DLL that is not in the lock file" -Skip:(-not $script:HasCSharpCompiler) {
             $dll = New-TestPluginDll -Name 'NotListed'
             $r = Import-TestPlugin -Dll $dll -NotInLock 3>$null
             $r.LoadedCount | Should Be 0
@@ -145,17 +299,17 @@ namespace @@NS@@ {
             @([System.AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GetName().Name -eq 'NotListed' }).Count | Should Be 0
         }
 
-        It "refuses a lock entry whose file name leaves the plugin folder" {
+        It "refuses a lock entry whose file name leaves the plugin folder" -Skip:(-not $script:HasCSharpCompiler) {
             $dir = Join-Path $script:PluginWork 'trav'
             New-Item -ItemType Directory -Force -Path $dir | Out-Null
             $lock = Join-Path $dir 'l.psd1'
             Write-WinEasePluginLock -Path $lock -Entries @([PSCustomObject]@{ File = '..\x.dll'; Sha256 = ('a' * 64); OnError = 'Warn'; Description = ''; Enabled = $true })
-            $r = Import-WinEasePlugins -RepoRoot $script:RepoRoot -UserDir $dir -UserLockPath $lock -BuiltinLockPath (Join-Path $dir 'none.psd1') -BuiltinDir (Join-Path $script:PluginWork 'emptybuiltin') -AbstractionsPath $script:AbstractionsDll 3>$null
+            $r = Import-WinEasePlugins -RepoRoot $script:RepoRoot -UserDir $dir -UserLockPath $lock -BuiltinLockPath (Join-Path $dir 'none.psd1') -BuiltinDir (Join-Path $script:PluginWork 'emptybuiltin') -AbstractionsPath (Get-TestAbstractionsDll) 3>$null
             $r.LoadedCount | Should Be 0
             $r.Rejected[0].Reason | Should Match 'plain .dll name'
         }
 
-        It "does not load a DLL built for another major version of the contract" {
+        It "does not load a DLL built for another major version of the contract" -Skip:(-not $script:HasCSharpCompiler) {
             New-Item -ItemType Directory -Force -Path (Join-Path $script:PluginWork 'v2') | Out-Null
             $abs2 = New-TestAbstractions -Path (Join-Path $script:PluginWork 'v2\WinEase.Plugins.Abstractions.dll') -Version '2.0.0.0'
             $dll = New-TestPluginDll -Name 'MajorTwo' -Reference $abs2
@@ -164,7 +318,7 @@ namespace @@NS@@ {
             $r.Rejected[0].Reason | Should Match 'major version 2'
         }
 
-        It "refuses a plugin that asks to replace a phase" {
+        It "refuses a plugin that asks to replace a phase" -Skip:(-not $script:HasCSharpCompiler) {
             $dll = New-TestPluginDll -Name 'Replacer' -Describe 'd.ReplacesPhases = new string[] { "09-physical-debloat" };'
             $r = Import-TestPlugin -Dll $dll 3>$null
             $r.LoadedCount | Should Be 0
@@ -186,7 +340,7 @@ namespace @@NS@@ {
     }
 
     Context "Hooks around a phase" {
-        It "calls Before then After with the phase name" {
+        It "calls Before then After with the phase name" -Skip:(-not $script:HasCSharpCompiler) {
             $dll = New-TestPluginDll -Name 'Order'
             [void](Import-TestPlugin -Dll $dll)
             Clear-TestRecEvents -Namespace 'Order'
@@ -195,7 +349,7 @@ namespace @@NS@@ {
             (Get-TestRecEvents -Namespace 'Order') -join ',' | Should Be '05-appx:Before,05-appx:After'
         }
 
-        It "skips a plugin whose phase list does not contain the phase" {
+        It "skips a plugin whose phase list does not contain the phase" -Skip:(-not $script:HasCSharpCompiler) {
             $dll = New-TestPluginDll -Name 'OnlyFod' -Describe 'd.Phases = new string[] { "06-fod" };'
             [void](Import-TestPlugin -Dll $dll)
             Clear-TestRecEvents -Namespace 'OnlyFod'
@@ -204,7 +358,7 @@ namespace @@NS@@ {
             (Get-TestRecEvents -Namespace 'OnlyFod') -join ',' | Should Be '06-fod:Before'
         }
 
-        It "skips a plugin outside its build range and runs it inside" {
+        It "skips a plugin outside its build range and runs it inside" -Skip:(-not $script:HasCSharpCompiler) {
             $dll = New-TestPluginDll -Name 'Ranged' -Describe 'd.MinBuild = 26100; d.MaxBuild = 26199;'
             [void](Import-TestPlugin -Dll $dll)
             Clear-TestRecEvents -Namespace 'Ranged'
@@ -231,20 +385,20 @@ namespace @@NS@@ {
 
     Context "OnError" {
         $throwing = 'throw new InvalidOperationException("boom");'
-        It "Warn reports the failure and goes on" {
+        It "Warn reports the failure and goes on" -Skip:(-not $script:HasCSharpCompiler) {
             $dll = New-TestPluginDll -Name 'ThrowWarn' -OnPhase $throwing
             [void](Import-TestPlugin -Dll $dll -OnError Warn)
             $w = $null
             { Invoke-WinEasePluginHook -Phase '05-appx' -Stage Before -WarningVariable w 3>$null } | Should Not Throw
             @($script:WinEasePluginRunLog)[-1].Status | Should Be 'Failed'
         }
-        It "Ignore goes on" {
+        It "Ignore goes on" -Skip:(-not $script:HasCSharpCompiler) {
             $dll = New-TestPluginDll -Name 'ThrowIgnore' -OnPhase $throwing
             [void](Import-TestPlugin -Dll $dll -OnError Ignore)
             { Invoke-WinEasePluginHook -Phase '05-appx' -Stage Before } | Should Not Throw
             @($script:WinEasePluginRunLog)[-1].Status | Should Be 'Failed'
         }
-        It "Stop ends the build" {
+        It "Stop ends the build" -Skip:(-not $script:HasCSharpCompiler) {
             $dll = New-TestPluginDll -Name 'ThrowStop' -OnPhase $throwing
             [void](Import-TestPlugin -Dll $dll -OnError Stop)
             { Invoke-WinEasePluginHook -Phase '05-appx' -Stage Before } | Should Throw 'boom'
@@ -253,7 +407,7 @@ namespace @@NS@@ {
 
     Context "Host services and DryRun" {
         $touch = 'c.Host.SetOfflineRegistry("zSOFTWARE", "Software\\Plugin", "Flag", "REG_DWORD", "1"); c.Host.WriteImageFile("note.txt", new byte[] { 1 }); Rec.Events.Add("dryrun=" + c.Host.DryRun);'
-        It "writes the registry value through Invoke-WinEaseReg when it is not a DryRun" {
+        It "writes the registry value through Invoke-WinEaseReg when it is not a DryRun" -Skip:(-not $script:HasCSharpCompiler) {
             $dll = New-TestPluginDll -Name 'HostReal' -OnPhase $touch
             [void](Import-TestPlugin -Dll $dll)
             $scratch = Join-Path $script:PluginWork 'scratch_real'
@@ -261,7 +415,7 @@ namespace @@NS@@ {
             @($script:RegCalls | Where-Object { $_ -like 'Add|HKLM\zSOFTWARE\Software\Plugin|Flag|REG_DWORD|1|*' }).Count | Should Be 1
             Test-Path -LiteralPath (Join-Path $scratch 'Windows\Setup\Scripts\Plugins\HostReal\note.txt') | Should Be $true
         }
-        It "only records the write operations in a DryRun" {
+        It "only records the write operations in a DryRun" -Skip:(-not $script:HasCSharpCompiler) {
             $dll = New-TestPluginDll -Name 'HostDry' -OnPhase $touch
             [void](Import-TestPlugin -Dll $dll)
             $scratch = Join-Path $script:PluginWork 'scratch_dry'
@@ -270,13 +424,13 @@ namespace @@NS@@ {
             Test-Path -LiteralPath $scratch | Should Be $false
             (Get-TestRecEvents -Namespace 'HostDry') -contains 'dryrun=True' | Should Be $true
         }
-        It "refuses a registry hive that is not an offline hive" {
+        It "refuses a registry hive that is not an offline hive" -Skip:(-not $script:HasCSharpCompiler) {
             $dll = New-TestPluginDll -Name 'HostHive' -OnPhase 'c.Host.SetOfflineRegistry("HKLM", "Software\\Evil", "V", "REG_DWORD", "1");'
             [void](Import-TestPlugin -Dll $dll -OnError Stop)
             { Invoke-WinEasePluginHook -Phase '10-registry' -Stage Before } | Should Throw
             $script:RegCalls.Count | Should Be 0
         }
-        It "does not let a plugin run DISM verbs that change the mount" {
+        It "does not let a plugin run DISM verbs that change the mount" -Skip:(-not $script:HasCSharpCompiler) {
             $dll = New-TestPluginDll -Name 'HostDism' -OnPhase 'c.Host.RunDism(new string[] { "/Unmount-Image", "/MountDir:C:\\x", "/Discard" });'
             [void](Import-TestPlugin -Dll $dll -OnError Stop)
             { Invoke-WinEasePluginHook -Phase '10-registry' -Stage Before -ScratchDir $script:PluginWork } | Should Throw
@@ -284,7 +438,7 @@ namespace @@NS@@ {
     }
 
     Context "Contributions" {
-        It "returns registry entries in the table shape and drops invalid ones" {
+        It "returns registry entries in the table shape and drops invalid ones" -Skip:(-not $script:HasCSharpCompiler) {
             $dll = New-TestPluginDll -Name 'ContribReg'
             [void](Import-TestPlugin -Dll $dll)
             $entries = @(Get-WinEasePluginContributions -Kind Registry 3>$null)
@@ -292,7 +446,7 @@ namespace @@NS@@ {
             $entries[0].Hive | Should Be 'zSYSTEM'
             $entries[0].PluginId | Should Be 'ContribReg'
         }
-        It "runs plugin registry entries through Invoke-WinEaseRegistryTable with the tweak gate" {
+        It "runs plugin registry entries through Invoke-WinEaseRegistryTable with the tweak gate" -Skip:(-not $script:HasCSharpCompiler) {
             $dll = New-TestPluginDll -Name 'ContribTable'
             [void](Import-TestPlugin -Dll $dll)
             $entries = @(Get-WinEasePluginContributions -Kind Registry 3>$null)
@@ -303,7 +457,7 @@ namespace @@NS@@ {
             Invoke-WinEaseRegistryTable -Entries $entries
             $script:RegCalls.Count | Should Be 0
         }
-        It "returns appx, fod, service and image file contributions and drops invalid ones" {
+        It "returns appx, fod, service and image file contributions and drops invalid ones" -Skip:(-not $script:HasCSharpCompiler) {
             $dll = New-TestPluginDll -Name 'ContribAll'
             [void](Import-TestPlugin -Dll $dll)
             @(Get-WinEasePluginContributions -Kind Appx)[0].Pattern | Should Be 'Contoso.*'
@@ -316,7 +470,7 @@ namespace @@NS@@ {
             $files.Count | Should Be 1
             $files[0].RelativePath | Should Be 'run.cmd'
         }
-        It "writes image files below Windows\Setup\Scripts\Plugins\<id> and not in a DryRun" {
+        It "writes image files below Windows\Setup\Scripts\Plugins\<id> and not in a DryRun" -Skip:(-not $script:HasCSharpCompiler) {
             $dll = New-TestPluginDll -Name 'ContribFiles'
             [void](Import-TestPlugin -Dll $dll)
             $scratch = Join-Path $script:PluginWork 'scratch_files'
@@ -333,7 +487,7 @@ namespace @@NS@@ {
     }
 
     Context "Lock files, self test and user registration" {
-        It "Test-WinEasePluginLocks reports Ok, Mismatch and Missing" {
+        It "Test-WinEasePluginLocks reports Ok, Mismatch and Missing" -Skip:(-not $script:HasCSharpCompiler) {
             $root = Join-Path $script:PluginWork 'repo'
             New-Item -ItemType Directory -Force -Path (Join-Path $root 'plugins\user'), (Join-Path $root 'plugins\builtin'), (Join-Path $root 'config\user') | Out-Null
             $good = New-TestPluginDll -Name 'LockGood'
@@ -353,7 +507,7 @@ namespace @@NS@@ {
             $result = Test-WinEaseSelfCheck22PluginLocks -ScriptRoot $script:RepoRoot
             $result.Passed | Should Be $true
         }
-        It "Add-WinEaseUserPlugin registers a file only with the hash the user confirmed" {
+        It "Add-WinEaseUserPlugin registers a file only with the hash the user confirmed" -Skip:(-not $script:HasCSharpCompiler) {
             $root = Join-Path $script:PluginWork 'repo_add'
             New-Item -ItemType Directory -Force -Path $root | Out-Null
             $dll = New-TestPluginDll -Name 'UserAdd'
@@ -366,7 +520,7 @@ namespace @@NS@@ {
             $inventory.Count | Should Be 1
             $inventory[0].Status | Should Be 'Ok'
             $inventory[0].OnError | Should Be 'Stop'
-            $r = Import-WinEasePlugins -RepoRoot $root -AbstractionsPath $script:AbstractionsDll
+            $r = Import-WinEasePlugins -RepoRoot $root -AbstractionsPath (Get-TestAbstractionsDll)
             $r.Loaded -contains 'UserAdd' | Should Be $true
         }
         It "ignores DLLs in plugins\user in the repository checkout (the folder holds only the README)" {
@@ -375,7 +529,7 @@ namespace @@NS@@ {
     }
 
     Context "WinUI host requests (plugins.list, plugins.addUser)" {
-        It "lists nothing, shows the hash first and registers only after the confirmation" {
+        It "lists nothing, shows the hash first and registers only after the confirmation" -Skip:(-not (Get-Command 'powershell.exe' -ErrorAction SilentlyContinue) -or -not $script:HasCSharpCompiler) {
             $root = Join-Path $script:PluginWork 'repo_host'
             New-Item -ItemType Directory -Force -Path (Join-Path $root 'config') | Out-Null
             Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'config\ui-strings') -Destination (Join-Path $root 'config\ui-strings') -Recurse
