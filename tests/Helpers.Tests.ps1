@@ -1995,6 +1995,22 @@ Describe "WinEase helpers - oscdimg integrity (Test-OscdimgIntegrity)" {
             Mock Get-AuthenticodeSignature { throw "Authenticode check error" }
             Mock Get-FileHash { return [PSCustomObject]@{ Hash = $pinnedHash } }
             Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $true
+            Assert-MockCalled Get-AuthenticodeSignature -Exactly 1 -Scope It
+            Assert-MockCalled Get-FileHash -Exactly 1 -Scope It
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "returns `$false when Get-AuthenticodeSignature throws an exception and hash is unknown" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_sig_ex_unregistered_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        try {
+            Mock Get-AuthenticodeSignature { throw "Authenticode check error" }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = '0000000000000000000000000000000000000000000000000000000000000000' } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
+            Assert-MockCalled Get-AuthenticodeSignature -Exactly 1 -Scope It
+            Assert-MockCalled Get-FileHash -Exactly 1 -Scope It
         } finally {
             Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
         }
@@ -2022,6 +2038,8 @@ Describe "WinEase helpers - oscdimg integrity (Test-OscdimgIntegrity)" {
             Mock Get-AuthenticodeSignature { throw "Signature check failed" }
             Mock Get-FileHash { throw "Hash check failed" }
             Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
+            Assert-MockCalled Get-AuthenticodeSignature -Exactly 1 -Scope It
+            Assert-MockCalled Get-FileHash -Exactly 1 -Scope It
         } finally {
             Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
         }
