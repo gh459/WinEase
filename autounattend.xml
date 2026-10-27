@@ -896,11 +896,12 @@ $scripts = @(
 
 		# Setup keeps copies of the answer file (they hold the account password in clear text) and the
 		# OOBE helper carries the password as Base64. Delete them; a failure is logged, never fatal.
-		$secretFiles = @();
-		foreach ($answerDir in @('C:\Windows\Panther', 'C:\Windows\Panther\unattend', 'C:\Windows\Panther\UnattendGC', 'C:\Windows\System32\Sysprep')) {
-			foreach ($answerName in @('unattend.xml', 'autounattend.xml')) { $secretFiles += (Join-Path -Path $answerDir -ChildPath $answerName); }
-		}
-		$secretFiles += 'C:\Windows\Setup\Scripts\WinEase-oobe-autologon-repair.ps1';
+		$secretFiles = @(
+			foreach ($answerDir in @('C:\Windows\Panther', 'C:\Windows\Panther\unattend', 'C:\Windows\Panther\UnattendGC', 'C:\Windows\System32\Sysprep')) {
+				foreach ($answerName in @('unattend.xml', 'autounattend.xml')) { Join-Path -Path $answerDir -ChildPath $answerName; }
+			}
+			'C:\Windows\Setup\Scripts\WinEase-oobe-autologon-repair.ps1';
+		);
 		foreach ($secretFile in $secretFiles) {
 			try {
 				if (Test-Path -LiteralPath $secretFile) {
@@ -916,14 +917,14 @@ $scripts = @(
 &amp; {
   [float] $complete = 0;
   [float] $increment = 100 / $scripts.Count;
-  $flErrors = @();
+  $flErrors = [System.Collections.Generic.List[string]]::new();
   foreach( $script in $scripts ) {
     Write-Progress -Activity 'Running scripts to finalize your Windows installation. Do not close this window.' -PercentComplete $complete;
     $start = [datetime]::Now;
     try {
       &amp; $script;
     } catch {
-      $flErrors += ("Script block failed: {0}" -f $_);
+      $flErrors.Add(("Script block failed: {0}" -f $_));
     }
     $complete += $increment;
   }

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace WinEase.Plugins.Builtin.UpstreamSync
@@ -50,13 +51,16 @@ namespace WinEase.Plugins.Builtin.UpstreamSync
         /// <summary>The tweak keys the registry entries are gated by.</summary>
         public static string[] TweakKeys()
         {
-            List<string> keys = new List<string>();
+            // Use HashSet to avoid O(N^2) linear searching during key deduplication.
+            var keys = new HashSet<string>(System.StringComparer.Ordinal);
             foreach (RegistryEntry entry in RegistryData())
             {
-                if (!keys.Contains(entry.Tweak)) keys.Add(entry.Tweak);
+                keys.Add(entry.Tweak);
             }
-            keys.Sort(System.StringComparer.Ordinal);
-            return keys.ToArray();
+            string[] result = new string[keys.Count];
+            keys.CopyTo(result, 0);
+            Array.Sort(result, System.StringComparer.Ordinal);
+            return result;
         }
 
         public static IList<AppxRemovalRule> AppxData()

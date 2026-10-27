@@ -75,6 +75,27 @@ public class LauncherLogicTests
         Assert.Null(LauncherLogic.NewestSourceWriteTimeUtc(@"C:\nowhere", d => false, (d, pattern, option) => Enumerable.Empty<string>(), f => DateTime.UtcNow));
     }
 
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("bin", true)]
+    [InlineData("obj", true)]
+    [InlineData("BIN", true)]
+    [InlineData("OBJ", true)]
+    [InlineData(@"bin\output.dll", true)]
+    [InlineData(@"obj\Debug\app.dll", true)]
+    [InlineData(@"C:\repo\gui\winui\WinEaseGui\bin\WinEaseGui.exe", true)]
+    [InlineData(@"C:\repo\gui\winui\WinEaseGui\obj\Debug\XamlTypeInfo.g.cs", true)]
+    [InlineData(@"gui/winui/WinEaseGui/bin/WinEaseGui.exe", true)]
+    [InlineData(@"gui/winui/WinEaseGui/obj/Debug/XamlTypeInfo.g.cs", true)]
+    [InlineData(@"C:\repo\bingo\app.exe", false)]
+    [InlineData(@"C:\repo\object\app.exe", false)]
+    [InlineData(@"C:\repo\gui\winui\WinEaseGui\Views\MainView.xaml.cs", false)]
+    public void IsUnderBuildOutput_identifies_build_output_directories_correctly(string path, bool expected)
+    {
+        Assert.Equal(expected, LauncherLogic.IsUnderBuildOutput(path));
+    }
+
     [Fact]
     public void BuilderArguments_pass_the_fixed_part_and_forward_arguments_in_order()
     {

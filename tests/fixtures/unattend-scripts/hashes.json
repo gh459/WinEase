@@ -1,8 +1,8 @@
 ﻿[
     {
         "path":  "scripts/setup/ExtractUnattend.ps1",
-        "sha256":  "96537560b23cd44f1b24ffef9c5b943495ee1a170f5ff50ee444d19fb07fd076",
-        "bytes":  7166
+        "sha256":  "a457d7ee37c0740734a1738a39e9100b3f76b388688d3e1ba29780ca3724b08e",
+        "bytes":  7257
     },
     {
         "path":  "scripts/setup/ApplyDefaultUser.ps1",

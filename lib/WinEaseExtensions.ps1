@@ -2,6 +2,139 @@
 # Dot-sourced by WinEasebuilder.ps1. Provides user tweaks, presets, custom scripts,
 # config diffing and recovery readiness diagnostics.
 
+# Helper functions for Import-WinEaseUserExtensions
+
+function Register-WinEaseUserPreset {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$PresetKey,
+        [Parameter(Mandatory = $true)][object]$OverrideData
+    )
+    $merged = @{}
+    if ($OverrideData.BasePreset -and $script:BuiltInPresets -and $script:BuiltInPresets.Contains($OverrideData.BasePreset)) {
+        $base = $script:BuiltInPresets[$OverrideData.BasePreset]
+        if ($base -is [System.Collections.IDictionary]) {
+            foreach ($k in $base.Keys) { $merged[$k] = $base[$k] }
+        } elseif ($base.PSObject) {
+            foreach ($p in $base.PSObject.Properties) { $merged[$p.Name] = $p.Value }
+        }
+    }
+    if ($OverrideData -is [System.Collections.IDictionary]) {
+        foreach ($k in $OverrideData.Keys) { if ($k -ne 'BasePreset') { $merged[$k] = $OverrideData[$k] } }
+    } elseif ($OverrideData.PSObject) {
+        foreach ($p in $OverrideData.PSObject.Properties) { if ($p.Name -ne 'BasePreset') { $merged[$p.Name] = $p.Value } }
+    }
+
+    if ($script:BuiltInPresets) {
+        $script:BuiltInPresets[$PresetKey] = $merged
+    } else {
+        if (-not $script:UserPresets) { $script:UserPresets = [ordered]@{} }
+        $script:UserPresets[$PresetKey] = $merged
+    }
+}
+
+function Import-WinEaseUserTweaksData {
+    [CmdletBinding()]
+    param(
+        [object[]]$UserTweaks
+    )
+    $tweakErrors = [System.Collections.Generic.List[string]]::new()
+    if (-not $UserTweaks) { return @() }
+    foreach ($ut in $UserTweaks) {
+        if (-not $ut.Key -or -not $ut.Category -or -not $ut.Description) {
+            $msg = "UserTweak missing required keys (Key, Category, Description): $($ut.Key)"
+            $tweakErrors.Add($msg)
+            Write-Warning "[UserExtensions] UserTweak missing required keys: $($ut.Key)"
+            continue
+        }
+        if ($script:AllTweakDefs -and $script:AllTweakDefs.Contains($ut.Key)) {
+            $msg = "UserTweak key '$($ut.Key)' conflicts with an existing tweak key; skipped."
+            $tweakErrors.Add($msg)
+            Write-Warning "[UserExtensions] UserTweak key '$($ut.Key)' conflicts with existing key; skipped."
+            continue
+        }
+        $script:UserTweakDefs[$ut.Key] = $ut
+        if ($script:AllTweakDefs) {
+            $script:AllTweakDefs[$ut.Key] = @{ Category = $ut.Category; Default = [bool]$ut.Default; Description = $ut.Description; IsUserTweak = $true }
+            if ($ut.DescriptionJa) { $script:AllTweakDefs[$ut.Key].DescriptionJa = [string]$ut.DescriptionJa }
+        }
+    }
+    return @($tweakErrors)
+}
+
+function Import-WinEaseUserFolderPresets {
+    [CmdletBinding()]
+    param(
+        [string]$PresetsDir
+    )
+    $folderCount = 0
+    $loadedAny = $false
+    $folderErrors = [System.Collections.Generic.List[string]]::new()
+    $knownBuiltInKeys = @('none', 'extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')
+
+    if ($PresetsDir -and (Test-Path -LiteralPath $PresetsDir)) {
+        foreach ($presetFile in @(Get-ChildItem -LiteralPath $PresetsDir -Filter '*.psd1' -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
+            $presetKey = ([System.IO.Path]::GetFileNameWithoutExtension($presetFile.Name)).Trim().ToLower()
+            if (-not $presetKey) { continue }
+            if ($presetKey -eq 'custom' -or $knownBuiltInKeys -contains $presetKey) {
+                $msg = "User preset file '$($presetFile.Name)' uses a reserved or built-in preset name; skipped."
+                $folderErrors.Add($msg)
+                Write-Warning "[UserExtensions] $msg"
+                continue
+            }
+            try {
+                $presetData = Import-PowerShellDataFile -LiteralPath $presetFile.FullName
+            } catch {
+                $msg = "Failed to load user preset '$($presetFile.FullName)': $($_.Exception.Message)"
+                $folderErrors.Add($msg)
+                Write-Warning "[UserExtensions] $msg"
+                continue
+            }
+            if ($presetData -isnot [System.Collections.IDictionary]) {
+                $msg = "User preset '$($presetFile.FullName)' does not contain a hashtable; skipped."
+                $folderErrors.Add($msg)
+                Write-Warning "[UserExtensions] $msg"
+                continue
+            }
+            Register-WinEaseUserPreset -PresetKey $presetKey -OverrideData $presetData
+            $folderCount++
+            $loadedAny = $true
+        }
+    }
+    return [PSCustomObject]@{
+        Count     = $folderCount
+        LoadedAny = $loadedAny
+        Errors    = @($folderErrors)
+    }
+}
+
+function Import-WinEaseUserCustomScriptsData {
+    [CmdletBinding()]
+    param(
+        [object[]]$CustomScripts
+    )
+    $csErrors = [System.Collections.Generic.List[string]]::new()
+    if (-not $CustomScripts) { return @() }
+    $validStages = @('PreBuild', 'OfflineImage', 'FirstLogon', 'UserOnce')
+    $validOnErrors = @('Stop', 'Warn', 'Ignore')
+    foreach ($cs in $CustomScripts) {
+        if (-not $cs.Stage -or $validStages -notcontains $cs.Stage) {
+            $msg = "CustomScript '$($cs.Id)' has invalid Stage '$($cs.Stage)'."
+            $csErrors.Add($msg)
+            Write-Warning "[UserExtensions] CustomScript '$($cs.Id)' invalid Stage '$($cs.Stage)'."
+            continue
+        }
+        if ($cs.OnError -and $validOnErrors -notcontains $cs.OnError) {
+            $msg = "CustomScript '$($cs.Id)' has invalid OnError '$($cs.OnError)'."
+            $csErrors.Add($msg)
+            Write-Warning "[UserExtensions] CustomScript '$($cs.Id)' invalid OnError '$($cs.OnError)'."
+            continue
+        }
+        $script:UserCustomScripts += $cs
+    }
+    return @($csErrors)
+}
+
 # 1. Import-WinEaseUserExtensions
 function Import-WinEaseUserExtensions {
     [CmdletBinding()]
@@ -16,7 +149,7 @@ function Import-WinEaseUserExtensions {
         $script:UserCustomScripts = @()
     }
     $script:UserPresets = [ordered]@{}
-    $errors = @()
+    $errors = [System.Collections.Generic.List[string]]::new()
 
     if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
         $scriptDir = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { (Get-Location).Path }
@@ -41,133 +174,41 @@ function Import-WinEaseUserExtensions {
             $loadedMain = $true
         } catch {
             $msg = "Failed to load '$ConfigPath': $($_.Exception.Message)"
-            $errors += $msg
+            $errors.Add($msg)
             Write-Warning "[UserExtensions] $msg"
         }
     }
 
     # UserTweaks
     if (-not $PresetsOnly -and $data -and $data.UserTweaks) {
-        foreach ($ut in $data.UserTweaks) {
-            if (-not $ut.Key -or -not $ut.Category -or -not $ut.Description) {
-                $errors += "UserTweak missing required keys (Key, Category, Description): $($ut.Key)"
-                Write-Warning "[UserExtensions] UserTweak missing required keys: $($ut.Key)"
-                continue
-            }
-            if ($script:AllTweakDefs -and $script:AllTweakDefs.Contains($ut.Key)) {
-                $errors += "UserTweak key '$($ut.Key)' conflicts with an existing tweak key; skipped."
-                Write-Warning "[UserExtensions] UserTweak key '$($ut.Key)' conflicts with existing key; skipped."
-                continue
-            }
-            $script:UserTweakDefs[$ut.Key] = $ut
-            if ($script:AllTweakDefs) {
-                $script:AllTweakDefs[$ut.Key] = @{ Category = $ut.Category; Default = [bool]$ut.Default; Description = $ut.Description; IsUserTweak = $true }
-                # Optional Japanese text for the GUI (display only)
-                if ($ut.DescriptionJa) { $script:AllTweakDefs[$ut.Key].DescriptionJa = [string]$ut.DescriptionJa }
-            }
-        }
+        $tweakErrors = Import-WinEaseUserTweaksData -UserTweaks $data.UserTweaks
+        foreach ($e in $tweakErrors) { $errors.Add($e) }
     }
 
     # UserPresets
     if ($data -and $data.UserPresets) {
         foreach ($presetKey in $data.UserPresets.Keys) {
-            $ov = $data.UserPresets[$presetKey]
-            $merged = @{}
-            if ($ov.BasePreset -and $script:BuiltInPresets -and $script:BuiltInPresets.Contains($ov.BasePreset)) {
-                $base = $script:BuiltInPresets[$ov.BasePreset]
-                if ($base -is [System.Collections.IDictionary]) {
-                    foreach ($k in $base.Keys) { $merged[$k] = $base[$k] }
-                } elseif ($base.PSObject) {
-                    foreach ($p in $base.PSObject.Properties) { $merged[$p.Name] = $p.Value }
-                }
-            }
-            if ($ov -is [System.Collections.IDictionary]) {
-                foreach ($k in $ov.Keys) { if ($k -ne 'BasePreset') { $merged[$k] = $ov[$k] } }
-            } elseif ($ov.PSObject) {
-                foreach ($p in $ov.PSObject.Properties) { if ($p.Name -ne 'BasePreset') { $merged[$p.Name] = $p.Value } }
-            }
-            if ($script:BuiltInPresets) { $script:BuiltInPresets[$presetKey] = $merged }
-            else { if (-not $script:UserPresets) { $script:UserPresets = [ordered]@{} }; $script:UserPresets[$presetKey] = $merged }
+            Register-WinEaseUserPreset -PresetKey $presetKey -OverrideData $data.UserPresets[$presetKey]
         }
     }
 
-    # Per-file user presets. The file name (without extension) is the preset key, the content is
-    # the same override hashtable a UserPresets entry holds. The rules the GUI save enforces also
-    # apply to hand-made files: no built-in preset name (the order of config\presets.psd1, which
-    # both windows also hard-code) and not the reserved 'custom' - such a file is skipped with a
-    # warning instead of overriding a built-in preset. Keys of presets loaded earlier (a save
-    # reloads before this runs again) are user presets and are simply loaded again.
-    $folderPresetCount = 0
-    $knownBuiltInKeys = @('none', 'extreme', 'balanced', 'fat32', 'handheld', 'vm', 'audio')
-    if ($presetsDir -and (Test-Path -LiteralPath $presetsDir)) {
-        foreach ($presetFile in @(Get-ChildItem -LiteralPath $presetsDir -Filter '*.psd1' -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
-            $presetKey = ([System.IO.Path]::GetFileNameWithoutExtension($presetFile.Name)).Trim().ToLower()
-            if (-not $presetKey) { continue }
-            if ($presetKey -eq 'custom' -or $knownBuiltInKeys -contains $presetKey) {
-                $msg = "User preset file '$($presetFile.Name)' uses a reserved or built-in preset name; skipped."
-                $errors += $msg
-                Write-Warning "[UserExtensions] $msg"
-                continue
-            }
-            try {
-                $presetData = Import-PowerShellDataFile -LiteralPath $presetFile.FullName
-            } catch {
-                $msg = "Failed to load user preset '$($presetFile.FullName)': $($_.Exception.Message)"
-                $errors += $msg
-                Write-Warning "[UserExtensions] $msg"
-                continue
-            }
-            if ($presetData -isnot [System.Collections.IDictionary]) {
-                $msg = "User preset '$($presetFile.FullName)' does not contain a hashtable; skipped."
-                $errors += $msg
-                Write-Warning "[UserExtensions] $msg"
-                continue
-            }
-            $merged = @{}
-            if ($presetData.BasePreset -and $script:BuiltInPresets -and $script:BuiltInPresets.Contains($presetData.BasePreset)) {
-                $base = $script:BuiltInPresets[$presetData.BasePreset]
-                if ($base -is [System.Collections.IDictionary]) {
-                    foreach ($k in $base.Keys) { $merged[$k] = $base[$k] }
-                } elseif ($base.PSObject) {
-                    foreach ($p in $base.PSObject.Properties) { $merged[$p.Name] = $p.Value }
-                }
-            }
-            foreach ($k in $presetData.Keys) { if ($k -ne 'BasePreset') { $merged[$k] = $presetData[$k] } }
-            if ($script:BuiltInPresets) { $script:BuiltInPresets[$presetKey] = $merged }
-            else { if (-not $script:UserPresets) { $script:UserPresets = [ordered]@{} }; $script:UserPresets[$presetKey] = $merged }
-            $folderPresetCount++
-            $loadedAny = $true
-        }
-    }
+    # Per-file user presets.
+    $folderResult = Import-WinEaseUserFolderPresets -PresetsDir $presetsDir
+    foreach ($e in $folderResult.Errors) { $errors.Add($e) }
 
     # CustomScripts
-    if (-not $PresetsOnly) {
-    $validStages = @('PreBuild','OfflineImage','FirstLogon','UserOnce')
-    $validOnErrors = @('Stop','Warn','Ignore')
-    if ($data -and $data.CustomScripts) {
-        foreach ($cs in $data.CustomScripts) {
-            if (-not $cs.Stage -or $validStages -notcontains $cs.Stage) {
-                $errors += "CustomScript '$($cs.Id)' has invalid Stage '$($cs.Stage)'."
-                Write-Warning "[UserExtensions] CustomScript '$($cs.Id)' invalid Stage '$($cs.Stage)'."
-                continue
-            }
-            if ($cs.OnError -and $validOnErrors -notcontains $cs.OnError) {
-                $errors += "CustomScript '$($cs.Id)' has invalid OnError '$($cs.OnError)'."
-                Write-Warning "[UserExtensions] CustomScript '$($cs.Id)' invalid OnError '$($cs.OnError)'."
-                continue
-            }
-            $script:UserCustomScripts += $cs
-        }
-    }
+    if (-not $PresetsOnly -and $data -and $data.CustomScripts) {
+        $csErrors = Import-WinEaseUserCustomScriptsData -CustomScripts $data.CustomScripts
+        foreach ($e in $csErrors) { $errors.Add($e) }
     }
 
     return [PSCustomObject]@{
-        Loaded                = ($loadedMain -or $loadedAny)
+        Loaded                = ($loadedMain -or $folderResult.LoadedAny)
         UserTweakCount        = @($script:UserTweakDefs.Keys).Count
-        UserPresetCount       = (($data.UserPresets | Measure-Object).Count + $folderPresetCount)
-        UserPresetFolderCount = $folderPresetCount
+        UserPresetCount       = (($data.UserPresets | Measure-Object).Count + $folderResult.Count)
+        UserPresetFolderCount = $folderResult.Count
         CustomScriptCount     = @($script:UserCustomScripts).Count
-        Errors                = $errors
+        Errors                = @($errors)
     }
 }
 
@@ -325,18 +366,21 @@ function Get-WinEaseCustomScriptFiles {
         [switch]$IncludeLegacy
     )
     $base = Join-Path -Path $RepoRoot -ChildPath 'tools\custom-scripts'
-    $dirs = @(Join-Path -Path $base -ChildPath $Stage)
+    $dirs = [System.Collections.Generic.List[string]]::new()
+    $dirs.Add((Join-Path -Path $base -ChildPath $Stage))
     if ($IncludeLegacy) {
-        if ($Stage -eq 'FirstLogon') { $dirs += $base }
-        elseif ($Stage -eq 'UserOnce') { $dirs += (Join-Path -Path $base -ChildPath 'user') }
+        if ($Stage -eq 'FirstLogon') { $dirs.Add($base) }
+        elseif ($Stage -eq 'UserOnce') { $dirs.Add((Join-Path -Path $base -ChildPath 'user')) }
     }
-    $found = @()
+    $found = [System.Collections.Generic.List[object]]::new()
     foreach ($d in $dirs) {
         if (-not (Test-Path -LiteralPath $d)) { continue }
-        $found += @(Get-ChildItem -LiteralPath $d -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -ne 'README.md' -and $_.Name -ne '.gitkeep' })
+        foreach ($file in @(Get-ChildItem -LiteralPath $d -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ne 'README.md' -and $_.Name -ne '.gitkeep' })) {
+            $found.Add($file)
+        }
     }
-    return $found
+    return @($found)
 }
 
 # The four stages of the custom script pipeline: where the scripts live in the repository, where
@@ -599,7 +643,7 @@ function Remove-WinEaseCustomScript {
     $full = $Path
     if (-not [System.IO.Path]::IsPathRooted($full)) { $full = Join-Path -Path $RepoRoot -ChildPath $full }
     $full = [System.IO.Path]::GetFullPath($full)
-    $base = [System.IO.Path]::GetFullPath((Join-Path -Path $RepoRoot -ChildPath 'tools\custom-scripts'))
+    $base = [System.IO.Path]::GetFullPath((Join-Path -Path $RepoRoot -ChildPath 'tools\custom-scripts')).TrimEnd('\') + '\'
     if (-not ($full.StartsWith($base, [System.StringComparison]::OrdinalIgnoreCase))) {
         throw "Only scripts inside '$base' can be removed."
     }

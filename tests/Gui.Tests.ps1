@@ -1393,11 +1393,15 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
     }
     # Literal keys of the WinUI 3 window: _s.Get("Key" / _s.Format("Key" in gui\winui\WinEaseGui\*.cs (and the preset labels)
     function Get-UiKeyUsedWinUi {
-        $keys = @()
+        $keys = [System.Collections.Generic.List[string]]::new()
         foreach ($f in Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot 'gui\winui\WinEaseGui') -Filter '*.cs') {
             $src = [System.IO.File]::ReadAllText($f.FullName)
-            $keys += @([regex]::Matches($src, '_s\.(?:Get|Format)\("([^"{}]+)"') | ForEach-Object { $_.Groups[1].Value })
-            $keys += @([regex]::Matches($src, '"(Media\.Preset\.[A-Za-z0-9]+)"') | ForEach-Object { $_.Groups[1].Value })
+            foreach ($m in [regex]::Matches($src, '_s\.(?:Get|Format)\("([^"{}]+)"')) {
+                $keys.Add($m.Groups[1].Value)
+            }
+            foreach ($m in [regex]::Matches($src, '"(Media\.Preset\.[A-Za-z0-9]+)"')) {
+                $keys.Add($m.Groups[1].Value)
+            }
         }
         return $keys
     }
@@ -1979,6 +1983,17 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
         @($cfg.AdvancedDebloatStandard).Count | Should Be 2
         (Invoke-WinEaseWinUiRequest -Op 'sources' -Arguments $null).Contains('Data') | Should Be $true
         { Invoke-WinEaseWinUiRequest -Op 'no-such-request' -Arguments $null } | Should Throw
+    }
+
+    It "requests: 'guide' request validates path safety and opens the guide file or throws on missing guide" {
+        # Test guide request when docs exist
+        Mock Start-Process {}
+        $res = Invoke-WinEaseWinUiRequest -Op 'guide' -Arguments $null
+        ($res -is [hashtable]) | Should Be $true
+        Assert-MockCalled Start-Process -Times 1 -Scope It
+
+        # Test guide request when repo root is missing guide doc
+        { Invoke-WinEaseWinUiGeneralRequest -Op 'guide' -Arguments $null -RepoRoot ([System.IO.Path]::GetTempPath()) } | Should Throw
     }
 
     It "the builder prefers the WinUI 3 window, keeps -ClassicGui and falls back to WinForms" {
@@ -2800,6 +2815,28 @@ Describe "C1 - build plan (Get-WinEaseBuildPlan, the final confirmation and the 
         $c3 = Compare-WinEaseBuildPlanToSettings -Plan $plan -Resolved $res
         $c3.HasCritical | Should Be $true
         $c3.Mismatches[0].Key | Should Be 'AdvancedDebloatStandard'
+    }
+
+    It "Write-WinEaseBuildPlanSummary creates directory if missing and writes JSON and TXT summary files" {
+        $plan = Get-C1Plan (New-C1Result 'balanced')
+        $targetDir = Join-Path $TestDrive 'nested_plan_summary'
+        (Test-Path -LiteralPath $targetDir) | Should Be $false
+
+        $paths = Write-WinEaseBuildPlanSummary -Plan $plan -Directory $targetDir -BaseName 'Summary_Test'
+        $paths.Count | Should Be 2
+        $paths[0] | Should Be (Join-Path $targetDir 'Summary_Test.plan.json')
+        $paths[1] | Should Be (Join-Path $targetDir 'Summary_Test.plan.txt')
+
+        (Test-Path -LiteralPath $paths[0]) | Should Be $true
+        (Test-Path -LiteralPath $paths[1]) | Should Be $true
+
+        $jsonObj = Get-Content -LiteralPath $paths[0] -Raw | ConvertFrom-Json
+        $jsonObj.Mode | Should Be 'RealBuild'
+        $jsonObj.PresetKey | Should Be 'balanced'
+
+        $txtContent = Get-Content -LiteralPath $paths[1] -Raw
+        $txtContent | Should Match 'REAL BUILD'
+        $txtContent | Should Match '== Overview =='
     }
 
     It "Invoke-WinEaseBuildPlanCheck writes the plan summary, warns on a mismatch and throws on a critical one" {

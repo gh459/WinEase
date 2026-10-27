@@ -845,6 +845,74 @@ Describe "WinEase helpers - DISM wrapper (Invoke-Dism)" {
         $script:LastDismExitCode | Should Be 2
     }
 
+    It "retries on initial failure and succeeds on a subsequent attempt" {
+        $script:DismCalls = 0
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $script:DismCalls++
+            if ($script:DismCalls -eq 1) {
+                $global:LASTEXITCODE = 2
+            } else {
+                $global:LASTEXITCODE = 0
+            }
+        }
+        function Start-Sleep {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'Mock Start-Sleep to avoid delays during tests')]
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([int]$Seconds)
+        }
+
+        $result = Invoke-Dism -DismArgs @('/Get-MountedWimInfo') -Retries 3
+        $result | Should Be $true
+        $script:DismCalls | Should Be 2
+        $script:LastDismExitCode | Should Be 0
+    }
+
+    It "executes at least 1 attempt when Retries is 0 or negative" {
+        $script:DismCalls = 0
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $script:DismCalls++
+            $global:LASTEXITCODE = 0
+        }
+
+        $result = Invoke-Dism -DismArgs @('/Get-MountedWimInfo') -Retries 0
+        $result | Should Be $true
+        $script:DismCalls | Should Be 1
+
+        $script:DismCalls = 0
+        $resultNeg = Invoke-Dism -DismArgs @('/Get-MountedWimInfo') -Retries -5
+        $resultNeg | Should Be $true
+        $script:DismCalls | Should Be 1
+    }
+
+    It "always includes /English as the first DISM argument" {
+        $script:CapturedArgs = $null
+        function dism.exe {
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $script:CapturedArgs = $DismArgs
+            $global:LASTEXITCODE = 0
+        }
+
+        $result = Invoke-Dism -DismArgs @('/Get-MountedWimInfo')
+        $result | Should Be $true
+        $script:CapturedArgs[0] | Should Be '/English'
+    }
+
+    It "defaults exit code to 0 when LASTEXITCODE is null" {
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $global:LASTEXITCODE = $null
+        }
+
+        $result = Invoke-Dism -DismArgs @('/Get-MountedWimInfo')
+        $result | Should Be $true
+        $script:LastDismExitCode | Should Be 0
+    }
+
     It "returns null when CaptureOutput is specified and DISM fails after retries" {
         function dism.exe {
             [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
@@ -1995,6 +2063,22 @@ Describe "WinEase helpers - oscdimg integrity (Test-OscdimgIntegrity)" {
             Mock Get-AuthenticodeSignature { throw "Authenticode check error" }
             Mock Get-FileHash { return [PSCustomObject]@{ Hash = $pinnedHash } }
             Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $true
+            Assert-MockCalled Get-AuthenticodeSignature -Exactly 1 -Scope It
+            Assert-MockCalled Get-FileHash -Exactly 1 -Scope It
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "returns `$false when Get-AuthenticodeSignature throws an exception and hash is unknown" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_sig_ex_unregistered_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        try {
+            Mock Get-AuthenticodeSignature { throw "Authenticode check error" }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = '0000000000000000000000000000000000000000000000000000000000000000' } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
+            Assert-MockCalled Get-AuthenticodeSignature -Exactly 1 -Scope It
+            Assert-MockCalled Get-FileHash -Exactly 1 -Scope It
         } finally {
             Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
         }
@@ -2021,6 +2105,79 @@ Describe "WinEase helpers - oscdimg integrity (Test-OscdimgIntegrity)" {
         try {
             Mock Get-AuthenticodeSignature { throw "Signature check failed" }
             Mock Get-FileHash { throw "Hash check failed" }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
+            Assert-MockCalled Get-AuthenticodeSignature -Exactly 1 -Scope It
+            Assert-MockCalled Get-FileHash -Exactly 1 -Scope It
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "returns `$true when Get-FileHash returns a lowercase SHA256 string for oscdimg" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_lower_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        $lowerHash = 'f5129f313ed7eb46f2677cf522e64264a225f226307ed0ddb52bb14c46e7cfdd'
+        try {
+            Mock Get-AuthenticodeSignature { return $null }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = $lowerHash } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $true
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "falls back to oscdimg hash check when Authenticode signature has null certificate or null subject" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_nullsig_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        $pinnedHash = '8DC3FB38E75C42127BE0A29D64CA6D79DFDDFDCBEE4A3BA8B36CFEBDCC1689E2'
+        try {
+            # Case A: SignerCertificate is null
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{ Status = 'Valid'; SignerCertificate = $null }
+            }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = $pinnedHash } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $true
+
+            # Case B: SignerCertificate.Subject is null or empty
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{
+                    Status            = 'Valid'
+                    SignerCertificate = [PSCustomObject]@{ Subject = $null }
+                }
+            }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $true
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "falls through to oscdimg hash check when certificate subject is non-Microsoft and matches pinned hash" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_nonms_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        $pinnedHash = 'CE53D1C8C08FF54B4B91D2DFDE80F9D86427BC8C78FA6BBDE278456CDD2E2B85'
+        try {
+            Mock Get-AuthenticodeSignature {
+                return [PSCustomObject]@{
+                    Status            = 'Valid'
+                    SignerCertificate = [PSCustomObject]@{ Subject = 'CN=Other Vendor Corp' }
+                }
+            }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = $pinnedHash } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $true
+        } finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "returns `$false when Get-FileHash returns object with empty or whitespace Hash property for oscdimg" {
+        $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_oscdimg_emptyhash_" + [guid]::NewGuid().ToString('N') + ".exe")
+        [System.IO.File]::WriteAllText($tempFile, "dummy content")
+        try {
+            Mock Get-AuthenticodeSignature { return $null }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = '' } }
+            Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
+
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = '   ' } }
             Test-OscdimgIntegrity -OscdimgPath $tempFile | Should Be $false
         } finally {
             Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
@@ -2216,7 +2373,8 @@ Describe "WinEase helpers - split module layout (R2)" {
         # G1 added ConvertTo-WinEaseRealPath and Test-WinEaseProtectedLexicalPath (path safety).
         # P1-01 added Test-WinEaseUnattendXmlStructure (unattend template safety).
         # Refactored Test-WinEaseDependencies added 8 modular dependency helpers.
-        $functions.Count | Should Be 67
+        # Refactored Reset-DirectoryWithRobocopy added 6 modular file-system helpers.
+        $functions.Count | Should Be 73
         $duplicates = @($functions | Group-Object Name | Where-Object Count -gt 1)
         $duplicates.Count | Should Be 0
         @($ast.FindAll({

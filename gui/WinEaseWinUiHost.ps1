@@ -211,13 +211,21 @@ function Invoke-WinEaseWinUiGeneralRequest {
             return @{ Data = @{ Issues = $rows; HasError = (Test-WinEaseInputHasError -Issues $issues) } }
         }
         'guide' {
-            $guide = Join-Path $RepoRoot 'docs\EXTENSIBILITY_GUIDE.md'
+            $docsDir = Join-Path $RepoRoot 'docs'
+            $allowedGuideEn = [System.IO.Path]::GetFullPath((Join-Path $docsDir 'EXTENSIBILITY_GUIDE.md'))
+            $allowedGuideJa = [System.IO.Path]::GetFullPath((Join-Path $docsDir 'EXTENSIBILITY_GUIDE.ja.md'))
+
+            $targetGuide = $allowedGuideEn
             if ($script:WinEaseUiLanguage -eq 'ja') {
-                $guideJa = Join-Path $RepoRoot 'docs\EXTENSIBILITY_GUIDE.ja.md'
-                if (Test-Path -LiteralPath $guideJa) { $guide = $guideJa }
+                if (Test-Path -LiteralPath $allowedGuideJa) { $targetGuide = $allowedGuideJa }
             }
-            if (-not (Test-Path -LiteralPath $guide)) { throw (Get-WinEaseUiString 'Mig.Guide.NotFound' -Format $guide) }
-            [void](Open-WinEaseFileSafe -Path $guide)
+
+            $fullGuide = [System.IO.Path]::GetFullPath($targetGuide)
+            if ($fullGuide -ne $allowedGuideEn -and $fullGuide -ne $allowedGuideJa) {
+                throw (Get-WinEaseUiString 'Mig.Guide.NotFound' -Format $targetGuide)
+            }
+            if (-not (Test-Path -LiteralPath $fullGuide)) { throw (Get-WinEaseUiString 'Mig.Guide.NotFound' -Format $fullGuide) }
+            [void](Open-WinEaseFileSafe -Path $fullGuide)
             return @{}
         }
         default { throw "Unknown request '$Op'" }
@@ -254,9 +262,9 @@ function Invoke-WinEaseWinUiPresetRequest {
             return @{ Data = $data }
         }
         'presetDiff' {
-            $resolved = @()
+            $resolved = [System.Collections.Generic.List[object]]::new()
             foreach ($name in @("$($a.From)", "$($a.To)")) {
-                if ($name -eq '__current__') { $resolved += , $a.Config } else { $resolved += , $name }
+                if ($name -eq '__current__') { $resolved.Add($a.Config) } else { $resolved.Add($name) }
             }
             $diff = Compare-WinEaseConfig -ReferenceConfig $resolved[0] -DifferenceConfig $resolved[1]
             return @{ Text = "$(Format-WinEaseConfigDiff -DiffResult $diff)" }
@@ -318,18 +326,18 @@ function Invoke-WinEaseWinUiMigrationRequest {
             # The message has to say what the rules actually did: a rule whose application
             # is still running is skipped (its files would be restored uselessly), and a
             # broken user rules file is reported instead of being silently ignored.
-            $detail = @()
+            $detail = [System.Collections.Generic.List[string]]::new()
             if (-not $o.Error -and $o.Result) {
                 $res = $o.Result
                 $rr = $res.RulesResult
                 if ($rr) {
-                    $detail += (Get-WinEaseUiString 'Mig.Backup.Rules' -Format @($rr.BackedUpRules).Count, (@($rr.SkipReasons).Count + [int]$rr.SkippedFiles), @($rr.FailedFiles).Count)
-                    foreach ($s in @($rr.SkipReasons)) { $detail += ('  {0}: {1}' -f $s.Item, $s.Reason) }
-                    foreach ($f in @($rr.FailedFiles)) { $detail += ('  {0}: {1}' -f $f.Rule, $f.Error) }
+                    $detail.Add((Get-WinEaseUiString 'Mig.Backup.Rules' -Format @($rr.BackedUpRules).Count, (@($rr.SkipReasons).Count + [int]$rr.SkippedFiles), @($rr.FailedFiles).Count))
+                    foreach ($s in @($rr.SkipReasons)) { $detail.Add(('  {0}: {1}' -f $s.Item, $s.Reason)) }
+                    foreach ($f in @($rr.FailedFiles)) { $detail.Add(('  {0}: {1}' -f $f.Rule, $f.Error)) }
                 }
                 $udFailed = @($res.UserData.FailedFiles | Where-Object { $_ }).Count
-                if ($udFailed -gt 0) { $detail += (Get-WinEaseUiString 'Mig.Backup.DataFailed' -Format $udFailed) }
-                foreach ($e in @($res.RuleErrors)) { $detail += (Get-WinEaseUiString 'Mig.Rules.LoadErrors' -Format ("$e")) }
+                if ($udFailed -gt 0) { $detail.Add((Get-WinEaseUiString 'Mig.Backup.DataFailed' -Format $udFailed)) }
+                foreach ($e in @($res.RuleErrors)) { $detail.Add((Get-WinEaseUiString 'Mig.Rules.LoadErrors' -Format ("$e"))) }
             }
             $done = Get-WinEaseUiString 'Mig.Backup.Done' -Format $root
             if ($detail.Count -gt 0) { $done += "`n`n" + ($detail -join "`n") }
@@ -459,11 +467,11 @@ function Invoke-WinEaseWinUiCustomScriptRequest {
         'customScriptPreview' {
             $engine = Join-Path $repo 'lib\WinEaseExtensions.ps1'
             if (-not (Get-Command -Name Get-WinEaseCustomScriptPreview -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $engine)) { . $engine }
-            $lines = @()
+            $lines = [System.Collections.Generic.List[string]]::new()
             foreach ($p in @(Get-WinEaseCustomScriptPreview -RepoRoot $repo)) {
-                $lines += ("{0}  {1}  ({2})" -f $p.Stage, $p.ImagePath, $p.RunsAs)
+                $lines.Add(("{0}  {1}  ({2})" -f $p.Stage, $p.ImagePath, $p.RunsAs))
             }
-            if ($lines.Count -eq 0) { $lines = @((Get-WinEaseUiString 'CS.Msg.Empty')) }
+            if ($lines.Count -eq 0) { $lines.Add((Get-WinEaseUiString 'CS.Msg.Empty')) }
             return @{ Title = (Get-WinEaseUiString 'CS.Msg.PreviewTitle'); Text = ($lines -join "`n") }
         }
         'customScriptOpenFolder' {

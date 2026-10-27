@@ -1258,16 +1258,16 @@ function Import-WinEaseProfile {
 
         # Value types: Apply-ProfileSettings casts with [bool], and [bool]"false" is $true, so a
         # quoted or nested value would silently switch a removal option on. Refuse such a file.
-        $typeErrors = @()
+        $typeErrors = [System.Collections.Generic.List[string]]::new()
         foreach ($cd in $script:ComponentDefs.Values) {
             if ($cd.Type -ne 'Bool') { continue }
             $prop = $settings.PSObject.Properties[$cd.Key]
-            if ($prop -and $null -ne $prop.Value -and $prop.Value -isnot [bool]) { $typeErrors += "$($cd.Key) (expected true/false, got '$($prop.Value)')" }
+            if ($prop -and $null -ne $prop.Value -and $prop.Value -isnot [bool]) { $typeErrors.Add("$($cd.Key) (expected true/false, got '$($prop.Value)')") }
         }
         $tsProp = $settings.PSObject.Properties['TweakSettings']
         if ($tsProp -and $null -ne $tsProp.Value) {
             foreach ($prop in $tsProp.Value.PSObject.Properties) {
-                if ($null -ne $prop.Value -and $prop.Value -isnot [bool]) { $typeErrors += "TweakSettings.$($prop.Name) (expected true/false, got '$($prop.Value)')" }
+                if ($null -ne $prop.Value -and $prop.Value -isnot [bool]) { $typeErrors.Add("TweakSettings.$($prop.Name) (expected true/false, got '$($prop.Value)')") }
             }
         }
         if ($typeErrors.Count -gt 0) {

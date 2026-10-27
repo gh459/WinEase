@@ -1210,6 +1210,184 @@ Describe "Migration restore - path validation" -Tags 'slow' {
     }
 }
 
+Describe "Restore-WinEaseCustomPaths unit tests" {
+    BeforeAll {
+        if (-not (Get-Command -Name Test-WinEasePathWithin -ErrorAction SilentlyContinue)) {
+            . (Join-Path $script:RepoRoot "WinEasehelpers.ps1")
+        }
+        if (-not (Get-Command -Name Restore-WinEaseCustomPaths -ErrorAction SilentlyContinue)) {
+            . (Join-Path $script:RepoRoot "tools\migrator\WinEaseMigration.ps1")
+        }
+    }
+
+    It "returns empty result when Custom directory is missing" {
+        $bk = Join-Path $TestDrive "no-custom-dir"
+        New-Item -ItemType Directory -Force -Path $bk | Out-Null
+        $r = Restore-WinEaseCustomPaths -BackupRoot $bk
+        $r.RestoredFiles | Should Be 0
+        $r.SkippedFiles | Should Be 0
+        @($r.FailedFiles).Count | Should Be 0
+    }
+
+    It "restores backed up custom path when source path is allowed" {
+        $bk = Join-Path $TestDrive "cp-ok-bk"
+        $target = Join-Path $TestDrive "cp-ok-target"
+        New-Item -ItemType Directory -Force -Path $target | Out-Null
+        $testFile = Join-Path $target "data.txt"
+        Set-Content -LiteralPath $testFile -Value "custom payload"
+        Backup-WinEaseCustomPaths -Paths @($target) -BackupRoot $bk | Out-Null
+        Remove-Item -LiteralPath $testFile -Force
+        $r = Restore-WinEaseCustomPaths -BackupRoot $bk -AllowedSourcePaths @($target) -ConflictPolicy Overwrite
+        $r.RestoredFiles | Should Be 1
+        @($r.FailedFiles).Count | Should Be 0
+        (Test-Path -LiteralPath $testFile) | Should Be $true
+        (Get-Content -LiteralPath $testFile -Raw).Trim() | Should Be "custom payload"
+    }
+
+    It "restores custom path to DefaultRestoreRoot when AllowedSourcePaths is omitted" {
+        $bk = Join-Path $TestDrive "cp-default-bk"
+        $srcDir = Join-Path $TestDrive "cp-default-src"
+        $destRoot = Join-Path $TestDrive "cp-default-root"
+        New-Item -ItemType Directory -Force -Path $srcDir, $destRoot | Out-Null
+        $srcFile = Join-Path $srcDir "file.txt"
+        Set-Content -LiteralPath $srcFile -Value "file payload"
+        Backup-WinEaseCustomPaths -Paths @($srcFile) -BackupRoot $bk | Out-Null
+
+        $r = Restore-WinEaseCustomPaths -BackupRoot $bk -DefaultRestoreRoot $destRoot -ConflictPolicy Overwrite
+        $r.RestoredFiles | Should Be 1
+        @($r.FailedFiles).Count | Should Be 0
+        $restoredFile = Join-Path $destRoot "file.txt"
+        (Test-Path -LiteralPath $restoredFile) | Should Be $true
+        (Get-Content -LiteralPath $restoredFile -Raw).Trim() | Should Be "file payload"
+    }
+
+    It "filters restoration by SourcePath when specified" {
+        $bk = Join-Path $TestDrive "cp-filter-bk"
+        $target1 = Join-Path $TestDrive "cp-target1"
+        $target2 = Join-Path $TestDrive "cp-target2"
+        New-Item -ItemType Directory -Force -Path $target1, $target2 | Out-Null
+        Set-Content -LiteralPath (Join-Path $target1 "file1.txt") -Value "val1"
+        Set-Content -LiteralPath (Join-Path $target2 "file2.txt") -Value "val2"
+        Backup-WinEaseCustomPaths -Paths @($target1, $target2) -BackupRoot $bk | Out-Null
+        Remove-Item -LiteralPath (Join-Path $target1 "file1.txt"), (Join-Path $target2 "file2.txt") -Force
+
+        $r = Restore-WinEaseCustomPaths -BackupRoot $bk -SourcePath $target1 -AllowedSourcePaths @($target1, $target2)
+        $r.RestoredFiles | Should Be 1
+        (Test-Path -LiteralPath (Join-Path $target1 "file1.txt")) | Should Be $true
+        (Test-Path -LiteralPath (Join-Path $target2 "file2.txt")) | Should Be $false
+    }
+
+    It "refuses restore when neither AllowedSourcePaths nor DefaultRestoreRoot is provided" {
+        $bk = Join-Path $TestDrive "cp-noallow-bk"
+        $target = Join-Path $TestDrive "cp-noallow-target"
+        New-Item -ItemType Directory -Force -Path $target | Out-Null
+        Set-Content -LiteralPath (Join-Path $target "noallow.txt") -Value "data"
+        Backup-WinEaseCustomPaths -Paths @($target) -BackupRoot $bk | Out-Null
+
+        $r = Restore-WinEaseCustomPaths -BackupRoot $bk
+        $r.RestoredFiles | Should Be 0
+        @($r.FailedFiles).Count | Should Be 1
+        (@($r.FailedFiles)[0].Error) | Should Match "no restore target was allowed"
+    }
+
+    It "reports missing backup file in FailedFiles" {
+        $bk = Join-Path $TestDrive "cp-missing-bk"
+        $target = Join-Path $TestDrive "cp-missing-target"
+        New-Item -ItemType Directory -Force -Path (Join-Path $bk "Custom"), $target | Out-Null
+        $entry = [PSCustomObject]@{
+            Category = "CustomPath"
+            RelativePath = "missing.txt"
+            SourcePath = (Join-Path $target "missing.txt")
+            Sha256 = ""
+        }
+        $manifestObj = [PSCustomObject]@{ Entries = @($entry); Created = (Get-Date).ToString("o") }
+        $manifestObj | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $bk "migration-manifest.json") -Encoding UTF8
+
+        $r = Restore-WinEaseCustomPaths -BackupRoot $bk -AllowedSourcePaths @($target)
+        $r.RestoredFiles | Should Be 0
+        @($r.FailedFiles).Count | Should Be 1
+        (@($r.FailedFiles)[0].Error) | Should Be "Backup file missing"
+    }
+
+    It "reports hash mismatch when backup file is corrupted" {
+        $bk = Join-Path $TestDrive "cp-hash-bk"
+        $target = Join-Path $TestDrive "cp-hash-target"
+        $customDir = Join-Path $bk "Custom"
+        New-Item -ItemType Directory -Force -Path $customDir, $target | Out-Null
+        Set-Content -LiteralPath (Join-Path $customDir "corrupt.txt") -Value "actual text"
+        $entry = [PSCustomObject]@{
+            Category = "CustomPath"
+            RelativePath = "corrupt.txt"
+            SourcePath = (Join-Path $target "corrupt.txt")
+            Sha256 = ("0" * 64)
+        }
+        $manifestObj = [PSCustomObject]@{ Entries = @($entry); Created = (Get-Date).ToString("o") }
+        $manifestObj | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $bk "migration-manifest.json") -Encoding UTF8
+
+        $r = Restore-WinEaseCustomPaths -BackupRoot $bk -AllowedSourcePaths @($target) -VerifyHashBeforeRestore
+        $r.RestoredFiles | Should Be 0
+        @($r.FailedFiles).Count | Should Be 1
+        (@($r.FailedFiles)[0].Error) | Should Be "Hash mismatch (corrupt)"
+        (Test-Path -LiteralPath (Join-Path $target "corrupt.txt")) | Should Be $false
+    }
+
+    It "refuses manifest entry without source path when AllowedSourcePaths is used" {
+        $bk = Join-Path $TestDrive "cp-nosrc-bk"
+        $target = Join-Path $TestDrive "cp-nosrc-target"
+        $customDir = Join-Path $bk "Custom"
+        New-Item -ItemType Directory -Force -Path $customDir, $target | Out-Null
+        Set-Content -LiteralPath (Join-Path $customDir "test.txt") -Value "nosrc text"
+        $entry = [PSCustomObject]@{
+            Category = "CustomPath"
+            RelativePath = "test.txt"
+            SourcePath = ""
+            Sha256 = ""
+        }
+        $manifestObj = [PSCustomObject]@{ Entries = @($entry); Created = (Get-Date).ToString("o") }
+        $manifestObj | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $bk "migration-manifest.json") -Encoding UTF8
+
+        $r = Restore-WinEaseCustomPaths -BackupRoot $bk -AllowedSourcePaths @($target)
+        $r.RestoredFiles | Should Be 0
+        @($r.FailedFiles).Count | Should Be 1
+        (@($r.FailedFiles)[0].Error) | Should Match "manifest entry has no source path"
+    }
+
+    It "DryRun simulates restore without writing files" {
+        $bk = Join-Path $TestDrive "cp-dry-bk"
+        $target = Join-Path $TestDrive "cp-dry-target"
+        New-Item -ItemType Directory -Force -Path $target | Out-Null
+        $testFile = Join-Path $target "dry.txt"
+        Set-Content -LiteralPath $testFile -Value "dry payload"
+        Backup-WinEaseCustomPaths -Paths @($target) -BackupRoot $bk | Out-Null
+        Remove-Item -LiteralPath $testFile -Force
+
+        $r = Restore-WinEaseCustomPaths -BackupRoot $bk -AllowedSourcePaths @($target) -DryRun
+        $r.RestoredFiles | Should Be 1
+        (Test-Path -LiteralPath $testFile) | Should Be $false
+    }
+
+    It "honors conflict policies Skip and BackupExisting when destination exists" {
+        $bk = Join-Path $TestDrive "cp-conflict-bk"
+        $target = Join-Path $TestDrive "cp-conflict-target"
+        New-Item -ItemType Directory -Force -Path $target | Out-Null
+        $testFile = Join-Path $target "conflict.txt"
+        Set-Content -LiteralPath $testFile -Value "backup payload"
+        Backup-WinEaseCustomPaths -Paths @($testFile) -BackupRoot $bk | Out-Null
+
+        Set-Content -LiteralPath $testFile -Value "existing user payload"
+
+        $rSkip = Restore-WinEaseCustomPaths -BackupRoot $bk -AllowedSourcePaths @($target) -ConflictPolicy Skip
+        $rSkip.SkippedFiles | Should Be 1
+        (Get-Content -LiteralPath $testFile -Raw).Trim() | Should Be "existing user payload"
+
+        $rBak = Restore-WinEaseCustomPaths -BackupRoot $bk -AllowedSourcePaths @($target) -ConflictPolicy BackupExisting
+        $rBak.RestoredFiles | Should Be 1
+        (Get-Content -LiteralPath $testFile -Raw).Trim() | Should Be "backup payload"
+        (Test-Path -LiteralPath "$testFile.WinEase.bak") | Should Be $true
+        (Get-Content -LiteralPath "$testFile.WinEase.bak" -Raw).Trim() | Should Be "existing user payload"
+    }
+}
+
 Describe "WinEase removal and migration wiring" {
     BeforeAll {
         $script:WiringText = @{
