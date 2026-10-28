@@ -2074,7 +2074,10 @@ try {
 if (Get-Command -Name Invoke-WinEaseCustomScriptsStage -ErrorAction SilentlyContinue) {
     try {
         $null = Invoke-WinEaseCustomScriptsStage -Stage 'PreBuild' -Context @{ Config = $resolvedConfig; ScriptRoot = $scriptDir } -DryRun:$isDryRunMode
-    } catch { Write-Warning "PreBuild custom scripts failed: $($_.Exception.Message)" }
+    } catch {
+        if (Test-WinEaseStopException $_) { throw }
+        Write-Warning "PreBuild custom scripts failed: $($_.Exception.Message)"
+    }
 }
 
 # Early verification of -SourceDrive

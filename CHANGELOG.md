@@ -3,7 +3,16 @@
 All notable changes to this fork are documented here. Versions follow the upstream
 WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
-## Unreleased (local fork, 2026-10-28) - artifact protection and failure recovery (audit PR-B)
+## Unreleased (local fork, 2026-10-28) - behaviour fixes (audit PR-C)
+
+### Fixed
+- **`OnError: Stop` of a custom script now stops the build.** The offline-image stage, the FirstLogon/UserOnce copy and the PreBuild stage swallowed the exception (verbose output or a warning). A requested stop is now marked and re-thrown; every other failure of those calls, and of the user extension actions in phases 5, 6, 10 and 11, is a warning instead of a verbose line nobody reads.
+- **Paths with spaces reach the child process intact.** `Start-Process -ArgumentList` with an array joins the elements without quoting. The Rust physical-debloat engine launch (`ConvertTo-WinEaseProcessArgumentString`) and both migration wizard launches in the GUIs now quote each argument.
+- **`PreventDeviceEncryption` is written to boot.wim (and on the resume path) only when the option is on.** It used to be written unconditionally.
+- The physical-debloat log says the Rust binary was "found" (it only checks that the file exists), not "verified".
+- New tests: `tests\BehaviourFixes.Tests.ps1` (includes a real child process with a space in its path).
+
+## Earlier in this unreleased set - artifact protection and failure recovery (audit PR-B)
 
 ### Fixed
 - **Phase 13 puts the pre-export `install.wim` back when the swap fails.** Moving the exported image into place used to leave the ISO tree without an install image if the second move failed. The original is restored, and if that fails too its backup path is reported.

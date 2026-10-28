@@ -141,7 +141,9 @@ function Invoke-WinEaseResumeIsoBuild {
             }
             reg.exe add "HKLM\zSYSTEM\Setup\LabConfig" /v "BypassNRO" /t REG_DWORD /d 1 /f > $null 2>&1
             reg.exe add "HKLM\zSYSTEM\Setup\MoSetup" /v "AllowUpgradesWithUnsupportedTPMOrCPU" /t REG_DWORD /d 1 /f > $null 2>&1
-            reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\BitLocker" /v "PreventDeviceEncryption" /t REG_DWORD /d 1 /f > $null 2>&1
+            if (Test-TweakEnabled 'PreventDeviceEncryption' $false) {
+                reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\BitLocker" /v "PreventDeviceEncryption" /t REG_DWORD /d 1 /f > $null 2>&1
+            }
         } finally {
             [void](Unmount-RegistryHiveWithRetry -Name 'zSYSTEM')
             $script:HivesLoaded = $false

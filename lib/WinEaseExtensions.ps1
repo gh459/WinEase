@@ -848,7 +848,12 @@ function Invoke-WinEaseCustomScriptsStage {
             } catch {
                 $sw.Stop()
                 $failed += $meta
-                if ($onError -eq 'Stop') { throw }
+                if ($onError -eq 'Stop') {
+                    # Marked so the phase that called this stage can tell a requested stop from a stray error.
+                    $stopEx = New-Object System.Exception("Custom script '$($meta.Id)' failed and is set to OnError: Stop: $($_.Exception.Message)", $_.Exception)
+                    $stopEx.Data['WinEaseStop'] = $true
+                    throw $stopEx
+                }
                 elseif ($onError -eq 'Warn') { Write-Warning "Custom script '$($meta.Id)' failed: $($_.Exception.Message)" }
                 else { Write-Verbose "Ignored: $($_.Exception.Message)" }
             }
@@ -914,4 +919,14 @@ Write-Verbose "Executing extension host for stage `$Stage"
     $targetFile = Join-Path -Path $CustomScriptsDir -ChildPath "WinEaseExtensionHost.ps1"
     Set-Content -LiteralPath $targetFile -Value $hostContent -Encoding UTF8
     return $targetFile
+}
+
+function Test-WinEaseStopException {
+    param($ErrorRecord)
+    $ex = if ($ErrorRecord -is [System.Management.Automation.ErrorRecord]) { $ErrorRecord.Exception } else { $ErrorRecord }
+    while ($ex) {
+        if ($ex.Data -and $ex.Data.Contains('WinEaseStop')) { return $true }
+        $ex = $ex.InnerException
+    }
+    return $false
 }

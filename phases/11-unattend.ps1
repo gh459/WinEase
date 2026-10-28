@@ -922,11 +922,11 @@ if (Get-Command -Name Invoke-WinEasePluginImageFiles -ErrorAction SilentlyContin
 
 # M2: User extension actions (SetupScripts)
 if (Get-Command -Name Invoke-WinEaseUserExtensionActions -ErrorAction SilentlyContinue) {
-    try { Invoke-WinEaseUserExtensionActions -PhaseType SetupScripts -ScratchDir $scratchDir -DryRun:$DryRun -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    try { Invoke-WinEaseUserExtensionActions -PhaseType SetupScripts -ScratchDir $scratchDir -DryRun:$DryRun -Context @{ ScratchDir = $scratchDir; Config = $resolvedConfig } | Out-Null } catch { Write-Warning "User extension actions (SetupScripts) failed: $($_.Exception.Message)" }
 }
 # M2: Custom scripts (OfflineImage stage) - runs after the registry/unattend work, before FirstLogon/UserOnce staging
 if (Get-Command -Name Invoke-WinEaseCustomScriptsStage -ErrorAction SilentlyContinue) {
-    try { Invoke-WinEaseCustomScriptsStage -Stage 'OfflineImage' -Context @{ ScratchDir = $scratchDir; WinEaseDir = $WinEaseDir; ScriptRoot = $scriptDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    try { Invoke-WinEaseCustomScriptsStage -Stage 'OfflineImage' -Context @{ ScratchDir = $scratchDir; WinEaseDir = $WinEaseDir; ScriptRoot = $scriptDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null } catch { if (Test-WinEaseStopException $_) { throw }; Write-Warning "Custom scripts (OfflineImage) failed: $($_.Exception.Message)" }
 }
 # M2: Custom scripts (FirstLogon & UserOnce stages -> copy to offline image)
 $customFirstLogonDir = Join-Path -Path $scratchDir -ChildPath 'Windows\Setup\Scripts\Custom\FirstLogon'
@@ -936,7 +936,7 @@ if (Get-Command -Name Invoke-WinEaseCustomScriptsStage -ErrorAction SilentlyCont
     try {
         Invoke-WinEaseCustomScriptsStage -Stage 'FirstLogon' -Context @{ ScratchDir = $scratchDir; ScriptRoot = $scriptDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null
         Invoke-WinEaseCustomScriptsStage -Stage 'UserOnce' -Context @{ ScratchDir = $scratchDir; ScriptRoot = $scriptDir; Config = $resolvedConfig } -DryRun:$DryRun | Out-Null
-    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    } catch { if (Test-WinEaseStopException $_) { throw }; Write-Warning "Custom scripts (FirstLogon/UserOnce) failed: $($_.Exception.Message)" }
 }
 
 # M2: Register custom FirstLogon scripts in autounattend.xml FirstLogonCommands

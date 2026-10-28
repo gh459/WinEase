@@ -59,7 +59,9 @@ if (Test-Path -LiteralPath $bootWimPath) {
             }
             $bootWrites.Add(@{ Key = 'HKLM\zSYSTEM\Setup\LabConfig'; Name = 'BypassNRO' })
             $bootWrites.Add(@{ Key = 'HKLM\zSYSTEM\Setup\MoSetup'; Name = 'AllowUpgradesWithUnsupportedTPMOrCPU' })
-            $bootWrites.Add(@{ Key = 'HKLM\zSYSTEM\ControlSet001\Control\BitLocker'; Name = 'PreventDeviceEncryption' })
+            if (Test-TweakEnabled 'PreventDeviceEncryption' $false) {
+                $bootWrites.Add(@{ Key = 'HKLM\zSYSTEM\ControlSet001\Control\BitLocker'; Name = 'PreventDeviceEncryption' })
+            }
             foreach ($bootWrite in $bootWrites) {
                 $bootWritten = Invoke-WinEaseReg -Action Add -Key $bootWrite.Key -Name $bootWrite.Name -Type REG_DWORD -Data '1' -PassThru
                 if ($bootWritten -is [bool] -and -not $bootWritten) {
