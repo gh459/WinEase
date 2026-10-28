@@ -57,6 +57,24 @@ Describe "Integration scaffold - script" {
         $a | Should Match '[A-Z]'
         $a | Should Match '[0-9]'
     }
+    It "creates a PSCredential from a string password" {
+        $cred = New-WinEaseIntegrationCredential -AccountName 'TestAdmin' -AccountSecret 'P@ssw0rd123!'
+        $cred | Should Not Be $null
+        $cred.UserName | Should Be 'TestAdmin'
+        $cred.GetNetworkCredential().Password | Should Be 'P@ssw0rd123!'
+    }
+    It "creates a PSCredential from a SecureString password" {
+        $sec = New-Object System.Security.SecureString
+        foreach ($c in 'Secr3tP@ss'.ToCharArray()) { $sec.AppendChar($c) }
+        $sec.MakeReadOnly()
+        $cred = New-WinEaseIntegrationCredential -AccountName 'TestUser' -AccountSecret $sec
+        $cred | Should Not Be $null
+        $cred.UserName | Should Be 'TestUser'
+        $cred.GetNetworkCredential().Password | Should Be 'Secr3tP@ss'
+    }
+    It "throws when AccountSecret is not a string or SecureString" {
+        { New-WinEaseIntegrationCredential -AccountName 'TestUser' -AccountSecret 12345 } | Should Throw
+    }
 }
 
 Describe "Integration scaffold - artifact scrub" {
