@@ -31,4 +31,7 @@ Describe "WinUI main window guards" {
     It "the preset diff dialog catches a failed request" {
         $script:Cs | Should Match '(?s)RequestAsync\("presetDiff".*?catch \(Exception ex\)'
     }
+    It "accessibility settings retrieval handles exceptions with debug logging" {
+        $script:Cs | Should Match '(?s)highContrast = new Windows\.UI\.ViewManagement\.AccessibilitySettings\(\)\.HighContrast;.*?catch \(Exception ex\)'
+    }
 }
