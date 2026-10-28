@@ -221,8 +221,14 @@ function Initialize-WinEaseBuiltinPlugins {
         if ($entry -and (Test-Path -LiteralPath $dll -PathType Leaf)) {
             $stale = $false
             if ($hasSource -and [string]$entry.Description -like "$($script:WinEaseBuiltinLocalBuildMarker)*") {
-                $inputs = @(Get-ChildItem -LiteralPath $srcDir -Filter '*.cs' -File)
-                $inputs += @(Get-WinEaseBuiltinPluginResources -Name $name -RepoRoot $paths.RepoRoot | ForEach-Object { Get-Item -LiteralPath ($_ -split ',')[0] })
+                $inputs = [System.Collections.Generic.List[object]]::new()
+                $csFiles = Get-ChildItem -LiteralPath $srcDir -Filter '*.cs' -File
+                if ($null -ne $csFiles) { $inputs.AddRange([object[]]@($csFiles)) }
+                $resources = Get-WinEaseBuiltinPluginResources -Name $name -RepoRoot $paths.RepoRoot
+                foreach ($res in $resources) {
+                    $resPath = ($res -split ',')[0]
+                    $inputs.Add((Get-Item -LiteralPath $resPath))
+                }
                 $newest = ($inputs | Sort-Object -Property LastWriteTimeUtc -Descending | Select-Object -First 1).LastWriteTimeUtc
                 $stale = $null -ne $newest -and $newest -gt (Get-Item -LiteralPath $dll).LastWriteTimeUtc
             }
