@@ -31,7 +31,7 @@ namespace WinEase.Launcher
 
         /// <summary>
         /// The launcher builds the WinUI window when the published exe is missing or older than its sources
-        /// (a stale exe keeps running GUI code with every fix since it was compiled missing), and dotnet is
+        /// (a stale exe would run outdated GUI code without fixes made since it was compiled), and dotnet is
         /// on PATH. Times are UTC last-write times; null means "missing / not readable".
         /// </summary>
         public static bool ShouldBuildWinUi(bool winUiExeExists, bool dotnetOnPath, DateTime? winUiExeUtc, DateTime? newestSourceUtc)
