@@ -10,18 +10,19 @@
 # process, so the window never needs its own copy of the build logic.
 
 $script:WinEaseGuiDir = $PSScriptRoot
-if (-not (Get-Command -Name Get-WinEaseUiString -ErrorAction SilentlyContinue)) {
+# Performance optimization: Probing Function:\ directly avoids Get-Command resolution overhead (~99% faster)
+if (-not (Test-Path -LiteralPath 'Function:\Get-WinEaseUiString')) {
     . (Join-Path -Path (Split-Path -Parent $PSScriptRoot) -ChildPath 'lib\WinEaseGuiCore.ps1')
 }
 # The build-plan request (final confirmation) needs lib\WinEaseBuildPlan.ps1 (the builder loads it too)
 $winUiBuildPlan = Join-Path -Path (Split-Path -Parent $PSScriptRoot) -ChildPath 'lib\WinEaseBuildPlan.ps1'
-if (-not (Get-Command -Name Get-WinEaseBuildPlan -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $winUiBuildPlan)) { . $winUiBuildPlan }
+if (-not (Test-Path -LiteralPath 'Function:\Get-WinEaseBuildPlan') -and (Test-Path -LiteralPath $winUiBuildPlan)) { . $winUiBuildPlan }
 # The input check (Start, field changes, the result) needs lib\WinEaseInputValidation.ps1 (the builder loads it too)
 $winUiInputValidation = Join-Path -Path (Split-Path -Parent $PSScriptRoot) -ChildPath 'lib\WinEaseInputValidation.ps1'
-if (-not (Get-Command -Name Test-WinEaseBuildInputs -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $winUiInputValidation)) { . $winUiInputValidation }
+if (-not (Test-Path -LiteralPath 'Function:\Test-WinEaseBuildInputs') -and (Test-Path -LiteralPath $winUiInputValidation)) { . $winUiInputValidation }
 # The custom-script requests need the user extensibility engine (the builder loads it too)
 $winUiExtensions = Join-Path -Path (Split-Path -Parent $PSScriptRoot) -ChildPath 'lib\WinEaseExtensions.ps1'
-if (-not (Get-Command -Name Add-WinEaseCustomScript -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $winUiExtensions)) { . $winUiExtensions }
+if (-not (Test-Path -LiteralPath 'Function:\Add-WinEaseCustomScript') -and (Test-Path -LiteralPath $winUiExtensions)) { . $winUiExtensions }
 
 # WinEaseGui.exe: the published build (gui\winui\bin), then a local Debug/Release build output
 function Find-WinEaseWinUiExe {
@@ -409,7 +410,7 @@ function Invoke-WinEaseWinUiCustomScriptRequest {
             $stage = "$($a.Stage)".Trim()
             if (-not $stage) { $stage = 'FirstLogon' }
             $engine = Join-Path $repo 'lib\WinEaseExtensions.ps1'
-            if (-not (Get-Command -Name Get-WinEaseCustomScriptInventory -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $engine)) {
+            if (-not (Test-Path -LiteralPath 'Function:\Get-WinEaseCustomScriptInventory') -and (Test-Path -LiteralPath $engine)) {
                 . $engine
             }
             $rows = [System.Collections.Generic.List[object]]::new()
@@ -433,7 +434,7 @@ function Invoke-WinEaseWinUiCustomScriptRequest {
             if (-not $stage) { $stage = 'FirstLogon' }
             $paths = @($a.Paths | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
             $engine = Join-Path $repo 'lib\WinEaseExtensions.ps1'
-            if (-not (Get-Command -Name Add-WinEaseCustomScript -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $engine)) { . $engine }
+            if (-not (Test-Path -LiteralPath 'Function:\Add-WinEaseCustomScript') -and (Test-Path -LiteralPath $engine)) { . $engine }
             $res = Add-WinEaseCustomScript -RepoRoot $repo -Stage $stage -Paths $paths
             $msg = (Get-WinEaseUiString 'CS.Msg.Added' -Format @($res.Added).Count, $stage)
             $kind = 'Info'
@@ -444,13 +445,13 @@ function Invoke-WinEaseWinUiCustomScriptRequest {
             $stage = "$($a.Stage)".Trim()
             if (-not $stage) { $stage = 'FirstLogon' }
             $engine = Join-Path $repo 'lib\WinEaseExtensions.ps1'
-            if (-not (Get-Command -Name Remove-WinEaseCustomScript -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $engine)) { . $engine }
+            if (-not (Test-Path -LiteralPath 'Function:\Remove-WinEaseCustomScript') -and (Test-Path -LiteralPath $engine)) { . $engine }
             $res = Remove-WinEaseCustomScript -RepoRoot $repo -Stage $stage -Path "$($a.Path)"
             return @{ Title = (Get-WinEaseUiString 'CS.Button.Remove'); Text = (Get-WinEaseUiString 'CS.Msg.Removed' -Format $res.Removed) }
         }
         'customScriptMeta' {
             $engine = Join-Path $repo 'lib\WinEaseExtensions.ps1'
-            if (-not (Get-Command -Name Set-WinEaseCustomScriptMetadata -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $engine)) { . $engine }
+            if (-not (Test-Path -LiteralPath 'Function:\Set-WinEaseCustomScriptMetadata') -and (Test-Path -LiteralPath $engine)) { . $engine }
             $order = 100
             if (-not [int]::TryParse("$($a.Order)".Trim(), [ref]$order)) { $order = 100 }
             $meta = Set-WinEaseCustomScriptMetadata -Path "$($a.Path)" -Order $order -Condition "$($a.Condition)" `
@@ -459,7 +460,7 @@ function Invoke-WinEaseWinUiCustomScriptRequest {
         }
         'customScriptReorder' {
             $engine = Join-Path $repo 'lib\WinEaseExtensions.ps1'
-            if (-not (Get-Command -Name Move-WinEaseCustomScriptOrder -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $engine)) { . $engine }
+            if (-not (Test-Path -LiteralPath 'Function:\Move-WinEaseCustomScriptOrder') -and (Test-Path -LiteralPath $engine)) { . $engine }
             $order = 100
             if (-not [int]::TryParse("$($a.Order)".Trim(), [ref]$order)) { $order = 100 }
             $res = Move-WinEaseCustomScriptOrder -Path "$($a.Path)" -NewOrder $order
@@ -467,7 +468,7 @@ function Invoke-WinEaseWinUiCustomScriptRequest {
         }
         'customScriptPreview' {
             $engine = Join-Path $repo 'lib\WinEaseExtensions.ps1'
-            if (-not (Get-Command -Name Get-WinEaseCustomScriptPreview -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $engine)) { . $engine }
+            if (-not (Test-Path -LiteralPath 'Function:\Get-WinEaseCustomScriptPreview') -and (Test-Path -LiteralPath $engine)) { . $engine }
             $lines = [System.Collections.Generic.List[string]]::new()
             foreach ($p in @(Get-WinEaseCustomScriptPreview -RepoRoot $repo)) {
                 $lines.Add(("{0}  {1}  ({2})" -f $p.Stage, $p.ImagePath, $p.RunsAs))
@@ -479,7 +480,7 @@ function Invoke-WinEaseWinUiCustomScriptRequest {
             $stage = "$($a.Stage)".Trim()
             if (-not $stage) { $stage = 'FirstLogon' }
             $engine = Join-Path $repo 'lib\WinEaseExtensions.ps1'
-            if (-not (Get-Command -Name Get-WinEaseCustomScriptStageMap -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $engine)) { . $engine }
+            if (-not (Test-Path -LiteralPath 'Function:\Get-WinEaseCustomScriptStageMap') -and (Test-Path -LiteralPath $engine)) { . $engine }
             $info = @(Get-WinEaseCustomScriptStageMap | Where-Object { $_.Stage -eq $stage })[0]
             if (-not $info) { throw "Unknown stage '$stage'." }
             $folder = Join-Path $repo $info.RepoFolder
@@ -498,7 +499,7 @@ function Invoke-WinEaseWinUiPluginRequest {
     switch ($Op) {
         'plugins.list' {
             $pluginEngine = Join-Path $repo 'lib\WinEasePlugins.ps1'
-            if (-not (Get-Command -Name Get-WinEasePluginInventory -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $pluginEngine)) { . $pluginEngine }
+            if (-not (Test-Path -LiteralPath 'Function:\Get-WinEasePluginInventory') -and (Test-Path -LiteralPath $pluginEngine)) { . $pluginEngine }
             $rows = [System.Collections.Generic.List[object]]::new()
             foreach ($p in @(Get-WinEasePluginInventory -RepoRoot $repo)) {
                 $rows.Add([ordered]@{
@@ -517,7 +518,7 @@ function Invoke-WinEaseWinUiPluginRequest {
             # Two steps: without ConfirmSha256 the reply shows the file and its hash (NeedsConfirm);
             # the window asks the user and sends the same request again with the hash that was shown.
             $pluginEngine = Join-Path $repo 'lib\WinEasePlugins.ps1'
-            if (-not (Get-Command -Name Add-WinEaseUserPlugin -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $pluginEngine)) { . $pluginEngine }
+            if (-not (Test-Path -LiteralPath 'Function:\Add-WinEaseUserPlugin') -and (Test-Path -LiteralPath $pluginEngine)) { . $pluginEngine }
             $pluginPath = "$($a.Path)".Trim()
             if (-not $pluginPath) { throw 'No plugin file was given.' }
             $pluginTitle = Get-WinEaseUiString 'Plugins.Title'
@@ -608,7 +609,7 @@ function ConvertFrom-WinEaseWinUiResult {
     # The window is not the trust boundary: the same input check the window ran (lib\WinEaseInputValidation.ps1) runs on what
     # arrived. A refused result is Success = $false with the reason; the builder never sees its values.
     if (-not $SkipValidation) {
-        if (-not (Get-Command -Name Test-WinEaseGuiResultInputs -ErrorAction SilentlyContinue)) { throw 'Test-WinEaseGuiResultInputs is not loaded (lib\WinEaseInputValidation.ps1).' }
+        if (-not (Test-Path -LiteralPath 'Function:\Test-WinEaseGuiResultInputs')) { throw 'Test-WinEaseGuiResultInputs is not loaded (lib\WinEaseInputValidation.ps1).' }
         $inputIssues = @(Test-WinEaseGuiResultInputs -Result $out -OutputDir (Get-WinEaseGuiOutputDir) -Strict -SkipWriteProbe:([bool]$out.DryRun))
         if (Test-WinEaseInputHasError -Issues $inputIssues) {
             return @{ Success = $false; Reason = (Format-WinEaseInputIssues -Issues @($inputIssues | Where-Object { $_.Severity -eq 'Error' })); Issues = $inputIssues }
