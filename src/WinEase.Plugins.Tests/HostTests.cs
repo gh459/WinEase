@@ -351,4 +351,42 @@ namespace WinEase.Plugins.Tests
             Assert.Equal(string.Empty, result.Output);
         }
     }
+
+    public class AppxRemovalRuleTests
+    {
+        [Fact]
+        public void DefaultConstructorInitializesPropertiesToDefaults()
+        {
+            AppxRemovalRule rule = new AppxRemovalRule();
+            Assert.Null(rule.Pattern);
+            Assert.Null(rule.Option);
+            Assert.False(rule.Invert);
+        }
+
+        [Theory]
+        [InlineData("*Microsoft.Bing*", "RemoveBloatware", false)]
+        [InlineData("Microsoft.Xbox*", "KeepXbox", true)]
+        [InlineData("", "", false)]
+        [InlineData(null, null, true)]
+        public void ParameterizedConstructorInitializesProperties(string pattern, string option, bool invert)
+        {
+            AppxRemovalRule rule = new AppxRemovalRule(pattern, option, invert);
+            Assert.Equal(pattern, rule.Pattern);
+            Assert.Equal(option, rule.Option);
+            Assert.Equal(invert, rule.Invert);
+        }
+
+        [Fact]
+        public void PropertiesCanBeModifiedAndRead()
+        {
+            AppxRemovalRule rule = new AppxRemovalRule();
+            rule.Pattern = "*Microsoft.ZuneVideo*";
+            rule.Option = "RemoveAppxBloatware";
+            rule.Invert = true;
+
+            Assert.Equal("*Microsoft.ZuneVideo*", rule.Pattern);
+            Assert.Equal("RemoveAppxBloatware", rule.Option);
+            Assert.True(rule.Invert);
+        }
+    }
 }
