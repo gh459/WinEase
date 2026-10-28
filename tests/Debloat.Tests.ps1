@@ -231,6 +231,167 @@ Describe "WinEase helpers - BuildContext advanced debloat lists" {
     }
 }
 
+Describe "WinEase debloat - Remove-WinEaseDebloatLanguagePacks" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseDebloat.ps1")
+
+        if (-not (Get-Command -Name dism.exe -ErrorAction SilentlyContinue)) {
+            function dism.exe {
+                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '')]
+                param()
+            }
+        }
+        if (-not (Get-Command -Name Test-TweakEnabled -ErrorAction SilentlyContinue)) {
+            function Test-TweakEnabled {
+                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+                param([string]$Name, [bool]$Default = $true)
+                return $Default
+            }
+        }
+    }
+
+    Context "Language protection and option handling" {
+        It "protects hardcoded languages (ja-JP, en-US) from removal" {
+            $script:detectedImageLanguage = $null
+            $script:scratchDir = 'C:\fake_scratch'
+            $script:isDryRunMode = $false
+
+            Mock dism.exe {
+                return 'LanguagePack_Microsoft-Windows-LanguageFeatures-Basic-ja-JP-Package~31bf3856ad364e35~amd64~~10.0.19041.1   Installed'
+            }
+
+            Mock Test-TweakEnabled { return $true }
+
+            Remove-WinEaseDebloatLanguagePacks
+
+            Assert-MockCalled dism.exe -Exactly 1 -Scope It -ParameterFilter {
+                $args -contains '/Get-Packages'
+            }
+            Assert-MockCalled dism.exe -Exactly 0 -Scope It -ParameterFilter {
+                $args -contains '/Remove-Package'
+            }
+        }
+
+        It "protects detected image language from removal" {
+            $script:detectedImageLanguage = 'ko-KR'
+            $script:scratchDir = 'C:\fake_scratch'
+            $script:isDryRunMode = $false
+
+            Mock dism.exe {
+                return 'LanguagePack_Microsoft-Windows-LanguageFeatures-Basic-ko-KR-Package~31bf3856ad364e35~amd64~~10.0.19041.1   Installed'
+            }
+
+            Mock Test-TweakEnabled { return $true }
+
+            Remove-WinEaseDebloatLanguagePacks
+
+            Assert-MockCalled dism.exe -Exactly 0 -Scope It -ParameterFilter {
+                $args -contains '/Remove-Package'
+            }
+        }
+
+        It "skips removal when tweak option protection is disabled" {
+            $script:detectedImageLanguage = 'en-US'
+            $script:scratchDir = 'C:\fake_scratch'
+            $script:isDryRunMode = $false
+
+            Mock dism.exe {
+                return 'LanguagePack_Microsoft-Windows-LanguageFeatures-Basic-ko-KR-Package~31bf3856ad364e35~amd64~~10.0.19041.1   Installed'
+            }
+
+            Mock Test-TweakEnabled {
+                param([string]$Name, [bool]$Default)
+                if ($Name -eq 'RemoveLanguageKoKR') { return $false }
+                return $true
+            }
+
+            Remove-WinEaseDebloatLanguagePacks
+
+            Assert-MockCalled Test-TweakEnabled -Exactly 1 -Scope It -ParameterFilter {
+                $Name -eq 'RemoveLanguageKoKR'
+            }
+            Assert-MockCalled dism.exe -Exactly 0 -Scope It -ParameterFilter {
+                $args -contains '/Remove-Package'
+            }
+        }
+
+        It "skips DISM execution in dry run mode" {
+            $script:detectedImageLanguage = 'en-US'
+            $script:scratchDir = 'C:\fake_scratch'
+            $script:isDryRunMode = $true
+
+            Mock dism.exe {
+                return 'LanguagePack_Microsoft-Windows-LanguageFeatures-Basic-zh-CN-Package~31bf3856ad364e35~amd64~~10.0.19041.1   Installed'
+            }
+
+            Mock Test-TweakEnabled { return $true }
+
+            Remove-WinEaseDebloatLanguagePacks
+
+            Assert-MockCalled dism.exe -Exactly 0 -Scope It -ParameterFilter {
+                $args -contains '/Remove-Package'
+            }
+        }
+
+        It "removes language packages via DISM when enabled and unprotected" {
+            $script:detectedImageLanguage = 'en-US'
+            $script:scratchDir = 'C:\fake_scratch'
+            $script:isDryRunMode = $false
+
+            Mock dism.exe {
+                if ($args -contains '/Get-Packages') {
+                    return @(
+                        'LanguagePack_Microsoft-Windows-LanguageFeatures-Basic-zh-CN-Package~31bf3856ad364e35~amd64~~10.0.19041.1   Installed',
+                        'LanguagePack_Microsoft-Windows-LanguageFeatures-Basic-zh-TW-Package~31bf3856ad364e35~amd64~~10.0.19041.1   Installed'
+                    )
+                }
+            }
+
+            Mock Test-TweakEnabled { return $true }
+
+            Remove-WinEaseDebloatLanguagePacks
+
+            Assert-MockCalled dism.exe -Exactly 2 -Scope It -ParameterFilter {
+                $args -contains '/Remove-Package'
+            }
+        }
+
+        It "catches DISM exceptions gracefully and writes a warning message" {
+            $script:detectedImageLanguage = 'en-US'
+            $script:scratchDir = 'C:\fake_scratch'
+            $script:isDryRunMode = $false
+
+            Mock dism.exe { throw "DISM failure" }
+
+            { Remove-WinEaseDebloatLanguagePacks } | Should Not Throw
+        }
+
+        It "ignores lines that do not contain language packages or valid package names" {
+            $script:detectedImageLanguage = 'en-US'
+            $script:scratchDir = 'C:\fake_scratch'
+            $script:isDryRunMode = $false
+
+            Mock dism.exe {
+                if ($args -contains '/Get-Packages') {
+                    return @(
+                        'LanguagePack_Microsoft-Windows-LanguageFeatures-Basic-fr-FR-Package Installed',
+                        'SomeOtherPackage Installed'
+                    )
+                }
+            }
+
+            Mock Test-TweakEnabled { return $true }
+
+            Remove-WinEaseDebloatLanguagePacks
+
+            Assert-MockCalled dism.exe -Exactly 0 -Scope It -ParameterFilter {
+                $args -contains '/Remove-Package'
+            }
+        }
+    }
+}
+
 Describe "WinEase debloat - Test-WinEaseAppxPackageRemovable" {
     BeforeAll {
         if (-not (Get-Command -Name Test-WinEaseAppxPackageRemovable -ErrorAction SilentlyContinue)) {
