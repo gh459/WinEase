@@ -362,10 +362,10 @@ Describe "the windows call the shared save function and the strings exist" {
             'Dlg.SavePreset.Save', 'Dlg.SavePreset.Overwrite', 'Msg.SavePreset.Success', 'Msg.SavePreset.Error',
             'SavePreset.Reason.InvalidName', 'SavePreset.Reason.Reserved', 'SavePreset.Reason.ConflictBuiltin',
             'SavePreset.Reason.Exists', 'SavePreset.Reason.Write', 'SavePreset.Reason.Readback')
-        $missing = @()
+        $missing = [System.Collections.Generic.List[string]]::new()
         foreach ($k in $keys) {
-            if (-not $en.PSObject.Properties[$k]) { $missing += "en $k" }
-            if (-not $ja.PSObject.Properties[$k]) { $missing += "ja $k" }
+            if (-not $en.PSObject.Properties[$k]) { $missing.Add("en $k") }
+            if (-not $ja.PSObject.Properties[$k]) { $missing.Add("ja $k") }
         }
         ($missing -join '; ') | Should BeNullOrEmpty
         # placeholders match between the languages
