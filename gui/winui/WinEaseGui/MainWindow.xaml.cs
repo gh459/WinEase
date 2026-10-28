@@ -1698,6 +1698,13 @@ public sealed partial class MainWindow : Window
                 buttons[k].Background = k == _csSelected ? Res("SubtleFillColorSecondaryBrush") : Res("SubtleFillColorTransparentBrush");
             }
         }
+        var headerPrefixes = new string[headers.Length];
+        for (int c = 1; c < headers.Length; c++)
+        {
+            headerPrefixes[c] = _s.Get(headers[c]) + ": ";
+        }
+        string legacySuffix = " (" + _s.Get("CS.Legacy") + ")";
+
         for (int i = 0; i < _csScripts.Count; i++)
         {
             var s = _csScripts[i];
@@ -1710,12 +1717,12 @@ public sealed partial class MainWindow : Window
                 string value = InitData.Str(s[fields[c]]);
                 if (fields[c] == "OnError") value = _s.Get("CS.OnError." + value, value);
                 // A legacy script is marked in text too, not only by the caution colour
-                if (c == 0 && legacy) value += " (" + _s.Get("CS.Legacy") + ")";
+                if (c == 0 && legacy) value += legacySuffix;
                 Cell(row, c, value, false, legacy);
-                if (c > 0) summary.Add(_s.Get(headers[c]) + ": " + value);
+                if (c > 0) summary.Add(string.Concat(headerPrefixes[c], value));
             }
             var btn = new Button { Content = row, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left };
-            AutomationProperties.SetName(btn, InitData.Str(s["Name"]) + (legacy ? " (" + _s.Get("CS.Legacy") + ")" : ""));
+            AutomationProperties.SetName(btn, legacy ? string.Concat(InitData.Str(s["Name"]), legacySuffix) : InitData.Str(s["Name"]));
             AutomationProperties.SetHelpText(btn, string.Join(", ", summary));
             btn.Click += (_, _) => { _csSelected = index; Highlight(); };
             buttons.Add(btn);
