@@ -60,8 +60,9 @@ public partial class App : Application
                 init = await bridge.ReadInitAsync();
             }
         }
-        catch
+        catch (Exception ex)
         {
+            LogError(ex);
             init = null;
             bridge = Bridge.CreateOffline();
         }
