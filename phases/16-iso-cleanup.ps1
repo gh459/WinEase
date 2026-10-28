@@ -6,8 +6,12 @@
 # 16. Final cleanup of ISO root and sources
 Write-Host "Performing final cleanup of ISO root..." -ForegroundColor Cyan
 $keepList = @("boot", "efi", "sources", "bootmgr", "bootmgr.efi", "bootmgfw.efi", "setup.exe", "autounattend.xml", "WinEase-build-info.json")
-Get-ChildItem -Path $WinEaseDir | Where-Object { $_.Name -notin $keepList } | ForEach-Object {
+Get-ChildItem -LiteralPath $WinEaseDir | Where-Object { $_.Name -notin $keepList } | ForEach-Object {
     Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+}
+$isoRootLeft = @(Get-ChildItem -LiteralPath $WinEaseDir -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -notin $keepList } | ForEach-Object { $_.Name })
+if ($isoRootLeft.Count -gt 0) {
+    Write-Warning "Final cleanup could not remove from the ISO root: $($isoRootLeft -join ', ')"
 }
 
 # Clean leftover build diagnostics and setup logs inside sources
@@ -32,6 +36,9 @@ if (Test-Path -LiteralPath $sourcesDir) {
         Remove-Item -LiteralPath "$sourcesDir\sxs" -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath "$sourcesDir\langpacks" -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item -Path "$sourcesDir\sflist*.dat" -Force -ErrorAction SilentlyContinue
+        foreach ($trimmed in @("$sourcesDir\sxs", "$sourcesDir\langpacks")) {
+            if (Test-Path -LiteralPath $trimmed) { Write-Warning "UltraSlim trim did not remove $trimmed; the ISO will be larger than expected." }
+        }
     }
 
     # Verify no temporary or backup files remain in ISO sources tree

@@ -621,8 +621,22 @@ if (Test-Path -LiteralPath $unattendSource) {
         Write-Host "Injecting custom hardware drivers from $InjectDrivers..." -ForegroundColor Cyan
         $destDriversDir = Join-Path -Path $WinEaseDir -ChildPath "sources\`$OEM`$\`$1\Drivers"
         New-Item -ItemType Directory -Force -Path $destDriversDir | Out-Null
-        Copy-Item -Path "$InjectDrivers\*" -Destination $destDriversDir -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Host "  - Drivers staged in sources\`$OEM`$\`$1\Drivers" -ForegroundColor Green
+        $driverCopyFailed = $false
+        try {
+            Copy-Item -Path "$InjectDrivers\*" -Destination $destDriversDir -Recurse -Force -ErrorAction Stop
+        } catch {
+            $driverCopyFailed = $true
+            Write-Warning "Copying the custom drivers failed: $($_.Exception.Message). Setup may not find all of them."
+        }
+        $driversSrcCount = @(Get-ChildItem -LiteralPath $InjectDrivers -Recurse -File -Force -ErrorAction SilentlyContinue).Count
+        $driversDstCount = @(Get-ChildItem -LiteralPath $destDriversDir -Recurse -File -Force -ErrorAction SilentlyContinue).Count
+        if ($driversDstCount -lt $driversSrcCount) {
+            $driverCopyFailed = $true
+            Write-Warning "Only $driversDstCount of $driversSrcCount driver file(s) were staged in sources\`$OEM`$\`$1\Drivers."
+        }
+        if (-not $driverCopyFailed) {
+            Write-Host "  - Drivers staged in sources\`$OEM`$\`$1\Drivers ($driversDstCount file(s))" -ForegroundColor Green
+        }
     }
 
     # Stage feature flags for FirstLogon.ps1 automation
