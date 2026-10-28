@@ -364,4 +364,49 @@ Describe "Autologon - transition watchdog Test-InteractiveSession" {
     }
 }
 
+Describe "Autologon - RunFirstLogon StringBuilder stream combination" {
+    BeforeAll {
+        function Combine-StreamsHelper {
+            param([string]$stdoutText, [string]$stderrText)
+            $sb = [System.Text.StringBuilder]::new()
+            if (-not [string]::IsNullOrEmpty($stdoutText)) {
+                [void]$sb.Append($stdoutText)
+            }
+            if (-not [string]::IsNullOrEmpty($stderrText)) {
+                if ($sb.Length -gt 0 -and -not $stdoutText.EndsWith("`r`n") -and -not $stdoutText.EndsWith("`n")) {
+                    [void]$sb.Append("`r`n")
+                }
+                [void]$sb.Append("[STDERR]`r`n")
+                [void]$sb.Append($stderrText)
+            }
+            return $sb.ToString()
+        }
+    }
+
+    It "combines stdout and stderr correctly with trailing newline on stdout" {
+        $out = Combine-StreamsHelper -stdoutText "STDOUT Line`r`n" -stderrText "STDERR Line`r`n"
+        $out | Should BeExactly "STDOUT Line`r`n[STDERR]`r`nSTDERR Line`r`n"
+    }
+
+    It "combines stdout and stderr correctly without trailing newline on stdout" {
+        $out = Combine-StreamsHelper -stdoutText "STDOUT Line" -stderrText "STDERR Line"
+        $out | Should BeExactly "STDOUT Line`r`n[STDERR]`r`nSTDERR Line"
+    }
+
+    It "handles stdout only" {
+        $out = Combine-StreamsHelper -stdoutText "STDOUT Only" -stderrText ""
+        $out | Should BeExactly "STDOUT Only"
+    }
+
+    It "handles stderr only" {
+        $out = Combine-StreamsHelper -stdoutText "" -stderrText "STDERR Only"
+        $out | Should BeExactly "[STDERR]`r`nSTDERR Only"
+    }
+
+    It "handles empty inputs" {
+        $out = Combine-StreamsHelper -stdoutText "" -stderrText ""
+        $out | Should BeExactly ""
+    }
+}
+
 Remove-Item Function:\reg.exe -ErrorAction SilentlyContinue
