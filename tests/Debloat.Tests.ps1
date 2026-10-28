@@ -731,6 +731,130 @@ Describe "WinEase forced physical deletion - the Rust engine" {
     }
 }
 
+Describe "WinEase debloat - Remove-WinEaseDebloatProvisionedAppx" {
+    BeforeAll {
+        if (-not $script:RepoRoot) { $script:RepoRoot = Split-Path -Parent $PSScriptRoot }
+        . (Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseDebloat.ps1")
+    }
+
+    BeforeEach {
+        $script:scratchDir = 'C:\FakeScratch'
+        $script:isDryRunMode = $false
+        $script:appxRegex = $null
+        $script:protectedAppxRegex = $null
+        $global:LASTEXITCODE = 0
+    }
+
+    AfterEach {
+        Remove-Item Function:\Get-AppxProvisionedPackage -ErrorAction SilentlyContinue
+        Remove-Item Function:\dism.exe -ErrorAction SilentlyContinue
+    }
+
+    It "skips pass and outputs warning when pattern regexes are not set" {
+        $outputs = @(Remove-WinEaseDebloatProvisionedAppx 6>&1)
+        $text = ($outputs | ForEach-Object { if ($_ -is [System.Management.Automation.InformationRecord]) { $_.MessageData } else { $_.ToString() } }) -join "`n"
+        $text | Should Match 'Phase 05 AppX pattern list unavailable; provisioned AppX pass skipped'
+    }
+
+    It "reports no remaining packages when none match removal rules" {
+        $script:appxRegex = Get-WinEaseAppxPatternRegex -Patterns @('*Zune*')
+        $script:protectedAppxRegex = Get-WinEaseAppxPatternRegex -Patterns @('*VCLibs*')
+
+        function Get-AppxProvisionedPackage {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param($Path, $ErrorAction)
+            return @(
+                [PSCustomObject]@{ PackageName = 'Microsoft.WindowsCalculator_1.0'; DisplayName = 'Calculator' }
+            )
+        }
+
+        $outputs = @(Remove-WinEaseDebloatProvisionedAppx 6>&1)
+        $text = ($outputs | ForEach-Object { if ($_ -is [System.Management.Automation.InformationRecord]) { $_.MessageData } else { $_.ToString() } }) -join "`n"
+        $text | Should Match 'No listed provisioned AppX packages remain'
+    }
+
+    It "logs dry-run removal without executing dism.exe when isDryRunMode is true" {
+        $script:appxRegex = Get-WinEaseAppxPatternRegex -Patterns @('*Zune*')
+        $script:protectedAppxRegex = Get-WinEaseAppxPatternRegex -Patterns @('*VCLibs*')
+        $script:isDryRunMode = $true
+
+        function Get-AppxProvisionedPackage {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param($Path, $ErrorAction)
+            return @(
+                [PSCustomObject]@{ PackageName = 'Microsoft.ZuneMusic_1.0'; DisplayName = 'Zune Music' }
+            )
+        }
+
+        $script:dismCalled = $false
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '')]
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $script:dismCalled = $true
+        }
+
+        $outputs = @(Remove-WinEaseDebloatProvisionedAppx 6>&1)
+        $text = ($outputs | ForEach-Object { if ($_ -is [System.Management.Automation.InformationRecord]) { $_.MessageData } else { $_.ToString() } }) -join "`n"
+        $text | Should Match '\[DRY\] Would remove provisioned AppX: Zune Music'
+        $script:dismCalled | Should Be $false
+    }
+
+    It "executes dism.exe and logs success when removal succeeds" {
+        $script:appxRegex = Get-WinEaseAppxPatternRegex -Patterns @('*Zune*')
+        $script:protectedAppxRegex = Get-WinEaseAppxPatternRegex -Patterns @('*VCLibs*')
+        $script:isDryRunMode = $false
+
+        function Get-AppxProvisionedPackage {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param($Path, $ErrorAction)
+            return @(
+                [PSCustomObject]@{ PackageName = 'Microsoft.ZuneMusic_1.0'; DisplayName = 'Zune Music' }
+            )
+        }
+
+        $script:capturedDismArgs = $null
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $script:capturedDismArgs = $DismArgs
+            $global:LASTEXITCODE = 0
+        }
+
+        $outputs = @(Remove-WinEaseDebloatProvisionedAppx 6>&1)
+        $text = ($outputs | ForEach-Object { if ($_ -is [System.Management.Automation.InformationRecord]) { $_.MessageData } else { $_.ToString() } }) -join "`n"
+        $text | Should Match '\[OK\] Removed provisioned AppX: Zune Music'
+        $script:capturedDismArgs | Should Not BeNullOrEmpty
+        ($script:capturedDismArgs -contains '/Remove-ProvisionedAppxPackage') | Should Be $true
+        ($script:capturedDismArgs -contains '/PackageName:Microsoft.ZuneMusic_1.0') | Should Be $true
+    }
+
+    It "logs a warning when dism.exe fails with a non-zero exit code" {
+        $script:appxRegex = Get-WinEaseAppxPatternRegex -Patterns @('*Zune*')
+        $script:protectedAppxRegex = Get-WinEaseAppxPatternRegex -Patterns @('*VCLibs*')
+        $script:isDryRunMode = $false
+
+        function Get-AppxProvisionedPackage {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param($Path, $ErrorAction)
+            return @(
+                [PSCustomObject]@{ PackageName = 'Microsoft.ZuneMusic_1.0'; DisplayName = 'Zune Music' }
+            )
+        }
+
+        function dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '')]
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $global:LASTEXITCODE = 1
+        }
+
+        $outputs = @(Remove-WinEaseDebloatProvisionedAppx 6>&1)
+        $text = ($outputs | ForEach-Object { if ($_ -is [System.Management.Automation.InformationRecord]) { $_.MessageData } else { $_.ToString() } }) -join "`n"
+        $text | Should Match '\[WARN\] Could not remove provisioned AppX: Zune Music'
+    }
+}
+
 Describe "WinEase advanced debloat - every engine can remove its target" {
     # The engine column of the Advanced Debloat tab must never offer an engine that
     # cannot remove the target: the user would pick an engine and nothing would happen.
