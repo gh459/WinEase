@@ -1350,6 +1350,7 @@ public sealed partial class MainWindow : Window
             Foreground = Res("TextFillColorSecondaryBrush"),
             Margin = new Thickness(0, 6, 0, 0),
         };
+        AutomationProperties.SetLiveSetting(_migStatusText, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
         backup.Children.Add(_migStatusText);
         PageHost.Children.Add(Card(backup));
 
@@ -1591,6 +1592,7 @@ public sealed partial class MainWindow : Window
         foreach (string st in CustomScriptStages) combo.Items.Add(new ComboBoxItem { Content = _s.Get("CS.StageName." + st, st), Tag = st });
         combo.SelectedIndex = Math.Max(0, Array.IndexOf(CustomScriptStages, _csStage));
         var info = new TextBlock { Text = StageInfoText(_csStage), TextWrapping = TextWrapping.Wrap, Foreground = Res("TextFillColorSecondaryBrush") };
+        AutomationProperties.SetLiveSetting(info, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
         var list = new StackPanel { Spacing = 2 };
         combo.SelectionChanged += async (_, _) =>
         {
@@ -1607,6 +1609,7 @@ public sealed partial class MainWindow : Window
         // The scripts of the stage
         PageHost.Children.Add(Section(_s.Get("CS.Group.Scripts")));
         _csCount = new TextBlock { Foreground = Res("TextFillColorSecondaryBrush") };
+        AutomationProperties.SetLiveSetting(_csCount, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
         PageHost.Children.Add(_csCount);
         var scroll = new ScrollViewer { Content = list, MaxHeight = 320, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto };
         PageHost.Children.Add(Card(scroll));
@@ -1874,6 +1877,7 @@ public sealed partial class MainWindow : Window
             Margin = new Thickness(198, 0, 0, 4),
             Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
         };
+        AutomationProperties.SetLiveSetting(msg, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
         _fieldMsgs[field] = msg;
         var sp = new StackPanel();
         sp.Children.Add(row);
