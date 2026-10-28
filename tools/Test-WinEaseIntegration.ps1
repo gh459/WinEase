@@ -369,11 +369,23 @@ function New-WinEaseIntegrationVm {
 }
 
 function New-WinEaseIntegrationCredential {
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingConvertToSecureStringWithPlainText', '', Justification = 'Random per-run password of a disposable test VM account')]
     [CmdletBinding()]
     [OutputType([pscredential])]
-    param([string]$AccountName, [string]$AccountSecret)
-    $secure = ConvertTo-SecureString -String $AccountSecret -AsPlainText -Force
+    param(
+        [string]$AccountName,
+        [object]$AccountSecret
+    )
+    if ($AccountSecret -is [System.Security.SecureString]) {
+        $secure = $AccountSecret
+    } elseif ($AccountSecret -is [string]) {
+        $secure = New-Object System.Security.SecureString
+        foreach ($char in $AccountSecret.ToCharArray()) {
+            $secure.AppendChar($char)
+        }
+        $secure.MakeReadOnly()
+    } else {
+        throw 'AccountSecret must be a string or SecureString.'
+    }
     return (New-Object System.Management.Automation.PSCredential($AccountName, $secure))
 }
 
