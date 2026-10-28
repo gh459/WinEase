@@ -56,6 +56,20 @@ namespace WinEase.Plugins.Tests
             Assert.Equal(3, host.Recorded.Count);
         }
 
+        [Fact]
+        public void WriteImageFileRejectsNullContent()
+        {
+            int[] calls;
+            DelegateWinEaseHost host = NewHost(false, out calls);
+            ArgumentNullException ex1 = Assert.Throws<ArgumentNullException>(() => host.WriteImageFile("file.txt", null));
+            Assert.Equal("content", ex1.ParamName);
+
+            ArgumentNullException ex2 = Assert.Throws<ArgumentNullException>(() => host.WriteImageFile(ImageFileRoot.SetupTools, "file.txt", null));
+            Assert.Equal("content", ex2.ParamName);
+
+            Assert.Equal(0, calls[2]);
+        }
+
         [Theory]
         [InlineData(null)]
         [InlineData("")]
