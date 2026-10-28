@@ -58,16 +58,22 @@ function Invoke-ChildScriptWithLog {
     $stdoutText = $stdoutTask.Result
     $stderrText = $stderrTask.Result
 
-    $combined = ""
+    $sb = [System.Text.StringBuilder]::new()
     if (-not [string]::IsNullOrEmpty($stdoutText)) {
-        $combined += $stdoutText
+        [void]$sb.Append($stdoutText)
     }
     if (-not [string]::IsNullOrEmpty($stderrText)) {
-        if (-not [string]::IsNullOrEmpty($combined) -and -not $combined.EndsWith("`r`n") -and -not $combined.EndsWith("`n")) {
-            $combined += "`r`n"
+        if ($sb.Length -gt 0) {
+            $last = $sb[$sb.Length - 1]
+            if ($last -ne [char]10) {
+                [void]$sb.Append("`r`n")
+            }
         }
-        $combined += "[STDERR]`r`n" + $stderrText
+        [void]$sb.Append("[STDERR]`r`n")
+        [void]$sb.Append($stderrText)
     }
+
+    $combined = $sb.ToString()
 
     if (-not [string]::IsNullOrEmpty($combined)) {
         try {
@@ -116,7 +122,7 @@ Write-FirstLogonLog "Session ID:            $sessionId"
 Write-FirstLogonLog "Is Elevated Admin:     $isAdmin"
 Write-FirstLogonLog "Target Applied User:   $targetUser"
 Write-FirstLogonLog "Target HKCU Hive Root: $targetHivePath (Accessible: $isHiveAccessible)"
-Write-FirstLogonLog "================================================="
+Write-FirstLogonLog "================================="
 
 try {
     # 1. Verify existence of required setup scripts

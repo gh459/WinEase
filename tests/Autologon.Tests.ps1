@@ -280,6 +280,19 @@ Describe "Autologon - RunFirstLogon logging" {
         $capturedCalls[0].LiteralPath | Should Be $wrapperLogFile
         $capturedCalls[0].Value | Should Match '\[ERROR\] Fallback path log entry'
     }
+
+    It "combines stdout and stderr streams cleanly using StringBuilder logic in RunFirstLogon.ps1" {
+        $runFlPath = Join-Path $script:RepoRoot 'scripts\setup\RunFirstLogon.ps1'
+        $scriptText = [System.IO.File]::ReadAllText($runFlPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($scriptText, [ref]$tokens, [ref]$errors)
+        $childFuncAst = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-ChildScriptWithLog' }, $true)
+        $childFuncAst | Should Not BeNullOrEmpty
+
+        # Verify StringBuilder is instantiated and used within Invoke-ChildScriptWithLog AST
+        $sbUsage = $childFuncAst.Extent.Text -match '\[System\.Text\.StringBuilder\]::new\(\)'
+        $sbUsage | Should Be $true
+    }
 }
 
 Remove-Item Function:\reg.exe -ErrorAction SilentlyContinue
