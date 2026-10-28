@@ -2142,6 +2142,7 @@ $script:BuildReportPath = ''
 $script:MountOpened = $false
 $script:HivesLoaded = $false
 $script:MountedIso = $null
+$script:MountedIsoByWinEase = $true
 $script:DefenderExclusionAdded = $false
 $script:IsVhdxMounted = $false
 
@@ -2650,11 +2651,15 @@ try {
 
     # 4. ALWAYS dismount source ISO if mounted by WinEase (Rule 17)
     if ($script:MountedIso) {
-        Write-Host "Dismounting source Windows 11 ISO..." -ForegroundColor Cyan
-        try {
-            Dismount-DiskImage -ImagePath $script:MountedIso.ImagePath -ErrorAction SilentlyContinue > $null
+        if ($script:MountedIsoByWinEase -eq $false) {
+            Write-Host "Leaving the source ISO mounted (it was already mounted before the build)." -ForegroundColor Cyan
             $script:MountedIso = $null
-        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        } else {
+            Write-Host "Dismounting source Windows 11 ISO..." -ForegroundColor Cyan
+            if (Dismount-WinEaseDiskImageVerified -ImagePath $script:MountedIso.ImagePath -Label 'source ISO') {
+                $script:MountedIso = $null
+            }
+        }
     }
 
     # 5. ALWAYS remove Windows Defender temporary workspace exclusion (Rule 17)

@@ -481,3 +481,59 @@ function Remove-WinEaseDefenderExclusion {
         return $false
     }
 }
+
+function Dismount-WinEaseDiskImageVerified {
+    param([Parameter(Mandatory = $true)][string]$ImagePath, [string]$Label = 'disk image')
+    $attached = {
+        try {
+            $di = Get-DiskImage -ImagePath $ImagePath -ErrorAction Stop
+            return [bool]($di -and $di.Attached)
+        } catch { return $true }
+    }
+    try { Dismount-DiskImage -ImagePath $ImagePath -ErrorAction Stop | Out-Null } catch { Write-Verbose "Dismount reported: $($_.Exception.Message)" }
+    if (-not (& $attached)) { return $true }
+    Start-Sleep -Milliseconds 500
+    try { Dismount-DiskImage -ImagePath $ImagePath -ErrorAction Stop | Out-Null } catch { Write-Verbose "Dismount retry reported: $($_.Exception.Message)" }
+    if (-not (& $attached)) { return $true }
+    Write-Warning "The $Label is still mounted: $ImagePath. Run: Dismount-DiskImage -ImagePath '$ImagePath'"
+    if ($script:DiagnosticData) {
+        if (-not $script:DiagnosticData.ContainsKey('DismountFailures')) { $script:DiagnosticData['DismountFailures'] = @() }
+        $script:DiagnosticData['DismountFailures'] += $ImagePath
+    }
+    return $false
+}
+
+function Resolve-WinEaseExplicitSourceMedia {
+    param([Parameter(Mandatory = $true)][string]$SourceDrive)
+    $result = [ordered]@{ DriveLetter = ''; MountedIso = $null; MountedByWinEase = $false }
+    if ($SourceDrive.EndsWith('.iso', [System.StringComparison]::OrdinalIgnoreCase)) {
+        if (-not (Test-Path -LiteralPath $SourceDrive -PathType Leaf)) {
+            throw "The ISO specified with -SourceDrive does not exist: $SourceDrive"
+        }
+        $wasAttached = $false
+        try {
+            $existing = Get-DiskImage -ImagePath $SourceDrive -ErrorAction Stop
+            $wasAttached = [bool]($existing -and $existing.Attached)
+        } catch { Write-Verbose "Get-DiskImage failed: $($_.Exception.Message)" }
+        try {
+            $img = Mount-DiskImage -ImagePath $SourceDrive -PassThru -ErrorAction Stop
+        } catch {
+            throw "The ISO specified with -SourceDrive could not be mounted: $SourceDrive ($($_.Exception.Message)). Not falling back to another media."
+        }
+        $result.MountedIso = $img
+        $result.MountedByWinEase = -not $wasAttached
+        $vol = $img | Get-Volume -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not ($vol -and $vol.DriveLetter)) {
+            if ($result.MountedByWinEase) { [void](Dismount-WinEaseDiskImageVerified -ImagePath $SourceDrive -Label 'source ISO') }
+            throw "The ISO specified with -SourceDrive mounted without a drive letter: $SourceDrive. Not falling back to another media."
+        }
+        $result.DriveLetter = "$($vol.DriveLetter):"
+        return [PSCustomObject]$result
+    }
+    $cand = $SourceDrive.Trim().TrimEnd(':') + ':'
+    if (-not (Test-Path -LiteralPath $cand)) {
+        throw "The drive specified with -SourceDrive does not exist: $SourceDrive. Not falling back to another media."
+    }
+    $result.DriveLetter = $cand
+    return [PSCustomObject]$result
+}

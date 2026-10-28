@@ -47,6 +47,7 @@ if (Test-Path -LiteralPath $destWim) {
 # G2: outer retry loop (2 passes) for transient export glitches
 $exportAttempt = 0
 $exportMaxAttempts = 2
+$minExportBytes = Get-WinEaseMinimumExportBytes -SourceBytes $(if (Test-Path -LiteralPath $destWim) { (Get-Item -LiteralPath $destWim).Length } else { 0 })
 while (-not $exportSuccess -and $exportAttempt -lt $exportMaxAttempts) {
     $exportAttempt++
     if ($exportAttempt -gt 1) {
@@ -80,7 +81,7 @@ while (-not $exportSuccess -and $exportAttempt -lt $exportMaxAttempts) {
     ) -join "`r`n"
     [System.IO.File]::AppendAllText($exportIntegrityReport, "$integrityEntry`r`n", [System.Text.Encoding]::UTF8)
 
-    if ($exportExit -eq 0 -and (Test-Path -LiteralPath $tempExportWim) -and ((Get-Item -LiteralPath $tempExportWim).Length -gt 500MB)) {
+    if ($exportExit -eq 0 -and (Test-Path -LiteralPath $tempExportWim) -and ((Get-Item -LiteralPath $tempExportWim).Length -gt $minExportBytes)) {
         $exportSuccess = $true
         break
     } else {
@@ -110,9 +111,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Step 2: Move original WIM to unique backup outside ISO tree (Rule 5)
-Move-Item -LiteralPath $destWim -Destination $destWimBackup -Force -ErrorAction Stop
-# Step 3: Move export output to final install.wim
-Move-Item -LiteralPath $tempExportWim -Destination $destWim -Force -ErrorAction Stop
+# Step 3: Move export output to final install.wim (restores the original if this step fails)
+[void](Invoke-WinEasePromoteExportedWim -CurrentWim $destWim -ExportedWim $tempExportWim -BackupWim $destWimBackup)
 
 # Step 4: Record final path existence, size, SHA256
 $finalWimItem = Get-Item -LiteralPath $destWim -ErrorAction Stop
