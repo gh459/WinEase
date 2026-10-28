@@ -28,6 +28,12 @@ if (-not (Get-Command -Name Initialize-WinEaseMountDirectory -ErrorAction Silent
     . (Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseMount.ps1")
 }
 
+# Define command stubs for native Windows tools if running on non-Windows platforms so Pester Mock functions bind
+if (-not (Get-Command -Name dism.exe -ErrorAction SilentlyContinue)) { function global:dism.exe {} }
+if (-not (Get-Command -Name robocopy.exe -ErrorAction SilentlyContinue)) { function global:robocopy.exe {} }
+if (-not (Get-Command -Name attrib.exe -ErrorAction SilentlyContinue)) { function global:attrib.exe {} }
+if (-not (Get-Command -Name cmd.exe -ErrorAction SilentlyContinue)) { function global:cmd.exe {} }
+
 function New-FsTestRoot {
     $root = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("WinEase_fs_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
     [System.IO.Directory]::CreateDirectory($root) | Out-Null
@@ -633,6 +639,85 @@ Describe "Reset-DirectoryWithRobocopy" -Tags 'slow' {
         New-FsTestJunction -Link $junc -Target $script:Outside
         { Reset-DirectoryWithRobocopy -Path (Join-Path $junc 'sub') -Retries 1 } | Should Throw
         Test-Path -LiteralPath (Join-Path $script:Outside 'sub\keep.txt') | Should Be $true
+    }
+}
+
+Describe "Invoke-WinEaseRobocopyMirror" {
+    BeforeEach {
+        Initialize-FsTestState
+        $script:T = New-FsTestRoot
+        $script:Target = Join-Path $script:T 'target'
+        [System.IO.Directory]::CreateDirectory($script:Target) | Out-Null
+    }
+    AfterEach { Remove-FsTestRoot -Root $script:T }
+
+    It "throws parameter binding exception when Path is omitted" {
+        { Invoke-WinEaseRobocopyMirror } | Should Throw
+    }
+
+    It "returns exit code and output from robocopy on success" {
+        $global:RoboArgs = $null
+        Mock robocopy.exe {
+            $global:RoboArgs = $args
+            $global:LASTEXITCODE = 1
+            return "Header`n1 file copied"
+        }
+        $res = Invoke-WinEaseRobocopyMirror -Path $script:Target
+        $res.ExitCode | Should Be 1
+        $res.Output | Should Match "1 file copied"
+    }
+
+    It "invokes robocopy with expected arguments and flags" {
+        $global:RoboArgs = $null
+        Mock robocopy.exe {
+            $global:RoboArgs = $args
+            $global:LASTEXITCODE = 0
+            return "OK"
+        }
+        $res = Invoke-WinEaseRobocopyMirror -Path $script:Target
+        $global:RoboArgs | Should Not BeNullOrEmpty
+        $global:RoboArgs[1] | Should Be $script:Target
+        ($global:RoboArgs -contains '/MIR') | Should Be $true
+        ($global:RoboArgs -contains '/XJ') | Should Be $true
+        ($global:RoboArgs -contains '/R:0') | Should Be $true
+        ($global:RoboArgs -contains '/W:0') | Should Be $true
+    }
+
+    It "emits a warning message incorporating custom Attempt value when robocopy exit code is 8 or higher" {
+        Mock robocopy.exe {
+            $global:LASTEXITCODE = 8
+            return "ERROR: Some files could not be copied."
+        }
+        $warn = @()
+        $res = Invoke-WinEaseRobocopyMirror -Path $script:Target -Attempt 3 -WarningVariable warn -WarningAction SilentlyContinue
+        $res.ExitCode | Should Be 8
+        $warn.Count | Should BeGreaterThan 0
+        $warn[0] | Should Match "Reset attempt 3: Robocopy error \(Exit code: 8\)"
+    }
+
+    It "does not emit a warning when robocopy exit code is less than 8" {
+        foreach ($code in 0, 1, 2, 7) {
+            $global:FsCode = $code
+            Mock robocopy.exe {
+                $global:LASTEXITCODE = $global:FsCode
+                return "OK"
+            }
+            $warn = @()
+            $res = Invoke-WinEaseRobocopyMirror -Path $script:Target -Attempt 1 -WarningVariable warn -WarningAction SilentlyContinue
+            $res.ExitCode | Should Be $code
+            $warn.Count | Should Be 0
+        }
+    }
+
+    It "cleans up the temporary empty directory even when robocopy throws an exception" {
+        $global:TempCreated = $null
+        Mock robocopy.exe {
+            $global:TempCreated = $args[0]
+            throw "Simulated robocopy invocation crash"
+        }
+        { Invoke-WinEaseRobocopyMirror -Path $script:Target } | Should Throw "Simulated robocopy invocation crash"
+        $global:TempCreated | Should Not BeNullOrEmpty
+        (Test-Path -LiteralPath $global:TempCreated) | Should Be $false
     }
 }
 
