@@ -299,7 +299,7 @@ Describe "Autologon - RunFirstLogon logging" {
 
         Mock Get-WmiObject { throw "WMI service unavailable" }
 
-        $currentUser = 'TestUser'
+        Set-Variable -Name currentUser -Value 'TestUser'  # read by the dot-sourced try block below
         . ([scriptblock]::Create($tryAst.Extent.Text))
 
         (Test-Path -LiteralPath $wrapperLogFile) | Should Be $true
