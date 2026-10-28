@@ -960,11 +960,11 @@ function Get-WinEaseLastRunTotalSeconds {
     # summing to ~840 s evaluated as 1 s).
     param([string]$TimingsPath)
     $lastTimings = (Get-Content -LiteralPath $TimingsPath -Raw -ErrorAction Stop) | ConvertFrom-Json
-    $totalSec = 0
-    foreach ($v in $lastTimings.PSObject.Properties.Value) {
-        if ($v -is [double] -or $v -is [decimal] -or $v -is [int] -or $v -is [long]) { $totalSec += [double]$v }
+    $durations = foreach ($v in $lastTimings.PSObject.Properties.Value) {
+        if ($v -is [double] -or $v -is [decimal] -or $v -is [int] -or $v -is [long]) { [double]$v }
     }
-    return $totalSec
+    if ($null -eq $durations) { return 0 }
+    return [System.Linq.Enumerable]::Sum([double[]]$durations)
 }
 
 # ==============================================================================
