@@ -21,6 +21,8 @@
     Comma-separated migration rule IDs (game saves / app settings).
 .PARAMETER ConflictPolicy
     Skip | BackupExisting | OverwriteIfNewer | Overwrite (default: BackupExisting)
+.PARAMETER StopRunningProcess
+    Restore: close running applications of a migration rule (close request, wait, then force) instead of skipping the rule.
 .PARAMETER IncludeSecrets
     Include credential/token files in the backup (excluded by default).
 .PARAMETER RetryFailedOnly
@@ -50,6 +52,7 @@ param(
     [ValidateSet('Skip', 'BackupExisting', 'OverwriteIfNewer', 'Overwrite')]
     [string]$ConflictPolicy = 'BackupExisting',
     [switch]$IncludeSecrets,
+    [switch]$StopRunningProcess,
     [switch]$RetryFailedOnly,
     [switch]$VerifyAfterBackup,
     [switch]$DryRun,
@@ -585,6 +588,7 @@ switch ($Mode) {
     }
     'Restore' {
         $restoreArgs = @{ BackupRoot = $PackagePath; ConflictPolicy = $ConflictPolicy; RetryFailedOnly = [bool]$RetryFailedOnly; DryRun = [bool]$DryRun }
+        if ($StopRunningProcess) { $restoreArgs['StopRunningProcess'] = $true }
         # The custom paths of the backup are only restored to the locations that are
         # named here. Without the list the custom path tasks are skipped.
         $allowed = @($CustomPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })

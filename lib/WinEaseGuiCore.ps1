@@ -709,6 +709,14 @@ function Get-WinEaseGuiBackupArgs {
     return $a
 }
 
+# Extra Start-WinEaseMigrationRestore parameters from the Tab 8 state
+function Get-WinEaseGuiRestoreExtraArgs {
+    param([hashtable]$Gui)
+    $a = @{}
+    if ($Gui.MigStopProcess -and $Gui.MigStopProcess.Checked) { $a['StopRunningProcess'] = $true }
+    return $a
+}
+
 function Get-WinEaseGuiConflictPolicy {
     param([hashtable]$Gui)
     if ($Gui.MigConflict -and $Gui.MigConflict.SelectedItem) { return [string]$Gui.MigConflict.SelectedItem }
