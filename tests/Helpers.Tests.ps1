@@ -348,7 +348,7 @@ Describe "WinEase builder - phase timing telemetry" {
         }, $true)).Extent.Text
         . ([scriptblock]::Create($funcText))
 
-        $logDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "nonexistent_dir_12345\sub_dir"
+        $logDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "nonexistent_$([guid]::NewGuid().ToString('N'))\sub_dir"
         $script:PhaseTimings = [ordered]@{ "Phase 1" = 10.5 }
 
         { Save-WinEasePhaseTimings } | Should Not Throw
@@ -555,7 +555,7 @@ Describe "WinEase builder - phase timing telemetry" {
         }, $true))
         . ([scriptblock]::Create($funcTexts[0].Extent.Text))
 
-        $script:DiagDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "nonexistent_dir_12345\sub_dir"
+        $script:DiagDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "nonexistent_$([guid]::NewGuid().ToString('N'))\sub_dir"
         $script:DiagnosticData = [ordered]@{ BuildId = "err-build" }
 
         { Write-WinEaseDiagnosticReport "Status" -ErrorAction SilentlyContinue } | Should Not Throw

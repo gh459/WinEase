@@ -3,6 +3,16 @@
 All notable changes to this fork are documented here. Versions follow the upstream
 WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
+## Unreleased (local fork, 2026-10-28) - P3 batch, first part (audit PR-F)
+
+### Fixed
+- **`Test-IsSafePathToDelete` refuses drive-relative and rooted paths** (`C:`, `C:foo`, `\x`, `x\y`). `GetFullPath` resolved them against the current directory, so the path that was judged was not the one named.
+- **Plugin FoD removals of kind Capability or Feature with a wildcard in the name are dropped** with a warning (package names stay patterns).
+- **Phase 15 unloads the `zVERIFYDEF` hive in a `finally` block**, so an exception while reading it cannot leave it loaded.
+- Tests no longer share the fixed temp path `nonexistent_dir_12345`; each uses a GUID name.
+
+Not done in this PR (still open from the audit): Remove-Item wildcard in phase 8, Set-ItemOwnershipAndAccess on reparse points, the failure-visibility items (phase 5, InjectDrivers, migration backup, Remove-WinEaseDebloatPath, phase 16, diskpart), answer-file DOM insertion, context-menu defaults, IME/font keep lists, migration `.bak` generations, workflow pinning, oscdimg signer, package-release temp names.
+
 ## Unreleased (local fork, 2026-10-28) - CI guards (audit PR-E)
 
 ### Fixed
