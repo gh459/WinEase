@@ -3,7 +3,7 @@
 # Requires:  Pester 3.4 on Windows PowerShell 5.1
 #
 # Covers Test-IsSafePathToDelete, Test-WinEasePathHasReparsePoint, Test-WinEaseMountPathInWorkspace,
-# Get-WinEaseMountedImages, Assert-WinEaseDirectorySafety, Reset-DirectoryWithRobocopy,
+# Get-WinEaseMountedImages, Set-ItemOwnershipAndAccess, Assert-WinEaseDirectorySafety, Reset-DirectoryWithRobocopy,
 # Clear-DismMountConflicts, Initialize-WinEaseMountDirectory and Test-CanSafelyDeleteVhdx.
 #
 # Safety rules for this file: only per-test temp directories are touched, DISM is never run
@@ -20,6 +20,16 @@
 param()
 
 . (Join-Path -Path $PSScriptRoot -ChildPath '_TestCommon.ps1')
+
+if (-not (Get-Command -Name dism.exe -ErrorAction SilentlyContinue)) { function global:dism.exe { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs) } }
+if (-not (Get-Command -Name robocopy.exe -ErrorAction SilentlyContinue)) { function global:robocopy.exe { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([Parameter(ValueFromRemainingArguments=$true)][string[]]$RoboArgs) } }
+if (-not (Get-Command -Name attrib.exe -ErrorAction SilentlyContinue)) { function global:attrib.exe { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([Parameter(ValueFromRemainingArguments=$true)][string[]]$AttribArgs) } }
+if (-not (Get-Command -Name takeown.exe -ErrorAction SilentlyContinue)) { function global:takeown.exe { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([Parameter(ValueFromRemainingArguments=$true)][string[]]$TakeownArgs) } }
+if (-not (Get-Command -Name icacls.exe -ErrorAction SilentlyContinue)) { function global:icacls.exe { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([Parameter(ValueFromRemainingArguments=$true)][string[]]$IcaclsArgs) } }
+if (-not (Get-Command -Name cmd.exe -ErrorAction SilentlyContinue)) { function global:cmd.exe { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([Parameter(ValueFromRemainingArguments=$true)][string[]]$CmdArgs) } }
+if (-not (Get-Command -Name Get-Acl -ErrorAction SilentlyContinue)) { function global:Get-Acl { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([Parameter(ValueFromRemainingArguments=$true)][string[]]$AclArgs) } }
+if (-not (Get-Command -Name Set-Acl -ErrorAction SilentlyContinue)) { function global:Set-Acl { [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')] param([Parameter(ValueFromRemainingArguments=$true)][string[]]$AclArgs) } }
+
 if (-not (Get-Command -Name Test-IsSafePathToDelete -ErrorAction SilentlyContinue)) {
     . (Join-Path -Path $script:RepoRoot -ChildPath "WinEasehelpers.ps1")
 }
@@ -42,7 +52,11 @@ function New-FsTestRoot {
 
 function New-FsTestJunction {
     param([string]$Link, [string]$Target)
-    $null = & cmd.exe /c "mklink /J `"$Link`" `"$Target`"" 2>&1
+    if ([Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT -or $IsWindows) {
+        $null = & cmd.exe /c "mklink /J `"$Link`" `"$Target`"" 2>&1
+    } else {
+        New-Item -ItemType SymbolicLink -Path $Link -Target $Target -Force -ErrorAction SilentlyContinue | Out-Null
+    }
     if (-not (Test-Path -LiteralPath $Link)) { throw "Could not create junction '$Link'" }
     $script:FsTestLinks.Add($Link)
 }
@@ -964,5 +978,130 @@ Describe "Test-CanSafelyDeleteVhdx" {
         $fileUpper = $script:VhdxFile.ToUpperInvariant()
 
         Test-CanSafelyDeleteVhdx -VhdxPath $fileUpper -VhdxDetached $true -ExpectedBaseDir $wsForward | Should Be $true
+    }
+}
+
+Describe "Set-ItemOwnershipAndAccess" {
+    BeforeEach {
+        Initialize-FsTestState
+        $script:T = New-FsTestRoot
+    }
+    AfterEach { Remove-FsTestRoot -Root $script:T }
+
+    $isWindowsPlatform = [Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT -or $IsWindows -or ($env:OS -like '*Windows*')
+
+    It "function Set-ItemOwnershipAndAccess is defined and has Mandatory Path parameter" {
+        $cmd = Get-Command -Name Set-ItemOwnershipAndAccess -ErrorAction SilentlyContinue
+        $cmd | Should Not Be $null
+        $cmd.Parameters.ContainsKey('Path') | Should Be $true
+        $cmd.Parameters['Path'].Attributes.Mandatory | Should Be $true
+        $cmd.Parameters.ContainsKey('Recurse') | Should Be $true
+        $cmd.Parameters.ContainsKey('Strict') | Should Be $true
+    }
+
+    It "returns early and does nothing when Path does not exist" {
+        $nonExistent = Join-Path $script:T 'non_existent_file.txt'
+        { Set-ItemOwnershipAndAccess -Path $nonExistent } | Should Not Throw
+        { Set-ItemOwnershipAndAccess -Path $nonExistent -Strict } | Should Not Throw
+    }
+
+    It "successfully applies ownership and ACL to an existing file and directory" -Skip:(-not $isWindowsPlatform) {
+        $dir = Join-Path $script:T 'testdir'
+        [System.IO.Directory]::CreateDirectory($dir) | Out-Null
+        $file = Join-Path $dir 'testfile.txt'
+        Set-Content -LiteralPath $file -Value 'content'
+
+        { Set-ItemOwnershipAndAccess -Path $file } | Should Not Throw
+        { Set-ItemOwnershipAndAccess -Path $dir } | Should Not Throw
+    }
+
+    It "clears ReadOnly attribute on target file" -Skip:(-not $isWindowsPlatform) {
+        $file = Join-Path $script:T 'readonly_file.txt'
+        Set-Content -LiteralPath $file -Value 'readonly'
+        Set-ItemProperty -LiteralPath $file -Name IsReadOnly -Value $true
+
+        ([System.IO.File]::GetAttributes($file) -band [System.IO.FileAttributes]::ReadOnly) | Should Not Be 0
+
+        Set-ItemOwnershipAndAccess -Path $file
+
+        ([System.IO.File]::GetAttributes($file) -band [System.IO.FileAttributes]::ReadOnly) | Should Be 0
+    }
+
+    It "recursively processes child items with -Recurse switch" -Skip:(-not $isWindowsPlatform) {
+        $parent = Join-Path $script:T 'parent'
+        $childDir = Join-Path $parent 'childDir'
+        [System.IO.Directory]::CreateDirectory($childDir) | Out-Null
+        $childFile = Join-Path $childDir 'childFile.txt'
+        Set-Content -LiteralPath $childFile -Value 'data'
+        Set-ItemProperty -LiteralPath $childFile -Name IsReadOnly -Value $true
+
+        Set-ItemOwnershipAndAccess -Path $parent -Recurse
+
+        ([System.IO.File]::GetAttributes($childFile) -band [System.IO.FileAttributes]::ReadOnly) | Should Be 0
+    }
+
+    It "skips enqueuing children of reparse points during recursive traversal" -Skip:(-not $isWindowsPlatform) {
+        $parent = Join-Path $script:T 'parent'
+        [System.IO.Directory]::CreateDirectory($parent) | Out-Null
+        $targetDir = Join-Path $script:T 'targetDir'
+        [System.IO.Directory]::CreateDirectory($targetDir) | Out-Null
+        $targetFile = Join-Path $targetDir 'targetFile.txt'
+        Set-Content -LiteralPath $targetFile -Value 'target'
+        Set-ItemProperty -LiteralPath $targetFile -Name IsReadOnly -Value $true
+
+        $junc = Join-Path $parent 'juncLink'
+        New-FsTestJunction -Link $junc -Target $targetDir
+
+        # Traversal should process $parent and $junc, but NOT recurse into $targetDir's children
+        Set-ItemOwnershipAndAccess -Path $parent -Recurse
+
+        # $targetFile inside the junction target remains untouched (ReadOnly still present)
+        ([System.IO.File]::GetAttributes($targetFile) -band [System.IO.FileAttributes]::ReadOnly) | Should Not Be 0
+    }
+
+    It "uses Repair-WinEaseDeniedAcl fallback when Set-Acl throws" -Skip:(-not $isWindowsPlatform) {
+        $file = Join-Path $script:T 'repair_file.txt'
+        Set-Content -LiteralPath $file -Value 'repair'
+
+        Mock Set-Acl { throw "Access denied Set-Acl" }
+        Mock Repair-WinEaseDeniedAcl { return $null }
+
+        { Set-ItemOwnershipAndAccess -Path $file -Strict } | Should Not Throw
+        Assert-MockCalled Repair-WinEaseDeniedAcl -Exactly 1
+    }
+
+    It "uses takeown.exe and icacls.exe fallback when Set-Acl and Repair-WinEaseDeniedAcl fail" -Skip:(-not $isWindowsPlatform) {
+        $file = Join-Path $script:T 'takeown_file.txt'
+        Set-Content -LiteralPath $file -Value 'takeown'
+
+        Mock Set-Acl { throw "Access denied Set-Acl" }
+        Mock Repair-WinEaseDeniedAcl { return "Repair failed" }
+        $global:FsTakeownCalled = $false
+        Mock takeown.exe { $global:FsTakeownCalled = $true; $global:LASTEXITCODE = 0 }
+        Mock icacls.exe { $global:LASTEXITCODE = 0 }
+
+        { Set-ItemOwnershipAndAccess -Path $file -Strict } | Should Not Throw
+        $global:FsTakeownCalled | Should Be $true
+    }
+
+    It "records failed items and throws exception when -Strict is specified and all fallbacks fail" -Skip:(-not $isWindowsPlatform) {
+        $file = Join-Path $script:T 'failed_file.txt'
+        Set-Content -LiteralPath $file -Value 'fail'
+
+        Mock Set-Acl { throw "Access denied Set-Acl" }
+        Mock Repair-WinEaseDeniedAcl { return "Repair failed" }
+        Mock takeown.exe { $global:LASTEXITCODE = 1 }
+        Mock icacls.exe { $global:LASTEXITCODE = 1 }
+
+        { Set-ItemOwnershipAndAccess -Path $file -Strict } | Should Throw 'Failed to acquire ownership/access'
+    }
+
+    It "records enumeration failure when Get-ChildItem throws during recursive traversal under -Strict" -Skip:(-not $isWindowsPlatform) {
+        $parent = Join-Path $script:T 'bad_enum'
+        [System.IO.Directory]::CreateDirectory($parent) | Out-Null
+
+        Mock Get-ChildItem { throw "Permission denied enumerating directory" } -ParameterFilter { $LiteralPath -eq (Resolve-Path -LiteralPath $parent).Path }
+
+        { Set-ItemOwnershipAndAccess -Path $parent -Recurse -Strict } | Should Throw 'Enumeration failed'
     }
 }
