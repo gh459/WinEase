@@ -107,6 +107,21 @@ function Copy-WinEaseMigrationFileWithHash {
 # applied. A file with an expected hash is copied to a temporary neighbour while it is
 # hashed (one read instead of Get-FileHash + Copy-Item), and only moved into place when
 # the hash matches, so a corrupt backup never replaces a good file.
+# The path a replaced file is backed up to. The first backup keeps the name "<file>.WinEase.bak"; a later restore
+# over the same file gets "<file>.WinEase.1.bak", ".2.bak", ... so the backup of the original is never overwritten.
+function Get-WinEaseMigrationBackupPath {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $candidate = "$Path.WinEase.bak"
+    $n = 0
+    while ([System.IO.File]::Exists($candidate)) {
+        $n++
+        $candidate = "$Path.WinEase.$n.bak"
+    }
+    return $candidate
+}
+
 # Returns 'Restored', 'Skipped' or 'HashMismatch'; throws on I/O failure.
 function Copy-WinEaseMigrationRestoreFile {
     [CmdletBinding()]
@@ -132,7 +147,7 @@ function Copy-WinEaseMigrationRestoreFile {
             $hash = Copy-WinEaseMigrationFileWithHash -SourcePath $SourcePath -DestPath $tempPath -SourceTimestamp $sourceTime
             if ($hash -ne $ExpectedSha256) { return 'HashMismatch' }
             if ($exists) {
-                if ($ConflictPolicy -eq 'BackupExisting') { [System.IO.File]::Copy($DestPath, "$DestPath.WinEase.bak", $true) }
+                if ($ConflictPolicy -eq 'BackupExisting') { [System.IO.File]::Copy($DestPath, (Get-WinEaseMigrationBackupPath -Path $DestPath), $false) }
                 [System.IO.File]::Delete($DestPath)
             }
             [System.IO.File]::Move($tempPath, $DestPath)
@@ -141,7 +156,7 @@ function Copy-WinEaseMigrationRestoreFile {
         }
         return 'Restored'
     }
-    if ($exists -and $ConflictPolicy -eq 'BackupExisting') { [System.IO.File]::Copy($DestPath, "$DestPath.WinEase.bak", $true) }
+    if ($exists -and $ConflictPolicy -eq 'BackupExisting') { [System.IO.File]::Copy($DestPath, (Get-WinEaseMigrationBackupPath -Path $DestPath), $false) }
     [System.IO.File]::Copy($SourcePath, $DestPath, $true)
     return 'Restored'
 }
@@ -1058,7 +1073,7 @@ function Invoke-WinEaseMigrationRulesRestore {
                     if (Test-Path -LiteralPath $destPath) {
                         if ($ConflictPolicy -eq 'Skip') { $skipped++; return }
                         elseif ($ConflictPolicy -eq 'BackupExisting') {
-                            Copy-Item -LiteralPath $destPath -Destination "$destPath.WinEase.bak" -Force
+                            Copy-Item -LiteralPath $destPath -Destination (Get-WinEaseMigrationBackupPath -Path $destPath) -Force
                         } elseif ($ConflictPolicy -eq 'OverwriteIfNewer') {
                             $destItem = Get-Item -LiteralPath $destPath
                             if ($destItem.LastWriteTimeUtc -ge $_.LastWriteTimeUtc) { $skipped++; return }

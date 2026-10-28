@@ -217,8 +217,12 @@ assign mount="$vhdxMountDir"
 "@
             $dpAttachFile = Join-Path -Path $env:TEMP -ChildPath "WinEase_dp_attach_$([System.IO.Path]::GetRandomFileName()).txt"
             $dpAttachScript | Set-Content -LiteralPath $dpAttachFile -Encoding ascii
-            & diskpart.exe /s $dpAttachFile > $null 2>&1
+            $dpAttachOut = & diskpart.exe /s $dpAttachFile 2>&1
+            $dpAttachExit = $LASTEXITCODE
             Remove-Item -LiteralPath $dpAttachFile -Force -ErrorAction SilentlyContinue
+            if ($dpAttachExit -ne 0) {
+                Write-Warning "diskpart returned exit code ${dpAttachExit} while setting up the VHDX scratch volume: $(@($dpAttachOut) -join ' ')"
+            }
             if (Test-Path -LiteralPath $vhdxPath) {
                 $isVhdxMounted = $true
                 $script:IsVhdxMounted = $true

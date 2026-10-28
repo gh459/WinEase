@@ -368,8 +368,15 @@ function Remove-WinEaseDebloatPath {
     if ($isDryRunMode) { Write-Host "    [DRY] Would delete: $Path" -ForegroundColor Yellow; return $true }
     if ($ContentsOnly) {
         Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        $left = @(Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue).Count
     } else {
         Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue
+        $left = if (Test-Path -LiteralPath $Path) { 1 } else { 0 }
+    }
+    # The delete is checked, not assumed: a locked or protected path used to be reported as deleted.
+    if ($left -gt 0) {
+        Write-Warning "Could not fully delete $Label ($Path); it is still present in the image."
+        return $false
     }
     Write-Host "    [OK] Deleted $Label" -ForegroundColor Green
     return $true

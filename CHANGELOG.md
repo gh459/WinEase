@@ -3,6 +3,17 @@
 All notable changes to this fork are documented here. Versions follow the upstream
 WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
+## Unreleased (local fork, 2026-10-28) - P3 batch, third part (audit PR-F)
+
+### Fixed
+- **`Remove-WinEaseDebloatPath` checks the result.** A path that is still there after the delete now warns and returns `\False` instead of printing "Deleted".
+- **`-InjectDrivers` reports a failed or partial copy** (error, or fewer files staged than found) instead of always printing "staged".
+- **A non-zero diskpart exit code while preparing the VHDX scratch volume is reported** (the existing fallback to a plain folder is unchanged).
+- **Phase 16 reports what it could not remove** from the ISO root and the UltraSlim trim; the root listing uses `-LiteralPath`.
+- **Migration restores no longer overwrite the backup of the original file.** The first backup keeps `<file>.WinEase.bak`; later ones are `.WinEase.1.bak`, `.2.bak`, ...
+
+Checked and left as is: `close-failed-agent-prs.yml` already matches a fixed list of agent branch prefixes. Still open: ACL changes on reparse points, answer-file DOM insertion, context-menu defaults, IME/font keep lists (Rust), zizmor pinning, release temp names, WinUI overwrite confirmations.
+
 ## Unreleased (local fork, 2026-10-28) - remaining audit items (audit PR-H)
 
 ### Changed
