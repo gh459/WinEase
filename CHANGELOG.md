@@ -5,6 +5,12 @@ WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
 ## Unreleased (local fork, 2026-10-28) - P3 batch, third part (audit PR-F)
 
+### GUI toggle audit (2026-10-28)
+Every GUI toggle was checked against the code that implements it: all of them are wired (registry tables, the Latency plugin, the first-logon flag files, `ui-preferences.psd1`, the FoD targets). Two real defects were found and fixed:
+- **`DisableUAC` did not turn UAC off.** It only wrote `ConsentPromptBehaviorAdmin = 0` and `PromptOnSecureDesktop = 0` (elevate without a prompt; UAC stayed on). It now also writes `EnableLUA = 0` (restart required). The old behaviour is the new option `DisableUACPrompts` (CLI `-DisableUACPrompts`, GUI Security tab). **Behaviour change:** a saved profile with `DisableUAC = true` now turns UAC off completely; use `DisableUACPrompts` for the previous effect. The README no longer claims the unattended answer file is changed.
+- **Switching a setting off did nothing.** `EnableDarkTheme` off never selected the light theme, so a preset or profile that turns it off had no effect. Registry table entries can now carry `OffData` / `OffType`, written while the setting is off. It is used for the per-user preferences that are on by default and have an unambiguous counterpart: `EnableDarkTheme`, `ShowFileExtensions`, `LaunchToThisPC`, `TaskbarEndTask`, `TaskbarAlignLeft`, `MenuShowDelayZero`, `HideSyncNotifications`. Entries without `OffData` behave as before. (Only the `none` preset turns these off; `tests\fixtures\registry\none.txt` was extended by hand because the snapshot tests need the built plugin DLLs.)
+- Not changed on purpose: the `Default` column of a few registry entries (`NoKernelPaging`, `BypassActivationRestrictions`, `DisableFTH`, `DisablePCA`) differs from the schema default. The builder seeds every setting from the schema, so the column is never consulted in a real build; aligning it would only change the registry snapshots.
+
 ### Fixed
 - **`Remove-WinEaseDebloatPath` checks the result.** A path that is still there after the delete now warns and returns `\False` instead of printing "Deleted".
 - **`-InjectDrivers` reports a failed or partial copy** (error, or fewer files staged than found) instead of always printing "staged".

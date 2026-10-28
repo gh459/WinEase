@@ -171,6 +171,31 @@ Describe "config\registry tables" {
         $true | Should Be $true
     }
 
+    It "only gives OffData to per-user entries of settings that are on by default" {
+        $bad = foreach ($r in $script:RegistryEntries) {
+            if ($null -eq $r.Entry.OffData) { continue }
+            if (-not [bool]$r.Entry.Default) { "$($r.File): $($r.Entry.Tweak) $($r.Entry.Name) has OffData but is off by default" }
+            foreach ($hive in @($r.Entry.Hive)) {
+                if ($hive -notin @('zNTUSER', 'zDEFAULT')) { "$($r.File): $($r.Entry.Tweak) $($r.Entry.Name) has OffData in hive $hive" }
+            }
+        }
+        ($bad -join "`n") | Should BeNullOrEmpty
+    }
+
+    It "turns UAC off completely only with DisableUAC (EnableLUA) and keeps DisableUACPrompts to the prompts" {
+        $uac = @($script:RegistryEntries | Where-Object { $_.Entry.Tweak -eq 'DisableUAC' } | ForEach-Object { $_.Entry })
+        $prompts = @($script:RegistryEntries | Where-Object { $_.Entry.Tweak -eq 'DisableUACPrompts' } | ForEach-Object { $_.Entry })
+        (@($uac | Where-Object { $_.Name -eq 'EnableLUA' -and $_.Data -eq '0' -and $_.Type -eq 'REG_DWORD' }).Count) | Should Be 1
+        (@($prompts | Where-Object { $_.Name -eq 'EnableLUA' }).Count) | Should Be 0
+        (@($prompts | Where-Object { $_.Name -eq 'ConsentPromptBehaviorAdmin' -and $_.Data -eq '0' }).Count) | Should Be 1
+    }
+
+    It "writes the light theme while EnableDarkTheme is off" {
+        $dark = @($script:RegistryEntries | Where-Object { $_.Entry.Tweak -eq 'EnableDarkTheme' } | ForEach-Object { $_.Entry })
+        $dark.Count | Should BeGreaterThan 0
+        foreach ($e in $dark) { $e.OffData | Should Be '1' }
+    }
+
     It "has a table for every Invoke-WinEaseRegistryTable -Section call of the phase" {
         $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\10-registry.ps1'))
         $sections = [regex]::Matches($text, 'Invoke-WinEaseRegistryTable -Section ([a-z-]+)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique
@@ -200,6 +225,9 @@ Describe "Invoke-WinEaseRegistryTable" {
             "        @{ Tweak = 'TblOn'; Default = `$true; Hive = 'zSOFTWARE'; Path = 'T'; Name = ''; Type = 'REG_SZ'; Data = '' }"
             "        @{ Tweak = 'TblOn'; Default = `$true; Hive = 'zSOFTWARE'; Path = 'T'; Name = 'New'; Type = 'REG_DWORD'; Data = '1'; MinBuild = 26100 }"
             "        @{ Tweak = 'TblOn'; Default = `$true; Hive = 'zSOFTWARE'; Path = 'T'; Name = 'Old'; Type = 'REG_DWORD'; Data = '1'; MaxBuild = 22631 }"
+            "        @{ Tweak = 'TblDual'; Default = `$true; Hive = 'zNTUSER'; Path = 'T'; Name = 'D'; Type = 'REG_DWORD'; Data = '0'; OffData = '1' }"
+            "        @{ Tweak = 'TblDual'; Default = `$true; Hive = 'zNTUSER'; Path = 'T'; Name = 'S'; Type = 'REG_DWORD'; Data = '1'; OffData = '400'; OffType = 'REG_SZ' }"
+            "        @{ Tweak = 'TblDual'; Default = `$true; Hive = 'zNTUSER'; Path = 'T'; Name = 'OnlyOn'; Type = 'REG_DWORD'; Data = '1' }"
             '    )'
             '}'
         )
@@ -240,6 +268,24 @@ Describe "Invoke-WinEaseRegistryTable" {
     It "-Unconditional ignores the tweak gate" {
         $script:TblSettings = [ordered]@{ TblOff = $false }
         @(Invoke-Table -Tweak 'TblOff' -Unconditional).Count | Should Be 1
+    }
+
+    It "writes OffData / OffType while the tweak is off and skips entries without OffData" {
+        $script:TblSettings = [ordered]@{ TblDual = $false }
+        $calls = Invoke-Table -Tweak 'TblDual'
+        $calls.Count | Should Be 2
+        ($calls -contains 'Add|HKLM\zNTUSER\T|D|REG_DWORD|1') | Should Be $true
+        ($calls -contains 'Add|HKLM\zNTUSER\T|S|REG_SZ|400') | Should Be $true
+    }
+
+    It "writes Data / Type, never OffData, while the tweak is on or -Unconditional" {
+        $calls = Invoke-Table -Tweak 'TblDual'
+        $calls.Count | Should Be 3
+        ($calls -contains 'Add|HKLM\zNTUSER\T|D|REG_DWORD|0') | Should Be $true
+        ($calls -contains 'Add|HKLM\zNTUSER\T|S|REG_DWORD|1') | Should Be $true
+        $script:TblSettings = [ordered]@{ TblDual = $false }
+        $calls = Invoke-Table -Tweak 'TblDual' -Unconditional
+        ($calls -contains 'Add|HKLM\zNTUSER\T|D|REG_DWORD|0') | Should Be $true
     }
 
     It "leaves Data out for an empty value of a non-string type" {

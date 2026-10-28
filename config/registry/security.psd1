@@ -21,7 +21,16 @@
         @{ Tweak = 'DisableSmartScreen'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Edge'; Name = 'SmartScreenEnabled'; Type = 'REG_DWORD'; Data = '0' }
         @{ Tweak = 'DisableSmartScreen'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Edge'; Name = 'SmartScreenPuaEnabled'; Type = 'REG_DWORD'; Data = '0' }
 
+        # --- DisableUACPrompts -------------------------------------------
+        # UAC stays on (Admin Approval Mode, virtualization); administrators are elevated without a prompt.
+        # ConsentPromptBehaviorUser is left alone: 0 would silently deny standard users, not elevate them.
+        @{ Tweak = 'DisableUACPrompts'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows\CurrentVersion\Policies\System'; Name = 'ConsentPromptBehaviorAdmin'; Type = 'REG_DWORD'; Data = '0' }
+        @{ Tweak = 'DisableUACPrompts'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows\CurrentVersion\Policies\System'; Name = 'PromptOnSecureDesktop'; Type = 'REG_DWORD'; Data = '0' }
+
         # --- DisableUAC --------------------------------------------------
+        # Full switch-off: EnableLUA = 0 (takes effect after a restart). The prompt values are written
+        # as well so that the system behaves the same if EnableLUA is switched back on later.
+        @{ Tweak = 'DisableUAC'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows\CurrentVersion\Policies\System'; Name = 'EnableLUA'; Type = 'REG_DWORD'; Data = '0' }
         @{ Tweak = 'DisableUAC'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows\CurrentVersion\Policies\System'; Name = 'ConsentPromptBehaviorAdmin'; Type = 'REG_DWORD'; Data = '0' }
         @{ Tweak = 'DisableUAC'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows\CurrentVersion\Policies\System'; Name = 'PromptOnSecureDesktop'; Type = 'REG_DWORD'; Data = '0' }
 

@@ -107,6 +107,7 @@
     "BypassHardwareRequirements": { "type": "boolean", "default": true },
     "BypassNetworkRequirement": { "type": "boolean", "default": true },
     "BypassNRO": { "type": "boolean", "default": true },
+    "DisableUACPrompts": { "type": "boolean", "default": false },
     "DisableUAC": { "type": "boolean", "default": false },
     "DisableSmartScreen": { "type": "boolean", "default": false },
     "DisableVBS": { "type": "boolean", "default": false },

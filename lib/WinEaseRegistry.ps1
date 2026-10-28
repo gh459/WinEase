@@ -141,8 +141,10 @@ function Invoke-WinEaseRegistryTable {
     .SYNOPSIS
         Writes the entries of config\registry\<Section>.psd1 into the loaded offline hives.
     .DESCRIPTION
-        Entry: @{ Tweak; Default; Hive; Path; Name; Type; Data; MinBuild; MaxBuild }
+        Entry: @{ Tweak; Default; Hive; Path; Name; Type; Data; MinBuild; MaxBuild; OffData; OffType }
           Tweak     the setting that gates the entry (Test-TweakEnabled). Empty = always.
+          OffData   optional: the data written while the setting is switched OFF (the counterpart of
+                    Data, e.g. the light theme for EnableDarkTheme); OffType defaults to Type
           Default   value of the setting when no profile / preset sets it
           Hive      offline hive (zSYSTEM, zSOFTWARE, zDEFAULT, zNTUSER, zCOMPONENTS) or a
                     list of them; the entry is written to each
@@ -173,29 +175,39 @@ function Invoke-WinEaseRegistryTable {
     foreach ($entry in $tableEntries) {
         $entryTweak = [string]$entry.Tweak
         if ($Tweak -and $entryTweak -ne $Tweak) { continue }
+        # A setting that is switched off writes the entry's OffData/OffType (its counterpart) when the
+        # entry has one; an entry without OffData writes nothing, as before.
+        $isOff = $false
         if ($entryTweak -and -not $Unconditional) {
-            if (-not (Test-TweakEnabled $entryTweak ([bool]$entry.Default))) { continue }
+            if (-not (Test-TweakEnabled $entryTweak ([bool]$entry.Default))) {
+                if ($null -eq $entry.OffData) { continue }
+                $isOff = $true
+            }
         }
         if ($build -gt 0) {
             if ($entry.MinBuild -and $build -lt [int]$entry.MinBuild) { continue }
             if ($entry.MaxBuild -and $build -gt [int]$entry.MaxBuild) { continue }
         }
-        # An empty argument is dropped by a native call, so an empty string goes to reg.exe as the literal "".
+        $valueType = [string]$entry.Type
+        $data = [string]$entry.Data
+        if ($isOff) {
+            $data = [string]$entry.OffData
+            if ($entry.OffType) { $valueType = [string]$entry.OffType }
+        }
         # An empty argument is dropped by a native call. A string value gets the literal ""; for
         # other types the data is left out, so reg.exe never takes the next switch as the data.
         $dataArgs = @{}
-        $data = [string]$entry.Data
         if ($data -ne '') { $dataArgs.Data = $data }
-        elseif ([string]$entry.Type -in @('REG_SZ', 'REG_EXPAND_SZ')) { $dataArgs.Data = '""' }
+        elseif ($valueType -in @('REG_SZ', 'REG_EXPAND_SZ')) { $dataArgs.Data = '""' }
         $isDefault = ([string]::IsNullOrEmpty([string]$entry.Name) -or [string]$entry.Name -eq '(default)')
         foreach ($hive in @($entry.Hive)) {
             $key = "HKLM\$hive\$($entry.Path)"
             # P1-01: reg.exe's exit status is read. Only an explicit $false counts as a failed write
             # (a stand-in that returns nothing is not a failure).
             $written = if ($isDefault) {
-                Invoke-WinEaseReg -Action Add -Key $key -DefaultValue -Type ([string]$entry.Type) -PassThru @dataArgs
+                Invoke-WinEaseReg -Action Add -Key $key -DefaultValue -Type $valueType -PassThru @dataArgs
             } else {
-                Invoke-WinEaseReg -Action Add -Key $key -Name ([string]$entry.Name) -Type ([string]$entry.Type) -PassThru @dataArgs
+                Invoke-WinEaseReg -Action Add -Key $key -Name ([string]$entry.Name) -Type $valueType -PassThru @dataArgs
             }
             if ($written -is [bool] -and -not $written) {
                 Add-WinEaseRegistryWriteFailure -Key $key -Name $(if ($isDefault) { '(default)' } else { [string]$entry.Name })

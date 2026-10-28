@@ -105,16 +105,28 @@ reached through the GUI ("Services & Apps" tab), the command line, a preset
   (`net user <name> <password>`) and clear the auto-logon keys
   (`AutoAdminLogon = 0`, `ForceAutoLogon = 0`, remove `DefaultPassword`).
 
+### DisableUACPrompts (GUI: Security tab)
+
+* **Default:** off
+* **What the build does:** `ConsentPromptBehaviorAdmin = 0` and `PromptOnSecureDesktop = 0`.
+  User Account Control stays on (Admin Approval Mode, file/registry virtualization); administrators
+  are elevated without a consent prompt.
+* **Impact:** malware that runs as an administrator gets elevation without any prompt.
+* **Recovery:** set `ConsentPromptBehaviorAdmin = 5` and `PromptOnSecureDesktop = 1` under
+  `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System`.
+
 ### DisableUAC (GUI: Security tab)
 
 * **Default:** off
-* **What the build does:** the User Account Control consent prompts are disabled.
+* **What the build does:** User Account Control is turned off completely: `EnableLUA = 0`, in
+  addition to the two prompt values of DisableUACPrompts. `EnableLUA` takes effect after a restart.
 * **Impact:** every process runs with full administrative rights without a prompt.
   This is the single most effective way to make a Windows system vulnerable to
-  malware. **Disabling UAC does not guarantee any measurable performance improvement**
+  malware. Microsoft Store/UWP apps and Edge, which depend on UAC, may stop working.
+  **Disabling UAC does not guarantee any measurable performance improvement**
   and should never be treated as an optimization tweak.
-* **Recovery:** set `ConsentPromptBehaviorAdmin = 5` and `EnableLUA = 1` under
-  `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System`.
+* **Recovery:** set `ConsentPromptBehaviorAdmin = 5`, `PromptOnSecureDesktop = 1` and `EnableLUA = 1`
+  under `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System`, then restart.
 
 ### EnableScripts (GUI: Security tab)
 
