@@ -13,6 +13,17 @@ Describe "Plugin host" {
     . (Join-Path -Path $script:RepoRoot -ChildPath 'lib\WinEaseReport.ps1')
     . (Join-Path -Path $script:RepoRoot -ChildPath 'lib\WinEaseSelfTest.ps1')
 
+    $script:HasCSharpCompiler = $false
+    try {
+        if ($IsWindows -or $env:OS -eq 'Windows_NT') {
+            $provider = New-Object -TypeName Microsoft.CSharp.CSharpCodeProvider
+            $provider.Dispose()
+            $script:HasCSharpCompiler = $true
+        }
+    } catch {
+        $script:HasCSharpCompiler = $false
+    }
+
     function Test-TweakEnabled {
         param([string]$Name, [bool]$Default = $true)
         if ($null -ne $script:TweakSettings -and ([System.Collections.IDictionary]$script:TweakSettings).Contains($Name)) { return [bool]$script:TweakSettings[$Name] }
@@ -21,6 +32,7 @@ Describe "Plugin host" {
 
     function New-TestAbstractions {
         param([string]$Path, [string]$Version = '1.0.0.0')
+        if (-not $script:HasCSharpCompiler) { return $null }
         $srcDir = Join-Path -Path $script:RepoRoot -ChildPath 'src\WinEase.Plugins.Abstractions'
         $sources = @(Get-ChildItem -LiteralPath $srcDir -Filter '*.cs' -File | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) })
         $sources += "[assembly: System.Reflection.AssemblyVersion(`"$Version`")]"
@@ -28,7 +40,10 @@ Describe "Plugin host" {
         return $Path
     }
 
-    $script:AbstractionsDll = New-TestAbstractions -Path (Join-Path $script:PluginWork 'WinEase.Plugins.Abstractions.dll')
+    $script:AbstractionsDll = $null
+    if ($script:HasCSharpCompiler) {
+        $script:AbstractionsDll = New-TestAbstractions -Path (Join-Path $script:PluginWork 'WinEase.Plugins.Abstractions.dll')
+    }
 
     # One test plugin per DLL. Rec.Events lists "<phase>:<stage>" for every OnPhase call.
     function New-TestPluginDll {
@@ -38,6 +53,7 @@ Describe "Plugin host" {
             [string]$Describe = '',
             [string]$Reference = $script:AbstractionsDll
         )
+        if (-not $script:HasCSharpCompiler) { return $null }
         $source = @'
 using System;
 using System.Collections;
@@ -115,8 +131,64 @@ namespace @@NS@@ {
         if ($PassThru) { return $true }
     }
 
+    Context "Resolve-WinEasePluginFile" {
+        It "resolves a valid plugin file name to its full path" {
+            $dir = Join-Path -Path $script:PluginWork -ChildPath 'resolve_test'
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            $expected = [System.IO.Path]::GetFullPath((Join-Path -Path $dir -ChildPath 'MyPlugin.dll'))
+            $actual = Resolve-WinEasePluginFile -Directory $dir -File 'MyPlugin.dll'
+            $actual | Should Be $expected
+        }
+
+        It "handles mixed-case .dll extensions correctly" {
+            $dir = Join-Path -Path $script:PluginWork -ChildPath 'resolve_test'
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            $expected = [System.IO.Path]::GetFullPath((Join-Path -Path $dir -ChildPath 'SamplePlugin.DLL'))
+            $actual = Resolve-WinEasePluginFile -Directory $dir -File 'SamplePlugin.DLL'
+            $actual | Should Be $expected
+        }
+
+        It "returns null for null, empty, or whitespace file parameters" {
+            $dir = Join-Path -Path $script:PluginWork -ChildPath 'resolve_test'
+            (Resolve-WinEasePluginFile -Directory $dir -File $null) | Should BeNullOrEmpty
+            (Resolve-WinEasePluginFile -Directory $dir -File '') | Should BeNullOrEmpty
+            (Resolve-WinEasePluginFile -Directory $dir -File '   ') | Should BeNullOrEmpty
+        }
+
+        It "returns null for file names containing slashes or backslashes" {
+            $dir = Join-Path -Path $script:PluginWork -ChildPath 'resolve_test'
+            (Resolve-WinEasePluginFile -Directory $dir -File 'sub/plugin.dll') | Should BeNullOrEmpty
+            (Resolve-WinEasePluginFile -Directory $dir -File 'sub\plugin.dll') | Should BeNullOrEmpty
+            (Resolve-WinEasePluginFile -Directory $dir -File '../plugin.dll') | Should BeNullOrEmpty
+            (Resolve-WinEasePluginFile -Directory $dir -File '..\plugin.dll') | Should BeNullOrEmpty
+        }
+
+        It "returns null for file names starting with a dot or dot-dot" {
+            $dir = Join-Path -Path $script:PluginWork -ChildPath 'resolve_test'
+            (Resolve-WinEasePluginFile -Directory $dir -File './plugin.dll') | Should BeNullOrEmpty
+            (Resolve-WinEasePluginFile -Directory $dir -File '.\plugin.dll') | Should BeNullOrEmpty
+            (Resolve-WinEasePluginFile -Directory $dir -File '.plugin.dll') | Should BeNullOrEmpty
+            (Resolve-WinEasePluginFile -Directory $dir -File '..dll') | Should BeNullOrEmpty
+        }
+
+        It "returns null for non-.dll file extensions" {
+            $dir = Join-Path -Path $script:PluginWork -ChildPath 'resolve_test'
+            (Resolve-WinEasePluginFile -Directory $dir -File 'plugin.exe') | Should BeNullOrEmpty
+            (Resolve-WinEasePluginFile -Directory $dir -File 'plugin.txt') | Should BeNullOrEmpty
+            (Resolve-WinEasePluginFile -Directory $dir -File 'plugin.ps1') | Should BeNullOrEmpty
+            (Resolve-WinEasePluginFile -Directory $dir -File 'plugin.dll.txt') | Should BeNullOrEmpty
+            (Resolve-WinEasePluginFile -Directory $dir -File 'plugin') | Should BeNullOrEmpty
+        }
+
+        It "returns null when file name attempts to escape directory root" {
+            $dir = Join-Path -Path $script:PluginWork -ChildPath 'resolve_test'
+            (Resolve-WinEasePluginFile -Directory $dir -File '../../etc/passwd.dll') | Should BeNullOrEmpty
+        }
+    }
+
     Context "Loading and the allow list" {
         It "loads a DLL whose SHA256 matches the lock file" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dll = New-TestPluginDll -Name 'LoadOk'
             $r = Import-TestPlugin -Dll $dll
             $r.LoadedCount | Should Be 1
@@ -129,6 +201,7 @@ namespace @@NS@@ {
         }
 
         It "does not load a DLL whose hash differs from the lock file" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dll = New-TestPluginDll -Name 'HashBad'
             $r = Import-TestPlugin -Dll $dll -Sha256 ('0' * 64) 3>$null
             $r.LoadedCount | Should Be 0
@@ -138,6 +211,7 @@ namespace @@NS@@ {
         }
 
         It "does not load a DLL that is not in the lock file" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dll = New-TestPluginDll -Name 'NotListed'
             $r = Import-TestPlugin -Dll $dll -NotInLock 3>$null
             $r.LoadedCount | Should Be 0
@@ -146,6 +220,7 @@ namespace @@NS@@ {
         }
 
         It "refuses a lock entry whose file name leaves the plugin folder" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dir = Join-Path $script:PluginWork 'trav'
             New-Item -ItemType Directory -Force -Path $dir | Out-Null
             $lock = Join-Path $dir 'l.psd1'
@@ -156,6 +231,7 @@ namespace @@NS@@ {
         }
 
         It "does not load a DLL built for another major version of the contract" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             New-Item -ItemType Directory -Force -Path (Join-Path $script:PluginWork 'v2') | Out-Null
             $abs2 = New-TestAbstractions -Path (Join-Path $script:PluginWork 'v2\WinEase.Plugins.Abstractions.dll') -Version '2.0.0.0'
             $dll = New-TestPluginDll -Name 'MajorTwo' -Reference $abs2
@@ -165,6 +241,7 @@ namespace @@NS@@ {
         }
 
         It "refuses a plugin that asks to replace a phase" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dll = New-TestPluginDll -Name 'Replacer' -Describe 'd.ReplacesPhases = new string[] { "09-physical-debloat" };'
             $r = Import-TestPlugin -Dll $dll 3>$null
             $r.LoadedCount | Should Be 0
@@ -187,6 +264,7 @@ namespace @@NS@@ {
 
     Context "Hooks around a phase" {
         It "calls Before then After with the phase name" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dll = New-TestPluginDll -Name 'Order'
             [void](Import-TestPlugin -Dll $dll)
             Clear-TestRecEvents -Namespace 'Order'
@@ -196,6 +274,7 @@ namespace @@NS@@ {
         }
 
         It "skips a plugin whose phase list does not contain the phase" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dll = New-TestPluginDll -Name 'OnlyFod' -Describe 'd.Phases = new string[] { "06-fod" };'
             [void](Import-TestPlugin -Dll $dll)
             Clear-TestRecEvents -Namespace 'OnlyFod'
@@ -205,6 +284,7 @@ namespace @@NS@@ {
         }
 
         It "skips a plugin outside its build range and runs it inside" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dll = New-TestPluginDll -Name 'Ranged' -Describe 'd.MinBuild = 26100; d.MaxBuild = 26199;'
             [void](Import-TestPlugin -Dll $dll)
             Clear-TestRecEvents -Namespace 'Ranged'
@@ -232,6 +312,7 @@ namespace @@NS@@ {
     Context "OnError" {
         $throwing = 'throw new InvalidOperationException("boom");'
         It "Warn reports the failure and goes on" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dll = New-TestPluginDll -Name 'ThrowWarn' -OnPhase $throwing
             [void](Import-TestPlugin -Dll $dll -OnError Warn)
             $w = $null
@@ -239,12 +320,14 @@ namespace @@NS@@ {
             @($script:WinEasePluginRunLog)[-1].Status | Should Be 'Failed'
         }
         It "Ignore goes on" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dll = New-TestPluginDll -Name 'ThrowIgnore' -OnPhase $throwing
             [void](Import-TestPlugin -Dll $dll -OnError Ignore)
             { Invoke-WinEasePluginHook -Phase '05-appx' -Stage Before } | Should Not Throw
             @($script:WinEasePluginRunLog)[-1].Status | Should Be 'Failed'
         }
         It "Stop ends the build" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dll = New-TestPluginDll -Name 'ThrowStop' -OnPhase $throwing
             [void](Import-TestPlugin -Dll $dll -OnError Stop)
             { Invoke-WinEasePluginHook -Phase '05-appx' -Stage Before } | Should Throw 'boom'
@@ -254,6 +337,7 @@ namespace @@NS@@ {
     Context "Host services and DryRun" {
         $touch = 'c.Host.SetOfflineRegistry("zSOFTWARE", "Software\\Plugin", "Flag", "REG_DWORD", "1"); c.Host.WriteImageFile("note.txt", new byte[] { 1 }); Rec.Events.Add("dryrun=" + c.Host.DryRun);'
         It "writes the registry value through Invoke-WinEaseReg when it is not a DryRun" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dll = New-TestPluginDll -Name 'HostReal' -OnPhase $touch
             [void](Import-TestPlugin -Dll $dll)
             $scratch = Join-Path $script:PluginWork 'scratch_real'
@@ -262,6 +346,7 @@ namespace @@NS@@ {
             Test-Path -LiteralPath (Join-Path $scratch 'Windows\Setup\Scripts\Plugins\HostReal\note.txt') | Should Be $true
         }
         It "only records the write operations in a DryRun" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dll = New-TestPluginDll -Name 'HostDry' -OnPhase $touch
             [void](Import-TestPlugin -Dll $dll)
             $scratch = Join-Path $script:PluginWork 'scratch_dry'
@@ -271,12 +356,14 @@ namespace @@NS@@ {
             (Get-TestRecEvents -Namespace 'HostDry') -contains 'dryrun=True' | Should Be $true
         }
         It "refuses a registry hive that is not an offline hive" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dll = New-TestPluginDll -Name 'HostHive' -OnPhase 'c.Host.SetOfflineRegistry("HKLM", "Software\\Evil", "V", "REG_DWORD", "1");'
             [void](Import-TestPlugin -Dll $dll -OnError Stop)
             { Invoke-WinEasePluginHook -Phase '10-registry' -Stage Before } | Should Throw
             $script:RegCalls.Count | Should Be 0
         }
         It "does not let a plugin run DISM verbs that change the mount" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dll = New-TestPluginDll -Name 'HostDism' -OnPhase 'c.Host.RunDism(new string[] { "/Unmount-Image", "/MountDir:C:\\x", "/Discard" });'
             [void](Import-TestPlugin -Dll $dll -OnError Stop)
             { Invoke-WinEasePluginHook -Phase '10-registry' -Stage Before -ScratchDir $script:PluginWork } | Should Throw
@@ -285,6 +372,7 @@ namespace @@NS@@ {
 
     Context "Contributions" {
         It "returns registry entries in the table shape and drops invalid ones" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dll = New-TestPluginDll -Name 'ContribReg'
             [void](Import-TestPlugin -Dll $dll)
             $entries = @(Get-WinEasePluginContributions -Kind Registry 3>$null)
@@ -293,6 +381,7 @@ namespace @@NS@@ {
             $entries[0].PluginId | Should Be 'ContribReg'
         }
         It "runs plugin registry entries through Invoke-WinEaseRegistryTable with the tweak gate" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dll = New-TestPluginDll -Name 'ContribTable'
             [void](Import-TestPlugin -Dll $dll)
             $entries = @(Get-WinEasePluginContributions -Kind Registry 3>$null)
@@ -304,6 +393,7 @@ namespace @@NS@@ {
             $script:RegCalls.Count | Should Be 0
         }
         It "returns appx, fod, service and image file contributions and drops invalid ones" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dll = New-TestPluginDll -Name 'ContribAll'
             [void](Import-TestPlugin -Dll $dll)
             @(Get-WinEasePluginContributions -Kind Appx)[0].Pattern | Should Be 'Contoso.*'
@@ -317,6 +407,7 @@ namespace @@NS@@ {
             $files[0].RelativePath | Should Be 'run.cmd'
         }
         It "writes image files below Windows\Setup\Scripts\Plugins\<id> and not in a DryRun" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $dll = New-TestPluginDll -Name 'ContribFiles'
             [void](Import-TestPlugin -Dll $dll)
             $scratch = Join-Path $script:PluginWork 'scratch_files'
@@ -341,6 +432,7 @@ namespace @@NS@@ {
 
     Context "Lock files, self test and user registration" {
         It "Test-WinEasePluginLocks reports Ok, Mismatch and Missing" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $root = Join-Path $script:PluginWork 'repo'
             New-Item -ItemType Directory -Force -Path (Join-Path $root 'plugins\user'), (Join-Path $root 'plugins\builtin'), (Join-Path $root 'config\user') | Out-Null
             $good = New-TestPluginDll -Name 'LockGood'
@@ -361,6 +453,7 @@ namespace @@NS@@ {
             $result.Passed | Should Be $true
         }
         It "Add-WinEaseUserPlugin registers a file only with the hash the user confirmed" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $root = Join-Path $script:PluginWork 'repo_add'
             New-Item -ItemType Directory -Force -Path $root | Out-Null
             $dll = New-TestPluginDll -Name 'UserAdd'
@@ -383,6 +476,7 @@ namespace @@NS@@ {
 
     Context "WinUI host requests (plugins.list, plugins.addUser)" {
         It "lists nothing, shows the hash first and registers only after the confirmation" {
+            if (-not $script:HasCSharpCompiler) { Set-ItResult -Skipped -Because 'C# compiler is unavailable on this platform'; return }
             $root = Join-Path $script:PluginWork 'repo_host'
             New-Item -ItemType Directory -Force -Path (Join-Path $root 'config') | Out-Null
             Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'config\ui-strings') -Destination (Join-Path $root 'config\ui-strings') -Recurse
