@@ -464,9 +464,9 @@ Describe "Migration safety (rules backup/restore)" -Tags 'slow' {
         }
         It "refuses an arbitrary absolute path posing as a Known Folder category" {
             $sb = New-Sandbox 'kf3'
-            $profile = Join-Path $sb 'User'
-            New-Item -ItemType Directory -Force -Path (Join-Path $profile 'Documents') | Out-Null
-            $env:USERPROFILE = $profile
+            $userProfile = Join-Path $sb 'User'
+            New-Item -ItemType Directory -Force -Path (Join-Path $userProfile 'Documents') | Out-Null
+            $env:USERPROFILE = $userProfile
             $bk = Join-Path $sb 'bk'
             Write-TestFile (Join-Path $bk 'C__evil\a.txt') 'a'
             [PSCustomObject]@{ Entries = @([PSCustomObject]@{ RelativePath = 'a.txt'; Category = 'C:\evil'; Sha256 = '' }) } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $bk 'migration-manifest.json') -Encoding UTF8

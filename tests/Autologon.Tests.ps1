@@ -300,7 +300,6 @@ Describe "Autologon - RunFirstLogon logging" {
         Mock Get-WmiObject { throw "WMI service unavailable" }
 
         $currentUser = 'TestUser'
-        $targetUser = $currentUser
         . ([scriptblock]::Create($tryAst.Extent.Text))
 
         (Test-Path -LiteralPath $wrapperLogFile) | Should Be $true
