@@ -794,10 +794,9 @@ Describe "WinEase builder - the tweak helper is available to every phase" {
         $schema = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
         $json = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot "config\WinEase.config.schema.json")) | ConvertFrom-Json
         $known = @($json.properties.PSObject.Properties.Name)
-        $missing = @()
-        foreach ($td in $schema.Tweaks) {
-            if ($known -notcontains $td.Key) { $missing += $td.Key }
-        }
+        $missing = @(foreach ($td in $schema.Tweaks) {
+            if ($known -notcontains $td.Key) { $td.Key }
+        })
         ($missing -join ', ') | Should Be ''
     }
 }
