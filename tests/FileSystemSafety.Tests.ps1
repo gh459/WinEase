@@ -20,6 +20,17 @@
 param()
 
 . (Join-Path -Path $PSScriptRoot -ChildPath '_TestCommon.ps1')
+
+foreach ($cmdName in 'dism.exe', 'cmd.exe', 'robocopy.exe', 'takeown.exe', 'icacls.exe', 'attrib.exe') {
+    if (-not (Get-Command -Name $cmdName -ErrorAction SilentlyContinue)) {
+        Set-Item -Path "Function:global:$cmdName" -Value {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)
+        }
+    }
+}
+
 if (-not (Get-Command -Name Test-IsSafePathToDelete -ErrorAction SilentlyContinue)) {
     . (Join-Path -Path $script:RepoRoot -ChildPath "WinEasehelpers.ps1")
 }
@@ -51,6 +62,8 @@ function Remove-FsTestRoot {
     if ($Root -and (Test-Path -LiteralPath $Root)) { Remove-Item -LiteralPath $Root -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
+$isWindowsPlatform = [Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT -or (Get-Variable -Name IsWindows -ValueOnly -ErrorAction SilentlyContinue)
+
 function Initialize-FsTestState {
     $global:FsDismCalls = 0; $global:FsPurgeCalls = 0; $global:FsResetCalls = 0; $global:FsQueryCalls = 0
     # Fresh module state for every test: no mount dirs, no workspace roots.
@@ -63,6 +76,22 @@ function Initialize-FsTestState {
     $script:DismMountDir = $null
     $script:VhdxMountDir = $null
     $script:scriptDir = $null
+
+    if (-not $env:windir) { $env:windir = 'C:\Windows' }
+    if (-not $env:ProgramFiles) { $env:ProgramFiles = 'C:\Program Files' }
+    if (-not $env:SystemDrive) { $env:SystemDrive = 'C:' }
+
+    if (-not $isWindowsPlatform) {
+        Mock Test-WinEaseAbsoluteLocalPath {
+            param($Path)
+            if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+            $clean = $Path.Replace('/', '\')
+            if ($clean -match '^[A-Za-z]:\\') { return $true }
+            if ($clean -match '^\\\\[^\\]+\\[^\\]+') { return $true }
+            if ($Path.StartsWith('/tmp') -or $Path.StartsWith('/private/tmp')) { return $true }
+            return $false
+        }
+    }
 }
 
 # Symlinks need SeCreateSymbolicLinkPrivilege or Developer Mode; probe once.
@@ -879,5 +908,83 @@ Describe "Test-CanSafelyDeleteVhdx" {
         $fileUpper = $script:VhdxFile.ToUpperInvariant()
 
         Test-CanSafelyDeleteVhdx -VhdxPath $fileUpper -VhdxDetached $true -ExpectedBaseDir $wsForward | Should Be $true
+    }
+}
+
+Describe "Remove-ProtectedDirectory" {
+    BeforeEach {
+        Initialize-FsTestState
+        $script:T = New-FsTestRoot
+        $script:BaseWorkDir = Join-Path $script:T 'base'
+        $script:MountAllocationRoot = Join-Path $script:BaseWorkDir 'mounts'
+        $script:DismMountDir = Join-Path $script:MountAllocationRoot 'dismmount'
+        [System.IO.Directory]::CreateDirectory($script:DismMountDir) | Out-Null
+        $script:Target = Join-Path $script:DismMountDir 'sub_dir'
+        Mock Start-Sleep { }
+        Mock Set-ItemOwnershipAndAccess { }
+    }
+    AfterEach { Remove-FsTestRoot -Root $script:T }
+
+    It "refuses deletion if DismMountDir is not set or target is not a strict descendant" {
+        $script:DismMountDir = $null
+        $dummy = Join-Path $script:MountAllocationRoot 'other'
+        { Remove-ProtectedDirectory -Path $dummy -ScratchPath "C:\scratch" } | Should Throw 'DismMountDir'
+
+        $script:DismMountDir = Join-Path $script:MountAllocationRoot 'dismmount'
+        { Remove-ProtectedDirectory -Path $script:DismMountDir -ScratchPath "C:\scratch" } | Should Throw 'strict descendants'
+        { Remove-ProtectedDirectory -Path (Join-Path $script:MountAllocationRoot 'outside') -ScratchPath "C:\scratch" } | Should Throw 'strict descendants'
+    }
+
+    It "refuses deletion on empty, drive root, UNC root or host system directory" {
+        { Remove-ProtectedDirectory -Path $null -ScratchPath "C:\scratch" } | Should Throw
+        { Remove-ProtectedDirectory -Path ' ' -ScratchPath "C:\scratch" } | Should Throw
+        { Remove-ProtectedDirectory -Path 'C:\' -ScratchPath "C:\scratch" } | Should Throw
+        $win = [System.Environment]::GetFolderPath('Windows')
+        if ($win) {
+            { Remove-ProtectedDirectory -Path $win -ScratchPath "C:\scratch" } | Should Throw
+        }
+    }
+
+    It "returns silently without error when target directory does not exist" {
+        $nonExistent = Join-Path $script:DismMountDir 'does_not_exist'
+        { Remove-ProtectedDirectory -Path $nonExistent -ScratchPath $script:DismMountDir } | Should Not Throw
+    }
+
+    It "successfully removes an existing directory tree" {
+        [System.IO.Directory]::CreateDirectory($script:Target) | Out-Null
+        $file1 = Join-Path $script:Target 'file1.txt'
+        Set-Content -LiteralPath $file1 -Value 'data'
+        $subFolder = Join-Path $script:Target 'nested'
+        [System.IO.Directory]::CreateDirectory($subFolder) | Out-Null
+        Set-Content -LiteralPath (Join-Path $subFolder 'file2.txt') -Value 'more data'
+
+        Remove-ProtectedDirectory -Path $script:Target -ScratchPath $script:DismMountDir
+        Test-Path -LiteralPath $script:Target | Should Be $false
+    }
+
+    It "removes a junction link child without deleting the junction target files" -Skip:(-not $isWindowsPlatform) {
+        [System.IO.Directory]::CreateDirectory($script:Target) | Out-Null
+        $outside = Join-Path $script:T 'outside_canary'
+        [System.IO.Directory]::CreateDirectory($outside) | Out-Null
+        $canaryFile = Join-Path $outside 'canary.txt'
+        Set-Content -LiteralPath $canaryFile -Value 'precious'
+
+        $junc = Join-Path $script:Target 'junc_link'
+        New-FsTestJunction -Link $junc -Target $outside
+
+        Remove-ProtectedDirectory -Path $script:Target -ScratchPath $script:DismMountDir
+
+        Test-Path -LiteralPath $script:Target | Should Be $false
+        Test-Path -LiteralPath $canaryFile | Should Be $true
+    }
+
+    It "throws exception when directory removal fails after max retries" {
+        [System.IO.Directory]::CreateDirectory($script:Target) | Out-Null
+        Mock Test-Path { return $true } -ParameterFilter {
+            $p = if ($LiteralPath) { $LiteralPath } else { $Path }
+            return ($p -and $p -like "*sub_dir*")
+        }
+
+        { Remove-ProtectedDirectory -Path $script:Target -ScratchPath $script:DismMountDir -Retries 2 } | Should Throw "Failed to remove protected directory after 2 attempts"
     }
 }

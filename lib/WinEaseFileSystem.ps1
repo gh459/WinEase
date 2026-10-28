@@ -43,16 +43,16 @@ function Assert-WinEaseDirectorySafety {
     # and remember which root contains it (used by the reparse-point ancestry check below)
     $isInsideWorkspace = $false
     $reparseWalkRoot = $null
-    $normAllocRoot = if ($script:MountAllocationRoot) { [System.IO.Path]::GetFullPath($script:MountAllocationRoot).TrimEnd('\') } else { $null }
-    $normBaseRoot = if ($script:BaseWorkDir) { [System.IO.Path]::GetFullPath($script:BaseWorkDir).TrimEnd('\') } else { $null }
+    $normAllocRoot = if ($script:MountAllocationRoot) { [System.IO.Path]::GetFullPath($script:MountAllocationRoot).TrimEnd('\', '/') } else { $null }
+    $normBaseRoot = if ($script:BaseWorkDir) { [System.IO.Path]::GetFullPath($script:BaseWorkDir).TrimEnd('\', '/') } else { $null }
     if ($normAllocRoot) {
-        if ($normPath -ieq $normAllocRoot -or $normPath.StartsWith($normAllocRoot + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+        if ($normPath -ieq $normAllocRoot -or $normPath.StartsWith($normAllocRoot + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $normPath.StartsWith($normAllocRoot + '/', [System.StringComparison]::OrdinalIgnoreCase)) {
             $isInsideWorkspace = $true
             $reparseWalkRoot = $normAllocRoot
         }
     }
     if (-not $isInsideWorkspace -and $normBaseRoot) {
-        if ($normPath -ieq $normBaseRoot -or $normPath.StartsWith($normBaseRoot + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+        if ($normPath -ieq $normBaseRoot -or $normPath.StartsWith($normBaseRoot + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $normPath.StartsWith($normBaseRoot + '/', [System.StringComparison]::OrdinalIgnoreCase)) {
             $isInsideWorkspace = $true
             $reparseWalkRoot = $normBaseRoot
         }
@@ -75,8 +75,8 @@ function Assert-WinEaseDirectorySafety {
                 if (-not $script:DismMountDir) {
                     throw "Safety guard: DismMountDir is not established. Cannot remove: $normPath"
                 }
-                $normScratch = [System.IO.Path]::GetFullPath($script:DismMountDir).TrimEnd('\')
-                if (-not ($normPath.StartsWith($normScratch + '\', [System.StringComparison]::OrdinalIgnoreCase))) {
+                $normScratch = [System.IO.Path]::GetFullPath($script:DismMountDir).TrimEnd('\', '/')
+                if (-not ($normPath.StartsWith($normScratch + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $normPath.StartsWith($normScratch + '/', [System.StringComparison]::OrdinalIgnoreCase))) {
                     throw "Safety guard: Target path is in protected host system directory: $normPath"
                 }
             } else {
@@ -130,8 +130,8 @@ function Assert-WinEaseDirectorySafety {
         if (-not $script:DismMountDir) {
             throw "Safety guard: Cannot execute RemoveOfflineContent when DismMountDir is not set."
         }
-        $normScratch = [System.IO.Path]::GetFullPath($script:DismMountDir).TrimEnd('\')
-        if ($normPath -ieq $normScratch -or -not ($normPath.StartsWith($normScratch + '\', [System.StringComparison]::OrdinalIgnoreCase))) {
+        $normScratch = [System.IO.Path]::GetFullPath($script:DismMountDir).TrimEnd('\', '/')
+        if ($normPath -ieq $normScratch -or -not ($normPath.StartsWith($normScratch + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $normPath.StartsWith($normScratch + '/', [System.StringComparison]::OrdinalIgnoreCase))) {
             throw "Safety guard: RemoveOfflineContent is only permitted on strict descendants of DismMountDir ('$normScratch'): $normPath"
         }
     }
