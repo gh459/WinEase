@@ -194,4 +194,29 @@ namespace WinEase.Plugins.Tests
             Assert.Empty(d.ReplacesPhases);
         }
     }
+
+    public class DismResultTests
+    {
+        [Theory]
+        [InlineData(0, true)]
+        [InlineData(3010, true)]
+        [InlineData(1, false)]
+        [InlineData(87, false)]
+        [InlineData(-1, false)]
+        [InlineData(3011, false)]
+        public void SucceededEvaluatesExitCodeCorrectly(int exitCode, bool expectedSucceeded)
+        {
+            DismResult result = new DismResult(exitCode, "Output");
+            Assert.Equal(exitCode, result.ExitCode);
+            Assert.Equal("Output", result.Output);
+            Assert.Equal(expectedSucceeded, result.Succeeded);
+        }
+
+        [Fact]
+        public void NullOutputDefaultsToEmptyString()
+        {
+            DismResult result = new DismResult(0, null);
+            Assert.Equal(string.Empty, result.Output);
+        }
+    }
 }
