@@ -55,6 +55,11 @@ param(
     # E1: Explicit opt-in gate for destructive physical debloat (Phase 9.5, 09-physical-debloat.ps1).
     # Advanced Debloat selections arriving from a profile or GUI are NOT sufficient by themselves.
     [switch]$AllowPhysicalDebloat,
+    # P1-03: a -WorkDir whose build\ or scratchdir\ folder holds files but carries no WinEase marker is
+    # not emptied unless this switch is given (the folder may belong to something else).
+    [switch]$ForceResetWorkspace,
+    # P1-01: stop the build when a registry write into the offline image fails (default: warn and record).
+    [switch]$StrictRegistryWrites,
 
     # Customization & Maintenance Settings
     # Both values are inserted verbatim into autounattend.xml and its embedded PowerShell scripts,
@@ -485,6 +490,8 @@ $script:AllowTemplateDownload = [bool]$AllowTemplateDownload
 # E1: Physical debloat opt-in gate for Phase 9.5 (09-physical-debloat.ps1). Set from the CLI
 # switch here; an interactive GUI session can additionally grant it via a consent dialog.
 $script:allowPhysicalDebloat = [bool]$AllowPhysicalDebloat
+$script:StrictRegistryWrites = [bool]$StrictRegistryWrites
+$script:RegistryWriteFailures = [System.Collections.Generic.List[string]]::new()
 
 # Check and adjust Execution Policy (Skip if in TestSelf or DryRun mode to remain 100% non-destructive)
 if ((-not $TestSelf) -and ($env:WINEASE_TEST_MODE -ne "1") -and (-not $isDryRunMode)) {
@@ -2652,10 +2659,9 @@ try {
 
     # 5. ALWAYS remove Windows Defender temporary workspace exclusion (Rule 17)
     if ($script:DefenderExclusionAdded -and $baseWorkDir) {
-        try {
-            Remove-MpPreference -ExclusionPath $baseWorkDir -ErrorAction SilentlyContinue
-            $script:DefenderExclusionAdded = $false
-        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        # P1-02: the removal is read back. A failure keeps the flag set (so the leftover is reported as a
+        # residue) and tells the user the command that removes the exclusion.
+        if (Remove-WinEaseDefenderExclusion -Path $baseWorkDir) { $script:DefenderExclusionAdded = $false }
     }
 
     # 5b. After a cancel: report what the cleanup left behind, so 'Cancelled' is never claimed over a half-cleaned state
@@ -2694,7 +2700,8 @@ try {
         if (Get-Command -Name Get-WinEaseCleanupRemediation -ErrorAction SilentlyContinue) {
             $cleanupRemediations = Get-WinEaseCleanupRemediation -LoadedHives $stillLoadedHivesAll -LingeringMounts $lingeringMountListAll `
                 -VhdxStillAttached ([bool]$script:IsVhdxMounted) -VhdxPath "$vhdxPath" `
-                -IsoStillMounted ([bool]$script:MountedIso) -IsoPath $(if ($script:MountedIso) { "$($script:MountedIso.ImagePath)" } else { '' })
+                -IsoStillMounted ([bool]$script:MountedIso) -IsoPath $(if ($script:MountedIso) { "$($script:MountedIso.ImagePath)" } else { '' }) `
+                -DefenderExclusionPath $(if ($script:DefenderExclusionAdded -and $baseWorkDir) { "$baseWorkDir" } else { '' })
             if ($script:DiagnosticData) {
                 $script:DiagnosticData['CleanupRemediations'] = @($cleanupRemediations)
             }

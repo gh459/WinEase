@@ -1064,3 +1064,63 @@ function Write-WinEaseTextFileAtomic {
     }
     return $false
 }
+
+# --- Workspace ownership marker -------------------------------------------------------------------
+# The builder empties <WorkDir>\build and <WorkDir>\scratchdir (robocopy /MIR plus an ACL rewrite).
+# -WorkDir can point at any folder, so a folder that happens to hold its own "build" or "scratchdir"
+# must not be wiped silently. A workspace WinEase created carries this marker; a non-empty folder
+# without it is only reset after an explicit -ForceResetWorkspace.
+# (The marker file name is '.winease-workspace'; the modules hold functions only, so it is written out in both users.)
+
+function Test-WinEaseDirectoryHasContent {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return $false }
+    return ($null -ne (Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue | Select-Object -First 1))
+}
+
+function Test-WinEaseWorkspaceResetAllowed {
+    <#
+    .SYNOPSIS
+        Decides whether <BaseWorkDir>\build and <BaseWorkDir>\scratchdir may be emptied.
+    .OUTPUTS
+        PSCustomObject: Allowed (bool), Reason (string), Paths (the non-empty folders that block the reset).
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$BaseWorkDir,
+        [Parameter(Mandatory = $true)][string]$BuildDir,
+        [Parameter(Mandatory = $true)][string]$ScratchDir,
+        [switch]$Force
+    )
+    $result = { param($allowed, $reason, $paths) [PSCustomObject]@{ Allowed = $allowed; Reason = $reason; Paths = @($paths) } }
+    $marker = Join-Path -Path $BaseWorkDir -ChildPath '.winease-workspace'
+    if (Test-Path -LiteralPath $marker -PathType Leaf) { return (& $result $true 'marker' @()) }
+
+    $buildFull = Test-WinEaseDirectoryHasContent -Path $BuildDir
+    $scratchFull = Test-WinEaseDirectoryHasContent -Path $ScratchDir
+    if (-not $buildFull -and -not $scratchFull) { return (& $result $true 'empty' @()) }
+    if ($Force) { return (& $result $true 'forced' @()) }
+
+    # A workspace from a WinEase version that wrote no marker: the default folder name, or folders
+    # that carry what WinEase puts there (build\sources, a mounted image under scratchdir).
+    if ((Split-Path -Leaf $BaseWorkDir) -ieq 'WinEase_workspace') { return (& $result $true 'default-name' @()) }
+    $legacyBuild = (-not $buildFull) -or (Test-Path -LiteralPath (Join-Path -Path $BuildDir -ChildPath 'sources') -PathType Container)
+    $legacyScratch = (-not $scratchFull) -or
+        (Test-Path -LiteralPath (Join-Path -Path $ScratchDir -ChildPath 'Windows') -PathType Container) -or
+        (Test-Path -LiteralPath (Join-Path -Path $ScratchDir -ChildPath 'mount') -PathType Container)
+    if ($legacyBuild -and $legacyScratch) { return (& $result $true 'legacy-signature' @()) }
+
+    $blocking = @()
+    if ($buildFull -and -not $legacyBuild) { $blocking += $BuildDir }
+    if ($scratchFull -and -not $legacyScratch) { $blocking += $ScratchDir }
+    return (& $result $false 'unmarked' $blocking)
+}
+
+function Write-WinEaseWorkspaceMarker {
+    param([Parameter(Mandatory = $true)][string]$BaseWorkDir, [string]$BuildId = '')
+    $marker = Join-Path -Path $BaseWorkDir -ChildPath '.winease-workspace'
+    if (Test-Path -LiteralPath $marker -PathType Leaf) { return $true }
+    $json = [ordered]@{ Tool = 'WinEase'; Purpose = 'build workspace'; CreatedUtc = [DateTime]::UtcNow.ToString('o'); BuildId = $BuildId } | ConvertTo-Json
+    $ok = Write-WinEaseTextFileAtomic -Path $marker -Content $json
+    if (-not $ok) { Write-Warning "Could not write the workspace marker '$marker'. The next build into this folder will need -ForceResetWorkspace." }
+    return [bool]$ok
+}

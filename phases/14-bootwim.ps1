@@ -51,17 +51,27 @@ if (Test-Path -LiteralPath $bootWimPath) {
                 throw "Failed to load boot.wim Index $bIndex SYSTEM hive from '$bootHiveFile' (Exit code: $LASTEXITCODE): $bootLoadOutput"
             }
             $script:HivesLoaded = $true
+            # P1-01/P2-07: the exit status of every write is read; a refused write is recorded and
+            # reported after the hive is unloaded.
+            $bootWrites = [System.Collections.Generic.List[object]]::new()
             foreach ($key in $labConfigKeys) {
-                reg.exe add "HKLM\zSYSTEM\Setup\LabConfig" /v $key /t REG_DWORD /d 1 /f > $null 2>&1
+                $bootWrites.Add(@{ Key = 'HKLM\zSYSTEM\Setup\LabConfig'; Name = [string]$key })
             }
-            reg.exe add "HKLM\zSYSTEM\Setup\LabConfig" /v "BypassNRO" /t REG_DWORD /d 1 /f > $null 2>&1
-            reg.exe add "HKLM\zSYSTEM\Setup\MoSetup" /v "AllowUpgradesWithUnsupportedTPMOrCPU" /t REG_DWORD /d 1 /f > $null 2>&1
-            reg.exe add "HKLM\zSYSTEM\ControlSet001\Control\BitLocker" /v "PreventDeviceEncryption" /t REG_DWORD /d 1 /f > $null 2>&1
+            $bootWrites.Add(@{ Key = 'HKLM\zSYSTEM\Setup\LabConfig'; Name = 'BypassNRO' })
+            $bootWrites.Add(@{ Key = 'HKLM\zSYSTEM\Setup\MoSetup'; Name = 'AllowUpgradesWithUnsupportedTPMOrCPU' })
+            $bootWrites.Add(@{ Key = 'HKLM\zSYSTEM\ControlSet001\Control\BitLocker'; Name = 'PreventDeviceEncryption' })
+            foreach ($bootWrite in $bootWrites) {
+                $bootWritten = Invoke-WinEaseReg -Action Add -Key $bootWrite.Key -Name $bootWrite.Name -Type REG_DWORD -Data '1' -PassThru
+                if ($bootWritten -is [bool] -and -not $bootWritten) {
+                    Add-WinEaseRegistryWriteFailure -Key "boot.wim index $bIndex $($bootWrite.Key)" -Name $bootWrite.Name
+                }
+            }
             # CurrentControlSet is dynamically linked by the Windows kernel at boot; leave hive untouched.
         } finally {
             [void](Unmount-RegistryHiveWithRetry -Name 'zSYSTEM')
             $script:HivesLoaded = $false
         }
+        Assert-WinEaseRegistryWrites -Stage "boot.wim index $bIndex" -Strict:([bool]$script:StrictRegistryWrites)
 
         Set-Location -LiteralPath $scriptDir
         [GC]::Collect()

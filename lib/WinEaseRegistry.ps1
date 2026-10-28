@@ -105,6 +105,37 @@ function Import-WinEaseRegistryTable {
     return @($data.Entries)
 }
 
+function Add-WinEaseRegistryWriteFailure {
+    <#
+    .SYNOPSIS
+        Records a registry write that reg.exe refused, for Assert-WinEaseRegistryWrites.
+    #>
+    param([Parameter(Mandatory = $true)][string]$Key, [string]$Name)
+    if ($null -eq $script:RegistryWriteFailures) { $script:RegistryWriteFailures = [System.Collections.Generic.List[string]]::new() }
+    $script:RegistryWriteFailures.Add($(if ($Name) { "$Key [$Name]" } else { $Key }))
+}
+
+function Assert-WinEaseRegistryWrites {
+    <#
+    .SYNOPSIS
+        Reports the registry writes that failed since the list was last cleared.
+    .DESCRIPTION
+        The failures are listed in a warning and kept in $script:DiagnosticData['RegistryWriteFailures'].
+        With -Strict (the builder's -StrictRegistryWrites) the first call with failures throws, so
+        an image with a partly applied registry is not turned into an ISO.
+    #>
+    [CmdletBinding()]
+    param([string]$Stage = 'registry', [switch]$Strict)
+    $failures = @($script:RegistryWriteFailures)
+    if ($failures.Count -eq 0) { return }
+    $shown = @($failures | Select-Object -First 15)
+    $more = if ($failures.Count -gt $shown.Count) { " (+$($failures.Count - $shown.Count) more)" } else { '' }
+    if ($script:DiagnosticData -is [System.Collections.IDictionary]) { $script:DiagnosticData['RegistryWriteFailures'] = $failures }
+    $message = "$($failures.Count) registry write(s) failed in ${Stage}: $($shown -join '; ')$more"
+    if ($Strict) { throw $message }
+    Write-Warning $message
+}
+
 function Invoke-WinEaseRegistryTable {
     <#
     .SYNOPSIS
@@ -159,10 +190,15 @@ function Invoke-WinEaseRegistryTable {
         $isDefault = ([string]::IsNullOrEmpty([string]$entry.Name) -or [string]$entry.Name -eq '(default)')
         foreach ($hive in @($entry.Hive)) {
             $key = "HKLM\$hive\$($entry.Path)"
-            if ($isDefault) {
-                Invoke-WinEaseReg -Action Add -Key $key -DefaultValue -Type ([string]$entry.Type) @dataArgs
+            # P1-01: reg.exe's exit status is read. Only an explicit $false counts as a failed write
+            # (a stand-in that returns nothing is not a failure).
+            $written = if ($isDefault) {
+                Invoke-WinEaseReg -Action Add -Key $key -DefaultValue -Type ([string]$entry.Type) -PassThru @dataArgs
             } else {
-                Invoke-WinEaseReg -Action Add -Key $key -Name ([string]$entry.Name) -Type ([string]$entry.Type) @dataArgs
+                Invoke-WinEaseReg -Action Add -Key $key -Name ([string]$entry.Name) -Type ([string]$entry.Type) -PassThru @dataArgs
+            }
+            if ($written -is [bool] -and -not $written) {
+                Add-WinEaseRegistryWriteFailure -Key $key -Name $(if ($isDefault) { '(default)' } else { [string]$entry.Name })
             }
         }
     }

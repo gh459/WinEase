@@ -962,3 +962,6 @@ if (Get-Command -Name Get-WinEasePluginContributions -ErrorAction SilentlyContin
 if (Get-Command -Name Invoke-WinEaseUserExtensionActions -ErrorAction SilentlyContinue) {
     try { Invoke-WinEaseUserExtensionActions -PhaseType Registry -ScratchDir $scratchDir -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
 }
+
+# P1-01: a registry write that reg.exe refused no longer passes unnoticed.
+Assert-WinEaseRegistryWrites -Stage 'phase 10 (registry)' -Strict:([bool]$script:StrictRegistryWrites)

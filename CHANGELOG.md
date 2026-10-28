@@ -3,6 +3,14 @@
 All notable changes to this fork are documented here. Versions follow the upstream
 WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
+## Unreleased (local fork, 2026-10-28) - destructive-operation safety (audit PR-A)
+
+### Fixed
+- **A `-WorkDir` that holds somebody else's `build` or `scratchdir` is no longer emptied.** The builder wipes both folders (robocopy mirror plus an ACL rewrite). A workspace WinEase created now carries a `.winease-workspace` marker; a non-empty folder without it (and without the signs of an older WinEase workspace: the default `WinEase_workspace` name, `build\sources`, a mounted image) stops the build before anything is touched. `-ForceResetWorkspace` overrides the stop.
+- **The temporary Windows Defender exclusion no longer deletes an exclusion the user already had.** The path is looked up first, the add and the removal are read back, and a failed removal is reported (warning, diagnostics, cleanup remediation list) with the command that removes it.
+- **Refused registry writes are no longer ignored.** `Invoke-WinEaseRegistryTable` and the boot.wim writes of phase 14 read the `reg.exe` exit status. Failures are listed in a warning and in the diagnostics (`RegistryWriteFailures`); the new `-StrictRegistryWrites` switch stops the build instead.
+- New tests: `tests\DestructiveSafety.Tests.ps1`.
+
 ## Unreleased (local fork, 2026-10-26) - the migration rules back up what they promise, and the backup is fast
 
 ### GitHub automation cleanup (2026-10-27)
