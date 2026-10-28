@@ -21,13 +21,13 @@ function Test-InteractiveSession {
             if ($rows.Count -ge 2) { return $true }
         }
     } catch {
-        # quser.exe may be unavailable or unsupported in certain Windows editions
+        # quser.exe may be unavailable or fail in non-interactive/minimal environments
     }
     try {
         $expl = Get-Process -Name explorer -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -gt 0 }
         if ($expl) { return $true }
     } catch {
-        # Get-Process can throw if process query fails or access is restricted
+        # Get-Process query may throw (e.g. permission or process enumeration issues)
     }
     return $false
 }
