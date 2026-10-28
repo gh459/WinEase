@@ -108,7 +108,9 @@ try {
     if ($csUser -and $csUser -notlike "*NT AUTHORITY*") {
         $targetUser = $csUser.Split('\')[-1]
     }
-} catch {}
+} catch {
+    Write-FirstLogonLog "Failed to query computer system user via WMI: $($_.Exception.Message)" "WARN"
+}
 
 $targetHivePath = "Registry::HKEY_USERS\$currentSid"
 $isHiveAccessible = Test-Path -LiteralPath $targetHivePath -ErrorAction SilentlyContinue
