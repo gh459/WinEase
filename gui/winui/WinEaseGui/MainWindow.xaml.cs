@@ -654,7 +654,13 @@ public sealed partial class MainWindow : Window
         SetSubtitle(_s.Get("Main.Subtitle"));
         _fieldMsgs.Clear();
 
-        // Source media
+        BuildSourceMediaSection();
+        BuildPresetSection();
+        BuildPayloadSection();
+    }
+
+    private void BuildSourceMediaSection()
+    {
         PageHost.Children.Add(Section(_s.Get("Media.Group.Source")));
         var srcPanel = new StackPanel();
         var source = new AutoSuggestBox { Text = _source, HorizontalAlignment = HorizontalAlignment.Stretch, QueryIcon = new SymbolIcon(Symbol.Find) };
@@ -724,8 +730,10 @@ public sealed partial class MainWindow : Window
         srcPanel.Children.Add(WithMessage("ComputerName", FieldRow(_s.Get("Media.Label.ComputerName"), computer)));
         PageHost.Children.Add(Card(srcPanel));
         ShowIssues();
+    }
 
-        // Preset
+    private void BuildPresetSection()
+    {
         PageHost.Children.Add(Section(_s.Get("Media.Group.Preset")));
         var preset = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
         AutomationProperties.SetName(preset, _s.Get("Media.Group.Preset").Trim());
@@ -768,8 +776,10 @@ public sealed partial class MainWindow : Window
         presetBox.Children.Add(_presetStatusText);
         PageHost.Children.Add(Card(presetBox));
         UpdatePresetStatus();
+    }
 
-        // Payload format
+    private void BuildPayloadSection()
+    {
         PageHost.Children.Add(Section(_s.Get("Media.Group.Payload")));
         var payload = new StackPanel { Spacing = 4 };
         var radios = new WrapPanel { HorizontalSpacing = 24, VerticalSpacing = 4, HorizontalAlignment = HorizontalAlignment.Left };
