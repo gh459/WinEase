@@ -722,11 +722,11 @@ Describe "WinEase builder - the tweak helper is available to every phase" {
     It "the helper is declared before every phase that calls it" {
         $defPos = $script:BuilderSource.IndexOf('function Test-TweakEnabled')
         $defPos | Should Not Be -1
-        $callers = @()
+        $callers = [System.Collections.Generic.List[string]]::new()
         foreach ($f in (Get-ChildItem -LiteralPath $script:PhasesDir -Filter '*.ps1' | Sort-Object Name)) {
             $text = [System.IO.File]::ReadAllText($f.FullName)
             if ($text -notmatch 'Test-TweakEnabled') { continue }
-            $callers += $f.Name
+            [void]$callers.Add($f.Name)
             $loadPos = $script:BuilderSource.IndexOf('"' + $f.Name + '"')
             $loadPos | Should Not Be -1
             ($defPos -lt $loadPos) | Should Be $true
