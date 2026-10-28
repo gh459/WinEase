@@ -134,6 +134,15 @@ public class LauncherLogicTests
         Assert.Equal(@"-NoProfile -ExecutionPolicy Bypass -File C:\x\build.ps1", LauncherLogic.BuildWinUiArguments(@"C:\x\build.ps1"));
     }
 
+    [Fact]
+    public void UnblockArguments_unblock_every_file_under_the_folder_without_needing_a_script_file()
+    {
+        string args = LauncherLogic.BuildUnblockArguments(@"C:\Users\O'Neil\WinEase\");
+        Assert.StartsWith("-NoProfile -ExecutionPolicy Bypass -Command ", args);
+        Assert.Contains(@"-LiteralPath 'C:\Users\O''Neil\WinEase'", args);
+        Assert.Contains("Unblock-File", args);
+    }
+
     [Theory]
     [InlineData(1223, true)]
     [InlineData(5, false)]

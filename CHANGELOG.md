@@ -3,6 +3,11 @@
 All notable changes to this fork are documented here. Versions follow the upstream
 WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
+## 2.2.1 - launcher unblocks downloaded files (2026-10-29)
+
+### Fixed
+- **`WinEase.exe` / `WinEase-GUI.bat` failed with "builder exited with code 1" and an empty `logs` folder** when the files carried the downloaded-from-internet mark (Zone.Identifier) and the machine policy was `RemoteSigned`: group policy overrides `-ExecutionPolicy Bypass`, so PowerShell refused `WinEasebuilder.ps1` as unsigned before it could write a log. Both launchers now clear the mark from every file under the install folder (`Unblock-File` through `-Command`, which needs no script file) before running anything.
+
 ## Unreleased (local fork, 2026-10-28) - P3 batch, third part (audit PR-F)
 
 ### GUI toggle audit (2026-10-28)
