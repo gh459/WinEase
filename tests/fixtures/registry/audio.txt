@@ -292,7 +292,7 @@ ADD	HKLM\zSOFTWARE\Classes\Directory\shell\runas	NoWorkingDirectory	REG_SZ	""
 ADD	HKLM\zSOFTWARE\Classes\Directory\shell\runas\command	(default)	REG_SZ	powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f $p /r /d y; icacls.exe $p /grant administrators:F /t }" "%1"
 ADD	HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas	(default)	REG_SZ	Open Command Prompt as Administrator
 ADD	HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas	HasLUAShield	REG_SZ	""
-ADD	HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas\command	(default)	REG_SZ	PowerShell -windowstyle hidden -Command \"Start-Process cmd.exe -ArgumentList '/s,/k,pushd,\"%V\"' -Verb RunAs\"
+ADD	HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas\command	(default)	REG_SZ	powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) Start-Process cmd.exe -ArgumentList '/s,/k,pushd', $p -Verb RunAs }" "%V"
 ADD	HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities	ApplicationName	REG_SZ	Windows Photo Viewer
 ADD	HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities	ApplicationDescription	REG_SZ	View pictures with Windows Photo Viewer
 ADD	HKLM\zSOFTWARE\Microsoft\Windows Photo Viewer\Capabilities	ApplicationIcon	REG_SZ	%SystemRoot%\System32\imageres.dll,-70

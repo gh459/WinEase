@@ -387,7 +387,7 @@ if (Test-TweakEnabled 'TakeOwnershipContextMenu' $false) {
 if (Test-TweakEnabled 'CmdAsAdminContextMenu' $false) {
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas" -DefaultValue -Type REG_SZ -Data "Open Command Prompt as Administrator"
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas" -Name "HasLUAShield" -Type REG_SZ -Data '""'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas\command" -DefaultValue -Type REG_SZ -Data 'PowerShell -windowstyle hidden -Command \"Start-Process cmd.exe -ArgumentList ''/s,/k,pushd,\"%V\"'' -Verb RunAs\"'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas\command" -DefaultValue -Type REG_SZ -Data 'powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) Start-Process cmd.exe -ArgumentList ''/s,/k,pushd'', $p -Verb RunAs }" "%V"'
 }
 
 if (Test-TweakEnabled 'PhotoViewerAssociations' $true) {

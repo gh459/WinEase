@@ -49,7 +49,8 @@ Describe "WinEase builder - AST syntax" {
     It "phases\10-registry.ps1 CmdAsAdminContextMenu escapes %V against command injection" {
         $regPath = Join-Path -Path $script:RepoRoot -ChildPath "phases\10-registry.ps1"
         $content = [System.IO.File]::ReadAllText($regPath, [System.Text.Encoding]::UTF8)
-        $content | Should Match 'pushd,\\"%V\\"'
+        $content | Should Match 'param\(\$p\)'
+        $content | Should Match 'Start-Process cmd\.exe -ArgumentList ''''/s,/k,pushd'''', \$p'
     }
     It "gui\WinEaseWinUiHost.ps1 and gui\WinEaseGui.ps1 Start-Process calls pass a quoted argument line preventing command injection" {
         foreach ($file in @($script:GuiPath, (Join-Path $script:RepoRoot "gui\WinEaseWinUiHost.ps1"))) {
