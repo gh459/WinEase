@@ -3,6 +3,17 @@
 All notable changes to this fork are documented here. Versions follow the upstream
 WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
+## Unreleased (local fork, 2026-10-28) - WinUI window robustness (audit PR-G)
+
+### Fixed
+- **Start cannot run twice.** The confirmation dialogs did not set the busy flag, so a second click could start a second flow. Start now holds a `_starting` flag, and an unexpected exception is shown instead of ending the handler silently.
+- **A failed result send no longer locks the window.** `_resultSent` is reset and the error is shown.
+- **The progress listener survives a bad event or a broken pipe** and always reaches the cleanup (timer stop, close button, failure panel).
+- **The `done` event's `Message` text is no longer stored as the diagnostics path.**
+- **Custom scripts and migration rules show an error reply** instead of an empty list; a reply for a stage that was switched meanwhile is dropped; a failed migration-rules request is not cached. The preset diff dialog catches a failed request.
+
+Not changed: the Restore/Retry/RestoreCustom overwrite confirmation and the unhandled-exception notice in `App.xaml.cs`. This change could not be compiled here (no .NET SDK); CI's .NET job is the first build.
+
 ## Unreleased (local fork, 2026-10-28) - P3 batch, second part (audit PR-F)
 
 ### Fixed
