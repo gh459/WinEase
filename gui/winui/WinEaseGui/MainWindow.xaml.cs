@@ -448,7 +448,16 @@ public sealed partial class MainWindow : Window
     private void UpdateThemeKey()
     {
         bool highContrast = false;
-        try { highContrast = new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast; } catch { }
+        try
+        {
+            highContrast = new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast;
+        }
+        catch (Exception ex)
+        {
+            // Accessibility settings retrieval may fail on unsupported environments or uninitialized WinRT contexts.
+            // Fall back to standard theme selection (Dark/Light).
+            System.Diagnostics.Debug.WriteLine($"Failed to retrieve accessibility settings for HighContrast theme: {ex.Message}");
+        }
         _themeKey = highContrast ? "HighContrast" : RootGrid.ActualTheme == ElementTheme.Dark ? "Dark" : "Light";
     }
 
