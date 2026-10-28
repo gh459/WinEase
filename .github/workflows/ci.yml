@@ -54,6 +54,17 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build the built-in plugins
+        # The registry snapshot tests need the plugin DLLs (plugins\builtin is gitignored). Without
+        # them those tests are skipped and a green run says nothing about the registry phase.
+        shell: pwsh
+        run: ./tools/build-binaries.ps1 -Component Plugins
+
       - name: Run Pester tests
         # The suite is written in Pester 3 syntax ("Should Be" without dashes), which Pester 5
         # rejects, and it is developed on Windows PowerShell 5.1. The runner image also ships
@@ -76,6 +87,13 @@ jobs:
           }
           Write-Host "Passed: $($result.PassedCount)  Failed: $($result.FailedCount)  Skipped: $($result.SkippedCount)  Inconclusive: $($result.InconclusiveCount)"
           if ($result.FailedCount -gt 0) { throw "$($result.FailedCount) Pester test(s) failed" }
+          # A silently growing skip count hides tests that no longer run (the plugin-dependent
+          # registry tests skip themselves when the DLLs are missing). Raise the limit only on purpose.
+          $maxSkipped = 12
+          if ($result.SkippedCount -gt $maxSkipped) {
+            Write-Host "::error title=Pester skipped tests::$($result.SkippedCount) tests were skipped (limit $maxSkipped)"
+            throw "$($result.SkippedCount) Pester tests were skipped; the limit is $maxSkipped"
+          }
 
       - name: Upload test results
         if: always()
