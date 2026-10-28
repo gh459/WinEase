@@ -1367,14 +1367,14 @@ Describe "WinEase dependency checker" {
     It "covers every Advanced Debloat item from the GUI" {
         $deps = Import-PowerShellDataFile -Path $depsPath
         $guiLines = [System.IO.File]::ReadAllLines($script:GuiCorePath)
-        $items = @()
+        $items = [System.Collections.Generic.List[string]]::new()
         $i = 0
         while ($i -lt $guiLines.Count) {
             if ($guiLines[$i] -match '\$script:WinEaseDebloat(Standard|Experimental)Items\s*=\s*@\(') {
                 $i++
                 while ($i -lt $guiLines.Count -and $guiLines[$i].Trim() -ne ')') {
                     $l = $guiLines[$i].Trim().TrimEnd(',')
-                    if ($l -match '"([^"]*)"') { $items += $matches[1] }
+                    if ($l -match '"([^"]*)"') { $items.Add($matches[1]) }
                     $i++
                 }
             }
