@@ -1525,8 +1525,9 @@ Describe "Migration audit hardening (exclusions, junctions, known folders, regis
         $bk = Join-Path $TestDrive 'bk-audit'
         $r = Invoke-WinEaseMigrationRulesBackup -RuleIds @('AuditApp') -BackupRoot $bk -Rules $rules
         $r.CopiedFiles | Should Be 1
-        Test-Path -LiteralPath (Join-Path $bk 'rules\AuditApp\keep.json') | Should Be $true
-        Test-Path -LiteralPath (Join-Path $bk 'rules\AuditApp\Cache') | Should Be $false
+        # each source lives in its own source-NNN folder of the rule backup
+        Test-Path -LiteralPath (Join-Path $bk 'rules\AuditApp\source-001\keep.json') | Should Be $true
+        Test-Path -LiteralPath (Join-Path $bk 'rules\AuditApp\source-001\Cache') | Should Be $false
         $m = Get-Content -LiteralPath (Join-Path $bk 'rules\AuditApp\rule-manifest.json') -Raw | ConvertFrom-Json
         @($m.Entries)[0].Sha256 | Should Match '^[0-9A-F]{64}$'
     }

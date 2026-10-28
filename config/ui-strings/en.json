@@ -187,6 +187,8 @@
   "Mig.Label.Rules": "Migration rules (games / app settings):",
   "Mig.Backup.DataFailed": "Failed file(s): {0} (see the report)",
   "Mig.Backup.Rules": "Rules: {0} backed up, {1} skipped, {2} failed.",
+  "Mig.Backup.Missing": "Source not found, not backed up: {0}",
+  "Mig.Backup.Incomplete": "The backup is incomplete (status: {0}). See the report for what was not saved.",
   "Mig.NoRules": "No migration rules found",
   "Mig.Rules.LoadErrors": "Migration rules could not be loaded: {0}",
   "Mig.Policy.BackupExisting": "Keep the old file as a backup",
