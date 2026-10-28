@@ -153,6 +153,63 @@ namespace WinEase.Plugins.Tests
         {
             Assert.Throws<ArgumentNullException>(delegate { PluginAssemblyResolver.Install(null); });
         }
+
+        [Theory]
+        [InlineData("invalid, version=invalid")]
+        [InlineData("")]
+        [InlineData("a=b=c")]
+        public void OnResolveCatchesExceptionWhenAssemblyNameIsInvalid(string invalidName)
+        {
+            System.Reflection.Assembly contract = typeof(IWinEasePlugin).Assembly;
+            PluginAssemblyResolver.Install(contract);
+
+            System.Reflection.MethodInfo onResolveMethod = typeof(PluginAssemblyResolver).GetMethod(
+                "OnResolve",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+            Assert.NotNull(onResolveMethod);
+
+            ResolveEventArgs args = new ResolveEventArgs(invalidName);
+            object result = onResolveMethod.Invoke(null, new object[] { null, args });
+
+            Assert.Null(result);
+        }
+
+        [Fact]
+        public void OnResolveReturnsContractAssemblyWhenNameAndVersionMatch()
+        {
+            System.Reflection.Assembly contract = typeof(IWinEasePlugin).Assembly;
+            PluginAssemblyResolver.Install(contract);
+
+            System.Reflection.MethodInfo onResolveMethod = typeof(PluginAssemblyResolver).GetMethod(
+                "OnResolve",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+            Assert.NotNull(onResolveMethod);
+
+            ResolveEventArgs args = new ResolveEventArgs("WinEase.Plugins.Abstractions, Version=1.0.0.0");
+            object result = onResolveMethod.Invoke(null, new object[] { null, args });
+
+            Assert.Same(contract, result);
+        }
+
+        [Fact]
+        public void OnResolveReturnsNullWhenMajorVersionMismatches()
+        {
+            System.Reflection.Assembly contract = typeof(IWinEasePlugin).Assembly;
+            PluginAssemblyResolver.Install(contract);
+
+            System.Reflection.MethodInfo onResolveMethod = typeof(PluginAssemblyResolver).GetMethod(
+                "OnResolve",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+            Assert.NotNull(onResolveMethod);
+
+            ResolveEventArgs args = new ResolveEventArgs("WinEase.Plugins.Abstractions, Version=99.0.0.0");
+            object result = onResolveMethod.Invoke(null, new object[] { null, args });
+
+            Assert.Null(result);
+        }
     }
 
     public class ContractTests
