@@ -636,6 +636,125 @@ Describe "Reset-DirectoryWithRobocopy" -Tags 'slow' {
     }
 }
 
+Describe "Invoke-WinEaseMountConflictUnmount" {
+    BeforeEach {
+        Initialize-FsTestState
+        if (-not (Get-Command dism.exe -ErrorAction SilentlyContinue)) { function dism.exe { } }
+        $script:T = New-FsTestRoot
+        $script:scriptDir = $script:T
+        $global:FsUnmountHivesCalled = [System.Collections.Generic.List[string]]::new()
+        $global:FsDismCommandArgs = [System.Collections.Generic.List[string]]::new()
+        $global:FsCleanupCalls = 0
+
+        Mock Set-Location { }
+        Mock Unmount-RegistryHiveWithRetry {
+            param($Name)
+            $global:FsUnmountHivesCalled.Add($Name)
+            return $true
+        }
+        Mock Invoke-WinEaseMountpointCleanup {
+            $global:FsCleanupCalls++
+            return $true
+        }
+    }
+    AfterEach { Remove-FsTestRoot -Root $script:T }
+
+    It "unloads offline registry hives and unmounts image with discard for standard Ok status" {
+        Mock dism.exe {
+            $global:FsDismCommandArgs.Add(($args -join ' '))
+            $global:LASTEXITCODE = 0
+        }
+
+        $conflict = [PSCustomObject]@{
+            Path        = 'C:\ws\mounts\m1'
+            ImagePath   = 'C:\ws\image.wim'
+            MountStatus = 'Ok'
+        }
+
+        Invoke-WinEaseMountConflictUnmount -Conflict $conflict
+
+        # Verify registry hives unloaded in order
+        $global:FsUnmountHivesCalled.Count | Should Be 5
+        $global:FsUnmountHivesCalled[0] | Should Be 'zCOMPONENTS'
+        $global:FsUnmountHivesCalled[1] | Should Be 'zDEFAULT'
+        $global:FsUnmountHivesCalled[2] | Should Be 'zNTUSER'
+        $global:FsUnmountHivesCalled[3] | Should Be 'zSOFTWARE'
+        $global:FsUnmountHivesCalled[4] | Should Be 'zSYSTEM'
+
+        # Verify DISM unmount arguments
+        $global:FsDismCommandArgs.Count | Should Be 1
+        $global:FsDismCommandArgs[0] | Should Match '/Unmount-Image'
+        $global:FsDismCommandArgs[0] | Should Match '/MountDir:C:\\ws\\mounts\\m1'
+        $global:FsDismCommandArgs[0] | Should Match '/discard'
+        $global:FsDismCommandArgs[0] | Should Not Match '/Remount-Image'
+
+        # Cleanup should not be triggered when unmount exit code is 0
+        $global:FsCleanupCalls | Should Be 0
+    }
+
+    It "attempts remount before unmounting when status is Needs Remount or Invalid" {
+        foreach ($status in 'Needs Remount', 'Invalid') {
+            $global:FsDismCommandArgs.Clear()
+            Mock dism.exe {
+                $global:FsDismCommandArgs.Add(($args -join ' '))
+                $global:LASTEXITCODE = 0
+            }
+
+            $conflict = [PSCustomObject]@{
+                Path        = 'C:\ws\mounts\m1'
+                ImagePath   = 'C:\ws\image.wim'
+                MountStatus = $status
+            }
+
+            Invoke-WinEaseMountConflictUnmount -Conflict $conflict
+
+            $global:FsDismCommandArgs.Count | Should Be 2
+            $global:FsDismCommandArgs[0] | Should Match '/Remount-Image'
+            $global:FsDismCommandArgs[0] | Should Match '/MountDir:C:\\ws\\mounts\\m1'
+            $global:FsDismCommandArgs[1] | Should Match '/Unmount-Image'
+            $global:FsDismCommandArgs[1] | Should Match '/MountDir:C:\\ws\\mounts\\m1'
+            $global:FsDismCommandArgs[1] | Should Match '/discard'
+        }
+    }
+
+    It "invokes mountpoint cleanup fallback when dism unmount fails with non-zero exit code" {
+        Mock dism.exe {
+            $global:LASTEXITCODE = 1
+        }
+
+        $conflict = [PSCustomObject]@{
+            Path        = 'C:\ws\mounts\m1'
+            ImagePath   = 'C:\ws\image.wim'
+            MountStatus = 'Ok'
+        }
+
+        Invoke-WinEaseMountConflictUnmount -Conflict $conflict
+
+        $global:FsCleanupCalls | Should Be 1
+    }
+
+    It "catches registry hive unmount exceptions and continues DISM unmount" {
+        Mock Unmount-RegistryHiveWithRetry {
+            throw 'Hive unload failed due to lock'
+        }
+        Mock dism.exe {
+            $global:FsDismCommandArgs.Add(($args -join ' '))
+            $global:LASTEXITCODE = 0
+        }
+
+        $conflict = [PSCustomObject]@{
+            Path        = 'C:\ws\mounts\m1'
+            ImagePath   = 'C:\ws\image.wim'
+            MountStatus = 'Ok'
+        }
+
+        { Invoke-WinEaseMountConflictUnmount -Conflict $conflict } | Should Not Throw
+
+        $global:FsDismCommandArgs.Count | Should Be 1
+        $global:FsDismCommandArgs[0] | Should Match '/Unmount-Image'
+    }
+}
+
 Describe "Clear-DismMountConflicts" {
     BeforeEach {
         Initialize-FsTestState
