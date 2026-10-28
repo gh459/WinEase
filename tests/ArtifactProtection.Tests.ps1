@@ -164,3 +164,88 @@ Describe "Explicit -SourceDrive is never replaced (P2-06)" {
         Assert-MockCalled Dismount-DiskImage
     }
 }
+
+Describe "temporary ISO promotion with rollback (Invoke-WinEasePromoteTemporaryIso)" {
+    BeforeEach {
+        $script:Root = New-ArtifactTestRoot
+        $script:TempIso = Join-Path $script:Root 'WinEase_temp.iso'
+        $script:TargetIso = Join-Path $script:Root 'WinEase.iso'
+        [System.IO.File]::WriteAllText($script:TempIso, 'new_iso_content')
+        $script:DiagnosticData = @{ PreservedArtifacts = @() }
+    }
+    AfterEach { Remove-Item -LiteralPath $script:Root -Recurse -Force -ErrorAction SilentlyContinue }
+
+    It "throws when temporary ISO does not exist" {
+        Remove-Item -LiteralPath $script:TempIso -Force
+        { Invoke-WinEasePromoteTemporaryIso -TempIsoPath $script:TempIso -TargetIsoPath $script:TargetIso -BuildId 'build123' } | Should Throw "Temporary ISO not found"
+    }
+
+    It "promotes temporary ISO when no target ISO exists initially" {
+        (Invoke-WinEasePromoteTemporaryIso -TempIsoPath $script:TempIso -TargetIsoPath $script:TargetIso -BuildId 'build123') | Should Be $true
+        Test-Path -LiteralPath $script:TargetIso | Should Be $true
+        [System.IO.File]::ReadAllText($script:TargetIso) | Should Be 'new_iso_content'
+        Test-Path -LiteralPath $script:TempIso | Should Be $false
+    }
+
+    It "promotes temporary ISO and cleans up backup when target ISO exists initially" {
+        [System.IO.File]::WriteAllText($script:TargetIso, 'old_iso_content')
+        $backupPath = Join-Path $script:Root 'WinEase_old_backup_build123.iso'
+
+        (Invoke-WinEasePromoteTemporaryIso -TempIsoPath $script:TempIso -TargetIsoPath $script:TargetIso -BuildId 'build123') | Should Be $true
+        Test-Path -LiteralPath $script:TargetIso | Should Be $true
+        [System.IO.File]::ReadAllText($script:TargetIso) | Should Be 'new_iso_content'
+        Test-Path -LiteralPath $script:TempIso | Should Be $false
+        Test-Path -LiteralPath $backupPath | Should Be $false
+    }
+
+    It "falls back to PSScriptRoot parent when target path has no parent directory" {
+        Push-Location -LiteralPath $script:Root
+        try {
+            $bareTarget = 'WinEase.iso'
+            $bareTemp = 'WinEase_temp.iso'
+            [System.IO.File]::WriteAllText((Join-Path $script:Root $bareTemp), 'new_iso_content')
+            (Invoke-WinEasePromoteTemporaryIso -TempIsoPath $bareTemp -TargetIsoPath $bareTarget -BuildId 'build123') | Should Be $true
+            Test-Path -LiteralPath $bareTarget | Should Be $true
+            (Get-Content -LiteralPath $bareTarget -Raw) | Should Be 'new_iso_content'
+        } finally {
+            Pop-Location
+        }
+    }
+
+    It "restores original ISO when promotion move fails" {
+        [System.IO.File]::WriteAllText($script:TargetIso, 'old_iso_content')
+        $script:MoveCalls = 0
+        Mock Move-Item {
+            $script:MoveCalls++
+            if ($script:MoveCalls -eq 2) { throw 'simulated promotion failure' }
+            [System.IO.File]::Move($LiteralPath, $Destination)
+        }
+
+        { Invoke-WinEasePromoteTemporaryIso -TempIsoPath $script:TempIso -TargetIsoPath $script:TargetIso -BuildId 'build123' } | Should Throw 'Failed to promote temporary ISO'
+        Test-Path -LiteralPath $script:TargetIso | Should Be $true
+        [System.IO.File]::ReadAllText($script:TargetIso) | Should Be 'old_iso_content'
+    }
+
+    It "records backup in DiagnosticData when promotion move and rollback move both fail" {
+        [System.IO.File]::WriteAllText($script:TargetIso, 'old_iso_content')
+        $backupPath = Join-Path $script:Root 'WinEase_old_backup_build123.iso'
+        $script:MoveCalls = 0
+        Mock Move-Item {
+            $script:MoveCalls++
+            if ($script:MoveCalls -eq 1) {
+                [System.IO.File]::Move($LiteralPath, $Destination)
+                return
+            }
+            throw 'simulated move failure'
+        }
+
+        { Invoke-WinEasePromoteTemporaryIso -TempIsoPath $script:TempIso -TargetIsoPath $script:TargetIso -BuildId 'build123' } | Should Throw 'rollback restoration failed'
+        @($script:DiagnosticData.PreservedArtifacts) -contains $backupPath | Should Be $true
+        Test-Path -LiteralPath $backupPath | Should Be $true
+    }
+
+    It "throws promotion error without attempting rollback when no old target ISO existed initially" {
+        Mock Move-Item { throw 'simulated move failure' }
+        { Invoke-WinEasePromoteTemporaryIso -TempIsoPath $script:TempIso -TargetIsoPath $script:TargetIso -BuildId 'build123' } | Should Throw 'Failed to promote temporary ISO'
+    }
+}
