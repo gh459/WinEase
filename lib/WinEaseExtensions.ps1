@@ -527,21 +527,26 @@ function Get-WinEaseCustomScriptInventory {
     )
     $map = @(Get-WinEaseCustomScriptStageMap)
     if ($Stage) { $map = @($map | Where-Object { $_.Stage -eq $Stage }) }
-    $items = @()
+    $items = [System.Collections.Generic.List[object]]::new()
     foreach ($stageInfo in $map) {
-        $files = @(Get-WinEaseCustomScriptFiles -RepoRoot $RepoRoot -Stage $stageInfo.Stage)
+        $files = [System.Collections.Generic.List[object]]::new()
+        foreach ($file in @(Get-WinEaseCustomScriptFiles -RepoRoot $RepoRoot -Stage $stageInfo.Stage)) {
+            $files.Add($file)
+        }
         if ($stageInfo.LegacyFolder) {
             $legacyDir = Join-Path -Path $RepoRoot -ChildPath $stageInfo.LegacyFolder
             if (Test-Path -LiteralPath $legacyDir) {
-                $files += @(Get-ChildItem -LiteralPath $legacyDir -File -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Name -ne 'README.md' -and $_.Name -ne '.gitkeep' })
+                foreach ($file in @(Get-ChildItem -LiteralPath $legacyDir -File -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -ne 'README.md' -and $_.Name -ne '.gitkeep' })) {
+                    $files.Add($file)
+                }
             }
         }
         foreach ($f in $files) {
             $meta = Get-WinEaseCustomScriptMetadata -ScriptPath $f.FullName
             $hasOrder = Test-WinEaseCustomScriptHasHeaderOrder -Path $f.FullName
             $inStage = ($f.DirectoryName -eq (Join-Path -Path $RepoRoot -ChildPath $stageInfo.RepoFolder))
-            $items += [PSCustomObject]@{
+            $items.Add([PSCustomObject]@{
                 Stage          = $stageInfo.Stage
                 Name           = $f.Name
                 FullPath       = $f.FullName
@@ -559,7 +564,7 @@ function Get-WinEaseCustomScriptInventory {
                 RunsAs         = $stageInfo.RunsAs
                 ImageFolder    = $stageInfo.ImageFolder
                 Location       = if ($inStage) { 'Stage' } else { 'Legacy' }
-            }
+            })
         }
     }
     return @($items | Sort-Object Stage, EffectiveOrder, Name)
@@ -643,7 +648,7 @@ function Remove-WinEaseCustomScript {
     $full = $Path
     if (-not [System.IO.Path]::IsPathRooted($full)) { $full = Join-Path -Path $RepoRoot -ChildPath $full }
     $full = [System.IO.Path]::GetFullPath($full)
-    $base = [System.IO.Path]::GetFullPath((Join-Path -Path $RepoRoot -ChildPath 'tools\custom-scripts')).TrimEnd('\') + '\'
+    $base = [System.IO.Path]::GetFullPath((Join-Path -Path $RepoRoot -ChildPath 'tools\custom-scripts')).TrimEnd([System.IO.Path]::DirectorySeparatorChar, '\', '/') + [System.IO.Path]::DirectorySeparatorChar
     if (-not ($full.StartsWith($base, [System.StringComparison]::OrdinalIgnoreCase))) {
         throw "Only scripts inside '$base' can be removed."
     }
