@@ -304,13 +304,15 @@ if ($removeDefender) {
     }
 
     # 5. Windows Security UI AppX payload / registration
-    $secHealthDirs = @()
+    $secHealthDirs = [System.Collections.Generic.List[string]]::new()
     foreach ($secRoot in @("Program Files\WindowsApps", "Windows\SystemApps", "ProgramData\Microsoft\Windows\AppRepository\Packages")) {
         $fullRoot = Join-Path -Path $verifyApply -ChildPath $secRoot
         if (Test-Path -LiteralPath $fullRoot) {
-            $secHealthDirs += @(Get-ChildItem -LiteralPath $fullRoot -Force -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -match 'SecHealthUI' } |
-                ForEach-Object { Join-Path -Path $secRoot -ChildPath $_.Name })
+            foreach ($item in (Get-ChildItem -LiteralPath $fullRoot -Force -ErrorAction SilentlyContinue)) {
+                if ($item.Name -match 'SecHealthUI') {
+                    $secHealthDirs.Add((Join-Path -Path $secRoot -ChildPath $item.Name))
+                }
+            }
         }
     }
     $defReport.Add("Security UI package entries  : $(if($secHealthDirs.Count){$secHealthDirs -join ', '}else{'none'})")
