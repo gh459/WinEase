@@ -30,6 +30,21 @@ namespace WinEase.Plugins.Tests
         }
 
         [Fact]
+        public void RunDismRejectsNullOrEmptyArguments()
+        {
+            int[] calls;
+            DelegateWinEaseHost host = NewHost(false, out calls);
+
+            ArgumentException exNull = Assert.Throws<ArgumentException>(() => host.RunDism(null));
+            Assert.Equal("arguments", exNull.ParamName);
+
+            ArgumentException exEmpty = Assert.Throws<ArgumentException>(() => host.RunDism(new string[0]));
+            Assert.Equal("arguments", exEmpty.ParamName);
+
+            Assert.Equal(0, calls[1]);
+        }
+
+        [Fact]
         public void DryRunRecordsAndDoesNothing()
         {
             int[] calls;
