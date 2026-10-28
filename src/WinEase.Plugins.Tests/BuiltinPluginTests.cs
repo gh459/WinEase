@@ -93,6 +93,8 @@ namespace WinEase.Plugins.Tests
 
     public class LatencyTests
     {
+        private static readonly Regex IsTweakEnabledRegex = new Regex(@"IsTweakEnabled\(""([A-Za-z]+)"", (true|false)\)", RegexOptions.Compiled);
+        private static readonly Regex IsComponentEnabledRegex = new Regex(@"IsComponentEnabled\(""([A-Za-z]+)""", RegexOptions.Compiled);
         private sealed class Recorder
         {
             public readonly List<string> Writes = new List<string>();
@@ -229,7 +231,7 @@ namespace WinEase.Plugins.Tests
             ISet<string> components;
             IDictionary<string, bool> schema = RepoFiles.SchemaSettings(out components);
             string source = File.ReadAllText(Path.Combine(RepoFiles.Root, "src", "WinEase.Plugins.Builtin.Latency", "LatencyPlugin.cs"));
-            foreach (Match m in Regex.Matches(source, @"IsTweakEnabled\(""([A-Za-z]+)"", (true|false)\)"))
+            foreach (Match m in IsTweakEnabledRegex.Matches(source))
             {
                 string key = m.Groups[1].Value;
                 Assert.True(schema.ContainsKey(key), key);
@@ -238,7 +240,7 @@ namespace WinEase.Plugins.Tests
                 if (key == "LowLatencyAudioMMCSS") continue;
                 Assert.True(schema[key] == (m.Groups[2].Value == "true"), key + ": default differs from config\\schema.psd1");
             }
-            foreach (Match m in Regex.Matches(source, @"IsComponentEnabled\(""([A-Za-z]+)"""))
+            foreach (Match m in IsComponentEnabledRegex.Matches(source))
             {
                 Assert.Contains(m.Groups[1].Value, components);
             }
