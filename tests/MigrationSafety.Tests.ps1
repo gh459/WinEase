@@ -306,6 +306,39 @@ Describe "Migration safety (rules backup/restore)" -Tags 'slow' {
         }
     }
 
+    Context "[P1-6b] a source folder that is itself a link" {
+        It "does not follow a junction used as SourcePaths and reports it as failed" {
+            $sb = New-Sandbox 'rootlink'
+            $outside = Join-Path $sb 'outside'
+            Write-TestFile (Join-Path $outside 'secret.txt') 'OUTSIDE-SECRET'
+            $link = Join-Path $sb 'linked'
+            cmd /c mklink /J $link $outside | Out-Null
+            $rules = New-TestRules -App @(New-TestRule -Id 'RootLink' -Sources @($link))
+            $bk = Join-Path $sb 'bk'
+            $r = Invoke-WinEaseMigrationRulesBackup -RuleIds @('RootLink') -BackupRoot $bk -Rules $rules -ForceRunningProcess
+            $r.CopiedFiles | Should Be 0
+            @($r.FailedFiles | Where-Object { $_.Kind -eq 'SourceIsLink' }).Count | Should Be 1
+            $r.Status | Should Be 'Failed'
+            (@(Get-ChildItem -LiteralPath $bk -Recurse -File -ErrorAction SilentlyContinue | Where-Object { (Read-TestFile $_.FullName) -eq 'OUTSIDE-SECRET' }).Count) | Should Be 0
+            cmd /c rmdir $link | Out-Null
+        }
+    }
+
+    Context "[P1-3b] legacy manifest entry without SourceId" {
+        It "only restores to the rule's own source, not to any folder below an allowed root" {
+            $sb = New-Sandbox 'legacysrc'
+            $src = Join-Path $sb 'src'
+            Write-TestFile (Join-Path $src 'a.txt') 'A'
+            $rules = New-TestRules -App @(New-TestRule -Id 'LegSrc' -Sources @($src))
+            $bk = Join-Path $sb 'bk'
+            Invoke-WinEaseMigrationRulesBackup -RuleIds @('LegSrc') -BackupRoot $bk -Rules $rules -ForceRunningProcess | Out-Null
+            Add-ManifestEntry -Backup $bk -RuleId 'LegSrc' -Entry ([PSCustomObject]@{ RelativePath = 'a.txt'; BackupPath = 'source-001\a.txt'; SourcePath = (Join-Path $src 'deep\other'); Sha256 = '' })
+            $rr = Invoke-WinEaseMigrationRulesRestore -RuleIds @('LegSrc') -BackupRoot $bk -Rules $rules -ForceRunningProcess
+            Test-Path -LiteralPath (Join-Path $src 'deep') | Should Be $false
+            (@($rr.FailedFiles | Where-Object { $_.Error -match '^Refused' }).Count) | Should Be 1
+        }
+    }
+
     # ---------------------------------------------------------------- 7. partial sources
     Context "[P1-7] missing sources and copy failures are reported, not hidden" {
         It "reports a missing source of three as a partial success" {

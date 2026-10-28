@@ -405,9 +405,12 @@ function Copy-WinEaseMigrationRestoreFile {
             if ($hash -ne $ExpectedSha256) { return 'HashMismatch' }
             if ($exists) {
                 if ($ConflictPolicy -eq 'BackupExisting') { [System.IO.File]::Copy($DestPath, (Get-WinEaseMigrationBackupPath -Path $DestPath), $false) }
-                [System.IO.File]::Delete($DestPath)
+                # Replace swaps the file in one step: if it fails the original is still there
+                # (delete-then-move could leave nothing behind).
+                [System.IO.File]::Replace($tempPath, $DestPath, [NullString]::Value)
+            } else {
+                [System.IO.File]::Move($tempPath, $DestPath)
             }
-            [System.IO.File]::Move($tempPath, $DestPath)
         } finally {
             if ([System.IO.File]::Exists($tempPath)) { try { [System.IO.File]::Delete($tempPath) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" } }
         }
@@ -1182,6 +1185,12 @@ function Invoke-WinEaseMigrationRulesBackup {
                 $ruleFailed++
                 continue
             }
+            if ($item.PSIsContainer -and ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+                # A source folder that is a junction/symlink would be read through to wherever it points
+                $failed += [PSCustomObject]@{ Rule = $rid; Path = [string]$sp; Error = 'Source folder is a symbolic link / junction and is never followed'; Kind = 'SourceIsLink' }
+                $ruleFailed++
+                continue
+            }
             $existingSources += [string]$sp
             $srcCandidates = Get-WinEaseMigrationBaseCandidates -BasePath $src
             if ($item.PSIsContainer) {
@@ -1480,6 +1489,20 @@ function Invoke-WinEaseMigrationRulesRestore {
                     # The source pattern is re-expanded here; the target must stay inside
                     # the rule's declared locations.
                     $srcExpanded = Expand-WinEaseMigrationPath -RawPath $rawSource
+                    if (-not $sourceId) {
+                        # Old manifests carry no source id: the recorded path must be one of the rule's
+                        # own sources (or a file/profile below the profile root), not just any place
+                        # below an allowed folder.
+                        $ownSource = $false
+                        foreach ($os in $ruleSourceList) {
+                            if (-not [string]::IsNullOrWhiteSpace([string]$os) -and (Expand-WinEaseMigrationPath -RawPath ([string]$os)) -ieq $srcExpanded) { $ownSource = $true; break }
+                        }
+                        if (-not $ownSource -and $profileRoot -and (Test-WinEasePathWithin -Path $srcExpanded -Root $profileRoot)) { $ownSource = $true }
+                        if (-not $ownSource) {
+                            $failed += [PSCustomObject]@{ Rule = $rid; Path = $rel; Error = "Refused: the manifest source '$rawSource' is not one of the rule's sources"; Kind = 'PathRejected'; Manifest = $ruleManifestPath }
+                            continue
+                        }
+                    }
                     # A rule source can be a single file: the backup copy IS that file, so
                     # the restore target is the source itself, not a child of it.
                     $targetCandidate = $null
