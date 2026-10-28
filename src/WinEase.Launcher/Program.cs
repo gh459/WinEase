@@ -26,6 +26,11 @@ namespace WinEase.Launcher
                 return 1;
             }
 
+            // Files from a download or ZIP carry a Zone.Identifier mark that a RemoteSigned machine policy rejects
+            // as unsigned (even with -ExecutionPolicy Bypass). Clear it before any script runs. Best effort.
+            try { RunHidden(LauncherLogic.BuildUnblockArguments(baseDir), baseDir); }
+            catch (Win32Exception) { }
+
             // Build the WinUI 3 window when it is missing or older than its sources (needs the .NET SDK).
             // Without it the builder shows the classic window.
             string winUiExe = Path.Combine(baseDir, "gui", "winui", "bin", "WinEaseGui.exe");

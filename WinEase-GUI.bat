@@ -4,6 +4,10 @@ title WinEase Builder GUI
 
 :: Fallback for source checkouts without WinEase.exe (built by tools\build-binaries.ps1). Same steps as the exe.
 
+:: Clear the downloaded-from-internet mark: a RemoteSigned machine policy rejects marked scripts as unsigned
+:: even with -ExecutionPolicy Bypass.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -LiteralPath '%~dp0.' -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue" >nul 2>&1
+
 :: Resolve builder script (WinEasebuilder.ps1 or WinEasebuilder-*.ps1)
 set "BUILDER=%~dp0WinEasebuilder.ps1"
 if not exist "%BUILDER%" (

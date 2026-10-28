@@ -140,6 +140,18 @@ namespace WinEase.Launcher
             return rest.Length == 0 ? head : head + " " + rest;
         }
 
+        /// <summary>
+        /// powershell.exe arguments that remove the downloaded-from-internet mark (Zone.Identifier) from every file
+        /// under baseDir. With a RemoteSigned machine policy, -ExecutionPolicy Bypass is overridden and marked
+        /// scripts are refused as unsigned. -Command needs no script file, so it runs under any policy.
+        /// </summary>
+        public static string BuildUnblockArguments(string baseDir)
+        {
+            string path = (baseDir ?? "").TrimEnd('\\', '/').Replace("'", "''");
+            return "-NoProfile -ExecutionPolicy Bypass -Command " +
+                QuoteArgument("Get-ChildItem -LiteralPath '" + path + "' -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue");
+        }
+
         /// <summary>The WinUI build step the batch ran: powershell.exe -File gui\winui\build.ps1.</summary>
         public static string BuildWinUiArguments(string buildScriptPath)
         {
