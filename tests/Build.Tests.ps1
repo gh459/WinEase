@@ -346,12 +346,11 @@ Describe "WinEase setup scripts - ExtractUnattend.ps1 fallback logic" {
         $scriptsDir = Join-Path $base "Scripts"
         New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null
 
-        $req = @()
-        foreach ($name in @('s1.ps1', 's2.ps1')) {
+        $req = @(foreach ($name in @('s1.ps1', 's2.ps1')) {
             $p = Join-Path $scriptsDir $name
             Set-Content -LiteralPath $p -Value "Write-Host '$name'" -Encoding UTF8
-            $req += $p
-        }
+            $p
+        })
 
         $exitCode = Invoke-ExtractUnattendModel -MarkerDir $markerDir -RequiredScripts $req
         $exitCode | Should Be 0
