@@ -2119,19 +2119,21 @@ Describe "WinEase builder - the UI preference table (config\ui-preferences.psd1)
     It "every reg.exe call of the repository passes the force switch" {
         # Without '/f' reg.exe asks "Overwrite (Yes/No)?" when the value already
         # exists and waits for a key press - that is what stopped the build.
-        $offenders = @()
-        $files = @()
-        $files += Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "phases") -Filter '*.ps1' -File
-        $files += Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "lib") -Filter '*.ps1' -File
-        $files += Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "scripts") -Filter '*.ps1' -File
-        foreach ($file in $files) {
-            $lineNo = 0
-            foreach ($line in [System.IO.File]::ReadAllLines($file.FullName)) {
-                $lineNo++
-                if ($line -notmatch '^\s*&?\s*reg(\.exe)?\s+(add|delete)\b') { continue }
-                if ($line -notmatch '/f') { $offenders += "$($file.Name):$lineNo" }
+        $files = @(
+            Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "phases") -Filter '*.ps1' -File
+            Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "lib") -Filter '*.ps1' -File
+            Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot "scripts") -Filter '*.ps1' -File
+        )
+        $offenders = @(
+            foreach ($file in $files) {
+                $lineNo = 0
+                foreach ($line in [System.IO.File]::ReadAllLines($file.FullName)) {
+                    $lineNo++
+                    if ($line -notmatch '^\s*&?\s*reg(\.exe)?\s+(add|delete)\b') { continue }
+                    if ($line -notmatch '/f') { "$($file.Name):$lineNo" }
+                }
             }
-        }
+        )
         ($offenders -join ', ') | Should Be ''
     }
 }
