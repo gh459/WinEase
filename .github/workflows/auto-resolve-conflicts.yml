@@ -177,6 +177,18 @@ jobs:
               fi
             done < "${RUNNER_TEMP}/conflicted.txt"
             if [ "$remaining" -ne 0 ]; then exit 1; fi
+            # The agent may only have edited the conflicted files. Anything else that differs from
+            # the index (other edited files, new files) or any conflicted workflow file is refused,
+            # so "git add -A" cannot stage a change nobody asked for.
+            stray="$( { git diff --name-only; git ls-files --others --exclude-standard; } | sort -u | grep -vxFf "${RUNNER_TEMP}/conflicted.txt" || true )"
+            if [ -n "$stray" ]; then
+              echo "::error title=Conflict resolution::files outside the conflict list were changed: $(echo "$stray" | tr '\n' ' ')"
+              exit 1
+            fi
+            if grep -qE '^\.github/' "${RUNNER_TEMP}/conflicted.txt"; then
+              echo "::error title=Conflict resolution::conflicts under .github/ are not resolved automatically"
+              exit 1
+            fi
             git add -A
             git commit --no-edit
           fi

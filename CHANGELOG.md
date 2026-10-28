@@ -3,6 +3,13 @@
 All notable changes to this fork are documented here. Versions follow the upstream
 WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
+## Unreleased (local fork, 2026-10-28) - CI guards (audit PR-E)
+
+### Fixed
+- **The Pester job builds the built-in plugins first** (`build-binaries.ps1 -Component Plugins`). Without the DLLs the registry snapshot tests skipped themselves in CI.
+- **The Pester job fails when more than 12 tests are skipped**, so a test group that silently stops running is noticed.
+- **The conflict auto-resolver no longer stages arbitrary changes.** Before `git add -A` it refuses files changed outside the conflicted list, new files, and conflicts under `.github/`.
+
 ## Unreleased (local fork, 2026-10-28) - Rust engine safety (audit PR-D)
 
 ### Fixed
