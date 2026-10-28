@@ -185,8 +185,8 @@
         @{ Key = 'EnableLongPaths'; Category = 'UI'; Default = $true; Description = 'Enable Win32 long paths (> 260 characters)'; CliSwitch = $true }
         @{ Key = 'TransparentShortcutOverlay'; Category = 'UI'; Default = $false; Description = 'Remove shortcut arrow icon overlay on desktop icons'; CliSwitch = $true }
         @{ Key = 'PhotoViewerAssociations'; Category = 'UI'; Default = $true; Description = 'Restore classic Windows Photo Viewer file associations'; CliSwitch = $true }
-        @{ Key = 'TakeOwnershipContextMenu'; Category = 'UI'; Default = $true; Description = 'Add Take Ownership right-click context menu'; CliSwitch = $true }
-        @{ Key = 'CmdAsAdminContextMenu'; Category = 'UI'; Default = $true; Description = 'Add Command Prompt as Administrator to context menu'; CliSwitch = $true }
+        @{ Key = 'TakeOwnershipContextMenu'; Category = 'UI'; Default = $false; Description = 'Add Take Ownership right-click context menu'; CliSwitch = $true }
+        @{ Key = 'CmdAsAdminContextMenu'; Category = 'UI'; Default = $false; Description = 'Add Command Prompt as Administrator to context menu'; CliSwitch = $true }
         @{ Key = 'OptimizeVisualEffects'; Category = 'UI'; Default = $true; Description = 'Optimize visual effects for maximum performance'; CliSwitch = $true }
         @{ Key = 'CleanContextMenus'; Category = 'UI'; Default = $true; Description = 'Hide Share, Give access to and Cast to Device context menu entries'; CliSwitch = $true }
 

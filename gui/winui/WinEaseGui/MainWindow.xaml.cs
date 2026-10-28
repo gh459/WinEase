@@ -1387,12 +1387,17 @@ public sealed partial class MainWindow : Window
         Action("Mig.Button.Estimate", () => RunAndShowAsync("estimate", MigrationArgs()));
         Action("Mig.Button.Backup", () => RunAndShowAsync("backup", MigrationArgs()));
         Action("Mig.Button.Verify", () => RunAndShowAsync("verify", MigrationArgs()));
-        Action("Mig.Button.Restore", () => RunAndShowAsync("restore", MigrationArgs()));
-        Action("Mig.Button.Retry", () =>
+        Action("Mig.Button.Restore", async () =>
         {
+            if (!await ConfirmOverwriteAsync()) return;
+            await RunAndShowAsync("restore", MigrationArgs());
+        });
+        Action("Mig.Button.Retry", async () =>
+        {
+            if (!await ConfirmOverwriteAsync()) return;
             var a = MigrationArgs();
             a["RetryFailedOnly"] = true;
-            return RunAndShowAsync("restore", a);
+            await RunAndShowAsync("restore", a);
         });
         right.Children.Add(Card(actions));
 
@@ -1432,7 +1437,11 @@ public sealed partial class MainWindow : Window
                 a["Paths"] = arr;
                 await RunAndShowAsync("backupCustom", a);
             }),
-            Btn(_s.Get("Mig.Button.RestoreCustom"), async (_, _) => await RunAndShowAsync("restoreCustom", MigrationArgs())));
+            Btn(_s.Get("Mig.Button.RestoreCustom"), async (_, _) =>
+            {
+                if (!await ConfirmOverwriteAsync()) return;
+                await RunAndShowAsync("restoreCustom", MigrationArgs());
+            }));
         custom.Children.Add(customButtons);
         PageHost.Children.Add(Card(custom));
 
@@ -1461,6 +1470,10 @@ public sealed partial class MainWindow : Window
         extPanel.Children.Add(guide);
         PageHost.Children.Add(Card(extPanel));
     }
+
+    // Only the Overwrite policy replaces files without keeping a backup, so only it asks first.
+    private async Task<bool> ConfirmOverwriteAsync() =>
+        _migConflict != "Overwrite" || await ConfirmAsync(_s.Get("Mig.Button.Restore"), _s.Get("Mig.Confirm.Overwrite"));
 
     // Rules are read from tools\migrator the first time the page is opened
     private async void FillMigrationRules(StackPanel host)
@@ -1861,10 +1874,11 @@ public sealed partial class MainWindow : Window
 
     private void ShowIssues()
     {
+        var issuesByField = _issues.ToLookup(i => i.Field == "OutputDir" ? "WorkDir" : i.Field, StringComparer.Ordinal);
         foreach (var kv in _fieldMsgs)
         {
-            var mine = _issues.Where(i => i.Field == kv.Key || (kv.Key == "WorkDir" && i.Field == "OutputDir")).ToList();
-            if (mine.Count == 0)
+            var mine = issuesByField[kv.Key];
+            if (!mine.Any())
             {
                 kv.Value.Text = "";
                 kv.Value.Visibility = Visibility.Collapsed;

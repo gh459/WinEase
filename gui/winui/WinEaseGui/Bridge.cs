@@ -144,9 +144,10 @@ public sealed class Bridge
                 var obj = JsonNode.Parse(line)?.AsObject();
                 if (obj != null && (string?)obj["op"] == "progress") onProgress(obj);
             }
-            catch (System.Text.Json.JsonException)
+            catch (System.Text.Json.JsonException ex)
             {
-                // Ignore a malformed line
+                // Skip a malformed line and log it so JSON parsing errors are not silently ignored.
+                App.LogError(ex);
             }
         }
     }

@@ -47,7 +47,7 @@ namespace WinEase.Plugins.Tests
         public void NoValueIsWrittenTwice()
         {
             IList<RegistryEntry> entries = UpstreamSyncPlugin.RegistryData();
-            var duplicates = entries.GroupBy(e => (e.Hive + "|" + e.Path + "|" + e.Name).ToLowerInvariant()).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+            var duplicates = entries.GroupBy(e => new { e.Hive, e.Path, e.Name }).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
             Assert.Empty(duplicates);
         }
 

@@ -14,6 +14,19 @@ WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
 Checked and left as is: `close-failed-agent-prs.yml` already matches a fixed list of agent branch prefixes. Still open: ACL changes on reparse points, answer-file DOM insertion, context-menu defaults, IME/font keep lists (Rust), zizmor pinning, release temp names, WinUI overwrite confirmations.
 
+## Unreleased (local fork, 2026-10-28) - remaining audit items (audit PR-H)
+
+### Changed
+- **The Take Ownership and Command Prompt as Administrator context menus are off by default** (`schema.psd1`, `WinEase.config.schema.json` and the fallback in phase 10). Profiles and presets that set them explicitly are unaffected. This is a default change; turn them on in the Tweaks list if you want them.
+
+### Fixed
+- **`Set-ItemOwnershipAndAccess` no longer touches directory junctions/symlinks.** `Set-Acl` follows the link and would have changed the owner and DACL of its target, which can be outside the image. File reparse points (WIM placeholders) are still processed.
+- **The answer file gets XML-escaped computer and user names**, inserted as literal text (a `\` in a name was read as a group reference; `<` or `&` broke the XML).
+- **WinUI: restore, retry and restore-custom ask for confirmation when the conflict policy is Overwrite** (new string `Mig.Confirm.Overwrite`, en/ja). The error log is `WinEase-winui-error-<pid>.log` instead of one shared name in the temp folder.
+- **`package-release.ps1` builds `*.zip.partial` and renames it when complete**, so a failed run leaves no half-written release asset and an existing package survives a failed rebuild.
+
+Not done: IME/font keep-list changes in the Rust engine (cannot be compiled here), a visible notice for unhandled WinUI exceptions, hash-pinning zizmor (it is pinned by version), XML escaping of the user name in the remaining command lines of the answer file.
+
 ## Unreleased (local fork, 2026-10-28) - WinUI window robustness (audit PR-G)
 
 ### Fixed
