@@ -4,7 +4,7 @@
 #
 # Covers Test-IsSafePathToDelete, Test-WinEasePathHasReparsePoint, Test-WinEaseMountPathInWorkspace,
 # Get-WinEaseMountedImages, Assert-WinEaseDirectorySafety, Reset-DirectoryWithRobocopy,
-# Clear-DismMountConflicts, Initialize-WinEaseMountDirectory and Test-CanSafelyDeleteVhdx.
+# Clear-DismMountConflicts, Initialize-WinEaseMountDirectory, Invoke-WinEaseImageMount and Test-CanSafelyDeleteVhdx.
 #
 # Safety rules for this file: only per-test temp directories are touched, DISM is never run
 # (Get-WinEaseMountedImages, dism.exe and every other mount helper is mocked), and links are
@@ -773,6 +773,194 @@ Describe "Initialize-WinEaseMountDirectory" -Tags 'slow' {
         Test-Path -LiteralPath $script:Mnt | Should Be $true
         @(Get-ChildItem -LiteralPath $script:Mnt -Force).Count | Should Be 0
         $global:FsDismCalls | Should Be 0
+    }
+}
+
+Describe "Invoke-WinEaseImageMount" -Tags 'slow' {
+    BeforeEach {
+        Initialize-FsTestState
+        $script:Ws = "C:\TestWorkspace"
+        $script:BaseWorkDir = "C:\TestWorkspace\base"
+        $script:MountAllocationRoot = "C:\TestWorkspace\base\mounts"
+        $script:WimFile = "C:\TestWorkspace\base\install.wim"
+
+        Mock Test-Path {
+            param($LiteralPath, $Path)
+            $p = if ($LiteralPath) { $LiteralPath } else { $Path }
+            if ([string]::IsNullOrWhiteSpace($p)) { return $false }
+            if ($p -like '*C:\TestWorkspace*' -and $p -notlike '*missing.wim*') { return $true }
+            return ([System.IO.File]::Exists($p) -or [System.IO.Directory]::Exists($p))
+        }
+        Mock ConvertTo-WinEaseRealPath {
+            param($Path)
+            if ($Path) { return [System.IO.Path]::GetFullPath($Path) }
+            return $null
+        }
+        Mock Start-Sleep { }
+        Mock dism.exe {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $global:FsDismCalls++
+            $global:LastDismArgs = $DismArgs
+            $global:LASTEXITCODE = 0
+        }
+        Mock Unmount-DismOfflineHives { $true }
+        Mock Invoke-WinEaseMountpointCleanup { $true }
+        Mock Initialize-WinEaseMountDirectory { }
+    }
+
+    It "throws parameter binding error when mandatory parameters are omitted" {
+        { Invoke-WinEaseImageMount } | Should Throw
+        { Invoke-WinEaseImageMount -ImageFile $script:WimFile } | Should Throw
+        { Invoke-WinEaseImageMount -ImageIndex '1' } | Should Throw
+    }
+
+    It "throws when the specified image file does not exist on disk" {
+        $missingWim = "C:\TestWorkspace\base\missing.wim"
+        { Invoke-WinEaseImageMount -ImageFile $missingWim -ImageIndex '1' -Retries 1 } | Should Throw 'Image file not found'
+    }
+
+    It "mounts successfully on first attempt and returns mount metadata object" {
+        $global:CurrentMountDir = $null
+        Mock New-WinEaseMountDirectoryPath {
+            $global:CurrentMountDir = ConvertTo-WinEaseNormalizedPath -Path "$script:MountAllocationRoot\mount_11111111"
+            [void]$script:ManagedMountDirs.Add($global:CurrentMountDir)
+            return $global:CurrentMountDir
+        }
+        Mock Get-WinEaseMountedImages {
+            return @([PSCustomObject]@{
+                Path        = "$script:MountAllocationRoot\mount_11111111"
+                ImagePath   = $script:WimFile
+                ImageIndex  = '1'
+                MountStatus = 'Ok'
+            })
+        }
+
+        $res = Invoke-WinEaseImageMount -ImageFile $script:WimFile -ImageIndex '1' -Retries 1
+        $res | Should Not Be $null
+        $res.MountDir | Should Be $global:CurrentMountDir
+        $res.ImageFile | Should Be (ConvertTo-WinEaseNormalizedPath -Path $script:WimFile)
+        $res.ImageIndex | Should Be '1'
+        $global:FsDismCalls | Should Be 1
+        ($global:LastDismArgs -contains '/Mount-Image') | Should Be $true
+        ($global:LastDismArgs -contains "/ImageFile:$(ConvertTo-WinEaseNormalizedPath -Path $script:WimFile)") | Should Be $true
+        ($global:LastDismArgs -contains "/Index:1") | Should Be $true
+        ($global:LastDismArgs -contains "/MountDir:$global:CurrentMountDir") | Should Be $true
+    }
+
+    It "propagates DismLogPath and ReadOnly switch to DISM arguments" {
+        $script:DismLogPath = "C:\TestWorkspace\base\dism.log"
+        $global:CurrentMountDir = $null
+        Mock New-WinEaseMountDirectoryPath {
+            $global:CurrentMountDir = ConvertTo-WinEaseNormalizedPath -Path "$script:MountAllocationRoot\mount_readonly"
+            [void]$script:ManagedMountDirs.Add($global:CurrentMountDir)
+            return $global:CurrentMountDir
+        }
+        Mock Get-WinEaseMountedImages {
+            return @([PSCustomObject]@{
+                Path        = "$script:MountAllocationRoot\mount_readonly"
+                ImagePath   = $script:WimFile
+                ImageIndex  = '2'
+                MountStatus = 'Ok'
+            })
+        }
+
+        $res = Invoke-WinEaseImageMount -ImageFile $script:WimFile -ImageIndex '2' -ReadOnly -Retries 1
+        $res | Should Not Be $null
+        ($global:LastDismArgs -contains "/LogPath:$script:DismLogPath") | Should Be $true
+        ($global:LastDismArgs -contains '/LogLevel:3') | Should Be $true
+        ($global:LastDismArgs -contains '/ReadOnly') | Should Be $true
+    }
+
+    It "recovers on initial DISM failure, cleans partial mount, and succeeds on second attempt" {
+        $global:AttemptCount = 0
+        $global:UnmountedCount = 0
+        $global:CreatedMountDirs = [System.Collections.Generic.List[string]]::new()
+        Mock New-WinEaseMountDirectoryPath {
+            $global:AttemptCount++
+            $dir = ConvertTo-WinEaseNormalizedPath -Path "$script:MountAllocationRoot\mount_attempt_$global:AttemptCount"
+            $global:CreatedMountDirs.Add($dir)
+            [void]$script:ManagedMountDirs.Add($dir)
+            return $dir
+        }
+        Mock dism.exe {
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$DismArgs)
+            $global:FsDismCalls++
+            if ($DismArgs -contains '/Unmount-Image') {
+                $global:UnmountedCount++
+            }
+            if ($global:AttemptCount -eq 1) {
+                $global:LASTEXITCODE = 1
+            } else {
+                $global:LASTEXITCODE = 0
+            }
+        }
+        Mock Get-WinEaseMountedImages {
+            if ($global:AttemptCount -eq 1 -and $global:UnmountedCount -eq 0) {
+                return @([PSCustomObject]@{
+                    Path        = "$script:MountAllocationRoot\mount_attempt_1"
+                    ImagePath   = $script:WimFile
+                    ImageIndex  = '1'
+                    MountStatus = 'Invalid'
+                })
+            } elseif ($global:AttemptCount -eq 2) {
+                return @([PSCustomObject]@{
+                    Path        = "$script:MountAllocationRoot\mount_attempt_2"
+                    ImagePath   = $script:WimFile
+                    ImageIndex  = '1'
+                    MountStatus = 'Ok'
+                })
+            }
+            return @()
+        }
+
+        $res = Invoke-WinEaseImageMount -ImageFile $script:WimFile -ImageIndex '1' -Retries 2
+        $res | Should Not Be $null
+        $res.MountDir | Should Be $global:CreatedMountDirs[1]
+        $global:AttemptCount | Should Be 2
+        $global:UnmountedCount | Should Be 1
+    }
+
+    It "throws error when all retry attempts fail" {
+        $global:AttemptCount = 0
+        Mock New-WinEaseMountDirectoryPath {
+            $global:AttemptCount++
+            $dir = ConvertTo-WinEaseNormalizedPath -Path "$script:MountAllocationRoot\mount_fail_$global:AttemptCount"
+            [void]$script:ManagedMountDirs.Add($dir)
+            return $dir
+        }
+        Mock dism.exe {
+            $global:FsDismCalls++
+            $global:LASTEXITCODE = 1
+        }
+        Mock Get-WinEaseMountedImages { return @() }
+
+        { Invoke-WinEaseImageMount -ImageFile $script:WimFile -ImageIndex '1' -Retries 2 } | Should Throw 'Failed to mount image'
+        $global:AttemptCount | Should Be 2
+    }
+
+    It "marks mount directory as Preserved and throws when a lingering mount cannot be resolved" {
+        $global:CurrentMountDir = $null
+        Mock New-WinEaseMountDirectoryPath {
+            $global:CurrentMountDir = ConvertTo-WinEaseNormalizedPath -Path "$script:MountAllocationRoot\mount_lingering"
+            [void]$script:ManagedMountDirs.Add($global:CurrentMountDir)
+            return $global:CurrentMountDir
+        }
+        Mock dism.exe {
+            $global:FsDismCalls++
+            $global:LASTEXITCODE = 1
+        }
+        Mock Get-WinEaseMountedImages {
+            return @([PSCustomObject]@{
+                Path        = "$script:MountAllocationRoot\mount_lingering"
+                ImagePath   = $script:WimFile
+                ImageIndex  = '1'
+                MountStatus = 'Invalid'
+            })
+        }
+
+        { Invoke-WinEaseImageMount -ImageFile $script:WimFile -ImageIndex '1' -Retries 1 } | Should Throw 'Failed to resolve mount conflict'
+        $script:PreservedMountDirs.Contains($global:CurrentMountDir) | Should Be $true
     }
 }
 
