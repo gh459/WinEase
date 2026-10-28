@@ -20,11 +20,15 @@ function Test-InteractiveSession {
             $rows = @($out | Where-Object { $_ -match '\S' })
             if ($rows.Count -ge 2) { return $true }
         }
-    } catch {}
+    } catch {
+        # quser.exe may be unavailable or unsupported in certain Windows editions
+    }
     try {
         $expl = Get-Process -Name explorer -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -gt 0 }
         if ($expl) { return $true }
-    } catch {}
+    } catch {
+        # Get-Process can throw if process query fails or access is restricted
+    }
     return $false
 }
 
