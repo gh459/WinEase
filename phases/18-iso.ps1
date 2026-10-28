@@ -102,6 +102,7 @@ $tempIsoFileName = "WinEase_temp_${profSlug}_$($script:BuildId).iso"
 $tempOutputIso = Join-Path -Path $scriptDir -ChildPath $tempIsoFileName
 $expectedPayloadFile = if ($exportESDMode) { "install.esd" } elseif ($splitWIMMode) { "install.swm" } else { "install.wim" }
 
+$minIsoBytes = Get-WinEaseMinimumIsoBytes -PayloadBytes $(if ($activePayloadPath -and (Test-Path -LiteralPath $activePayloadPath)) { (Get-Item -LiteralPath $activePayloadPath).Length } else { 0 })
 $maxIsoAttempts = 3
 $isoCreationSuccess = $false
 $isoAttempt = 0
@@ -128,7 +129,7 @@ while (-not $isoCreationSuccess -and $isoAttempt -lt $maxIsoAttempts) {
     $oscdimgExit = $LASTEXITCODE
     $script:DiagnosticData.OscdimgExitCode = $oscdimgExit
 
-    if ($oscdimgExit -ne 0 -or (-not (Test-Path -LiteralPath $tempOutputIso)) -or ((Get-Item -LiteralPath $tempOutputIso).Length -lt 1.5GB)) {
+    if ($oscdimgExit -ne 0 -or (-not (Test-Path -LiteralPath $tempOutputIso)) -or ((Get-Item -LiteralPath $tempOutputIso).Length -lt $minIsoBytes)) {
         Write-Warning "oscdimg failed on attempt $isoAttempt (ExitCode: $oscdimgExit)."
         Start-Sleep -Seconds 2
         continue
@@ -173,13 +174,11 @@ while (-not $isoCreationSuccess -and $isoAttempt -lt $maxIsoAttempts) {
         if ($embeddedWimSha256 -eq $script:VerifiedFinalWimSha256) {
             Write-Host "  [PASS] ISO embedded payload SHA256 hash verified identical." -ForegroundColor Green
         } else {
+            # The payload must not change between verification (phase 15) and mastering. A hash that
+            # differs from the verified one is a failure even when it matches what is on disk now:
+            # the verified hash is never overwritten here.
             $rehashDisk = (Get-FileHash -LiteralPath $activePayloadPath -Algorithm SHA256).Hash
-            if ($embeddedWimSha256 -eq $rehashDisk) {
-                Write-Host "  [PASS] ISO embedded payload verified identical to current payload on disk." -ForegroundColor Green
-                $script:VerifiedFinalWimSha256 = $rehashDisk
-            } else {
-                throw "PAYLOAD HASH MISMATCH: ISO embedded $expectedPayloadFile ($embeddedWimSha256) does not match verified final payload ($script:VerifiedFinalWimSha256) or current payload on disk ($rehashDisk)."
-            }
+            throw "PAYLOAD HASH MISMATCH: ISO embedded $expectedPayloadFile ($embeddedWimSha256) does not match the verified final payload ($script:VerifiedFinalWimSha256); payload on disk now hashes to $rehashDisk."
         }
 
         $script:IsoGenerated = $true
@@ -197,7 +196,7 @@ while (-not $isoCreationSuccess -and $isoAttempt -lt $maxIsoAttempts) {
         Start-Sleep -Seconds 5
     } finally {
         if ($isoMountResult) {
-            try { Dismount-DiskImage -ImagePath $tempOutputIso -ErrorAction SilentlyContinue | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+            [void](Dismount-WinEaseDiskImageVerified -ImagePath $tempOutputIso -Label 'temporary verification ISO')
         }
     }
 }

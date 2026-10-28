@@ -42,7 +42,8 @@ if (-not $unmountSuccess) {
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Critical: Unable to commit changes. Discarding mount to prevent corrupted image..." -ForegroundColor Red
         & dism.exe /English /Unmount-Image "/MountDir:$scratchDir" /discard > $null 2>&1
-        $script:MountOpened = $false
+        # Keep MountOpened set when the discard failed so the cleanup step retries and reports it.
+        if ($LASTEXITCODE -eq 0) { $script:MountOpened = $false }
         throw "Failed to commit modifications to install image. Build aborted to prevent producing a corrupted ISO."
     } else {
         $script:MountOpened = $false

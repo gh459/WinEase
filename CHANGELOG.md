@@ -3,7 +3,16 @@
 All notable changes to this fork are documented here. Versions follow the upstream
 WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
-## Unreleased (local fork, 2026-10-28) - destructive-operation safety (audit PR-A)
+## Unreleased (local fork, 2026-10-28) - artifact protection and failure recovery (audit PR-B)
+
+### Fixed
+- **Phase 13 puts the pre-export `install.wim` back when the swap fails.** Moving the exported image into place used to leave the ISO tree without an install image if the second move failed. The original is restored, and if that fails too its backup path is reported.
+- **Size and hash checks follow the payload.** The ISO minimum is the payload size plus 100 MB (was a fixed 1.5 GB) and the export minimum is a quarter of the source image, at least 200 MB (was a fixed 500 MB). An ISO whose embedded payload hash differs from the hash verified in phase 15 now fails the attempt instead of replacing the verified hash.
+- **Mount cleanup is verified.** The source ISO and the temporary verification ISO are dismounted and read back; a still-attached image is warned about with the command to detach it and listed in the diagnostics (`DismountFailures`). A source ISO that was already mounted before the build is left mounted. A failed `/discard` in phase 12 keeps the mount registered so cleanup retries it.
+- **An explicit `-SourceDrive` is never replaced by auto-detection.** A missing ISO, a mount failure, an ISO without a drive letter or a missing drive now stops the build.
+- New tests: `tests\ArtifactProtection.Tests.ps1`.
+
+## Earlier in this unreleased set - destructive-operation safety (audit PR-A)
 
 ### Fixed
 - **A `-WorkDir` that holds somebody else's `build` or `scratchdir` is no longer emptied.** The builder wipes both folders (robocopy mirror plus an ACL rewrite). A workspace WinEase created now carries a `.winease-workspace` marker; a non-empty folder without it (and without the signs of an older WinEase workspace: the default `WinEase_workspace` name, `build\sources`, a mounted image) stops the build before anything is touched. `-ForceResetWorkspace` overrides the stop.

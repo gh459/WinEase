@@ -1124,3 +1124,46 @@ function Write-WinEaseWorkspaceMarker {
     if (-not $ok) { Write-Warning "Could not write the workspace marker '$marker'. The next build into this folder will need -ForceResetWorkspace." }
     return [bool]$ok
 }
+
+function Invoke-WinEasePromoteExportedWim {
+    param(
+        [Parameter(Mandatory = $true)][string]$CurrentWim,
+        [Parameter(Mandatory = $true)][string]$ExportedWim,
+        [Parameter(Mandatory = $true)][string]$BackupWim
+    )
+    if (-not (Test-Path -LiteralPath $ExportedWim -PathType Leaf)) {
+        throw "Exported WIM not found: $ExportedWim"
+    }
+    Move-Item -LiteralPath $CurrentWim -Destination $BackupWim -Force -ErrorAction Stop
+    try {
+        Move-Item -LiteralPath $ExportedWim -Destination $CurrentWim -Force -ErrorAction Stop
+    } catch {
+        $swapErr = $_
+        # Never leave the ISO tree without an install image: put the pre-export image back.
+        if ((Test-Path -LiteralPath $BackupWim) -and -not (Test-Path -LiteralPath $CurrentWim)) {
+            try {
+                Move-Item -LiteralPath $BackupWim -Destination $CurrentWim -Force -ErrorAction Stop
+                Write-Warning "Export promotion failed ($swapErr). Restored the pre-export image to $CurrentWim."
+            } catch {
+                $restoreErr = $_
+                if ($script:DiagnosticData) { $script:DiagnosticData.PreservedArtifacts += $BackupWim }
+                throw "Failed to move the exported WIM into place ($swapErr) AND restoring the pre-export image failed ($restoreErr). The original image is preserved at: $BackupWim"
+            }
+        }
+        throw "Failed to move the exported WIM into place: $swapErr"
+    }
+    return $true
+}
+
+function Get-WinEaseMinimumExportBytes {
+    param([long]$SourceBytes = 0)
+    if ($SourceBytes -le 0) { return [long]500MB }
+    return [long][math]::Max([long]200MB, [long][math]::Floor($SourceBytes * 0.25))
+}
+
+function Get-WinEaseMinimumIsoBytes {
+    param([long]$PayloadBytes = 0)
+    if ($PayloadBytes -le 0) { return [long]1.5GB }
+    # The ISO holds the payload plus boot media; anything smaller than payload + 100MB is truncated.
+    return [long]($PayloadBytes + 100MB)
+}

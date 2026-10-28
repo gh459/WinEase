@@ -10,31 +10,18 @@ param()
 # Determine source drive letter (with auto-detection)
 $DriveLetter = ""
 if ($SourceDrive) {
-    if ($SourceDrive.EndsWith(".iso", [System.StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $SourceDrive)) {
-        Write-Host "Mounting specified Windows 11 ISO: $SourceDrive..." -ForegroundColor Cyan
-        try {
-            $diskImg = Mount-DiskImage -ImagePath $SourceDrive -PassThru -ErrorAction SilentlyContinue
-            if ($diskImg) {
-                $script:MountedIso = $diskImg
-                if ($diskImg -and $diskImg.ImagePath) {
-                    $script:DiagnosticData.SourceIsoPath = $diskImg.ImagePath
-                }
-                $vol = $diskImg | Get-Volume -ErrorAction SilentlyContinue
-                if ($vol -and $vol.DriveLetter) {
-                    $DriveLetter = "$($vol.DriveLetter):"
-                    Write-Host "ISO mounted successfully on drive: $DriveLetter" -ForegroundColor Green
-                }
-            }
-        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-    }
-    if (-not $DriveLetter) {
-        $candDrive = $SourceDrive.Trim().TrimEnd(':') + ":"
-        if (Test-Path -LiteralPath $candDrive) {
-            $DriveLetter = $candDrive
-            Write-Host "Using specified SourceDrive: $DriveLetter" -ForegroundColor Green
-        } else {
-            Write-Host "Specified SourceDrive '$SourceDrive' does not exist." -ForegroundColor Red
+    # An explicit -SourceDrive is never replaced by auto-detection: resolve it or stop.
+    $explicitMedia = Resolve-WinEaseExplicitSourceMedia -SourceDrive $SourceDrive
+    $DriveLetter = $explicitMedia.DriveLetter
+    if ($explicitMedia.MountedIso) {
+        $script:MountedIso = $explicitMedia.MountedIso
+        $script:MountedIsoByWinEase = $explicitMedia.MountedByWinEase
+        if ($explicitMedia.MountedIso.ImagePath) {
+            $script:DiagnosticData.SourceIsoPath = $explicitMedia.MountedIso.ImagePath
         }
+        Write-Host "ISO mounted successfully on drive: $DriveLetter" -ForegroundColor Green
+    } else {
+        Write-Host "Using specified SourceDrive: $DriveLetter" -ForegroundColor Green
     }
 }
 
@@ -52,6 +39,7 @@ function Find-AndMountHealthyWindowsIso {
     foreach ($iso in $sortedIsos) {
         try {
             $diskImg = Get-DiskImage -ImagePath $iso.FullName -ErrorAction SilentlyContinue
+            $script:MountedIsoByWinEase = (-not $diskImg -or -not $diskImg.Attached)
             if (-not $diskImg -or -not $diskImg.Attached) {
                 Write-Host "Auto-mounting healthy Windows 11 ISO: $($iso.Name)..." -ForegroundColor Cyan
                 $diskImg = Mount-DiskImage -ImagePath $iso.FullName -PassThru -ErrorAction SilentlyContinue
@@ -67,7 +55,7 @@ function Find-AndMountHealthyWindowsIso {
                     }
                 }
                 # Dismount candidate if it does not contain a healthy install.wim
-                try { Dismount-DiskImage -ImagePath $iso.FullName -ErrorAction SilentlyContinue > $null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+                if ($script:MountedIsoByWinEase) { [void](Dismount-WinEaseDiskImageVerified -ImagePath $iso.FullName -Label 'candidate ISO') }
                 $script:MountedIso = $null
             }
         } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
