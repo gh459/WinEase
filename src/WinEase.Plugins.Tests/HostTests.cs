@@ -42,6 +42,30 @@ namespace WinEase.Plugins.Tests
         }
 
         [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        public void SetOfflineRegistryRejectsNullOrEmptyHive(string hive)
+        {
+            int[] calls;
+            DelegateWinEaseHost host = NewHost(false, out calls);
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => host.SetOfflineRegistry(hive, "Software\\X", "V", "REG_DWORD", "1"));
+            Assert.Equal("hive", ex.ParamName);
+            Assert.Equal(0, calls[0]);
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        public void SetOfflineRegistryRejectsNullOrEmptyPath(string path)
+        {
+            int[] calls;
+            DelegateWinEaseHost host = NewHost(false, out calls);
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => host.SetOfflineRegistry("zSYSTEM", path, "V", "REG_DWORD", "1"));
+            Assert.Equal("path", ex.ParamName);
+            Assert.Equal(0, calls[0]);
+        }
+
+        [Theory]
         [InlineData("..\\evil.txt")]
         [InlineData("a\\..\\..\\evil.txt")]
         [InlineData("C:\\evil.txt")]
