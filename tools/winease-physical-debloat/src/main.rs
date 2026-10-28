@@ -101,6 +101,8 @@ struct DebloatResult {
     deleted_dirs: u64,
     deleted_registry_keys: u64,
     errors: Vec<String>,
+    /// Findings that are not failures: a target that matched nothing in the image.
+    warnings: Vec<String>,
     dry_run: bool,
     timestamp: String,
     targets_processed: Vec<String>,
@@ -575,6 +577,23 @@ pub fn validate_target_path(mount: &Path, rel_path: &str) -> Result<PathBuf, Str
             full.display()
         ));
     }
+    // A junction or symlink in the middle of the path would carry the deletion outside the
+    // mounted image although the textual path stays inside it. The folders between the
+    // mount root and the target are checked; the target itself is handled by the delete
+    // functions, which never delete through a link.
+    let mut ancestor = full.parent();
+    while let Some(a) = ancestor {
+        if a == mount || !a.starts_with(mount) {
+            break;
+        }
+        if is_reparse_point(a) {
+            return Err(format!(
+                "Target path passes through a reparse point (junction/symlink): {}",
+                a.display()
+            ));
+        }
+        ancestor = a.parent();
+    }
     Ok(full)
 }
 
@@ -757,18 +776,42 @@ fn delete_directory_contents(path: &str, dry_run: bool) -> RemovalOutcome {
         return outcome;
     }
     let mut entries: Vec<PathBuf> = Vec::new();
-    if let Ok(rd) = fs::read_dir(p) {
-        for entry in rd.flatten() {
-            let ep = entry.path();
-            if is_reparse_point(&ep) {
-                println!(
-                    "  [SKIP] Reparse point (junction/symlink) not traversed: {}",
-                    ep.to_string_lossy()
-                );
-                continue;
+    // A folder that cannot be listed is not an empty folder: the failure is reported,
+    // otherwise a locked or access-denied folder looks like a successful removal of
+    // nothing. The listing is retried once after the access is forced, but never in a
+    // dry run, which must not change any ownership or DACL.
+    let rd = match fs::read_dir(p) {
+        Ok(rd) => rd,
+        Err(first_err) => {
+            if dry_run {
+                outcome
+                    .errors
+                    .push(format!("cannot list {}: {}", path, first_err));
+                return outcome;
             }
-            entries.push(ep);
+            let _ = force_access(path);
+            match fs::read_dir(p) {
+                Ok(rd) => rd,
+                Err(e) => {
+                    outcome.errors.push(format!(
+                        "cannot list {}: {} (first attempt: {})",
+                        path, e, first_err
+                    ));
+                    return outcome;
+                }
+            }
         }
+    };
+    for entry in rd.flatten() {
+        let ep = entry.path();
+        if is_reparse_point(&ep) {
+            println!(
+                "  [SKIP] Reparse point (junction/symlink) not traversed: {}",
+                ep.to_string_lossy()
+            );
+            continue;
+        }
+        entries.push(ep);
     }
     if dry_run {
         println!("[DRY] Would delete the content of: {}", path);
@@ -1123,12 +1166,14 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
     {
         targets.push(DeletionTarget {
             name: "Hyper-V",
+            // Only the user-mode host services are removed. vhdmp.sys (the VHD/VHDX miniport)
+            // and hvservice.sys are kernel drivers: vhdmp.sys is also used to mount the
+            // VHDX files of Windows itself, and a missing driver that is registered as a
+            // boot-time dependency can stop the image from starting.
             files: vec![
                 "Windows\\System32\\vmms.exe",
                 "Windows\\System32\\vmwp.exe",
                 "Windows\\System32\\vmcompute.exe",
-                "Windows\\System32\\drivers\\hvservice.sys",
-                "Windows\\System32\\drivers\\vhdmp.sys",
             ],
             dirs: vec![],
             ..Default::default()
@@ -1198,7 +1243,11 @@ fn get_targets(config: &DebloatConfig) -> Vec<DeletionTarget> {
                 "Windows\\System32\\localspl.dll",
                 "Windows\\System32\\win32spl.dll",
             ],
-            dirs: vec!["Windows\\System32\\spool"],
+            // The spool folder holds more than the print queue: the color profiles
+            // (spool\drivers\color) are used by every application that renders colors.
+            // Only the queue is emptied and the folder itself stays.
+            dirs: vec![],
+            dir_contents: vec!["Windows\\System32\\spool\\PRINTERS"],
             ..Default::default()
         });
     }
@@ -1652,6 +1701,20 @@ fn chrono_now() -> String {
     }
 }
 
+/// A path target that removed nothing and failed nothing matched nothing in the image:
+/// the file names of a target can be wrong for this build of Windows, and without this
+/// finding the run still reports success. A target that failed is not a zero match.
+fn zero_match_warning(name: &str, removed: u64, new_errors: usize) -> Option<String> {
+    if removed == 0 && new_errors == 0 {
+        Some(format!(
+            "target '{}' matched nothing in the image; its paths may not exist in this build of Windows",
+            name
+        ))
+    } else {
+        None
+    }
+}
+
 const USAGE: &str = "Usage: winease-physical-debloat --config <path> [options]
 
 Options:
@@ -1790,6 +1853,8 @@ fn main() {
     for target in &targets {
         println!("\n=== Processing: {} ===", target.name);
         result.targets_processed.push(target.name.to_string());
+        let removed_before = result.deleted_files + result.deleted_dirs;
+        let errors_before = result.errors.len();
 
         // The fonts and the input method engines need a rule instead of a list of
         // paths, so they are removed by their own handler.
@@ -1956,25 +2021,41 @@ fn main() {
                 }
             }
         }
+
+        if let Some(w) = zero_match_warning(
+            target.name,
+            result.deleted_files + result.deleted_dirs - removed_before,
+            result.errors.len() - errors_before,
+        ) {
+            println!("  [WARN] {}", w);
+            result.warnings.push(w);
+        }
     }
 
+    let mut result_write_failed = false;
     if !config.log_path.is_empty() {
         // The caller (phase 09) reads this result file, so a failure to produce
         // it must not be swallowed: report it on stderr instead of panicking on
-        // serialization or silently dropping the write error. The exit code is
-        // unchanged; it still reflects the removal result alone.
+        // serialization, and exit with a non-zero code below so the caller does not
+        // read a missing or stale result file as a clean run.
         match serde_json::to_string_pretty(&result) {
             Ok(result_json) => match fs::write(&config.log_path, result_json) {
                 Ok(()) => println!("\nResult written to: {}", config.log_path),
-                Err(e) => eprintln!(
-                    "\n[ERR] Could not write the result file {}: {}",
-                    config.log_path, e
-                ),
+                Err(e) => {
+                    result_write_failed = true;
+                    eprintln!(
+                        "\n[ERR] Could not write the result file {}: {}",
+                        config.log_path, e
+                    );
+                }
             },
-            Err(e) => eprintln!(
-                "\n[ERR] Could not serialize the result for {}: {}",
-                config.log_path, e
-            ),
+            Err(e) => {
+                result_write_failed = true;
+                eprintln!(
+                    "\n[ERR] Could not serialize the result for {}: {}",
+                    config.log_path, e
+                );
+            }
         }
     }
 
@@ -1990,9 +2071,16 @@ fn main() {
     for e in &result.errors {
         println!("  - {}", e);
     }
+    println!("Warnings: {}", result.warnings.len());
+    for w in &result.warnings {
+        println!("  - {}", w);
+    }
 
     if !result.success && !result.errors.is_empty() {
         std::process::exit(1);
+    }
+    if result_write_failed {
+        std::process::exit(5);
     }
 }
 
@@ -2379,6 +2467,119 @@ mod tests {
         assert!(dir.exists(), "the directory itself was removed");
         assert!(!file.exists(), "the log file is still there");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The kernel drivers of Hyper-V are not removed: vhdmp.sys also mounts the VHDX files
+    /// of Windows itself.
+    #[test]
+    fn test_hyperv_target_keeps_the_kernel_drivers() {
+        let mut experimental = std::collections::HashMap::new();
+        experimental.insert("physical_hyperv".to_string(), true);
+        let config = DebloatConfig {
+            dry_run: true,
+            mount_path: "C:\\nonexistent-mount".to_string(),
+            log_path: String::new(),
+            confirm_offline_image: false,
+            experimental,
+            primary_ime_lang: None,
+        };
+        let targets = get_targets(&config);
+        assert_eq!(targets.len(), 1);
+        for f in &targets[0].files {
+            assert!(!f.ends_with(".sys"), "a driver is on the removal list: {}", f);
+        }
+        assert!(!targets[0].files.is_empty());
+    }
+
+    /// The spooler target empties the print queue and does not remove the spool folder,
+    /// which also holds the color profiles.
+    #[test]
+    fn test_spooler_target_does_not_remove_the_spool_folder() {
+        let mut experimental = std::collections::HashMap::new();
+        experimental.insert("physical_spooler".to_string(), true);
+        let config = DebloatConfig {
+            dry_run: true,
+            mount_path: "C:\\nonexistent-mount".to_string(),
+            log_path: String::new(),
+            confirm_offline_image: false,
+            experimental,
+            primary_ime_lang: None,
+        };
+        let targets = get_targets(&config);
+        assert_eq!(targets.len(), 1);
+        assert!(
+            !targets[0]
+                .dirs
+                .iter()
+                .any(|d| d.eq_ignore_ascii_case("Windows\\System32\\spool")),
+            "the whole spool folder is on the removal list"
+        );
+        assert!(targets[0]
+            .dir_contents
+            .iter()
+            .any(|d| d.ends_with("spool\\PRINTERS")));
+    }
+
+    #[test]
+    fn test_zero_match_warning() {
+        assert!(zero_match_warning("Edge", 0, 0).is_some());
+        assert!(zero_match_warning("Edge", 2, 0).is_none());
+        assert!(zero_match_warning("Edge", 0, 1).is_none());
+    }
+
+    /// A folder that cannot be listed is reported, not treated as empty.
+    #[test]
+    fn test_unlistable_directory_content_is_an_error() {
+        let dir = test_temp_dir("unlistable");
+        let file = dir.join("a-file.txt");
+        fs::write(&file, b"x").unwrap();
+        let gone = dir.join("gone");
+        let outcome = delete_directory_contents(&gone.to_string_lossy(), true);
+        // A folder that does not exist is a skip, not an error.
+        assert!(outcome.errors.is_empty());
+        let outcome = delete_directory_contents(&file.to_string_lossy(), true);
+        assert!(!outcome.errors.is_empty(), "a file was accepted as a directory");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A junction between the mount root and the target must be refused, because the
+    /// deletion would follow it out of the image.
+    #[test]
+    fn test_target_path_through_a_junction_is_rejected() {
+        use std::os::windows::process::CommandExt;
+        let root = test_temp_dir("ancestor");
+        let outside = root.join("outside");
+        let mount = root.join("mount");
+        fs::create_dir_all(&outside).unwrap();
+        fs::create_dir_all(mount.join("Windows")).unwrap();
+        let junction = mount.join("Windows").join("System32");
+        let rc = std::process::Command::new("cmd")
+            .args([
+                "/C",
+                &format!(
+                    "mklink /J \"{}\" \"{}\"",
+                    junction.display(),
+                    outside.display()
+                ),
+            ])
+            .creation_flags(0x08000000)
+            .output();
+        if rc.is_ok() && junction.exists() {
+            assert!(
+                validate_target_path(&mount, "Windows\\System32\\spoolsv.exe").is_err(),
+                "a path through a junction was accepted"
+            );
+            assert!(validate_target_path(&mount, "Windows\\Temp").is_ok());
+        }
+        if junction.exists() {
+            let _ = remove_junction(&junction);
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn remove_junction(p: &Path) -> std::io::Result<()> {
+        // remove_dir removes the junction itself and never its target.
+        fs::remove_dir(p)
     }
 
     /// A unique directory for a test. The name contains the process id and the name of
