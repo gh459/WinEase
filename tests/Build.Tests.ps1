@@ -58,6 +58,13 @@ Describe "WinEase builder - AST syntax" {
             $content | Should Match 'Start-Process\s+powershell\.exe\s+-ArgumentList\s+\$migratorArgLine'
         }
     }
+    It "scripts\tools\WinEase Control Center.bat avoids %~f0 command injection when elevating" {
+        $batPath = Join-Path $script:RepoRoot "scripts\tools\WinEase Control Center.bat"
+        $content = [System.IO.File]::ReadAllText($batPath, [System.Text.Encoding]::UTF8)
+        $content | Should Not Match 'Start-Process.*%~f0'
+        $content | Should Match 'set "SELF_PATH=%~f0"'
+        $content | Should Match '\$env:SELF_PATH'
+    }
 }
 
 Describe "WinEase builder - autounattend.xml" {
