@@ -1874,10 +1874,11 @@ public sealed partial class MainWindow : Window
 
     private void ShowIssues()
     {
+        var issuesByField = _issues.ToLookup(i => i.Field == "OutputDir" ? "WorkDir" : i.Field, StringComparer.Ordinal);
         foreach (var kv in _fieldMsgs)
         {
-            var mine = _issues.Where(i => i.Field == kv.Key || (kv.Key == "WorkDir" && i.Field == "OutputDir")).ToList();
-            if (mine.Count == 0)
+            var mine = issuesByField[kv.Key];
+            if (!mine.Any())
             {
                 kv.Value.Text = "";
                 kv.Value.Visibility = Visibility.Collapsed;
