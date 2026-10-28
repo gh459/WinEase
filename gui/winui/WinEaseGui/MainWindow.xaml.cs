@@ -79,6 +79,9 @@ public sealed partial class MainWindow : Window
     private string _page = "media";
     private bool _busy;
     private bool _resultSent;
+    // True while the Start confirmations run. The dialogs do not set _busy, so a second click (or the
+    // keyboard accelerator) could otherwise start a second confirmation flow and send two results.
+    private bool _starting;
     // Build progress / cancel (D2): the builder advertises cancel support in its 'hello' event; nothing is assumed.
     private bool _progressActive, _buildFinished, _cancelSupported, _cancelRequested, _allowClose, _closeDialogOpen;
     private string _cancelRequestPath = "";
@@ -1466,7 +1469,25 @@ public sealed partial class MainWindow : Window
         if (_migRules == null)
         {
             host.Children.Add(new ProgressRing { IsActive = true, Width = 20, Height = 20, HorizontalAlignment = HorizontalAlignment.Left });
-            var r = await _bridge.RequestAsync("migrationRules", _s.Language);
+            JsonObject r;
+            try
+            {
+                r = await _bridge.RequestAsync("migrationRules", _s.Language);
+            }
+            catch (Exception ex)
+            {
+                App.LogError(ex);
+                host.Children.Clear();
+                host.Children.Add(new TextBlock { Text = "\u26A0 " + _s.Format("Msg.Error", ex.Message), Foreground = Res("SystemFillColorCautionBrush"), TextWrapping = TextWrapping.Wrap });
+                return;
+            }
+            if (!InitData.Bool(r["ok"]))
+            {
+                // Not cached: the next visit tries again instead of showing "no rules" for good
+                host.Children.Clear();
+                host.Children.Add(new TextBlock { Text = "\u26A0 " + _s.Format("Msg.Error", InitData.Str(r["Text"])), Foreground = Res("SystemFillColorCautionBrush"), TextWrapping = TextWrapping.Wrap });
+                return;
+            }
             ruleErrors = InitData.StrList(r["Errors"]);
             var list = new List<(string, string)>();
             foreach (var n in InitData.Arr(r["Data"]))
@@ -1600,7 +1621,16 @@ public sealed partial class MainWindow : Window
     // The scripts of the selected stage (the engine runs in the builder process)
     private async Task LoadCustomScriptsAsync(StackPanel host)
     {
-        var r = await _bridge.RequestAsync("customScripts", _s.Language, new JsonObject { ["Stage"] = _csStage });
+        string requestedStage = _csStage;
+        var r = await _bridge.RequestAsync("customScripts", _s.Language, new JsonObject { ["Stage"] = requestedStage });
+        // The stage was switched while the request ran: this reply belongs to the old stage
+        if (requestedStage != _csStage) return;
+        if (!InitData.Bool(r["ok"]))
+        {
+            host.Children.Clear();
+            host.Children.Add(new TextBlock { Text = "\u26A0 " + _s.Format("Msg.Error", InitData.Str(r["Text"])), Foreground = Res("SystemFillColorCautionBrush"), TextWrapping = TextWrapping.Wrap });
+            return;
+        }
         _csScripts.Clear();
         foreach (var n in InitData.Arr(r["Data"]))
         {
@@ -1943,6 +1973,25 @@ public sealed partial class MainWindow : Window
     // =======================================================================================================
     private async void StartButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_busy || _starting || _resultSent) return;
+        _starting = true;
+        try
+        {
+            await StartBuildFlowAsync();
+        }
+        catch (Exception ex)
+        {
+            App.LogError(ex);
+            await MessageAsync(_s.Get("Val.Title"), _s.Format("Msg.Error", ex.Message), "Error");
+        }
+        finally
+        {
+            _starting = false;
+        }
+    }
+
+    private async Task StartBuildFlowAsync()
+    {
         if (_busy) return;
         // Same input check as Complete-WinEaseGuiResult, the session bridge and the builder (PowerShell: Test-WinEaseBuildInputs).
         // An Error blocks Start and is shown under its control; never fail open when the check cannot run.
@@ -2169,7 +2218,19 @@ public sealed partial class MainWindow : Window
     {
         if (_resultSent) return;
         _resultSent = true;
-        await _bridge.SendResultAsync(_s.Language, result);
+        try
+        {
+            await _bridge.SendResultAsync(_s.Language, result);
+        }
+        catch (Exception ex)
+        {
+            // The builder never got the result: the window must stay usable and say so, not stay
+            // locked in a "sent" state with nothing started.
+            _resultSent = false;
+            App.LogError(ex);
+            await MessageAsync(_s.Get("Val.Title"), _s.Format("Msg.Error", ex.Message), "Error");
+            return;
+        }
         // A real build keeps the window open and shows its progress; cancel and dry run close as before
         if (_bridge.IsConnected && InitData.Bool(result["Success"]) && !InitData.Bool(result["DryRun"]))
         {
@@ -2589,7 +2650,8 @@ public sealed partial class MainWindow : Window
                         failed = true;
                         failKey = InitData.Str(m["MessageKey"]);
                         if (failSummary.Length == 0) failSummary = InitData.Str(m["Summary"]);
-                        if (diagPath.Length == 0) diagPath = InitData.Str(m["Message"]);
+                        // "Message" is text, never a path: it used to be assigned to diagPath
+                        if (failSummary.Length == 0) failSummary = InitData.Str(m["Message"]);
                     }
                     break;
             }
@@ -2602,11 +2664,26 @@ public sealed partial class MainWindow : Window
 
         // Events are read asynchronously and the continuation runs on the UI thread; the guard keeps every
         // control update on the dispatcher even if that ever changes, and nothing here waits on the builder.
-        await _bridge.ListenProgressAsync(m =>
+        try
         {
-            if (DispatcherQueue.HasThreadAccess) Handle(m);
-            else DispatcherQueue.TryEnqueue(() => Handle(m));
-        });
+            await _bridge.ListenProgressAsync(m =>
+            {
+                // One bad event must not end the listening and leave the window stuck on "running"
+                void Safe()
+                {
+                    try { Handle(m); }
+                    catch (Exception ex) { App.LogError(ex); }
+                }
+                if (DispatcherQueue.HasThreadAccess) Safe();
+                else DispatcherQueue.TryEnqueue(Safe);
+            });
+        }
+        catch (Exception ex)
+        {
+            // The pipe broke: fall through to the cleanup below, which shows the generic failure
+            App.LogError(ex);
+            AddLogLine(ex.Message);
+        }
 
         // The builder closed the pipe: finished (or ended abnormally). A build that never sent
         // 'done' is a failure, not a success: show the generic failure panel and keep the log reachable.
@@ -2765,6 +2842,11 @@ public sealed partial class MainWindow : Window
                 output.Text = "...";
                 var r = await _bridge.RequestAsync("presetDiff", _s.Language, args);
                 output.Text = InitData.Str(r["Text"]);
+            }
+            catch (Exception ex)
+            {
+                App.LogError(ex);
+                output.Text = _s.Format("Msg.Error", ex.Message);
             }
             finally
             {
