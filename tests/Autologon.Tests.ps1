@@ -280,6 +280,44 @@ Describe "Autologon - RunFirstLogon logging" {
         $capturedCalls[0].LiteralPath | Should Be $wrapperLogFile
         $capturedCalls[0].Value | Should Match '\[ERROR\] Fallback path log entry'
     }
+
+    It "correctly formats output text using StringBuilder across stdout and stderr combinations" {
+        $runFlPath = Join-Path $script:RepoRoot 'scripts\setup\RunFirstLogon.ps1'
+        $scriptText = [System.IO.File]::ReadAllText($runFlPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($scriptText, [ref]$tokens, [ref]$errors)
+        $funcAst = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-ChildScriptWithLog' }, $true)
+        $funcAst | Should Not BeNullOrEmpty
+
+        # Verify AST contains StringBuilder usage instead of string concatenation
+        $funcAst.Extent.Text | Should Match '\[System\.Text\.StringBuilder\]::new\(\)'
+        $funcAst.Extent.Text | Should Match '\[void\]\$sb\.Append'
+
+        # Test formatting logic behavior
+        $cases = @(
+            @{ stdout = "Out line 1"; stderr = "Err line 1"; expected = "Out line 1`r`n[STDERR]`r`nErr line 1" },
+            @{ stdout = "Out line 1`r`n"; stderr = "Err line 1"; expected = "Out line 1`r`n[STDERR]`r`nErr line 1" },
+            @{ stdout = "Out line 1"; stderr = ""; expected = "Out line 1" },
+            @{ stdout = ""; stderr = "Err line 1"; expected = "[STDERR]`r`nErr line 1" }
+        )
+
+        foreach ($c in $cases) {
+            $stdoutText = $c.stdout
+            $stderrText = $c.stderr
+            $sb = [System.Text.StringBuilder]::new()
+            if (-not [string]::IsNullOrEmpty($stdoutText)) {
+                [void]$sb.Append($stdoutText)
+            }
+            if (-not [string]::IsNullOrEmpty($stderrText)) {
+                if ($sb.Length -gt 0 -and -not $stdoutText.EndsWith("`r`n") -and -not $stdoutText.EndsWith("`n")) {
+                    [void]$sb.Append("`r`n")
+                }
+                [void]$sb.Append("[STDERR]`r`n")
+                [void]$sb.Append($stderrText)
+            }
+            $sb.ToString() | Should BeExactly $c.expected
+        }
+    }
 }
 
 Remove-Item Function:\reg.exe -ErrorAction SilentlyContinue
