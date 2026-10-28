@@ -251,6 +251,7 @@
   "Mig.Button.Verify": "バックアップの整合性を検証",
   "Mig.Button.Wizard": "移行ウィザードを開く",
   "Mig.Check.ExcludeSecrets": "資格情報・トークンを除外する (推奨)",
+  "Mig.Check.StopProcess": "復元前に実行中のアプリを終了する",
   "Mig.Custom.BackupDone": "指定したパスのバックアップが完了しました。\nコピー: {0} ファイル\n失敗: {1}",
   "Mig.Custom.BackupStatus": "指定パスのバックアップ: {0} ファイル",
   "Mig.Custom.NoPaths": "パスが指定されていません。",

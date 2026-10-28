@@ -1631,6 +1631,7 @@ function New-WinEaseMigrationActionsGroup {
             $allowed = @(($g.CustomPaths.Text -split "`n").ForEach({ $_.Trim() }).Where({ $_ }))
             if ($allowed.Count -gt 0) { $ra['AllowedCustomPaths'] = $allowed }
             if ($retry) { $ra['RetryFailedOnly'] = $true }
+            foreach ($extra in (Get-WinEaseGuiRestoreExtraArgs -Gui $g).GetEnumerator()) { $ra[$extra.Key] = $extra.Value }
             $o = Invoke-WinEaseGuiMigrationJob -Button $btn -Form $f -RepoRoot $script:WinEaseGuiRepoRoot -Arguments $ra -Script 'param($a) Start-WinEaseMigrationRestore @a'
             $msg = Get-WinEaseUiString 'Mig.Restore.Done'
             if ($o.Result -and $o.Result.Results) { $msg += "`n" + ($o.Result.Results | ForEach-Object { "$($_.TaskId): $($_.Status)" } | Out-String) }
@@ -1791,6 +1792,7 @@ function New-WinEaseMigrationTab {
     [void](New-WinEaseLabel -Text (Get-WinEaseUiString 'Mig.Label.ConflictPolicy') -X 15 -Y 80 -Width 220 -Height 20 -Parent $grpTop)
     $cmbConflict = New-WinEaseComboBox -Items @('BackupExisting', 'Skip', 'OverwriteIfNewer', 'Overwrite') -SelectedIndex 0 -DropList -X 240 -Y 78 -Width 200 -Parent $grpTop
     $gui.MigConflict = $cmbConflict
+    $gui.MigStopProcess = New-WinEaseCheckBox -Text (Get-WinEaseUiString 'Mig.Check.StopProcess') -X 450 -Y 78 -Width 380 -Height 24 -Checked $false -Parent $grpTop
 
     # Left: personal data folders + migration rules
     $grpRules = New-WinEaseGroupBox -Text (Get-WinEaseUiString 'Mig.Group.Rules') -Width 410 -Height 420 -Parent $flowMig

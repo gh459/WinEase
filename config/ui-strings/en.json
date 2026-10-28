@@ -157,6 +157,7 @@
   "Mig.Button.Verify": "Verify Backup Integrity",
   "Mig.Button.Wizard": "Open Migration Wizard",
   "Mig.Check.ExcludeSecrets": "Exclude credentials/tokens (Recommended)",
+  "Mig.Check.StopProcess": "Close running apps before restoring",
   "Mig.Custom.BackupDone": "Custom paths backup completed.\nCopied: {0} files.\nFailed: {1}",
   "Mig.Custom.BackupStatus": "Custom backup: {0} files.",
   "Mig.Custom.NoPaths": "No paths specified.",

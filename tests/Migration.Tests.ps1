@@ -738,11 +738,11 @@ Describe "Invoke-WinEaseMigrationRulesRestore" -Tags 'slow' {
         $bk = Join-Path $TestDrive 'bk-reg-fail'
         $ruleDir = Join-Path $bk 'rules\RegFailRule'
         New-Item -ItemType Directory -Force -Path $ruleDir | Out-Null
-        Set-Content -LiteralPath (Join-Path $ruleDir 'test.reg') -Value 'Windows Registry Editor Version 5.00'
+        Set-Content -LiteralPath (Join-Path $ruleDir 'test.reg') -Value @('Windows Registry Editor Version 5.00', '', '[HKEY_CURRENT_USER\Software\WinEaseTest]')
 
         $customRules = [PSCustomObject]@{
             GameRules      = @()
-            AppConfigRules = @(@{ Id = 'RegFailRule'; Name = 'Reg Fail Rule'; SourcePaths = @() })
+            AppConfigRules = @(@{ Id = 'RegFailRule'; Name = 'Reg Fail Rule'; SourcePaths = @(); RegistryPaths = @('HKCU:\Software\WinEaseTest') })
             CustomPathRules= @()
             SecretPatterns = @(); Errors = @()
         }
@@ -1483,5 +1483,85 @@ Describe "WinEase removal and migration wiring" {
             $env:USERPROFILE = $oldProfile
             Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+}
+
+Describe "Migration audit hardening (exclusions, junctions, known folders, registry, ACL)" {
+    It "Test-WinEaseMigrationExcluded matches cache folders, lock files and journals" {
+        $pats = @((Get-WinEaseMigrationRules).DefaultExcludePatterns)
+        $pats.Count | Should BeGreaterThan 0
+        Test-WinEaseMigrationExcluded -RelativePath 'Default\Cache\f_000001' -Patterns $pats | Should Be $true
+        Test-WinEaseMigrationExcluded -RelativePath 'a\GPUCache\data_0' -Patterns $pats | Should Be $true
+        Test-WinEaseMigrationExcluded -RelativePath 'a\LOCK' -Patterns $pats | Should Be $true
+        Test-WinEaseMigrationExcluded -RelativePath 'places.sqlite-wal' -Patterns @('*.sqlite-wal') | Should Be $true
+        Test-WinEaseMigrationExcluded -RelativePath 'x\History.db-wal' -Patterns $pats | Should Be $true
+        Test-WinEaseMigrationExcluded -RelativePath 'x\settings.json' -Patterns $pats | Should Be $false
+        Test-WinEaseMigrationExcluded -RelativePath 'workspaceStorage\abc\x.json' -Patterns @('workspaceStorage') | Should Be $true
+    }
+    It "Get-WinEaseMigrationFiles never enters a junction and prunes excluded folders" {
+        $root = Join-Path $TestDrive 'enum'
+        $real = Join-Path $root 'real'
+        New-Item -ItemType Directory -Force -Path $real, (Join-Path $root 'Cache') | Out-Null
+        Set-Content -LiteralPath (Join-Path $real 'a.txt') -Value 'a'
+        Set-Content -LiteralPath (Join-Path $root 'Cache\c.bin') -Value 'c'
+        $link = Join-Path $root 'link'
+        cmd /c mklink /J "$link" "$real" | Out-Null
+        $names = @(Get-WinEaseMigrationFiles -Path $root -ExcludePatterns @('*\Cache\*') | ForEach-Object { $_.FullName.Substring($root.Length + 1) })
+        ($names -contains 'real\a.txt') | Should Be $true
+        ($names -contains 'link\a.txt') | Should Be $false
+        ($names -contains 'Cache\c.bin') | Should Be $false
+    }
+    It "Rule backup drops caches and locks and records a hash" {
+        $src = Join-Path $TestDrive 'ruleapp'
+        New-Item -ItemType Directory -Force -Path (Join-Path $src 'Cache') | Out-Null
+        Set-Content -LiteralPath (Join-Path $src 'keep.json') -Value '{}'
+        Set-Content -LiteralPath (Join-Path $src 'Cache\big.bin') -Value 'x'
+        Set-Content -LiteralPath (Join-Path $src 'db.sqlite-wal') -Value 'w'
+        $rules = [PSCustomObject]@{
+            GameRules = @(); CustomPathRules = @(); SecretPatterns = @(); Errors = @()
+            DefaultExcludePatterns = @('*\Cache\*', '*.db-wal', '*.sqlite-wal')
+            AppConfigRules = @(@{ Id = 'AuditApp'; Name = 'Audit'; SourcePaths = @($src); ExcludePatterns = @(); ProcessNames = @() })
+        }
+        $bk = Join-Path $TestDrive 'bk-audit'
+        $r = Invoke-WinEaseMigrationRulesBackup -RuleIds @('AuditApp') -BackupRoot $bk -Rules $rules
+        $r.CopiedFiles | Should Be 1
+        Test-Path -LiteralPath (Join-Path $bk 'rules\AuditApp\keep.json') | Should Be $true
+        Test-Path -LiteralPath (Join-Path $bk 'rules\AuditApp\Cache') | Should Be $false
+        $m = Get-Content -LiteralPath (Join-Path $bk 'rules\AuditApp\rule-manifest.json') -Raw | ConvertFrom-Json
+        @($m.Entries)[0].Sha256 | Should Match '^[0-9A-F]{64}$'
+    }
+    It "Credential store paths are treated as secrets" {
+        $pats = @((Get-WinEaseMigrationRules).SecretPatterns)
+        Test-WinEaseSecretPath -FilePath 'C:\Users\u\AppData\Roaming\Microsoft\Protect\S-1-5\key' -SecretPatterns $pats | Should Be $true
+        Test-WinEaseSecretPath -FilePath 'C:\Users\u\AppData\Local\Microsoft\Credentials\ABC' -SecretPatterns $pats | Should Be $true
+    }
+    It "Expand-WinEaseMigrationPath resolves %MYDOCUMENTS% through the shell folder API" {
+        $p = Expand-WinEaseMigrationPath -RawPath '%MYDOCUMENTS%\My Games'
+        $p | Should Be (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'My Games')
+    }
+    It "Test-WinEaseRegFileWithinKeys accepts only the declared HKCU keys" {
+        $ok = Join-Path $TestDrive 'ok.reg'
+        $bad = Join-Path $TestDrive 'bad.reg'
+        $del = Join-Path $TestDrive 'del.reg'
+        Set-Content -LiteralPath $ok -Value @('Windows Registry Editor Version 5.00', '[HKEY_CURRENT_USER\Software\7-Zip]', '[HKEY_CURRENT_USER\Software\7-Zip\FM]')
+        Set-Content -LiteralPath $bad -Value @('Windows Registry Editor Version 5.00', '[HKEY_LOCAL_MACHINE\SOFTWARE\Evil]')
+        Set-Content -LiteralPath $del -Value @('Windows Registry Editor Version 5.00', '[-HKEY_CURRENT_USER\Software\7-Zip]')
+        Test-WinEaseRegFileWithinKeys -Path $ok -AllowedKeys @('HKCU:\Software\7-Zip') | Should Be $true
+        Test-WinEaseRegFileWithinKeys -Path $bad -AllowedKeys @('HKCU:\Software\7-Zip') | Should Be $false
+        Test-WinEaseRegFileWithinKeys -Path $del -AllowedKeys @('HKCU:\Software\7-Zip') | Should Be $false
+        Test-WinEaseRegFileWithinKeys -Path $ok -AllowedKeys @() | Should Be $false
+    }
+    It "Protect-WinEaseRestoredSecretFile strips inherited access from .ssh private keys only" {
+        $ssh = Join-Path $TestDrive '.ssh'
+        New-Item -ItemType Directory -Force -Path $ssh | Out-Null
+        $key = Join-Path $ssh 'id_ed25519'
+        $pub = Join-Path $ssh 'id_ed25519.pub'
+        Set-Content -LiteralPath $key -Value 'k'
+        Set-Content -LiteralPath $pub -Value 'p'
+        Protect-WinEaseRestoredSecretFile -Path $key | Should Be $true
+        Protect-WinEaseRestoredSecretFile -Path $pub | Should Be $false
+        $acl = Get-Acl -LiteralPath $key
+        $acl.AreAccessRulesProtected | Should Be $true
+        @($acl.Access | Where-Object { $_.IdentityReference.Value -match 'Users$|Authenticated Users|Everyone' }).Count | Should Be 0
     }
 }
