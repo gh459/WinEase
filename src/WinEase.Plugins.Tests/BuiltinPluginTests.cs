@@ -344,4 +344,21 @@ namespace WinEase.Plugins.Tests
             Assert.Throws<ArgumentException>(delegate { host.WriteImageFile(ImageFileRoot.SetupTools, "..\\x.bat", new byte[0]); });
         }
     }
+
+    public class PluginAssemblyResolverTests
+    {
+        [Fact]
+        public void InstallThrowsOnNullContractAssembly()
+        {
+            Assert.Throws<ArgumentNullException>(() => PluginAssemblyResolver.Install(null));
+        }
+
+        [Fact]
+        public void InstallWithContractAssemblySucceedsAndIsIdempotent()
+        {
+            var assembly = typeof(PluginAssemblyResolver).Assembly;
+            PluginAssemblyResolver.Install(assembly);
+            PluginAssemblyResolver.Install(assembly);
+        }
+    }
 }

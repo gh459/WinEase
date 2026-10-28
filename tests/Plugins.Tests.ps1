@@ -22,6 +22,11 @@ Describe "Plugin host" {
     function New-TestAbstractions {
         param([string]$Path, [string]$Version = '1.0.0.0')
         $srcDir = Join-Path -Path $script:RepoRoot -ChildPath 'src\WinEase.Plugins.Abstractions'
+        $prebuilt = Join-Path -Path $srcDir -ChildPath 'bin\Debug\netstandard2.0\WinEase.Plugins.Abstractions.dll'
+        if ($Version -eq '1.0.0.0' -and (Test-Path -LiteralPath $prebuilt)) {
+            Copy-Item -LiteralPath $prebuilt -Destination $Path
+            return $Path
+        }
         $sources = @(Get-ChildItem -LiteralPath $srcDir -Filter '*.cs' -File | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) })
         $sources += "[assembly: System.Reflection.AssemblyVersion(`"$Version`")]"
         [void](New-WinEaseCSharpAssembly -Source $sources -OutputPath $Path)
@@ -419,6 +424,37 @@ namespace @@NS@@ {
             $html | Should Match 'Evil&lt;b&gt;'
             $html | Should Not Match 'Evil<b>'
             $html | Should Match 'SHA256 mismatch'
+        }
+    }
+
+    Context "Assembly resolver" {
+        It "registers the assembly resolver handler for the contract assembly" {
+            $absPath = Join-Path -Path $script:RepoRoot -ChildPath 'src\WinEase.Plugins.Abstractions\bin\Debug\netstandard2.0\WinEase.Plugins.Abstractions.dll'
+            if (-not (Test-Path -LiteralPath $absPath)) {
+                $absPath = $script:AbstractionsDll
+            }
+            $abs = Get-WinEasePluginAbstractions -AbstractionsPath $absPath
+            { Register-WinEasePluginAssemblyResolver -Abstractions $abs } | Should Not Throw
+        }
+
+        It "is idempotent when called multiple times for the contract assembly" {
+            $absPath = Join-Path -Path $script:RepoRoot -ChildPath 'src\WinEase.Plugins.Abstractions\bin\Debug\netstandard2.0\WinEase.Plugins.Abstractions.dll'
+            if (-not (Test-Path -LiteralPath $absPath)) {
+                $absPath = $script:AbstractionsDll
+            }
+            $abs = Get-WinEasePluginAbstractions -AbstractionsPath $absPath
+            {
+                Register-WinEasePluginAssemblyResolver -Abstractions $abs
+                Register-WinEasePluginAssemblyResolver -Abstractions $abs
+            } | Should Not Throw
+        }
+
+        It "throws when called with an assembly that does not contain PluginAssemblyResolver" {
+            { Register-WinEasePluginAssemblyResolver -Abstractions ([string].Assembly) } | Should Throw
+        }
+
+        It "throws when called with null argument for Abstractions" {
+            { Register-WinEasePluginAssemblyResolver -Abstractions $null } | Should Throw
         }
     }
 
