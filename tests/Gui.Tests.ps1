@@ -2261,7 +2261,7 @@ Describe "GUI core (lib\WinEaseGuiCore.ps1)" {
 
     It "Open-WinEaseFileSafe returns false for a non-existent file" {
         . (Join-Path -Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')
-        $nonExistent = Join-Path -Path $env:TEMP -ChildPath "non_existent_file_$([guid]::NewGuid().ToString('N')).txt"
+        $nonExistent = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "non_existent_file_$([guid]::NewGuid().ToString('N')).txt"
         Open-WinEaseFileSafe -Path $nonExistent | Should Be $false
     }
 
@@ -2303,6 +2303,33 @@ Describe "GUI core (lib\WinEaseGuiCore.ps1)" {
             Assert-MockCalled Start-Process -Scope It
         } finally {
             if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "Invoke-WinEaseGuiDoEvents runs safely when System.Windows.Forms.Application is not loaded" {
+        . (Join-Path -Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')
+        { Invoke-WinEaseGuiDoEvents } | Should Not Throw
+    }
+
+    It "Invoke-WinEaseGuiDoEvents invokes DoEvents when System.Windows.Forms.Application type exists" {
+        . (Join-Path -Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')
+        if (-not ('System.Windows.Forms.Application' -as [type])) {
+            Add-Type -TypeDefinition @'
+namespace System.Windows.Forms
+{
+    public class Application
+    {
+        public static int DoEventsCallCount = 0;
+        public static void DoEvents() { DoEventsCallCount++; }
+    }
+}
+'@
+        }
+        $app = 'System.Windows.Forms.Application' -as [type]
+        $startCount = try { $app::DoEventsCallCount } catch { $null }
+        { Invoke-WinEaseGuiDoEvents } | Should Not Throw
+        if ($null -ne $startCount) {
+            $app::DoEventsCallCount | Should Be ($startCount + 1)
         }
     }
 }
