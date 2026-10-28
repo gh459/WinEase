@@ -648,7 +648,8 @@ function Remove-WinEaseCustomScript {
     $full = $Path
     if (-not [System.IO.Path]::IsPathRooted($full)) { $full = Join-Path -Path $RepoRoot -ChildPath $full }
     $full = [System.IO.Path]::GetFullPath($full)
-    $base = [System.IO.Path]::GetFullPath((Join-Path -Path $RepoRoot -ChildPath 'tools\custom-scripts')).TrimEnd([System.IO.Path]::DirectorySeparatorChar, '\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $base = [System.IO.Path]::GetFullPath((Join-Path -Path $RepoRoot -ChildPath 'tools\custom-scripts')).TrimEnd('\', '/', $sep) + $sep
     if (-not ($full.StartsWith($base, [System.StringComparison]::OrdinalIgnoreCase))) {
         throw "Only scripts inside '$base' can be removed."
     }
