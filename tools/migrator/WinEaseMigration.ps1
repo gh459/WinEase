@@ -106,6 +106,27 @@ function Get-WinEaseMigrationRelativePath {
 # '*Cache' excludes a folder of that name), against the whole relative path, and against
 # '\<relative path>' (so '*\Cache\*' and '*\LOCK' work). -IsDirectory tests a folder
 # before it is entered, which prunes whole subtrees.
+function Get-WinEaseMigrationExcludeMatch {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RelativePath,
+        [string[]]$Patterns = @(),
+        [switch]$IsDirectory
+    )
+    $rel = $RelativePath.Trim('\', '/')
+    if (-not $rel) { return $null }
+    $segments = $rel -split '[\\/]'
+    $withLead = '\' + $rel + $(if ($IsDirectory) { '\' } else { '' })
+    foreach ($pat in @($Patterns)) {
+        if ([string]::IsNullOrWhiteSpace($pat)) { continue }
+        foreach ($seg in $segments) { if ($seg -like $pat) { return [string]$pat } }
+        if ($rel -like $pat -or $withLead -like $pat) { return [string]$pat }
+    }
+    return $null
+}
+
 function Test-WinEaseMigrationExcluded {
     [CmdletBinding()]
     [OutputType([bool])]
@@ -115,29 +136,38 @@ function Test-WinEaseMigrationExcluded {
         [string[]]$Patterns = @(),
         [switch]$IsDirectory
     )
-    $rel = $RelativePath.Trim('\', '/')
-    if (-not $rel) { return $false }
-    $segments = $rel -split '[\\/]'
-    $withLead = '\' + $rel + $(if ($IsDirectory) { '\' } else { '' })
-    foreach ($pat in @($Patterns)) {
-        if ([string]::IsNullOrWhiteSpace($pat)) { continue }
-        foreach ($seg in $segments) { if ($seg -like $pat) { return $true } }
-        if ($rel -like $pat -or $withLead -like $pat) { return $true }
-    }
-    return $false
+    return ($null -ne (Get-WinEaseMigrationExcludeMatch -RelativePath $RelativePath -Patterns $Patterns -IsDirectory:$IsDirectory))
+}
+
+# Get-WinEaseMigrationUnsafeFileReason: why a file must not be copied as a plain file
+# (link, Hidden or System attribute), or $null. One definition for the folder walk and for
+# a single file named directly in SourcePaths; FileAttributes works on Windows PowerShell 5.1.
+function Get-WinEaseMigrationUnsafeFileReason {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.IO.FileSystemInfo]$Item
+    )
+    if ($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { return 'symbolic link / reparse point (never followed)' }
+    if ($Item.Attributes -band [System.IO.FileAttributes]::Hidden) { return 'Hidden attribute' }
+    if ($Item.Attributes -band [System.IO.FileAttributes]::System) { return 'System attribute' }
+    return $null
 }
 
 # Get-WinEaseMigrationFiles: files below a folder, without ever descending into a
 # junction/symlink (also on Windows PowerShell 5.1, where EnumerationOptions is missing).
 # Hidden/system files and folders stay out, like Get-ChildItem without -Force. With
-# -ExcludePatterns, excluded folders are not entered at all.
+# -ExcludePatterns, excluded folders are not entered at all. -ExcludedOut collects what the
+# patterns removed (RelativePath, Pattern, IsDirectory) so callers can report it.
 function Get-WinEaseMigrationFiles {
     [CmdletBinding()]
     [OutputType([System.IO.FileInfo[]])]
     param(
         [Parameter(Mandatory = $true)]
         [string]$Path,
-        [string[]]$ExcludePatterns = @()
+        [string[]]$ExcludePatterns = @(),
+        [System.Collections.Generic.List[object]]$ExcludedOut
     )
     $skipAttr = [System.IO.FileAttributes]::Hidden -bor [System.IO.FileAttributes]::System -bor [System.IO.FileAttributes]::ReparsePoint
     $result = [System.Collections.Generic.List[System.IO.FileInfo]]::new()
@@ -150,12 +180,24 @@ function Get-WinEaseMigrationFiles {
             $di = New-Object System.IO.DirectoryInfo($current)
             foreach ($f in $di.GetFiles()) {
                 if ($f.Attributes -band $skipAttr) { continue }
-                if ($ExcludePatterns.Count -gt 0 -and $f.FullName.Length -ge $baseLen -and (Test-WinEaseMigrationExcluded -RelativePath $f.FullName.Substring($baseLen) -Patterns $ExcludePatterns)) { continue }
+                if ($ExcludePatterns.Count -gt 0 -and $f.FullName.Length -ge $baseLen) {
+                    $hit = Get-WinEaseMigrationExcludeMatch -RelativePath $f.FullName.Substring($baseLen) -Patterns $ExcludePatterns
+                    if ($null -ne $hit) {
+                        if ($null -ne $ExcludedOut) { $ExcludedOut.Add([PSCustomObject]@{ RelativePath = $f.FullName.Substring($baseLen); Pattern = $hit; IsDirectory = $false }) }
+                        continue
+                    }
+                }
                 $result.Add($f)
             }
             foreach ($d in $di.GetDirectories()) {
                 if ($d.Attributes -band $skipAttr) { continue }
-                if ($ExcludePatterns.Count -gt 0 -and $d.FullName.Length -ge $baseLen -and (Test-WinEaseMigrationExcluded -RelativePath $d.FullName.Substring($baseLen) -Patterns $ExcludePatterns -IsDirectory)) { continue }
+                if ($ExcludePatterns.Count -gt 0 -and $d.FullName.Length -ge $baseLen) {
+                    $hit = Get-WinEaseMigrationExcludeMatch -RelativePath $d.FullName.Substring($baseLen) -Patterns $ExcludePatterns -IsDirectory
+                    if ($null -ne $hit) {
+                        if ($null -ne $ExcludedOut) { $ExcludedOut.Add([PSCustomObject]@{ RelativePath = $d.FullName.Substring($baseLen); Pattern = $hit; IsDirectory = $true }) }
+                        continue
+                    }
+                }
                 $stack.Push($d.FullName)
             }
         } catch { Write-Verbose "Get-WinEaseMigrationFiles: $($_.Exception.Message)" }
@@ -318,10 +360,6 @@ function Copy-WinEaseMigrationFileWithHash {
     }
 }
 
-# Copy-WinEaseMigrationRestoreFile: restores one backed up file with the conflict policy
-# applied. A file with an expected hash is copied to a temporary neighbour while it is
-# hashed (one read instead of Get-FileHash + Copy-Item), and only moved into place when
-# the hash matches, so a corrupt backup never replaces a good file.
 # The path a replaced file is backed up to. The first backup keeps the name "<file>.WinEase.bak"; a later restore
 # over the same file gets "<file>.WinEase.1.bak", ".2.bak", ... so the backup of the original is never overwritten.
 function Get-WinEaseMigrationBackupPath {
@@ -337,6 +375,10 @@ function Get-WinEaseMigrationBackupPath {
     return $candidate
 }
 
+# Copy-WinEaseMigrationRestoreFile: restores one backed up file with the conflict policy
+# applied. A file with an expected hash is copied to a temporary neighbour while it is
+# hashed (one read instead of Get-FileHash + Copy-Item), and only moved into place when
+# the hash matches, so a corrupt backup never replaces a good file.
 # Returns 'Restored', 'Skipped' or 'HashMismatch'; throws on I/O failure.
 function Copy-WinEaseMigrationRestoreFile {
     [CmdletBinding()]
@@ -977,6 +1019,85 @@ function Invoke-WinEaseRegExe {
     return $true
 }
 
+# Get-WinEaseMigrationPolicy: the safety patterns a rules operation applies. A caller that
+# hands over a rule set without them (hand-built objects, older callers) gets the built-in
+# policy, never "no protection"; an explicitly empty list is kept as the caller's choice.
+function Get-WinEaseMigrationPolicy {
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$Rules
+    )
+    $secret = $Rules.SecretPatterns
+    $excludes = $Rules.DefaultExcludePatterns
+    if ($null -eq $secret -or $null -eq $excludes) {
+        $builtin = Get-WinEaseMigrationRules
+        if ($null -eq $secret) { $secret = $builtin.SecretPatterns }
+        if ($null -eq $excludes) { $excludes = $builtin.DefaultExcludePatterns }
+    }
+    return [PSCustomObject]@{ SecretPatterns = @($secret); DefaultExcludePatterns = @($excludes) }
+}
+
+# Get-WinEaseMigrationRuleSources: the places a rule backs up. Every SourcePaths entry gets
+# a stable id ('source-001' = first entry, numbering includes blank entries so the index is
+# the position in the rule); the backup keeps each source below its own folder so equal
+# relative paths of different sources never collide. A rule with ProfileRoot (browsers) also
+# gets one 'profile-<name>' source per existing profile folder matching ProfilePatterns
+# (default 'Profile *'), for each of ProfileFiles; those are optional (a profile without
+# Bookmarks is normal). The raw spelling is kept so a restore re-expands it on the new machine.
+function Get-WinEaseMigrationRuleSources {
+    [CmdletBinding()]
+    [OutputType([object[]])]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Rule
+    )
+    $list = [System.Collections.Generic.List[object]]::new()
+    $i = 0
+    foreach ($sp in @($Rule.SourcePaths)) {
+        $i++
+        if ([string]::IsNullOrWhiteSpace([string]$sp)) { continue }
+        $list.Add([PSCustomObject]@{ Raw = [string]$sp; Id = ('source-{0:D3}' -f $i); Optional = $false })
+    }
+    if ($Rule.ProfileRoot -and $Rule.ProfileFiles) {
+        $rootRaw = ([string]$Rule.ProfileRoot).TrimEnd('\', '/')
+        $root = Expand-WinEaseMigrationPath -RawPath $rootRaw
+        $patterns = if ($Rule.ProfilePatterns) { @($Rule.ProfilePatterns) } else { @('Profile *') }
+        if (Test-Path -LiteralPath $root -PathType Container) {
+            foreach ($d in @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue | Sort-Object Name)) {
+                if ($d.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { continue }
+                $match = $false
+                foreach ($pat in $patterns) { if ($d.Name -like $pat) { $match = $true; break } }
+                if (-not $match) { continue }
+                foreach ($pf in @($Rule.ProfileFiles)) {
+                    $list.Add([PSCustomObject]@{ Raw = ($rootRaw + '\' + $d.Name + '\' + [string]$pf); Id = ('profile-' + ($d.Name -replace '[^\w.-]', '_')); Optional = $true })
+                }
+            }
+        }
+    }
+    return $list.ToArray()
+}
+
+# Get-WinEaseMigrationOutcome: one success decision for a rules backup result, shared by the
+# CLI, the GUI and the report so they cannot disagree. Success only when nothing failed,
+# no source was missing and no rule was skipped.
+function Get-WinEaseMigrationOutcome {
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$RulesResult
+    )
+    $failed = @($RulesResult.FailedFiles | Where-Object { $_ })
+    $missing = @($RulesResult.MissingSources | Where-Object { $_ })
+    $status = if ($RulesResult.PSObject.Properties['Status']) { [string]$RulesResult.Status } elseif ($failed.Count -eq 0 -and $missing.Count -eq 0) { 'Success' } else { 'Failed' }
+    $parts = @()
+    if ($failed.Count -gt 0) { $parts += ('{0} item(s) failed' -f $failed.Count) }
+    if ($missing.Count -gt 0) { $parts += ('{0} source(s) not found: {1}' -f $missing.Count, (@($missing | ForEach-Object { [string]$_.Path }) -join ', ')) }
+    return [PSCustomObject]@{ Success = ($status -eq 'Success'); Status = $status; FailedCount = $failed.Count; MissingCount = $missing.Count; Message = ($parts -join '; ') }
+}
+
 # 8. Invoke-WinEaseMigrationRulesBackup
 function Invoke-WinEaseMigrationRulesBackup {
     [CmdletBinding()]
@@ -994,8 +1115,9 @@ function Invoke-WinEaseMigrationRulesBackup {
     )
     if (-not $Rules) { $Rules = Get-WinEaseMigrationRules }
     $allRules = @($Rules.GameRules) + @($Rules.AppConfigRules) + @($Rules.CustomPathRules)
-    $secretPatterns = $Rules.SecretPatterns
-    $defaultExcludes = @($Rules.DefaultExcludePatterns)
+    $policy = Get-WinEaseMigrationPolicy -Rules $Rules
+    $secretPatterns = $policy.SecretPatterns
+    $defaultExcludes = @($policy.DefaultExcludePatterns)
     Write-Verbose "ConflictPolicy: $ConflictPolicy"
     $copied = 0
     $skipped = 0
@@ -1005,6 +1127,10 @@ function Invoke-WinEaseMigrationRulesBackup {
     $skipReasons = @()
     $backedUp = @()
     $notices = @()
+    $excludedFiles = [System.Collections.Generic.List[object]]::new()
+    $missingAll = [System.Collections.Generic.List[object]]::new()
+    $duplicates = [System.Collections.Generic.List[object]]::new()
+    $skippedRules = 0
     if (-not (Test-Path -LiteralPath $BackupRoot)) { New-Item -ItemType Directory -Force -Path $BackupRoot | Out-Null }
     foreach ($rid in $RuleIds) {
         $rule = $allRules | Where-Object { $_.Id -eq $rid } | Select-Object -First 1
@@ -1018,6 +1144,7 @@ function Invoke-WinEaseMigrationRulesBackup {
             if ($running.Count -gt 0) {
                 Write-Warning "Rule '$rid' skipped: process(es) running: $($running -join ', ')"
                 $skipped++
+                $skippedRules++
                 $skipReasons += [PSCustomObject]@{ Item = $rid; Reason = "Application running ($($running -join ', ')); close it and retry" }
                 continue
             }
@@ -1033,42 +1160,94 @@ function Invoke-WinEaseMigrationRulesBackup {
         $ruleEntries = @()
         $existingSources = @()
         $missingSources = @()
-        # SourcePaths (files/dirs)
-        if ($rule.SourcePaths) {
-            foreach ($sp in $rule.SourcePaths) {
-                $src = Expand-WinEaseMigrationPath -RawPath $sp
-                if (-not (Test-Path -LiteralPath $src)) { $missingSources += [string]$sp; continue }
-                $existingSources += [string]$sp
-                $item = Get-Item -LiteralPath $src
-                $srcCandidates = Get-WinEaseMigrationBaseCandidates -BasePath $src
-                if ($item.PSIsContainer) {
-                    # Shared blacklist (caches, locks, logs) plus the rule's own patterns; excluded
-                    # folders are pruned, junctions are never entered.
-                    $ruleExcludes = @($defaultExcludes) + @($rule.ExcludePatterns | Where-Object { $_ })
-                    $files = Get-WinEaseMigrationFiles -Path $src -ExcludePatterns $ruleExcludes
-                    foreach ($f in $files) {
-                        $rel = Get-WinEaseMigrationRelativePath -BaseCandidates $srcCandidates -FullName $f.FullName
-                        if (-not $IncludeSecrets -and $rule.ExcludeSecrets -and (Test-WinEaseSecretPath -FilePath $f.FullName -SecretPatterns $secretPatterns)) {
-                            Write-Verbose "Excluded secret: $($f.FullName)"
-                            $skipped++
-                            $secretExcluded++
-                            continue
-                        }
-                        $dest = Join-Path -Path $ruleBackupDir -ChildPath $rel
+        $ruleFailed = 0
+        $seenRel = @{}
+        $ruleExcludes = @($defaultExcludes) + @($rule.ExcludePatterns | Where-Object { $_ })
+        # Secrets stay out unless the caller opted in; the rule's own ExcludeSecrets flag can
+        # no longer switch the protection off (a rule without the flag is protected as well).
+        $protectSecrets = -not $IncludeSecrets
+        # SourcePaths (files/dirs), each below its own source-NNN folder in the backup
+        foreach ($srcDef in @(Get-WinEaseMigrationRuleSources -Rule $rule)) {
+            $sp = $srcDef.Raw
+            $src = Expand-WinEaseMigrationPath -RawPath $sp
+            if (-not (Test-Path -LiteralPath $src)) {
+                if (-not $srcDef.Optional) {
+                    $missingSources += [string]$sp
+                    $missingAll.Add([PSCustomObject]@{ Rule = $rid; Path = [string]$sp; Expanded = $src })
+                }
+                continue
+            }
+            try { $item = Get-Item -LiteralPath $src -Force -ErrorAction Stop } catch {
+                $failed += [PSCustomObject]@{ Rule = $rid; Path = [string]$sp; Error = "Source cannot be read: $($_.Exception.Message)"; Kind = 'SourceUnreadable' }
+                $ruleFailed++
+                continue
+            }
+            $existingSources += [string]$sp
+            $srcCandidates = Get-WinEaseMigrationBaseCandidates -BasePath $src
+            if ($item.PSIsContainer) {
+                # Shared blacklist (caches, locks, logs) plus the rule's own patterns; excluded
+                # folders are pruned, junctions are never entered.
+                $patternHits = [System.Collections.Generic.List[object]]::new()
+                $files = Get-WinEaseMigrationFiles -Path $src -ExcludePatterns $ruleExcludes -ExcludedOut $patternHits
+                foreach ($h in $patternHits) {
+                    $excludedFiles.Add([PSCustomObject]@{ Rule = $rid; Path = (Join-Path -Path $src -ChildPath $h.RelativePath); Kind = 'Pattern'; Reason = "matched exclude pattern '$($h.Pattern)'" })
+                }
+                foreach ($f in $files) {
+                    $rel = Get-WinEaseMigrationRelativePath -BaseCandidates $srcCandidates -FullName $f.FullName
+                    if ($protectSecrets -and (Test-WinEaseSecretPath -FilePath $f.FullName -SecretPatterns $secretPatterns)) {
+                        Write-Verbose "Excluded secret: $($f.FullName)"
+                        $skipped++
+                        $secretExcluded++
+                        $excludedFiles.Add([PSCustomObject]@{ Rule = $rid; Path = $f.FullName; Kind = 'Secret'; Reason = 'secret/credential pattern (use -IncludeSecrets to back it up)' })
+                        continue
+                    }
+                    $backupRel = $srcDef.Id + '\' + $rel
+                    if ($seenRel.ContainsKey($rel.ToLowerInvariant()) -and $seenRel[$rel.ToLowerInvariant()] -ne $srcDef.Id) {
+                        $duplicates.Add([PSCustomObject]@{ Rule = $rid; RelativePath = $rel; Sources = @($seenRel[$rel.ToLowerInvariant()], $srcDef.Id); Note = 'same relative path in several sources; both copies are kept in separate folders' })
+                    } else { $seenRel[$rel.ToLowerInvariant()] = $srcDef.Id }
+                    try {
+                        $dest = Join-Path -Path $ruleBackupDir -ChildPath $backupRel
                         $destDir = Split-Path -Parent $dest
                         if (-not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
                         $fileHash = Copy-WinEaseMigrationFileWithHash -SourcePath $f.FullName -DestPath $dest -SourceTimestamp $f.LastWriteTimeUtc
-                        $ruleEntries += [PSCustomObject]@{ RelativePath = $rel; SourcePath = [string]$sp; Sha256 = $fileHash }
+                        $ruleEntries += [PSCustomObject]@{ RelativePath = $rel; SourceId = $srcDef.Id; SourcePath = [string]$sp; BackupPath = $backupRel; Sha256 = $fileHash }
                         $ruleCopied++
+                    } catch {
+                        $failed += [PSCustomObject]@{ Rule = $rid; Path = $f.FullName; Error = $_.Exception.Message; Kind = 'CopyFailed' }
+                        $ruleFailed++
+                        Write-Verbose "Ignored: $($_.Exception.Message)"
                     }
-                } else {
-                    if (-not $IncludeSecrets -and $rule.ExcludeSecrets -and (Test-WinEaseSecretPath -FilePath $item.FullName -SecretPatterns $secretPatterns)) {
-                        Write-Verbose "Excluded secret: $($item.FullName)"; $skipped++; $secretExcluded++; continue
-                    }
-                    if (Test-WinEaseMigrationExcluded -RelativePath $item.Name -Patterns (@($defaultExcludes) + @($rule.ExcludePatterns | Where-Object { $_ }))) { $skipped++; continue }
-                    $fileHash = Copy-WinEaseMigrationFileWithHash -SourcePath $src -DestPath (Join-Path -Path $ruleBackupDir -ChildPath $item.Name) -SourceTimestamp $item.LastWriteTimeUtc
-                    $ruleEntries += [PSCustomObject]@{ RelativePath = [string]$item.Name; SourcePath = [string]$sp; IsFileSource = $true; Sha256 = $fileHash }
+                }
+            } else {
+                $unsafe = Get-WinEaseMigrationUnsafeFileReason -Item $item
+                if ($unsafe) {
+                    $skipped++
+                    $excludedFiles.Add([PSCustomObject]@{ Rule = $rid; Path = $item.FullName; Kind = 'Attribute'; Reason = "single file skipped: $unsafe" })
+                    continue
+                }
+                if ($protectSecrets -and (Test-WinEaseSecretPath -FilePath $item.FullName -SecretPatterns $secretPatterns)) {
+                    Write-Verbose "Excluded secret: $($item.FullName)"; $skipped++; $secretExcluded++
+                    $excludedFiles.Add([PSCustomObject]@{ Rule = $rid; Path = $item.FullName; Kind = 'Secret'; Reason = 'secret/credential pattern (use -IncludeSecrets to back it up)' })
+                    continue
+                }
+                $hit = Get-WinEaseMigrationExcludeMatch -RelativePath $item.Name -Patterns $ruleExcludes
+                if ($null -ne $hit) {
+                    $skipped++
+                    $excludedFiles.Add([PSCustomObject]@{ Rule = $rid; Path = $item.FullName; Kind = 'Pattern'; Reason = "matched exclude pattern '$hit'" })
+                    continue
+                }
+                $backupRel = $srcDef.Id + '\' + $item.Name
+                try {
+                    $dest = Join-Path -Path $ruleBackupDir -ChildPath $backupRel
+                    $destDir = Split-Path -Parent $dest
+                    if (-not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
+                    $fileHash = Copy-WinEaseMigrationFileWithHash -SourcePath $src -DestPath $dest -SourceTimestamp $item.LastWriteTimeUtc
+                    $ruleEntries += [PSCustomObject]@{ RelativePath = [string]$item.Name; SourceId = $srcDef.Id; SourcePath = [string]$sp; BackupPath = $backupRel; IsFileSource = $true; Sha256 = $fileHash }
                     $ruleCopied++
+                } catch {
+                    $failed += [PSCustomObject]@{ Rule = $rid; Path = $item.FullName; Error = $_.Exception.Message; Kind = 'CopyFailed' }
+                    $ruleFailed++
+                    Write-Verbose "Ignored: $($_.Exception.Message)"
                 }
             }
         }
@@ -1089,12 +1268,14 @@ function Invoke-WinEaseMigrationRulesBackup {
                     $exportOk = Invoke-WinEaseRegExe -ArgumentList @('export', $regKey, $regFileArg, '/y')
                     if (-not $exportOk -or -not (Test-Path -LiteralPath $regFile)) {
                         $failed += [PSCustomObject]@{ Rule = $rid; Path = [string]$rp; Error = "Registry export failed for '$regKey' (reg.exe exit code $($LASTEXITCODE))" }
+                        $ruleFailed++
                     } else {
                         $ruleEntries += [PSCustomObject]@{ RelativePath = ($regName + '.reg'); SourcePath = '' }
                         $ruleRegistry++
                     }
                 } catch {
                     $failed += [PSCustomObject]@{ Rule = $rid; Path = [string]$rp; Error = "Registry export failed for '$regKey': $($_.Exception.Message)" }
+                    $ruleFailed++
                 }
             }
         }
@@ -1111,12 +1292,18 @@ function Invoke-WinEaseMigrationRulesBackup {
         $copied += $ruleCopied
         $registryExported += $ruleRegistry
         if ($ruleCopied -gt 0 -or $ruleRegistry -gt 0) {
-            $backedUp += [PSCustomObject]@{ Id = $rid; Name = $rule.Name; FileCount = $ruleCopied; RegistryCount = $ruleRegistry }
+            $ruleStatus = if ($ruleFailed -gt 0 -or $missingSources.Count -gt 0) { 'PartialSuccess' } else { 'Success' }
+            $backedUp += [PSCustomObject]@{ Id = $rid; Name = $rule.Name; FileCount = $ruleCopied; RegistryCount = $ruleRegistry; Status = $ruleStatus; MissingSources = @($missingSources); FailedCount = $ruleFailed }
+            if ($missingSources.Count -gt 0) {
+                $skipReasons += [PSCustomObject]@{ Item = $rid; Reason = "Source not found (rule backed up partially): $($missingSources -join ', ')" }
+            }
             # The rule manifest tells the restore where every file came from (SourcePath
             # keeps the raw pattern so the new machine re-expands it with its own profile).
             try {
                 $ruleManifest = [PSCustomObject]@{
                     Id            = $rid
+                    FormatVersion = 2
+                    IncludeSecrets = [bool]$IncludeSecrets
                     Created       = (Get-Date).ToString('o')
                     SourcePaths   = @($existingSources)
                     RegistryKeys  = @(@($rule.RegistryPaths) | Where-Object { $_ } | ForEach-Object { ([string]$_).Trim() -replace '^([A-Za-z0-9]+):', '$1' })
@@ -1135,7 +1322,13 @@ function Invoke-WinEaseMigrationRulesBackup {
         if ($rule.CloudSaveNotice) { $notices += [PSCustomObject]@{ RuleId = $rid; Name = $rule.Name; Notice = [string]$rule.CloudSaveNotice } }
     }
     if ($secretExcluded -gt 0) { $skipReasons += [PSCustomObject]@{ Item = "$secretExcluded file(s)"; Reason = 'Secret/credential files excluded by default (use -IncludeSecrets to back them up)' } }
-    return [PSCustomObject]@{ CopiedFiles = $copied; RegistryExports = $registryExported; SkippedFiles = $skipped; FailedFiles = $failed; SecretExcludedFiles = $secretExcluded; SkipReasons = $skipReasons; BackedUpRules = $backedUp; CloudSaveNotices = $notices; RuleErrors = @($Rules.Errors) }
+    # Overall state: Success only when nothing failed, no source was missing and no rule was
+    # skipped; PartialSuccess when something was saved next to a problem; Failed when nothing
+    # was saved although something was requested.
+    $problems = ($failed.Count + $missingAll.Count + $skippedRules)
+    $saved = ($copied + $registryExported)
+    $status = if ($problems -eq 0) { 'Success' } elseif ($saved -gt 0) { 'PartialSuccess' } else { 'Failed' }
+    return [PSCustomObject]@{ Success = ($status -eq 'Success'); Status = $status; CopiedFiles = $copied; RegistryExports = $registryExported; SkippedFiles = $skipped; FailedFiles = $failed; MissingSources = @($missingAll); ExcludedFiles = @($excludedFiles); DuplicateFiles = @($duplicates); SecretExcludedFiles = $secretExcluded; SkipReasons = $skipReasons; BackedUpRules = $backedUp; CloudSaveNotices = $notices; RuleErrors = @($Rules.Errors) }
 }
 
 function Invoke-WinEaseMigrationRulesRestore {
@@ -1161,6 +1354,13 @@ function Invoke-WinEaseMigrationRulesRestore {
     $restored = 0
     $skipped = 0
     $failed = @()
+    $excludedFiles = [System.Collections.Generic.List[object]]::new()
+    # The safety policy is applied again here: a backup (or its manifest) is not trusted to
+    # have been filtered when it was written.
+    $policy = Get-WinEaseMigrationPolicy -Rules $Rules
+    $secretPatterns = $policy.SecretPatterns
+    $defaultExcludes = @($policy.DefaultExcludePatterns)
+    $protectSecrets = -not $IncludeSecrets
     foreach ($rid in $RuleIds) {
         $rule = $allRules | Where-Object { $_.Id -eq $rid } | Select-Object -First 1
         $ruleBackupDir = Join-Path -Path $BackupRoot -ChildPath "rules\$rid"
@@ -1171,8 +1371,15 @@ function Invoke-WinEaseMigrationRulesRestore {
         # will never read back (settings are written on exit), so the rule is skipped.
         if (-not $ForceRunningProcess -and $rule.ProcessNames) {
             $running = @()
+            $unknown = @()
             foreach ($pn in $rule.ProcessNames) {
-                if (Get-Process -Name $pn -ErrorAction SilentlyContinue) { $running += $pn }
+                # A failed lookup is not "not running": the state is unknown and the rule waits.
+                try {
+                    if (Get-Process -Name $pn -ErrorAction Stop) { $running += $pn }
+                } catch {
+                    if ($_.FullyQualifiedErrorId -like 'NoProcessFoundForGivenName*') { Write-Verbose "Process '$pn' is not running" }
+                    else { $unknown += $pn; Write-Verbose "Process check failed for '$pn': $($_.Exception.Message)" }
+                }
             }
             if ($running.Count -gt 0 -and $StopRunningProcess) {
                 $running = @(Stop-WinEaseMigrationProcess -Name $running)
@@ -1180,7 +1387,13 @@ function Invoke-WinEaseMigrationRulesRestore {
             if ($running.Count -gt 0) {
                 Write-Warning "Rule '$rid' skipped: process(es) running: $($running -join ', ')"
                 $skipped++
-                $failed += [PSCustomObject]@{ Rule = $rid; Error = "Application running ($($running -join ', ')); close it and retry" }
+                $failed += [PSCustomObject]@{ Rule = $rid; Error = "Application running ($($running -join ', ')); close it and retry"; Kind = 'ApplicationRunning'; Retryable = $true }
+                continue
+            }
+            if ($unknown.Count -gt 0) {
+                Write-Warning "Rule '$rid' skipped: could not determine whether $($unknown -join ', ') is running"
+                $skipped++
+                $failed += [PSCustomObject]@{ Rule = $rid; Error = "Could not determine whether the application is running ($($unknown -join ', ')); close it and retry, or restore with -ForceRunningProcess"; Kind = 'ProcessCheckFailed'; Retryable = $true }
                 continue
             }
         }
@@ -1194,6 +1407,15 @@ function Invoke-WinEaseMigrationRulesRestore {
         # Allowed restore targets: the locations the rule itself declares, expanded on
         # this machine. A manifest entry may only restore inside one of them.
         $allowedRoots = @(@($rule.SourcePaths) | ForEach-Object { Expand-WinEaseMigrationPath -RawPath ([string]$_) } | Where-Object { $_ })
+        # Browser profiles are discovered at backup time ('Profile 1', ...): the new machine
+        # may not have them yet, so the whole profile root is an allowed location.
+        $profileRoot = $null
+        if ($rule.ProfileRoot -and $rule.ProfileFiles) {
+            $profileRoot = Expand-WinEaseMigrationPath -RawPath ([string]$rule.ProfileRoot)
+            $allowedRoots += $profileRoot
+        }
+        $ruleSourceList = @($rule.SourcePaths)
+        $ruleExcludes = @($defaultExcludes) + @($rule.ExcludePatterns | Where-Object { $_ })
 
         # Registry restore: every *.reg file the backup wrote (one per key)
         $regFiles = @(Get-ChildItem -LiteralPath $ruleBackupDir -Filter '*.reg' -File -ErrorAction SilentlyContinue)
@@ -1224,28 +1446,80 @@ function Invoke-WinEaseMigrationRulesRestore {
             foreach ($entry in $manifestEntries) {
                 $rel = [string]$entry.RelativePath
                 if (-not $rel -or $rel -eq 'rule-manifest.json' -or $rel -like '*.reg') { continue }
-                $srcPath = Join-Path -Path $ruleBackupDir -ChildPath $rel
-                if (-not (Test-Path -LiteralPath $srcPath)) { $failed += [PSCustomObject]@{ Rule = $rid; Path = $rel; Error = 'Backup file missing' }; continue }
+                # Format 2 keeps every source in its own folder (BackupPath = source-NNN\<rel>);
+                # older backups store the relative path directly below the rule folder.
+                $backupRel = if ($entry.PSObject.Properties['BackupPath'] -and $entry.BackupPath) { [string]$entry.BackupPath } else { $rel }
+                # The manifest is not trusted. The backup file is located through the same
+                # validation as every other path: relative, no '..', no drive/UNC form, no
+                # link on the way, and inside the rule's backup folder after normalisation.
+                $srcCheck = Resolve-WinEaseSafeRelativePath -RelativePath $backupRel -Root $ruleBackupDir -Label 'backup path'
+                if (-not $srcCheck.IsSafe) {
+                    $failed += [PSCustomObject]@{ Rule = $rid; Path = $backupRel; Error = "Refused: $($srcCheck.Reason)"; Kind = 'PathRejected'; Manifest = $ruleManifestPath }
+                    continue
+                }
+                $srcPath = $srcCheck.Path
+                if (-not (Test-Path -LiteralPath $srcPath -PathType Leaf)) { $failed += [PSCustomObject]@{ Rule = $rid; Path = $rel; Error = 'Backup file missing'; Kind = 'BackupMissing'; Manifest = $ruleManifestPath }; continue }
+                # Which of the rule's sources the file belongs to. A source id names the rule's
+                # own SourcePaths entry, so the restore location comes from the rule on THIS
+                # machine, not from the (possibly foreign or edited) path in the manifest.
+                $rawSource = [string]$entry.SourcePath
+                $sourceId = if ($entry.PSObject.Properties['SourceId']) { [string]$entry.SourceId } else { '' }
+                if ($sourceId -match '^source-(\d+)$') {
+                    $idx = [int]$Matches[1] - 1
+                    if ($idx -ge 0 -and $idx -lt $ruleSourceList.Count -and -not [string]::IsNullOrWhiteSpace([string]$ruleSourceList[$idx])) { $rawSource = [string]$ruleSourceList[$idx] }
+                    else {
+                        $failed += [PSCustomObject]@{ Rule = $rid; Path = $backupRel; Error = "Refused: source id '$sourceId' is not defined by the rule"; Kind = 'PathRejected'; Manifest = $ruleManifestPath }
+                        continue
+                    }
+                } elseif ($sourceId -and $sourceId -notmatch '^profile-[\w.-]+$') {
+                    $failed += [PSCustomObject]@{ Rule = $rid; Path = $backupRel; Error = "Refused: unknown source id '$sourceId'"; Kind = 'PathRejected'; Manifest = $ruleManifestPath }
+                    continue
+                }
                 $destPath = $null
-                if (-not [string]::IsNullOrWhiteSpace([string]$entry.SourcePath) -and $allowedRoots.Count -gt 0) {
+                if (-not [string]::IsNullOrWhiteSpace($rawSource) -and $allowedRoots.Count -gt 0) {
                     # The source pattern is re-expanded here; the target must stay inside
-                    # the rule's declared locations (the manifest is not trusted).
-                    $srcExpanded = Expand-WinEaseMigrationPath -RawPath ([string]$entry.SourcePath)
+                    # the rule's declared locations.
+                    $srcExpanded = Expand-WinEaseMigrationPath -RawPath $rawSource
                     # A rule source can be a single file: the backup copy IS that file, so
                     # the restore target is the source itself, not a child of it.
                     $targetCandidate = $null
+                    $isFileTarget = $false
                     if ($entry.IsFileSource) {
                         $targetCandidate = $srcExpanded
+                        $isFileTarget = $true
                     } else {
                         $srcItem = Get-Item -LiteralPath $srcExpanded -Force -ErrorAction SilentlyContinue
-                        if ($srcItem -and -not $srcItem.PSIsContainer) { $targetCandidate = $srcExpanded }
-                        else { $targetCandidate = Join-Path -Path $srcExpanded -ChildPath $rel }
+                        if ($srcItem -and -not $srcItem.PSIsContainer) { $targetCandidate = $srcExpanded; $isFileTarget = $true }
+                    }
+                    if (-not $isFileTarget) {
+                        # The relative path below the source is validated on its own, so a
+                        # '..' cannot step out of the source into another allowed location.
+                        $relCheck = Resolve-WinEaseSafeRelativePath -RelativePath $rel -Root $srcExpanded -Label 'restore path'
+                        if (-not $relCheck.IsSafe) {
+                            $failed += [PSCustomObject]@{ Rule = $rid; Path = $rel; Error = "Refused: $($relCheck.Reason)"; Kind = 'PathRejected'; Manifest = $ruleManifestPath }
+                            continue
+                        }
+                        $targetCandidate = $relCheck.Path
                     }
                     $target = Resolve-WinEaseRestoreTarget -Path $targetCandidate -AllowedRoots $allowedRoots
                     if ($target.IsSafe) { $destPath = $target.Path }
-                    else { $failed += [PSCustomObject]@{ Rule = $rid; Path = $rel; Error = "Refused: $($target.Reason)" }; continue }
+                    else { $failed += [PSCustomObject]@{ Rule = $rid; Path = $rel; Error = "Refused: $($target.Reason)"; Kind = 'PathRejected'; Manifest = $ruleManifestPath }; continue }
                 } else {
-                    $failed += [PSCustomObject]@{ Rule = $rid; Path = $rel; Error = 'Refused: the rule manifest has no source path or the rule declares no sources' }
+                    $failed += [PSCustomObject]@{ Rule = $rid; Path = $rel; Error = 'Refused: the rule manifest has no source path or the rule declares no sources'; Kind = 'PathRejected'; Manifest = $ruleManifestPath }
+                    continue
+                }
+                # Safety policy again: caches, locks, logs, journals and (without -IncludeSecrets)
+                # secrets are not restored even when the manifest lists them.
+                $relForPolicy = if ($isFileTarget) { [System.IO.Path]::GetFileName($destPath) } else { $rel }
+                $policyHit = Get-WinEaseMigrationExcludeMatch -RelativePath $relForPolicy -Patterns $ruleExcludes
+                if ($null -ne $policyHit) {
+                    $skipped++
+                    $excludedFiles.Add([PSCustomObject]@{ Rule = $rid; Path = $destPath; Kind = 'Pattern'; Reason = "matched exclude pattern '$policyHit'" })
+                    continue
+                }
+                if ($protectSecrets -and (Test-WinEaseSecretPath -FilePath $destPath -SecretPatterns $secretPatterns)) {
+                    $skipped++
+                    $excludedFiles.Add([PSCustomObject]@{ Rule = $rid; Path = $destPath; Kind = 'Secret'; Reason = 'secret/credential pattern (restore with -IncludeSecrets to allow it)' })
                     continue
                 }
                 try {
@@ -1254,11 +1528,16 @@ function Invoke-WinEaseMigrationRulesRestore {
                     $ruleHash = if ($entry.PSObject.Properties['Sha256'] -and $entry.Sha256) { [string]$entry.Sha256 } else { '' }
                     switch (Copy-WinEaseMigrationRestoreFile -SourcePath $srcPath -DestPath $destPath -ConflictPolicy $ConflictPolicy -ExpectedSha256 $ruleHash) {
                         'Skipped' { $skipped++ }
-                        'HashMismatch' { $failed += [PSCustomObject]@{ Rule = $rid; Path = $rel; Error = 'Hash mismatch (corrupt)' } }
+                        'HashMismatch' { $failed += [PSCustomObject]@{ Rule = $rid; Path = $rel; Error = 'Hash mismatch (corrupt)'; Kind = 'HashMismatch'; Retryable = $false } }
                         default { $restored++; [void](Protect-WinEaseRestoredSecretFile -Path $destPath) }
                     }
                 } catch {
-                    $failed += [PSCustomObject]@{ Rule = $rid; Path = $rel; Error = $_.Exception.Message }
+                    # A sharing/lock violation is transient (the application still holds the
+                    # file); anything else is not worth retrying unchanged.
+                    $hr = if ($_.Exception.InnerException) { $_.Exception.InnerException.HResult } else { $_.Exception.HResult }
+                    $code = $hr -band 0xFFFF
+                    $inUse = ($_.Exception -is [System.IO.IOException] -and ($code -eq 32 -or $code -eq 33)) -or ($_.Exception.InnerException -is [System.IO.IOException] -and ($code -eq 32 -or $code -eq 33))
+                    $failed += [PSCustomObject]@{ Rule = $rid; Path = $rel; Error = $_.Exception.Message; Kind = $(if ($inUse) { 'FileInUse' } else { 'IoError' }); Retryable = [bool]$inUse }
                     Write-Verbose "Ignored: $($_.Exception.Message)"
                 }
             }
@@ -1286,6 +1565,18 @@ function Invoke-WinEaseMigrationRulesRestore {
                     }
                 }
                 if (-not $destPath) { return }
+                # same safety policy as for manifest backups
+                $legacyHit = Get-WinEaseMigrationExcludeMatch -RelativePath $rel -Patterns $ruleExcludes
+                if ($null -ne $legacyHit) {
+                    $skipped++
+                    $excludedFiles.Add([PSCustomObject]@{ Rule = $rid; Path = $destPath; Kind = 'Pattern'; Reason = "matched exclude pattern '$legacyHit'" })
+                    return
+                }
+                if ($protectSecrets -and (Test-WinEaseSecretPath -FilePath $destPath -SecretPatterns $secretPatterns)) {
+                    $skipped++
+                    $excludedFiles.Add([PSCustomObject]@{ Rule = $rid; Path = $destPath; Kind = 'Secret'; Reason = 'secret/credential pattern (restore with -IncludeSecrets to allow it)' })
+                    return
+                }
                 try {
                     $destDir = Split-Path -Parent $destPath
                     if (-not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
@@ -1307,7 +1598,10 @@ function Invoke-WinEaseMigrationRulesRestore {
             }
         }
     }
-    return [PSCustomObject]@{ RestoredFiles = $restored; SkippedFiles = $skipped; FailedFiles = $failed }
+    # Success only when everything asked for was restored; PartialSuccess when something was
+    # restored next to a failure or an excluded file; Failed when nothing was restored.
+    $status = if ($failed.Count -eq 0 -and $excludedFiles.Count -eq 0) { 'Success' } elseif ($restored -gt 0) { 'PartialSuccess' } elseif ($failed.Count -gt 0) { 'Failed' } else { 'PartialSuccess' }
+    return [PSCustomObject]@{ Success = ($status -eq 'Success'); Status = $status; RestoredFiles = $restored; SkippedFiles = $skipped; FailedFiles = $failed; ExcludedFiles = @($excludedFiles) }
 }
 
 # 9. Start-WinEaseMigrationBackup & Start-WinEaseMigrationRestore
@@ -1356,13 +1650,12 @@ function Start-WinEaseMigrationBackup {
     }
     # Manifest: Entries stay readable by Restore-WinEaseUserData / Restore-WinEaseCustomPaths;
     # Folders / Rules / CustomPaths tell Start-WinEaseMigrationRestore which tasks exist.
-    $entries = @(
-        if ($ud.ManifestEntries) { $ud.ManifestEntries }
-        if ($cp -and $cp.ManifestEntries) { $cp.ManifestEntries }
-    )
-    $folderList = @(foreach ($k in $FolderMap.Keys) {
-        [PSCustomObject]@{ Category = [string]$k; SourcePath = [string]$FolderMap[$k] }
-    })
+    $entries = @($ud.ManifestEntries)
+    if ($cp) { $entries += @($cp.ManifestEntries) }
+    $folderList = @()
+    foreach ($k in $FolderMap.Keys) {
+        $folderList += [PSCustomObject]@{ Category = [string]$k; SourcePath = [string]$FolderMap[$k] }
+    }
     $ruleList = @()
     if ($rb) { $ruleList = @($rb.BackedUpRules) }
     $customList = @($customExpanded)
@@ -1385,8 +1678,16 @@ function Start-WinEaseMigrationBackup {
         $ruleList = @($previous.Rules | Where-Object { $_ -and $_.Id -and $newRuleIds -notcontains [string]$_.Id }) + $ruleList
         $customList = @($previous.CustomPaths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) -and $customList -notcontains [string]$_ }) + $customList
     }
+    # One decision for the whole backup: the rules part (missing sources, failed copies, skipped
+    # rules) and the user data / custom path parts all have to be clean for 'Success'.
+    $backupStatus = 'Success'
+    if ($rb) { $backupStatus = (Get-WinEaseMigrationOutcome -RulesResult $rb).Status }
+    $otherFailed = @(@($ud, $cp) | Where-Object { $_ } | ForEach-Object { @($_.FailedFiles) } | Where-Object { $_ }).Count
+    if ($otherFailed -gt 0 -and $backupStatus -eq 'Success') { $backupStatus = 'PartialSuccess' }
     $manifest = [PSCustomObject]@{
         Created      = (Get-Date).ToString('o')
+        Status       = $backupStatus
+        Success      = ($backupStatus -eq 'Success')
         BackupRoot   = $BackupRoot
         AppInventory = $inv.OutputPath
         Entries      = $entries
@@ -1420,6 +1721,8 @@ function Start-WinEaseMigrationRestore {
         [switch]$DryRun,
         # Close running target applications of a rule (close request, wait, force) instead of skipping it
         [switch]$StopRunningProcess,
+        # Restore secret/credential files too (they are never restored without this switch)
+        [switch]$IncludeSecrets,
         [string[]]$AllowedCustomPaths = @()
     )
     $statePath = Join-Path -Path $BackupRoot -ChildPath 'restore-state.json'
@@ -1488,8 +1791,9 @@ function Start-WinEaseMigrationRestore {
                 'Rule' {
                     if ($DryRun) { $status = 'Skipped'; $detail = 'DryRun: rule restore not simulated' }
                     else {
-                        $detail = Invoke-WinEaseMigrationRulesRestore -RuleIds @($t.Target) -BackupRoot $BackupRoot -ConflictPolicy $ConflictPolicy -StopRunningProcess:$StopRunningProcess
+                        $detail = Invoke-WinEaseMigrationRulesRestore -RuleIds @($t.Target) -BackupRoot $BackupRoot -ConflictPolicy $ConflictPolicy -StopRunningProcess:$StopRunningProcess -IncludeSecrets:$IncludeSecrets
                         if (@($detail.FailedFiles).Count -gt 0) { $status = 'Failed' }
+                        elseif ($detail.Status -eq 'PartialSuccess') { $status = 'PartialSuccess' }
                     }
                 }
                 'Custom' {
@@ -1800,6 +2104,8 @@ function Get-WinEaseMigrationReportData {
         $files += [int]$rv.CopiedFiles
         $succeeded.Add([PSCustomObject]@{ Area = 'App/game rules'; Item = "$($rv.CopiedFiles) file(s) from $(@($rv.BackedUpRules).Count) rule(s)"; Detail = '' })
         foreach ($s in @($rv.SkipReasons)) { $skippedItems.Add([PSCustomObject]@{ Item = [string]$s.Item; Reason = [string]$s.Reason }) }
+        foreach ($x in @($rv.ExcludedFiles | Where-Object { $_ })) { $skippedItems.Add([PSCustomObject]@{ Item = [string]$x.Path; Reason = "$($x.Kind): $($x.Reason)" }) }
+        foreach ($x in @($rv.MissingSources | Where-Object { $_ })) { $failedItems.Add([PSCustomObject]@{ Item = "$($x.Rule): source not found"; Reason = [string]$x.Path }) }
         foreach ($f in @($rv.FailedFiles)) {
             $name = if ($f.Rule) { [string]$f.Rule } else { [string]$f.Path }
             $failedItems.Add([PSCustomObject]@{ Item = $name; Reason = [string]$f.Error })
@@ -1826,6 +2132,8 @@ function Get-WinEaseMigrationReportData {
             $st = [string]$t.Status
             if ($st -eq 'Completed') {
                 $succeeded.Add([PSCustomObject]@{ Area = 'Restore'; Item = [string]$t.TaskId; Detail = '' })
+            } elseif ($st -eq 'PartialSuccess') {
+                $skippedItems.Add([PSCustomObject]@{ Item = [string]$t.TaskId; Reason = 'Restored, but some files were not restored: ' + (@(@($t.Detail.ExcludedFiles) | Where-Object { $_ } | ForEach-Object { "$($_.Path) ($($_.Reason))" }) -join '; ') })
             } elseif ($st -eq 'Failed') {
                 $reason = if ($t.Detail -is [string]) { [string]$t.Detail } elseif ($t.Detail -and $t.Detail.FailedFiles) { (@($t.Detail.FailedFiles | ForEach-Object { "$($_.Path) $($_.Error)".Trim() }) -join '; ') } elseif ($t.Detail -and $t.Detail.Failed) { (@($t.Detail.Failed | ForEach-Object { "$($_.App): $($_.Error)" }) -join '; ') } else { 'Task failed' }
                 $failedItems.Add([PSCustomObject]@{ Item = [string]$t.TaskId; Reason = $reason })

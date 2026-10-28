@@ -1434,7 +1434,7 @@ Describe "GUI display language (English / Japanese)" -Tags 'slow' {
             @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseBuildPlan.ps1')), "'(Plan\.[A-Za-z.]+)'") | ForEach-Object { $_.Groups[1].Value }) +
             @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseInputValidation.ps1')), "'((?:Val|Msg)\.[A-Za-z.]+)'") | ForEach-Object { $_.Groups[1].Value }) +
             @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseGuiSession.ps1')), "'((?:Val|Msg)\.[A-Za-z.]+)'") | ForEach-Object { $_.Groups[1].Value }) +
-            @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')), "'(SavePreset\.[A-Za-z.]+)'") | ForEach-Object { $_.Groups[1].Value })
+            @([regex]::Matches([System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')), "'((?:SavePreset|Mig\.Backup)\.[A-Za-z.]+)'") | ForEach-Object { $_.Groups[1].Value })
         # A key ending in '.' is a prefix the code completes at run time (_s.Get("CS.OnError." + value)):
         # it is not a key itself. The table must hold at least one key under it, and those keys count as used.
         $dynamicPrefixes = @($used | Where-Object { $_.EndsWith('.') } | Select-Object -Unique)

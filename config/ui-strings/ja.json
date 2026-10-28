@@ -281,6 +281,8 @@
   "Mig.Label.Rules": "移行ルール (ゲーム / アプリの設定):",
   "Mig.Backup.DataFailed": "失敗したファイル: {0} 件 (レポートを参照)",
   "Mig.Backup.Rules": "ルール: {0} 件バックアップ / {1} 件スキップ / {2} 件失敗。",
+  "Mig.Backup.Missing": "保存元が見つからずバックアップされませんでした: {0}",
+  "Mig.Backup.Incomplete": "バックアップは不完全です (状態: {0})。保存されなかった項目はレポートを参照してください。",
   "Mig.NoRules": "移行ルールが見つかりません",
   "Mig.Rules.LoadErrors": "移行ルールを読み込めませんでした: {0}",
   "Mig.Policy.BackupExisting": "既存ファイルをバックアップとして残す",

@@ -338,6 +338,7 @@ function Invoke-WinEaseWinUiMigrationRequest {
                 $udFailed = @($res.UserData.FailedFiles | Where-Object { $_ }).Count
                 if ($udFailed -gt 0) { $detail.Add((Get-WinEaseUiString 'Mig.Backup.DataFailed' -Format $udFailed)) }
                 foreach ($e in @($res.RuleErrors)) { $detail.Add((Get-WinEaseUiString 'Mig.Rules.LoadErrors' -Format ("$e"))) }
+                foreach ($line in @(Get-WinEaseGuiBackupOutcomeLines -Result $res)) { $detail.Add($line) }
             }
             $done = Get-WinEaseUiString 'Mig.Backup.Done' -Format $root
             if ($detail.Count -gt 0) { $done += "`n`n" + ($detail -join "`n") }
@@ -363,6 +364,7 @@ function Invoke-WinEaseWinUiMigrationRequest {
             if (-not $policy) { $policy = 'BackupExisting' }
             $ra = @{ BackupRoot = $root; ConflictPolicy = $policy }
             if ($a.RetryFailedOnly) { $ra['RetryFailedOnly'] = $true }
+            if ($a.IncludeSecrets) { $ra['IncludeSecrets'] = $true }
             $o = Invoke-WinEaseGuiMigrationJob -RepoRoot $repo -Arguments $ra -Script 'param($a) Start-WinEaseMigrationRestore @a'
             $msg = Get-WinEaseUiString 'Mig.Restore.Done'
             if ($o.Result -and $o.Result.Results) { $msg += "`n" + ($o.Result.Results | ForEach-Object { "$($_.TaskId): $($_.Status)" } | Out-String) }

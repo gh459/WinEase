@@ -714,6 +714,8 @@ function Get-WinEaseGuiRestoreExtraArgs {
     param([hashtable]$Gui)
     $a = @{}
     if ($Gui.MigStopProcess -and $Gui.MigStopProcess.Checked) { $a['StopRunningProcess'] = $true }
+    # secrets in a backup are only restored when the user unticked 'exclude secrets' (explicit opt-in)
+    if ($Gui.MigExcludeSecrets -and -not $Gui.MigExcludeSecrets.Checked) { $a['IncludeSecrets'] = $true }
     return $a
 }
 
@@ -1108,4 +1110,19 @@ function Save-WinEaseGuiUserPreset {
     }
     $result.Saved = $true
     return $result
+}
+
+# Lines that tell a backup result apart from a clean success: sources that were not found,
+# failed copies and the overall state. Shared by both migration GUIs; the success decision
+# itself comes from Get-WinEaseMigrationOutcome so the GUI, CLI and result object agree.
+function Get-WinEaseGuiBackupOutcomeLines {
+    param($Result)
+    $lines = [System.Collections.Generic.List[string]]::new()
+    if (-not $Result -or -not $Result.RulesResult -or -not (Get-Command -Name Get-WinEaseMigrationOutcome -ErrorAction SilentlyContinue)) { return @() }
+    $outcome = Get-WinEaseMigrationOutcome -RulesResult $Result.RulesResult
+    foreach ($m in @($Result.RulesResult.MissingSources)) {
+        if ($m) { $lines.Add((Get-WinEaseUiString 'Mig.Backup.Missing' -Format ('{0}: {1}' -f $m.Rule, $m.Path))) }
+    }
+    if (-not $outcome.Success) { $lines.Add((Get-WinEaseUiString 'Mig.Backup.Incomplete' -Format $outcome.Status)) }
+    return @($lines)
 }

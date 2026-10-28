@@ -573,8 +573,17 @@ switch ($Mode) {
                 $message = ('{0} data file(s) recorded with SHA-256 during the copy' -f $verified)
                 if ($ruleCount -gt 0) { $message += ('; {0} further file(s) from {1} migration rule(s) copied as-is' -f $ruleFiles, $ruleCount) }
                 $message += '. Run -Mode Verify for a full integrity check.'
+                # Missing sources and skipped rules count against the result like failed copies do
+                # (the same decision the GUI uses), so the CLI never reports a partial backup as clean.
+                $outcomeStatus = 'Success'
+                if ($result.RulesResult) {
+                    $oc = Get-WinEaseMigrationOutcome -RulesResult $result.RulesResult
+                    $outcomeStatus = $oc.Status
+                    if ($oc.Message) { $message += ' ATTENTION: ' + $oc.Message + '.' }
+                }
                 $verify = [PSCustomObject]@{
-                    Success = ($failedCount -eq 0)
+                    Success = ($failedCount -eq 0 -and $outcomeStatus -eq 'Success')
+                    Status  = $(if ($failedCount -gt 0 -and $outcomeStatus -eq 'Success') { 'PartialSuccess' } else { $outcomeStatus })
                     Checked = $verified
                     Message = $message
                 }
@@ -588,6 +597,7 @@ switch ($Mode) {
     }
     'Restore' {
         $restoreArgs = @{ BackupRoot = $PackagePath; ConflictPolicy = $ConflictPolicy; RetryFailedOnly = [bool]$RetryFailedOnly; DryRun = [bool]$DryRun }
+        if ($IncludeSecrets) { $restoreArgs['IncludeSecrets'] = $true }
         if ($StopRunningProcess) { $restoreArgs['StopRunningProcess'] = $true }
         # The custom paths of the backup are only restored to the locations that are
         # named here. Without the list the custom path tasks are skipped.
