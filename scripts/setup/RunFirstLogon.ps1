@@ -58,16 +58,21 @@ function Invoke-ChildScriptWithLog {
     $stdoutText = $stdoutTask.Result
     $stderrText = $stderrTask.Result
 
-    $combined = ""
+    $sb = [System.Text.StringBuilder]::new()
     if (-not [string]::IsNullOrEmpty($stdoutText)) {
-        $combined += $stdoutText
+        [void]$sb.Append($stdoutText)
     }
     if (-not [string]::IsNullOrEmpty($stderrText)) {
-        if (-not [string]::IsNullOrEmpty($combined) -and -not $combined.EndsWith("`r`n") -and -not $combined.EndsWith("`n")) {
-            $combined += "`r`n"
+        if ($sb.Length -gt 0) {
+            $hasEnding = ($sb.Length -ge 2 -and $sb[$sb.Length - 2] -eq [char]13 -and $sb[$sb.Length - 1] -eq [char]10) -or ($sb[$sb.Length - 1] -eq [char]10)
+            if (-not $hasEnding) {
+                [void]$sb.Append("`r`n")
+            }
         }
-        $combined += "[STDERR]`r`n" + $stderrText
+        [void]$sb.Append("[STDERR]`r`n")
+        [void]$sb.Append($stderrText)
     }
+    $combined = $sb.ToString()
 
     if (-not [string]::IsNullOrEmpty($combined)) {
         try {
