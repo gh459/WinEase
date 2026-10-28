@@ -280,6 +280,33 @@ Describe "Autologon - RunFirstLogon logging" {
         $capturedCalls[0].LiteralPath | Should Be $wrapperLogFile
         $capturedCalls[0].Value | Should Match '\[ERROR\] Fallback path log entry'
     }
+
+    It "logs a warning when WMI computer system user query throws an exception" {
+        if (-not (Get-Command -Name Get-WmiObject -ErrorAction SilentlyContinue)) {
+            function global:Get-WmiObject {
+                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'Stub for cross-platform testing')]
+                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'Stub parameter')]
+                param([string]$Class, $ErrorAction)
+            }
+        }
+
+        $wrapperLogFile = Join-Path $script:TestLogDir 'firstlogon-wrapper.log'
+        $scriptText = [System.IO.File]::ReadAllText($runFlPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($scriptText, [ref]$tokens, [ref]$errors)
+        $tryAst = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.TryStatementAst] -and $n.Extent.Text -match 'Win32_ComputerSystem' }, $true)
+        $tryAst | Should Not BeNullOrEmpty
+
+        Mock Get-WmiObject { throw "WMI service unavailable" }
+
+        $currentUser = 'TestUser'
+        $targetUser = $currentUser
+        . ([scriptblock]::Create($tryAst.Extent.Text))
+
+        (Test-Path -LiteralPath $wrapperLogFile) | Should Be $true
+        $content = Get-Content -LiteralPath $wrapperLogFile -Raw
+        $content | Should Match '\[WARN\] Failed to query computer system user via WMI: WMI service unavailable'
+    }
 }
 
 Remove-Item Function:\reg.exe -ErrorAction SilentlyContinue
