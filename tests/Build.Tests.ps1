@@ -80,9 +80,15 @@ Describe "WinEase builder - autounattend.xml" {
         $doc = [xml]([System.IO.File]::ReadAllText($script:UnattendPath, [System.Text.Encoding]::UTF8))
         $dupCount = 0
         foreach ($pass in $doc.unattend.settings) {
-            $keys = @($pass.component | ForEach-Object { "$($_.name) [$($_.processorArchitecture)]" })
-            $dups = $keys | Group-Object | Where-Object { $_.Count -gt 1 }
-            if ($dups) { $dupCount += $dups.Count }
+            $seenKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+            $dupKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+            foreach ($comp in $pass.component) {
+                $key = "$($comp.name) [$($comp.processorArchitecture)]"
+                if (-not $seenKeys.Add($key)) {
+                    [void]$dupKeys.Add($key)
+                }
+            }
+            $dupCount += $dupKeys.Count
         }
         $dupCount | Should Be 0
     }
