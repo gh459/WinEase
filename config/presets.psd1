@@ -53,6 +53,7 @@
             CrashDumpMode = 'Automatic'
             TweakSettings = @{
                 BypassActivationRestrictions = $false
+                DisableUACPrompts = $false
                 DisableUAC = $false
                 DisableSmartScreen = $false
                 DisableVBS = $false

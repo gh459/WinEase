@@ -11,6 +11,10 @@
 #   Type      REG_SZ, REG_DWORD, REG_EXPAND_SZ, REG_BINARY or REG_NONE
 #   Data      the data as reg.exe takes it; empty = the empty string
 #   MinBuild / MaxBuild  optional, inclusive Windows build numbers the entry applies to (absent = no limit)
+#   OffData / OffType    optional: the counterpart written while the setting is switched OFF (OffType
+#             defaults to Type). Used for per-user preferences whose opposite is unambiguous, so a
+#             preset or profile that switches the setting off really selects the other state.
+#             An entry without OffData writes nothing while the setting is off.
 @{
     Version = '1.0'
 
@@ -19,34 +23,34 @@
         @{ Tweak = 'EnableClassicContextMenu'; Default = $true; Hive = @('zDEFAULT', 'zNTUSER'); Path = 'Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32'; Name = ''; Type = 'REG_SZ'; Data = '' }
 
         # --- EnableDarkTheme ---------------------------------------------
-        @{ Tweak = 'EnableDarkTheme'; Default = $true; Hive = 'zDEFAULT'; Path = 'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'; Name = 'AppsUseLightTheme'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'EnableDarkTheme'; Default = $true; Hive = 'zDEFAULT'; Path = 'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'; Name = 'SystemUsesLightTheme'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'EnableDarkTheme'; Default = $true; Hive = 'zNTUSER'; Path = 'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'; Name = 'AppsUseLightTheme'; Type = 'REG_DWORD'; Data = '0' }
-        @{ Tweak = 'EnableDarkTheme'; Default = $true; Hive = 'zNTUSER'; Path = 'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'; Name = 'SystemUsesLightTheme'; Type = 'REG_DWORD'; Data = '0' }
+        @{ Tweak = 'EnableDarkTheme'; Default = $true; Hive = 'zDEFAULT'; Path = 'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'; Name = 'AppsUseLightTheme'; Type = 'REG_DWORD'; Data = '0'; OffData = '1' }
+        @{ Tweak = 'EnableDarkTheme'; Default = $true; Hive = 'zDEFAULT'; Path = 'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'; Name = 'SystemUsesLightTheme'; Type = 'REG_DWORD'; Data = '0'; OffData = '1' }
+        @{ Tweak = 'EnableDarkTheme'; Default = $true; Hive = 'zNTUSER'; Path = 'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'; Name = 'AppsUseLightTheme'; Type = 'REG_DWORD'; Data = '0'; OffData = '1' }
+        @{ Tweak = 'EnableDarkTheme'; Default = $true; Hive = 'zNTUSER'; Path = 'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'; Name = 'SystemUsesLightTheme'; Type = 'REG_DWORD'; Data = '0'; OffData = '1' }
 
         # --- ShowFileExtensions ------------------------------------------
-        @{ Tweak = 'ShowFileExtensions'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'HideFileExt'; Type = 'REG_DWORD'; Data = '0' }
+        @{ Tweak = 'ShowFileExtensions'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'HideFileExt'; Type = 'REG_DWORD'; Data = '0'; OffData = '1' }
 
         # --- ShowHiddenFiles ---------------------------------------------
         @{ Tweak = 'ShowHiddenFiles'; Default = $false; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'Hidden'; Type = 'REG_DWORD'; Data = '1' }
 
         # --- LaunchToThisPC ----------------------------------------------
-        @{ Tweak = 'LaunchToThisPC'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'LaunchTo'; Type = 'REG_DWORD'; Data = '1' }
+        @{ Tweak = 'LaunchToThisPC'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'LaunchTo'; Type = 'REG_DWORD'; Data = '1'; OffData = '2' }
 
         # --- TaskbarEndTask ----------------------------------------------
-        @{ Tweak = 'TaskbarEndTask'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings'; Name = 'TaskbarEndTask'; Type = 'REG_DWORD'; Data = '1' }
+        @{ Tweak = 'TaskbarEndTask'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings'; Name = 'TaskbarEndTask'; Type = 'REG_DWORD'; Data = '1'; OffData = '0' }
 
         # --- DisableLogonBlur --------------------------------------------
         @{ Tweak = 'DisableLogonBlur'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Policies\Microsoft\Windows\System'; Name = 'DisableAcrylicBackgroundOnLogon'; Type = 'REG_DWORD'; Data = '1' }
 
         # --- TaskbarAlignLeft --------------------------------------------
-        @{ Tweak = 'TaskbarAlignLeft'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'TaskbarAl'; Type = 'REG_DWORD'; Data = '0' }
+        @{ Tweak = 'TaskbarAlignLeft'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'TaskbarAl'; Type = 'REG_DWORD'; Data = '0'; OffData = '1' }
 
         # --- HideMeetNow -------------------------------------------------
         @{ Tweak = 'HideMeetNow'; Default = $true; Hive = @('zDEFAULT', 'zNTUSER'); Path = 'Software\Microsoft\Windows\CurrentVersion\Policies\Explorer'; Name = 'HideSCAMeetNow'; Type = 'REG_DWORD'; Data = '1' }
 
         # --- HideSyncNotifications ---------------------------------------
-        @{ Tweak = 'HideSyncNotifications'; Default = $true; Hive = @('zDEFAULT', 'zNTUSER'); Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'ShowSyncProviderNotifications'; Type = 'REG_DWORD'; Data = '0' }
+        @{ Tweak = 'HideSyncNotifications'; Default = $true; Hive = @('zDEFAULT', 'zNTUSER'); Path = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'ShowSyncProviderNotifications'; Type = 'REG_DWORD'; Data = '0'; OffData = '1' }
 
         # --- DisableStartupSound -----------------------------------------
         @{ Tweak = 'DisableStartupSound'; Default = $true; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows\CurrentVersion\Authentication\LogonUI\BootAnimation'; Name = 'DisableStartupSound'; Type = 'REG_DWORD'; Data = '1' }
@@ -58,7 +62,7 @@
         @{ Tweak = 'DisableSleepOption'; Default = $false; Hive = 'zSOFTWARE'; Path = 'Microsoft\Windows\CurrentVersion\Explorer\FlyoutMenuSettings'; Name = 'ShowSleepOption'; Type = 'REG_DWORD'; Data = '0' }
 
         # --- MenuShowDelayZero -------------------------------------------
-        @{ Tweak = 'MenuShowDelayZero'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Control Panel\Desktop'; Name = 'MenuShowDelay'; Type = 'REG_SZ'; Data = '0' }
+        @{ Tweak = 'MenuShowDelayZero'; Default = $true; Hive = @('zNTUSER', 'zDEFAULT'); Path = 'Control Panel\Desktop'; Name = 'MenuShowDelay'; Type = 'REG_SZ'; Data = '0'; OffData = '400' }
 
         # --- TransparentShortcutOverlay ----------------------------------
         # Resource -50 in shell32.dll is the transparent icon; the previous value

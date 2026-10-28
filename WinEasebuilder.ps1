@@ -316,6 +316,7 @@ param(
     [switch]$BypassHardwareRequirements,
     [switch]$BypassNetworkRequirement,
     [switch]$BypassNRO,
+    [switch]$DisableUACPrompts,
     [switch]$DisableUAC,
     [switch]$DisableSmartScreen,
     [switch]$DisableVBS,

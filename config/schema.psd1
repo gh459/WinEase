@@ -33,7 +33,8 @@
         @{ Key = 'BypassNetworkRequirement'; Category = 'Security'; Default = $true; Description = 'Bypass mandatory OOBE internet connection requirement'; CliSwitch = $true }
         @{ Key = 'BypassNRO'; Category = 'Security'; Default = $true; Description = 'Enable BypassNRO registry policy for local account creation'; CliSwitch = $true }
         @{ Key = 'BypassActivationRestrictions'; Category = 'Security'; Default = $true; Description = 'Unlock personalization, suppress watermarks and licensing nags'; Variable = 'bypassActivationRestrictions'; CliSwitch = $true }
-        @{ Key = 'DisableUAC'; Category = 'Security'; Default = $false; Description = 'Disable User Account Control (UAC) prompts (runs all processes with full admin rights; high security risk)'; CliSwitch = $true }
+        @{ Key = 'DisableUACPrompts'; Category = 'Security'; Default = $false; Description = 'Stop UAC consent prompts for administrators (UAC stays on; elevation is granted silently; security risk)'; CliSwitch = $true }
+        @{ Key = 'DisableUAC'; Category = 'Security'; Default = $false; Description = 'Turn User Account Control (UAC) off completely (EnableLUA = 0, needs a restart; Store/UWP apps and Edge may stop working; high security risk)'; CliSwitch = $true }
         @{ Key = 'DisableSmartScreen'; Category = 'Security'; Default = $false; Description = 'Disable SmartScreen filter for apps and downloads'; CliSwitch = $true }
         @{ Key = 'DisableVBS'; Category = 'Security'; Default = $false; Description = 'Disable Virtualization-Based Security (VBS / Core Isolation)'; CliSwitch = $true }
         @{ Key = 'DisableWPBT'; Category = 'Security'; Default = $false; Description = 'Disable Windows Platform Binary Table (OEM backdoor prevention)'; CliSwitch = $true }

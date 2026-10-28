@@ -50,7 +50,8 @@ ISO media and post-install systems have completely different security perimeters
 ## High-risk security toggles
 
 WinEase exposes low-level Windows features that intentionally weaken security defenses when enabled:
-* **`DisableUAC`**: Bypasses all User Account Control elevation prompts, executing every app with full administrative privileges. This does **not** guarantee gaming or system performance gains.
+* **`DisableUACPrompts`**: Stops the User Account Control consent prompts for administrators (UAC stays on, elevation is granted silently). This does **not** guarantee gaming or system performance gains.
+* **`DisableUAC`**: Turns User Account Control off completely (`EnableLUA = 0`, effective after a restart), executing every app with full administrative privileges. Microsoft Store/UWP apps and Edge may stop working. This does **not** guarantee gaming or system performance gains.
 * **`DisableCPUMitigations`**: Disables speculative execution CPU hardware mitigations (Spectre/Meltdown/etc.), exposing the host to microarchitectural side-channel attacks. Performance gains are unverified and workload-dependent.
 * **`ConfigureWinlogon`**: Implants unattended credentials in cleartext within ISO answer files.
 

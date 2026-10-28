@@ -43,3 +43,19 @@ ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE	BypassNRO	REG_DWORD	1
 ADD	HKLM\zSYSTEM\Setup\LabConfig	BypassNRO	REG_DWORD	1
 ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation	Manufacturer	REG_SZ	WinEase Project
 ADD	HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation	SupportURL	REG_SZ	https://github.com/gh459/WinEase
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize	AppsUseLightTheme	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize	SystemUsesLightTheme	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	HideFileExt	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	LaunchTo	REG_DWORD	2
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings	TaskbarEndTask	REG_DWORD	0
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	TaskbarAl	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	ShowSyncProviderNotifications	REG_DWORD	1
+ADD	HKLM\zDEFAULT\Control Panel\Desktop	MenuShowDelay	REG_SZ	400
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize	AppsUseLightTheme	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize	SystemUsesLightTheme	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	HideFileExt	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	LaunchTo	REG_DWORD	2
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings	TaskbarEndTask	REG_DWORD	0
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	TaskbarAl	REG_DWORD	1
+ADD	HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced	ShowSyncProviderNotifications	REG_DWORD	1
+ADD	HKLM\zNTUSER\Control Panel\Desktop	MenuShowDelay	REG_SZ	400

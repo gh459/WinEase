@@ -189,8 +189,13 @@ if (Test-TweakEnabled 'DisableSmartScreen' $false) {
     Invoke-WinEaseRegistryTable -Section security -Tweak DisableSmartScreen
 }
 
+if (Test-TweakEnabled 'DisableUACPrompts' $false) {
+    Write-Host "Disabling UAC consent prompts (UAC stays on)..." -ForegroundColor Yellow
+    Invoke-WinEaseRegistryTable -Section security -Tweak DisableUACPrompts
+}
+
 if (Test-TweakEnabled 'DisableUAC' $false) {
-    Write-Host "Disabling UAC consent prompts..." -ForegroundColor Yellow
+    Write-Host "Turning User Account Control off completely (EnableLUA = 0, effective after a restart)..." -ForegroundColor Yellow
     Invoke-WinEaseRegistryTable -Section security -Tweak DisableUAC
 }
 
@@ -276,10 +281,10 @@ if (Test-TweakEnabled 'EnableClassicContextMenu' $true) {
     Invoke-WinEaseRegistryTable -Section ui -Tweak EnableClassicContextMenu
 }
 
-if (Test-TweakEnabled 'EnableDarkTheme' $true) {
-    Write-Host "Enabling Dark Theme by default..." -ForegroundColor Green
-    Invoke-WinEaseRegistryTable -Section ui -Tweak EnableDarkTheme
-}
+# Not wrapped in a Test-TweakEnabled check: while the setting is off, the table writes the
+# light theme (OffData), so switching it off really selects the light theme.
+Write-Host ("Setting the default theme ({0})..." -f $(if (Test-TweakEnabled 'EnableDarkTheme' $true) { 'dark' } else { 'light' })) -ForegroundColor Green
+Invoke-WinEaseRegistryTable -Section ui -Tweak EnableDarkTheme
 
 Invoke-WinEaseRegistryTable -Section ui -Tweak ShowFileExtensions
 
