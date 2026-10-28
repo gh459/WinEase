@@ -4,7 +4,7 @@
 #
 # Covers Test-IsSafePathToDelete, Test-WinEasePathHasReparsePoint, Test-WinEaseMountPathInWorkspace,
 # Get-WinEaseMountedImages, Assert-WinEaseDirectorySafety, Reset-DirectoryWithRobocopy,
-# Clear-DismMountConflicts, Initialize-WinEaseMountDirectory and Test-CanSafelyDeleteVhdx.
+# Clear-DismMountConflicts, Initialize-WinEaseMountDirectory, Remove-WinEaseLingeringItems and Test-CanSafelyDeleteVhdx.
 #
 # Safety rules for this file: only per-test temp directories are touched, DISM is never run
 # (Get-WinEaseMountedImages, dism.exe and every other mount helper is mocked), and links are
@@ -773,6 +773,54 @@ Describe "Initialize-WinEaseMountDirectory" -Tags 'slow' {
         Test-Path -LiteralPath $script:Mnt | Should Be $true
         @(Get-ChildItem -LiteralPath $script:Mnt -Force).Count | Should Be 0
         $global:FsDismCalls | Should Be 0
+    }
+}
+
+Describe "Remove-WinEaseLingeringItems" {
+    BeforeEach {
+        Initialize-FsTestState
+        $script:T = New-FsTestRoot
+    }
+    AfterEach { Remove-FsTestRoot -Root $script:T }
+
+    It "sweeps remaining files and subdirectories while leaving target directory intact" {
+        $targetDir = Join-Path $script:T 'sweep_target'
+        [System.IO.Directory]::CreateDirectory($targetDir) | Out-Null
+        $file1 = Join-Path $targetDir 'file1.txt'
+        $subDir = Join-Path $targetDir 'subdir'
+        $file2 = Join-Path $subDir 'file2.txt'
+
+        Set-Content -LiteralPath $file1 -Value 'file 1 content'
+        [System.IO.Directory]::CreateDirectory($subDir) | Out-Null
+        Set-Content -LiteralPath $file2 -Value 'file 2 content'
+
+        Remove-WinEaseLingeringItems -Path $targetDir
+
+        Test-Path -LiteralPath $targetDir | Should Be $true
+        @(Get-ChildItem -LiteralPath $targetDir -Force).Count | Should Be 0
+    }
+
+    It "handles an empty target directory gracefully" {
+        $emptyDir = Join-Path $script:T 'empty_target'
+        [System.IO.Directory]::CreateDirectory($emptyDir) | Out-Null
+
+        Remove-WinEaseLingeringItems -Path $emptyDir
+
+        Test-Path -LiteralPath $emptyDir | Should Be $true
+        @(Get-ChildItem -LiteralPath $emptyDir -Force).Count | Should Be 0
+    }
+
+    It "falls back to Remove-Item when direct .NET deletion fails" {
+        $targetDir = Join-Path $script:T 'fallback_target'
+        [System.IO.Directory]::CreateDirectory($targetDir) | Out-Null
+        $roFile = Join-Path $targetDir 'readonly.txt'
+        Set-Content -LiteralPath $roFile -Value 'read-only item'
+        Set-ItemProperty -LiteralPath $roFile -Name IsReadOnly -Value $true
+
+        Remove-WinEaseLingeringItems -Path $targetDir
+
+        Test-Path -LiteralPath $roFile | Should Be $false
+        @(Get-ChildItem -LiteralPath $targetDir -Force).Count | Should Be 0
     }
 }
 
