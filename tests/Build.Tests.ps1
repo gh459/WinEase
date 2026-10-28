@@ -58,6 +58,12 @@ Describe "WinEase builder - AST syntax" {
             $content | Should Match 'Start-Process\s+powershell\.exe\s+-ArgumentList\s+\$migratorArgLine'
         }
     }
+    It "WinEase-GUI.bat avoids %BUILDER% command injection in powershell.exe -Command elevation" {
+        $batPath = Join-Path $script:RepoRoot "WinEase-GUI.bat"
+        $content = [System.IO.File]::ReadAllText($batPath, [System.Text.Encoding]::UTF8)
+        $content | Should Not Match '-Command\s+"[^"]*%BUILDER%[^"]*"'
+        $content | Should Match '-Command\s+"[^"]*\$env:BUILDER[^"]*"'
+    }
 }
 
 Describe "WinEase builder - autounattend.xml" {

@@ -40,7 +40,7 @@ echo  WinEase Builder GUI - Windows 11 Image Customization Tool
 echo ==============================================================================
 echo.
 echo [WinEase] Admin privileges required. Please approve the UAC prompt.
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { Start-Process powershell.exe -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File """%BUILDER%""" -GUI' -Verb RunAs } catch { exit 1223 }"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { Start-Process powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $env:BUILDER, '-GUI') -Verb RunAs } catch { exit 1223 }"
 set "ELEVATE_EXIT=%errorLevel%"
 
 if %ELEVATE_EXIT% equ 1223 (
