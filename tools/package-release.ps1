@@ -87,7 +87,10 @@ $committed = [DateTimeOffset]::Parse(("$(& git -C $repoRoot show -s --format=%cI
 
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 $OutputDir = (Resolve-Path -LiteralPath $OutputDir).Path
-$zipPath = Join-Path -Path $OutputDir -ChildPath "WinEase-$Tag-win-$Architecture.zip"
+$finalZipPath = Join-Path -Path $OutputDir -ChildPath "WinEase-$Tag-win-$Architecture.zip"
+# Built under a temporary name and renamed once complete, so a failed run never leaves a half-written .zip
+# that looks like a release asset (and an existing good package survives a failed rebuild).
+$zipPath = "$finalZipPath.partial"
 if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
 & git -C $repoRoot -c core.autocrlf=false archive --format=zip "--prefix=$Prefix/" -o $zipPath $full
 if ($LASTEXITCODE -ne 0) { throw "git archive failed with exit code $LASTEXITCODE" }
@@ -108,6 +111,8 @@ try {
         } finally { $in.Dispose() }
     }
 } finally { $archive.Dispose() }
+Move-Item -LiteralPath $zipPath -Destination $finalZipPath -Force
+$zipPath = $finalZipPath
 
 # <zip>.sha256 in the format of sha256sum (two spaces, LF) so that `sha256sum -c` and Get-FileHash agree
 $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()

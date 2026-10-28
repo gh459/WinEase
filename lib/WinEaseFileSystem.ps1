@@ -181,6 +181,14 @@ function Set-ItemOwnershipAndAccess {
 
         $isReparse = [bool]($itemObj.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
 
+        # Set-Acl follows a junction or directory symlink and would change the owner and DACL of its target,
+        # which can be outside the image. A directory link is left alone (file reparse points are WIM
+        # placeholders and still need the access).
+        if ($isReparse -and $itemObj.PSIsContainer) {
+            Write-Verbose "Not changing ownership/access of the directory link '$current'."
+            continue
+        }
+
         # Clear ReadOnly attribute if present
         if ($itemObj.Attributes -band [System.IO.FileAttributes]::ReadOnly) {
             try {

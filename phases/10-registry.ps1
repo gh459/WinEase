@@ -368,7 +368,7 @@ Invoke-WinEaseRegistryTable -Section ui -Tweak DisableSleepOption
 
 Invoke-WinEaseRegistryTable -Section ui -Tweak MenuShowDelayZero
 
-if (Test-TweakEnabled 'TakeOwnershipContextMenu' $true) {
+if (Test-TweakEnabled 'TakeOwnershipContextMenu' $false) {
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\*\shell\runas" -DefaultValue -Type REG_SZ -Data "Take Ownership"
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\*\shell\runas" -Name "HasLUAShield" -Type REG_SZ -Data '""'
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\*\shell\runas" -Name "NoWorkingDirectory" -Type REG_SZ -Data '""'
@@ -379,7 +379,7 @@ if (Test-TweakEnabled 'TakeOwnershipContextMenu' $true) {
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\shell\runas\command" -DefaultValue -Type REG_SZ -Data 'powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -Command "& { param($p) takeown.exe /f $p /r /d y; icacls.exe $p /grant administrators:F /t }" "%1"'
 }
 
-if (Test-TweakEnabled 'CmdAsAdminContextMenu' $true) {
+if (Test-TweakEnabled 'CmdAsAdminContextMenu' $false) {
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas" -DefaultValue -Type REG_SZ -Data "Open Command Prompt as Administrator"
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas" -Name "HasLUAShield" -Type REG_SZ -Data '""'
     Invoke-WinEaseReg -Action Add -Key "HKLM\zSOFTWARE\Classes\Directory\Background\shell\runas\command" -DefaultValue -Type REG_SZ -Data 'PowerShell -windowstyle hidden -Command \"Start-Process cmd.exe -ArgumentList ''/s,/k,pushd,\"%V\"'' -Verb RunAs\"'
