@@ -406,7 +406,8 @@ function Get-WinEaseCleanupRemediation {
         [bool]$VhdxStillAttached = $false,
         [string]$VhdxPath = '',
         [bool]$IsoStillMounted = $false,
-        [string]$IsoPath = ''
+        [string]$IsoPath = '',
+        [string]$DefenderExclusionPath = ''
     )
     $remediations = [System.Collections.Generic.List[PSCustomObject]]::new()
     foreach ($h in @($LoadedHives | Where-Object { $_ })) {
@@ -438,6 +439,13 @@ function Get-WinEaseCleanupRemediation {
             Type        = 'SourceIso'
             Target      = $iTarget
             Remediation = "Dismount-DiskImage -ImagePath `"$iTarget`""
+        })
+    }
+    if ($DefenderExclusionPath) {
+        $remediations.Add([PSCustomObject]@{
+            Type        = 'DefenderExclusion'
+            Target      = $DefenderExclusionPath
+            Remediation = "Remove-MpPreference -ExclusionPath `"$DefenderExclusionPath`""
         })
     }
     return ,@($remediations.ToArray())

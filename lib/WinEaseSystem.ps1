@@ -429,3 +429,55 @@ function Format-WinEasePhaseDuration {
     if ($secs -gt 0) { return "${mins}m ${secs}s" }
     return "${mins}m"
 }
+
+# --- Windows Defender workspace exclusion ---------------------------------------------------------
+# The build adds the workspace to the Defender exclusions to speed DISM up and removes it at the end.
+# Only an exclusion this build added is removed: an exclusion the user already had for the same path
+# stays, and a failed add or remove is reported instead of being assumed to have worked.
+function Test-WinEaseDefenderExclusion {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $key = $Path.TrimEnd('\')
+    $listed = @((Get-MpPreference -ErrorAction Stop).ExclusionPath | Where-Object { $_ } | ForEach-Object { "$_".TrimEnd('\') })
+    return ($listed -icontains $key)
+}
+
+function Add-WinEaseDefenderExclusion {
+    <#
+    .OUTPUTS
+        $true only when this call added the exclusion and a read-back shows it. $false when the path was
+        already excluded (it is not ours to remove), or when the add failed.
+    #>
+    [OutputType([bool])]
+    param([Parameter(Mandatory = $true)][string]$Path)
+    try {
+        if (Test-WinEaseDefenderExclusion -Path $Path) {
+            Write-Verbose "Defender already excludes '$Path'; the exclusion is left as it is."
+            return $false
+        }
+        Add-MpPreference -ExclusionPath $Path -ErrorAction Stop
+        if (Test-WinEaseDefenderExclusion -Path $Path) { return $true }
+        Write-Warning "Could not confirm the Windows Defender exclusion for '$Path'; the build runs without it."
+        return $false
+    } catch {
+        Write-Verbose "Defender exclusion skipped: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Remove-WinEaseDefenderExclusion {
+    <#
+    .OUTPUTS
+        $true when the exclusion is gone (read back). $false, with a warning that names the command to run,
+        when it could not be removed.
+    #>
+    [OutputType([bool])]
+    param([Parameter(Mandatory = $true)][string]$Path)
+    try {
+        Remove-MpPreference -ExclusionPath $Path -ErrorAction Stop
+        if (Test-WinEaseDefenderExclusion -Path $Path) { throw 'the exclusion is still listed after Remove-MpPreference' }
+        return $true
+    } catch {
+        Write-Warning "The temporary Windows Defender exclusion for '$Path' could not be removed: $($_.Exception.Message). Remove it with: Remove-MpPreference -ExclusionPath '$Path'"
+        return $false
+    }
+}

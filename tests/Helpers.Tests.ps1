@@ -2497,7 +2497,9 @@ Describe "WinEase helpers - split module layout (R2)" {
         # P1-01 added Test-WinEaseUnattendXmlStructure (unattend template safety).
         # Refactored Test-WinEaseDependencies added 8 modular dependency helpers.
         # Refactored Reset-DirectoryWithRobocopy added 6 modular file-system helpers.
-        $functions.Count | Should Be 73
+        # The workspace marker (P1-03) added 3 helpers to lib\WinEaseFileSystem.ps1 and the Defender
+        # exclusion lifecycle (P1-02) added 3 to lib\WinEaseSystem.ps1.
+        $functions.Count | Should Be 79
         $duplicates = @($functions | Group-Object Name | Where-Object Count -gt 1)
         $duplicates.Count | Should Be 0
         @($ast.FindAll({

@@ -106,11 +106,23 @@
     # A3: Host environment stability diagnostics (root-cause aid for WIM 577 / hash-jitter builds)
     Invoke-WinEaseHostHealthCheck -WorkspaceDir $baseWorkDir
 
-    # Temporarily exclude workspace from Windows Defender real-time scanning to accelerate DISM operations
-    try {
-        Add-MpPreference -ExclusionPath $baseWorkDir -ErrorAction SilentlyContinue
-        $script:DefenderExclusionAdded = $true
-    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    # P1-03: do not empty a build\ or scratchdir\ folder that WinEase did not create. The check runs before
+    # anything else touches the workspace (Defender exclusion, mount cleanup, reset).
+    $workspaceCheck = Test-WinEaseWorkspaceResetAllowed -BaseWorkDir $baseWorkDir -BuildDir $WinEaseDir -ScratchDir $vhdxMountDir -Force:([bool]$ForceResetWorkspace)
+    if (-not $workspaceCheck.Allowed) {
+        throw ("The workspace folder '$baseWorkDir' already contains data that WinEase did not create: " +
+            ($workspaceCheck.Paths -join ', ') +
+            ". The builder empties 'build' and 'scratchdir' inside the workspace, so it refuses to continue. " +
+            "Choose an empty folder as -WorkDir, or pass -ForceResetWorkspace if these folders may be emptied.")
+    }
+    if ($workspaceCheck.Reason -eq 'forced') {
+        Write-Warning "-ForceResetWorkspace: '$WinEaseDir' and '$vhdxMountDir' will be emptied although they carry no WinEase marker."
+    }
+
+    # Temporarily exclude workspace from Windows Defender real-time scanning to accelerate DISM operations.
+    # P1-02: only an exclusion this build added is removed at the end. An exclusion the user already had
+    # for the same path stays, and the flag is set only after a read-back shows the exclusion is there.
+    $script:DefenderExclusionAdded = [bool](Add-WinEaseDefenderExclusion -Path $baseWorkDir)
 
     # 1. Resolve any lingering DISM mounts associated with our workspace or candidate WIMs
     $managedWims = @(
@@ -184,6 +196,7 @@
         }
     }
     New-Item -ItemType Directory -Force -Path (Join-Path -Path $WinEaseDir -ChildPath "sources") | Out-Null
+    [void](Write-WinEaseWorkspaceMarker -BaseWorkDir $baseWorkDir -BuildId $script:BuildId)
     if (-not (Test-Path -LiteralPath $vhdxMountDir)) {
         New-Item -ItemType Directory -Force -Path $vhdxMountDir | Out-Null
     }
