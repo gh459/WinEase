@@ -826,6 +826,12 @@ function Get-WinEasePluginContributions {
                         Write-Warning "[Plugins] $($plugin.Id): FoD removal '$($item.Kind) $($item.Name)' dropped."
                         continue
                     }
+                    # Package names are matched as patterns by phase 6; a capability or feature name is
+                    # passed to DISM as is, so a wildcard there would not mean what the plugin author thinks.
+                    if (@('Capability', 'Feature') -contains [string]$item.Kind -and [string]$item.Name -match '[*?]') {
+                        Write-Warning "[Plugins] $($plugin.Id): FoD removal '$($item.Kind) $($item.Name)' dropped (wildcards are not allowed)."
+                        continue
+                    }
                     $results.Add([PSCustomObject]@{ PluginId = $plugin.Id; Kind = [string]$item.Kind; Name = [string]$item.Name })
                 }
                 'Service' {

@@ -240,6 +240,7 @@ if ($removeDefender) {
     if (Test-Path -LiteralPath $sysHive) {
         $null = & reg.exe load "HKLM\zVERIFYDEF" "$sysHive" 2>&1
         if ($LASTEXITCODE -eq 0) {
+          try {
             foreach ($s in $defSvc) {
                 $null = & reg.exe query "HKLM\zVERIFYDEF\ControlSet001\Services\$s" 2>&1
                 if ($LASTEXITCODE -eq 0) { $presentSvc += $s }
@@ -262,7 +263,10 @@ if ($removeDefender) {
                     }
                 }
             }
+          } finally {
+            # unloaded even when one of the reads above throws, so the hive never stays loaded
             & reg.exe unload "HKLM\zVERIFYDEF" > $null 2>&1
+          }
         }
     }
     $defReport.Add("Defender service keys present  : $(if($presentSvc.Count){$presentSvc -join ', '}else{'none'})")

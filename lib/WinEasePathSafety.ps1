@@ -494,6 +494,9 @@ function Test-WinEaseProtectedLexicalPath {
 function Test-IsSafePathToDelete {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    # "C:" and "C:foo" are drive-relative: GetFullPath would resolve them against the current
+    # directory of that drive, so what gets judged is not what the caller named. Refuse them.
+    if (-not (Test-WinEaseAbsoluteLocalPath -Path $Path)) { return $false }
     try {
         $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
         if (Test-WinEaseProtectedLexicalPath -Path $full) { return $false }
