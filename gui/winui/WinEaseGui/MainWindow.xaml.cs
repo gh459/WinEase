@@ -1304,6 +1304,15 @@ public sealed partial class MainWindow : Window
     {
         PageTitle.Text = CleanTabText(_s.Get("Tab.Migration"));
 
+        BuildMigrationAssistantSection();
+        BuildMigrationBackupSection();
+        BuildMigrationColumnsSection();
+        BuildMigrationCustomPathsSection();
+        BuildMigrationExtensionsSection();
+    }
+
+    private void BuildMigrationAssistantSection()
+    {
         // Post-install migration assistant switch and the backup bundle opt-out
         var assist = _init.Components.FirstOrDefault(c => c.Key == "IncludeMigrationAssistant");
         ToggleSwitch? backupToggle = null;
@@ -1322,7 +1331,10 @@ public sealed partial class MainWindow : Window
                 toggle.Toggled += (_, _) => { if (backupToggle != null) backupToggle.IsEnabled = toggle.IsOn; };
             }
         }
+    }
 
+    private void BuildMigrationBackupSection()
+    {
         // Backup destination, secrets, conflict policy
         PageHost.Children.Add(Section(_s.Get("Mig.Group.Backup")));
         var backup = new StackPanel();
@@ -1353,7 +1365,10 @@ public sealed partial class MainWindow : Window
         AutomationProperties.SetLiveSetting(_migStatusText, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
         backup.Children.Add(_migStatusText);
         PageHost.Children.Add(Card(backup));
+    }
 
+    private void BuildMigrationColumnsSection()
+    {
         // Folders and rules | actions
         var columns = new Grid { ColumnSpacing = 12 };
         columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -1429,7 +1444,10 @@ public sealed partial class MainWindow : Window
             }
         };
         PageHost.Children.Add(columns);
+    }
 
+    private void BuildMigrationCustomPathsSection()
+    {
         // Custom files and folders
         PageHost.Children.Add(Section(_s.Get("Mig.Group.Custom")));
         var custom = new StackPanel { Spacing = 6 };
@@ -1454,7 +1472,10 @@ public sealed partial class MainWindow : Window
             }));
         custom.Children.Add(customButtons);
         PageHost.Children.Add(Card(custom));
+    }
 
+    private void BuildMigrationExtensionsSection()
+    {
         // User extensions (config\user\user-tweaks.psd1)
         PageHost.Children.Add(Section(_s.Get("Mig.Group.Extensions")));
         var ext = _init.Extensions;
