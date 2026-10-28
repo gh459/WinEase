@@ -316,7 +316,7 @@ function Resolve-WinEasePluginFile {
     param([string]$Directory, [string]$File)
     if ([string]::IsNullOrWhiteSpace($File) -or $File -match '[\\/]' -or $File -match '^\.' -or $File -notmatch '\.dll$') { return $null }
     $full = [System.IO.Path]::GetFullPath((Join-Path -Path $Directory -ChildPath $File))
-    $root = [System.IO.Path]::GetFullPath($Directory).TrimEnd('\') + '\'
+    $root = [System.IO.Path]::GetFullPath($Directory).TrimEnd([System.IO.Path]::DirectorySeparatorChar, '\', '/') + [System.IO.Path]::DirectorySeparatorChar
     if (-not $full.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) { return $null }
     return $full
 }
