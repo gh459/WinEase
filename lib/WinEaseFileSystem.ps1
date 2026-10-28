@@ -1167,3 +1167,32 @@ function Get-WinEaseMinimumIsoBytes {
     # The ISO holds the payload plus boot media; anything smaller than payload + 100MB is truncated.
     return [long]($PayloadBytes + 100MB)
 }
+
+# Removes everything inside a directory and keeps the directory. Replaces "Remove-Item -Path '<dir>\*'
+# -Recurse", whose wildcard also expands against unexpected names and follows links on older hosts.
+# Children that are reparse points (junctions/symlinks) are never followed or deleted through; they are
+# reported. Returns the number of entries that could not be removed.
+function Clear-WinEaseDirectoryContents {
+    [CmdletBinding()]
+    [OutputType([int])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return 0 }
+    $failed = 0
+    foreach ($child in @(Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue)) {
+        if (($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            Write-Warning "Not removing the link '$($child.FullName)' (reparse point)."
+            $failed++
+            continue
+        }
+        try {
+            Remove-Item -LiteralPath $child.FullName -Recurse -Force -ErrorAction Stop
+        } catch {
+            Write-Verbose "Could not remove '$($child.FullName)': $($_.Exception.Message)"
+            $failed++
+        }
+    }
+    return $failed
+}

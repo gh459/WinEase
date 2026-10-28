@@ -3,6 +3,15 @@
 All notable changes to this fork are documented here. Versions follow the upstream
 WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 
+## Unreleased (local fork, 2026-10-28) - P3 batch, second part (audit PR-F)
+
+### Fixed
+- **Phase 8 no longer deletes with `Remove-Item -Path '<dir>\*'`.** The new `Clear-WinEaseDirectoryContents` empties a folder without wildcard expansion and never deletes through a junction or symlink child (it warns and counts it).
+- **Phase 5 reports a failed `Get-AppxProvisionedPackage`** instead of silently treating it as "no apps to remove".
+- **The oscdimg signature check needs an exact Microsoft signer** (`CN`/`O` = `Microsoft Corporation` or `Microsoft Windows`), not any subject containing "Microsoft".
+
+Still open from the audit: ACL changes on reparse points, InjectDrivers/migration-backup/`Remove-WinEaseDebloatPath`/phase 16/diskpart failure reporting, answer-file DOM insertion, context-menu defaults, IME/font keep lists (Rust), migration `.bak` generations, workflow pinning, release temp names.
+
 ## Unreleased (local fork, 2026-10-28) - CI guards (audit PR-E)
 
 ### Fixed

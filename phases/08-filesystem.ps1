@@ -113,7 +113,7 @@ if ((Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue) 
 if (-not $keepAsianIME) {
     Write-Host "Removing Asian Input Methods (CHS, CHT, KOR, JPN)..." -ForegroundColor Cyan
     $keepImeDirectories = @()
-    Remove-Item -Path (Join-Path -Path $winDir -ChildPath "Speech\Engines\TTS") -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path -Path $winDir -ChildPath "Speech\Engines\TTS") -Recurse -Force -ErrorAction SilentlyContinue
 }
 foreach ($imeDir in $allImeDirectories) {
     if ($imeDir -notin $keepImeDirectories) {
@@ -261,21 +261,21 @@ if (Get-Command -Name Test-WinEaseDebloatTarget -ErrorAction SilentlyContinue) {
 if ($cleanOfflineCaches -or $cleanEventLogs -or $cleanCrashDumps -or $cleanTempFiles) {
     Write-Host "Cleaning offline system caches, prefetch, and setup logs..." -ForegroundColor Cyan
     if ($cleanTempFiles) {
-        Remove-Item -Path "$scratchDir\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
+        $null = Clear-WinEaseDirectoryContents -Path "$scratchDir\Windows\Temp"
     }
     if ($cleanOfflineCaches) {
-        Remove-Item -Path "$scratchDir\Windows\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "$scratchDir\Windows\System32\LogFiles\*" -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "$scratchDir\Windows\Prefetch\*" -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "$scratchDir\Windows\Panther\*" -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "$scratchDir\Windows\Downloaded Program Files\*" -Recurse -Force -ErrorAction SilentlyContinue
+        $null = Clear-WinEaseDirectoryContents -Path "$scratchDir\Windows\SoftwareDistribution\Download"
+        $null = Clear-WinEaseDirectoryContents -Path "$scratchDir\Windows\System32\LogFiles"
+        $null = Clear-WinEaseDirectoryContents -Path "$scratchDir\Windows\Prefetch"
+        $null = Clear-WinEaseDirectoryContents -Path "$scratchDir\Windows\Panther"
+        $null = Clear-WinEaseDirectoryContents -Path "$scratchDir\Windows\Downloaded Program Files"
     }
     if ($cleanEventLogs) {
-        Remove-Item -Path "$scratchDir\Windows\System32\winevt\Logs\*" -Recurse -Force -ErrorAction SilentlyContinue
+        $null = Clear-WinEaseDirectoryContents -Path "$scratchDir\Windows\System32\winevt\Logs"
     }
     if ($cleanCrashDumps) {
-        Remove-Item -Path "$scratchDir\Windows\Minidump\*" -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "$scratchDir\Windows\Memory.dmp" -Force -ErrorAction SilentlyContinue
+        $null = Clear-WinEaseDirectoryContents -Path "$scratchDir\Windows\Minidump"
+        Remove-Item -LiteralPath "$scratchDir\Windows\Memory.dmp" -Force -ErrorAction SilentlyContinue
     }
 }
 if ($trimWallpapers) {
@@ -288,7 +288,7 @@ if (-not $removeHelpFiles -and (Get-Command -Name Test-WinEaseDebloatTarget -Err
     $removeHelpFiles = Test-WinEaseDebloatTarget -Item 'Remove help files [10-20MB]'
 }
 if ($removeHelpFiles) {
-    Remove-Item -Path (Join-Path -Path $winDir -ChildPath "Help") -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path -Path $winDir -ChildPath "Help") -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 # Edge Browser and OneDrive (Preserve System32 WebView2 runtime for Windows 11 OOBE stability)
