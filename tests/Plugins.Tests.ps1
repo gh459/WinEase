@@ -115,6 +115,25 @@ namespace @@NS@@ {
         if ($PassThru) { return $true }
     }
 
+    Context "Find-WinEaseLoadedAssembly" {
+        It "returns a loaded assembly when found by exact name" {
+            $asm = Find-WinEaseLoadedAssembly -Name 'System.Management.Automation'
+            $asm | Should Not Be $null
+            $asm.GetName().Name | Should Be 'System.Management.Automation'
+        }
+
+        It "matches assembly names case-insensitively" {
+            $asm = Find-WinEaseLoadedAssembly -Name 'system.management.automation'
+            $asm | Should Not Be $null
+            $asm.GetName().Name | Should Be 'System.Management.Automation'
+        }
+
+        It "returns null when looking up an un-loaded assembly" {
+            $asm = Find-WinEaseLoadedAssembly -Name 'WinEase.NonExistentAssembly.TestSample'
+            $asm | Should Be $null
+        }
+    }
+
     Context "Loading and the allow list" {
         It "loads a DLL whose SHA256 matches the lock file" {
             $dll = New-TestPluginDll -Name 'LoadOk'
