@@ -2252,6 +2252,114 @@ Describe "GUI core (lib\WinEaseGuiCore.ps1)" {
         Assert-MockCalled Test-WinEaseRecoveryReadiness -Exactly 1 -Scope It
     }
 
+    Context "Invoke-WinEaseGuiMigrationJob unit tests with mocked background job" {
+        It "forwards parameters to Invoke-WinEaseGuiBackgroundJob and extracts last output object" {
+            . (Join-Path -Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')
+
+            $dummyButton = [PSCustomObject]@{ Name = 'Btn' }
+            $dummyForm = [PSCustomObject]@{ Name = 'Frm' }
+            $script:passedButton = $null
+            $script:passedForm = $null
+            $script:passedArgList = $null
+            $script:passedScriptBlock = $null
+
+            Mock Invoke-WinEaseGuiBackgroundJob {
+                param($ScriptBlock, $ArgumentList, $Button, $Form)
+                $script:passedScriptBlock = $ScriptBlock
+                $script:passedArgList = $ArgumentList
+                $script:passedButton = $Button
+                $script:passedForm = $Form
+                return [PSCustomObject]@{
+                    Output = @("first_output", @{ Status = "Complete"; Value = 99 })
+                    Error  = $null
+                    Errors = [System.Collections.Generic.List[string]]::new()
+                }
+            }
+
+            $res = Invoke-WinEaseGuiMigrationJob -RepoRoot "C:\TestRepo" -Script 'param($a) $a' -Arguments @{ Param1 = "Val1" } -Button $dummyButton -Form $dummyForm
+
+            $res.Result.Status | Should Be "Complete"
+            $res.Result.Value | Should Be 99
+            $res.Error | Should BeNullOrEmpty
+            $res.Errors.Count | Should Be 0
+
+            $script:passedButton | Should Be $dummyButton
+            $script:passedForm | Should Be $dummyForm
+            $script:passedArgList[0] | Should Be "C:\TestRepo"
+            $script:passedArgList[1] | Should Be 'param($a) $a'
+            $script:passedArgList[2].Param1 | Should Be "Val1"
+            Assert-MockCalled Invoke-WinEaseGuiBackgroundJob -Exactly 1 -Scope It
+        }
+
+        It "returns Error and null Result when background job reports Error" {
+            . (Join-Path -Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')
+
+            Mock Invoke-WinEaseGuiBackgroundJob {
+                param($ScriptBlock, $ArgumentList, $Button, $Form)
+                return [PSCustomObject]@{
+                    Output = @("some_output")
+                    Error  = "Background job execution failed"
+                    Errors = [System.Collections.Generic.List[string]]::new()
+                }
+            }
+
+            $res = Invoke-WinEaseGuiMigrationJob -RepoRoot "C:\TestRepo" -Script 'throw'
+            $res.Result | Should BeNullOrEmpty
+            $res.Error | Should Be "Background job execution failed"
+            Assert-MockCalled Invoke-WinEaseGuiBackgroundJob -Exactly 1 -Scope It
+        }
+
+        It "passes error stream messages in Errors" {
+            . (Join-Path -Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')
+
+            $errList = [System.Collections.Generic.List[string]]::new()
+            $errList.Add("Warning stream item")
+
+            Mock Invoke-WinEaseGuiBackgroundJob {
+                param($ScriptBlock, $ArgumentList, $Button, $Form)
+                return [PSCustomObject]@{
+                    Output = @("job_out")
+                    Error  = $null
+                    Errors = $errList
+                }
+            }
+
+            $res = Invoke-WinEaseGuiMigrationJob -RepoRoot "C:\TestRepo" -Script 'param($a) "job_out"'
+            $res.Result | Should Be "job_out"
+            $res.Errors.Count | Should Be 1
+            $res.Errors[0] | Should Be "Warning stream item"
+        }
+    }
+
+    Context "Invoke-WinEaseGuiMigrationJob integration test with real background job" {
+        It "executes real background job loading repo helpers and passing arguments" {
+            . (Join-Path -Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')
+
+            $tempRoot = [System.IO.Path]::GetTempPath()
+            $dummyRepo = Join-Path $tempRoot "mig_job_repo_$([guid]::NewGuid().ToString('N'))"
+            $dummyMigDir = Join-Path $dummyRepo "tools\migrator"
+            New-Item -ItemType Directory -Force -Path $dummyMigDir | Out-Null
+
+            try {
+                # Create dummy WinEasehelpers.ps1 and WinEaseMigration.ps1
+                Set-Content -LiteralPath (Join-Path $dummyRepo "WinEasehelpers.ps1") -Value 'function Get-DummyHelper { return "HelperLoaded" }'
+                Set-Content -LiteralPath (Join-Path $dummyMigDir "WinEaseMigration.ps1") -Value 'function Get-DummyMigration { return "MigrationLoaded" }'
+
+                $scriptText = 'param($jobArgs) [PSCustomObject]@{ Helper = (Get-DummyHelper); Migration = (Get-DummyMigration); ArgVal = $jobArgs.MyVal }'
+                $res = Invoke-WinEaseGuiMigrationJob -RepoRoot $dummyRepo -Script $scriptText -Arguments @{ MyVal = "Test123" }
+
+                $res.Error | Should BeNullOrEmpty
+                $res.Result.Helper | Should Be "HelperLoaded"
+                $res.Result.Migration | Should Be "MigrationLoaded"
+                $res.Result.ArgVal | Should Be "Test123"
+            } finally {
+                if (Test-Path -LiteralPath $dummyRepo) {
+                    Remove-Item -LiteralPath $dummyRepo -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    }
+
     It "Open-WinEaseFileSafe returns false when path is null, empty or whitespace" {
         . (Join-Path -Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')
         Open-WinEaseFileSafe -Path $null | Should Be $false
@@ -2261,7 +2369,8 @@ Describe "GUI core (lib\WinEaseGuiCore.ps1)" {
 
     It "Open-WinEaseFileSafe returns false for a non-existent file" {
         . (Join-Path -Path $script:RepoRoot 'lib\WinEaseGuiCore.ps1')
-        $nonExistent = Join-Path -Path $env:TEMP -ChildPath "non_existent_file_$([guid]::NewGuid().ToString('N')).txt"
+        $tempDir = if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() }
+        $nonExistent = Join-Path -Path $tempDir -ChildPath "non_existent_file_$([guid]::NewGuid().ToString('N')).txt"
         Open-WinEaseFileSafe -Path $nonExistent | Should Be $false
     }
 
