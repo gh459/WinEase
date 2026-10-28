@@ -34,4 +34,10 @@ Describe "WinUI main window guards" {
     It "accessibility settings retrieval handles exceptions with debug logging" {
         $script:Cs | Should Match '(?s)highContrast = new Windows\.UI\.ViewManagement\.AccessibilitySettings\(\)\.HighContrast;.*?catch \(Exception ex\)'
     }
+    It "dynamic status and validation message elements configure AutomationProperties.SetLiveSetting for screen reader accessibility" {
+        $script:Cs | Should Match 'AutomationProperties\.SetLiveSetting\(msg, Microsoft\.UI\.Xaml\.Automation\.Peers\.AutomationLiveSetting\.Polite\);'
+        $script:Cs | Should Match 'AutomationProperties\.SetLiveSetting\(_migStatusText, Microsoft\.UI\.Xaml\.Automation\.Peers\.AutomationLiveSetting\.Polite\);'
+        $script:Cs | Should Match 'AutomationProperties\.SetLiveSetting\(info, Microsoft\.UI\.Xaml\.Automation\.Peers\.AutomationLiveSetting\.Polite\);'
+        $script:Cs | Should Match 'AutomationProperties\.SetLiveSetting\(_csCount, Microsoft\.UI\.Xaml\.Automation\.Peers\.AutomationLiveSetting\.Polite\);'
+    }
 }
