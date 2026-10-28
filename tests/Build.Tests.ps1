@@ -555,13 +555,21 @@ Describe "Builder cleanup S11" {
         $script:S11Root = $script:RepoRoot
     }
     It "BOM-less .ps1/.psd1 files are ASCII only" {
-        $bad = @(
-            foreach ($f in (Get-ChildItem -LiteralPath $script:S11Root -Recurse -File | Where-Object { $_.Extension -in '.ps1', '.psd1' -and $_.FullName -notmatch '[\\/](\.git|\.claude|logs)[\\/]' })) {
-                $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
-                $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
-                if (-not $hasBom -and (@($bytes | Where-Object { $_ -gt 127 }).Count -gt 0)) { $f.Name }
+        $bad = [System.Collections.Generic.List[string]]::new()
+        foreach ($f in (Get-ChildItem -LiteralPath $script:S11Root -Recurse -File | Where-Object { $_.Extension -in '.ps1', '.psd1' -and $_.FullName -notmatch '[\\/](\.git|\.claude|logs)[\\/]' })) {
+            $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+            $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+            if (-not $hasBom) {
+                $hasNonAscii = $false
+                foreach ($b in $bytes) {
+                    if ($b -gt 127) {
+                        $hasNonAscii = $true
+                        break
+                    }
+                }
+                if ($hasNonAscii) { $bad.Add($f.Name) }
             }
-        )
+        }
         ($bad -join ',') | Should Be ''
     }
     It "parallel WindowsApps cleanup checks containment and reports failed folders" {
