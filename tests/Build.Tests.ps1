@@ -267,7 +267,7 @@ Describe "WinEase setup scripts - Custom Scripts Logging" {
 
     It "Write-UserScriptLog falls back to Add-Content when System.IO.File::AppendAllText throws" {
         Mock Add-Content -MockWith { }
-        $userLogFile = Join-Path ([System.IO.Path]::GetTempPath()) "nonexistent_dir_12345\UserOnce-custom.log"
+        $userLogFile = Join-Path ([System.IO.Path]::GetTempPath()) "nonexistent_$([guid]::NewGuid().ToString('N'))\UserOnce-custom.log"
 
         Write-UserScriptLog "Fallback path test message"
 
@@ -277,7 +277,7 @@ Describe "WinEase setup scripts - Custom Scripts Logging" {
     It "Write-UserScriptLog writes warning when both AppendAllText and Add-Content throw" {
         Mock Add-Content -MockWith { throw "Mocked Add-Content error" }
         Mock Write-Warning -MockWith { }
-        $userLogFile = Join-Path ([System.IO.Path]::GetTempPath()) "nonexistent_dir_12345\UserOnce-custom.log"
+        $userLogFile = Join-Path ([System.IO.Path]::GetTempPath()) "nonexistent_$([guid]::NewGuid().ToString('N'))\UserOnce-custom.log"
 
         Write-UserScriptLog "Double failure test message"
 
