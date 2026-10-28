@@ -282,4 +282,59 @@ Describe "Autologon - RunFirstLogon logging" {
     }
 }
 
+Describe "Autologon - transition watchdog Test-InteractiveSession" {
+    BeforeAll {
+        $watchdogPath = Join-Path $script:RepoRoot 'scripts\setup\WinEase-transition-watchdog.ps1'
+        $scriptText = [System.IO.File]::ReadAllText($watchdogPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($scriptText, [ref]$tokens, [ref]$errors)
+        $funcAst = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Test-InteractiveSession' }, $true)
+        . ([scriptblock]::Create($funcAst.Extent.Text))
+    }
+
+    It "returns true when quser succeeds with active user rows" {
+        function quser.exe {
+            $global:LASTEXITCODE = 0
+            return @(
+                " USERNAME              SESSIONNAME        ID  STATE   IDLE TIME  LOGON TIME",
+                ">admin                 console             1  Active      .      3/30/2026 10:00"
+            )
+        }
+        try {
+            (Test-InteractiveSession) | Should Be $true
+        } finally {
+            Remove-Item Function:\quser.exe -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "falls back to Get-Process and returns true when quser fails but explorer session exists" {
+        function quser.exe {
+            $global:LASTEXITCODE = 1
+            return $null
+        }
+        Mock Get-Process {
+            return [PSCustomObject]@{ ProcessName = 'explorer'; SessionId = 1 }
+        }
+        try {
+            (Test-InteractiveSession) | Should Be $true
+        } finally {
+            Remove-Item Function:\quser.exe -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "handles exceptions in quser and Get-Process gracefully returning false" {
+        function quser.exe {
+            throw "quser.exe not found"
+        }
+        Mock Get-Process {
+            throw "Access denied"
+        }
+        try {
+            (Test-InteractiveSession) | Should Be $false
+        } finally {
+            Remove-Item Function:\quser.exe -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 Remove-Item Function:\reg.exe -ErrorAction SilentlyContinue
