@@ -188,6 +188,28 @@ namespace WinEase.Plugins.Tests
             Assert.Equal(@"C:\scratch", host.ScratchDir);
             Assert.False(host.DryRun);
         }
+
+        [Fact]
+        public void UnconfiguredServicesThrowNotSupportedExceptionOutsideDryRun()
+        {
+            DelegateWinEaseHost host = new DelegateWinEaseHost(@"C:\scratch", @"C:\WinEase", null, false);
+
+            NotSupportedException regEx = Assert.Throws<NotSupportedException>(() =>
+                host.SetOfflineRegistry("zSYSTEM", "Software\\Test", "Value", "REG_SZ", "1"));
+            Assert.Equal("The builder gave no registry service.", regEx.Message);
+
+            NotSupportedException dismEx = Assert.Throws<NotSupportedException>(() =>
+                host.RunDism(new[] { "/Get-Packages" }));
+            Assert.Equal("The builder gave no DISM service.", dismEx.Message);
+
+            NotSupportedException fileEx = Assert.Throws<NotSupportedException>(() =>
+                host.WriteImageFile("test.txt", new byte[] { 1 }));
+            Assert.Equal("The builder gave no file service.", fileEx.Message);
+
+            NotSupportedException rootFileEx = Assert.Throws<NotSupportedException>(() =>
+                host.WriteImageFile(ImageFileRoot.SetupTools, "test.dll", new byte[] { 1 }));
+            Assert.Equal("The builder gave no file service.", rootFileEx.Message);
+        }
     }
 
     public class ResolverTests
