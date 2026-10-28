@@ -259,7 +259,7 @@ function Test-OscdimgIntegrity {
     # 1. Check Authenticode Signature (Official Microsoft Windows ADK binary)
     try {
         $sig = Get-AuthenticodeSignature -FilePath $OscdimgPath -ErrorAction SilentlyContinue
-        if ($sig -and $sig.Status -eq 'Valid' -and ($sig.SignerCertificate.Subject -match 'Microsoft')) {
+        if ($sig -and $sig.Status -eq 'Valid' -and ($sig.SignerCertificate.Subject -match '(^|,\s*)(CN|O)=Microsoft (Corporation|Windows)(,|$)')) {
             return $true
         }
     } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }

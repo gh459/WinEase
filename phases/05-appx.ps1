@@ -100,9 +100,15 @@ if (Get-Command -Name Get-WinEaseAppxPatternRegex -ErrorAction SilentlyContinue)
 
 $packagesToRemove = @()
 if ($appxRegex) {
-    $packagesToRemove = @(Get-AppxProvisionedPackage -Path $scratchDir -ErrorAction SilentlyContinue | Where-Object {
-        Test-WinEaseAppxPackageRemovable -Name $_.PackageName -DisplayName $_.DisplayName -RemovalRegex $appxRegex -ProtectedRegex $protectedAppxRegex
-    })
+    try {
+        $packagesToRemove = @(Get-AppxProvisionedPackage -Path $scratchDir -ErrorAction Stop | Where-Object {
+            Test-WinEaseAppxPackageRemovable -Name $_.PackageName -DisplayName $_.DisplayName -RemovalRegex $appxRegex -ProtectedRegex $protectedAppxRegex
+        })
+    } catch {
+        # An empty list here would read as "nothing to remove" and the requested apps would stay.
+        Write-Warning "Could not list the provisioned apps of the image, so no app was removed in this phase: $($_.Exception.Message)"
+        $packagesToRemove = @()
+    }
 }
 
 $successfullyRemovedPackages = [System.Collections.Generic.List[object]]::new()
