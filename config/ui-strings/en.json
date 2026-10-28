@@ -150,6 +150,7 @@
   "Mig.Button.ExportApps": "Export App Inventory",
   "Mig.Button.Guide": "Open Extensibility Guide",
   "Mig.Button.Readiness": "Recovery Readiness Check",
+  "Mig.Confirm.Overwrite": "The conflict policy is Overwrite: existing files are replaced without a backup. Continue?",
   "Mig.Button.Restore": "Run Restore",
   "Mig.Button.RestoreCustom": "Restore Custom Paths",
   "Mig.Button.Retry": "Retry Failed Tasks Only",

@@ -23,12 +23,13 @@ public partial class App : Application
         };
     }
 
-    // %TEMP%\WinEase-winui-error.log (the window has no console)
+    // %TEMP%\WinEase-winui-error-<process id>.log (the window has no console). The name is per process, so a
+    // file left by another process or user in the shared temp folder is never appended to.
     public static void LogError(Exception ex)
     {
         try
         {
-            File.AppendAllText(Path.Combine(Path.GetTempPath(), "WinEase-winui-error.log"), $"[{DateTime.Now:s}] {ex}\n\n");
+            File.AppendAllText(Path.Combine(Path.GetTempPath(), $"WinEase-winui-error-{Environment.ProcessId}.log"), $"[{DateTime.Now:s}] {ex}\n\n");
         }
         catch
         {

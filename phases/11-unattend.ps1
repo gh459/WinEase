@@ -154,10 +154,14 @@ if (Test-Path -LiteralPath $unattendSource) {
     $xmlContent = $xmlContent -replace '(?s)\t*\{\s*#[^\r\n]*Zero-Click Setup Completion[^\}]*\}\s*;\r?\n', ''
     # Dynamically parameterize ComputerName, UserName and UserPassword
     $targetUserPass = if ($null -ne $UserPassword -and $UserPassword -ne '') { $UserPassword } elseif ($null -ne $script:UserPassword -and $script:UserPassword -ne '') { $script:UserPassword } else { '' }
-    $xmlContent = $xmlContent -replace '<ComputerName>WinEase</ComputerName>', "<ComputerName>$ComputerName</ComputerName>"
-    $xmlContent = $xmlContent -replace '<Username>User</Username>', "<Username>$UserName</Username>"
-    $xmlContent = $xmlContent -replace '<Name>User</Name>', "<Name>$UserName</Name>"
-    $xmlContent = $xmlContent -replace '<DisplayName>User</DisplayName>', "<DisplayName>$UserName</DisplayName>"
+    # The values are XML-escaped and inserted as literal text. A -replace replacement string would read "$1"
+    # in a name as a group reference, and a "<" or "&" would break (or inject into) the answer file.
+    $escComputerName = [System.Security.SecurityElement]::Escape([string]$ComputerName)
+    $escUserName = [System.Security.SecurityElement]::Escape([string]$UserName)
+    $xmlContent = $xmlContent.Replace('<ComputerName>WinEase</ComputerName>', "<ComputerName>$escComputerName</ComputerName>")
+    $xmlContent = $xmlContent.Replace('<Username>User</Username>', "<Username>$escUserName</Username>")
+    $xmlContent = $xmlContent.Replace('<Name>User</Name>', "<Name>$escUserName</Name>")
+    $xmlContent = $xmlContent.Replace('<DisplayName>User</DisplayName>', "<DisplayName>$escUserName</DisplayName>")
     $xmlContent = $xmlContent -replace 'net\.exe user User ', "net.exe user `"$UserName`" "
     $xmlContent = $xmlContent -replace 'Set-LocalUser -Name "User"', "Set-LocalUser -Name `"$UserName`""
     $xmlContent = $xmlContent -replace "-Name 'DefaultUserName' -Type 'String' -Force -Value 'User'", "-Name 'DefaultUserName' -Type 'String' -Force -Value '$UserName'"
