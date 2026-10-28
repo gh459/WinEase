@@ -36,8 +36,8 @@
     },
     {
         "path":  "scripts/tools/WinEase Control Center.bat",
-        "sha256":  "d8643f201fdae88bf77d2f3d96e72ecccd96cf286ff59b99c1ffcadf32963ded",
-        "bytes":  5010
+        "sha256":  "d02e605c3eeab33b0ae4dad85dab178d83ee99dbc5128e33be4676b5b0ec6835",
+        "bytes":  5068
     },
     {
         "path":  "scripts/tools/Atlas-ReviOS Tools/1. Toggle Windows Defender.bat",

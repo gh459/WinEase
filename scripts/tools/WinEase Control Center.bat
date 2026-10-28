@@ -5,7 +5,8 @@ title WinEase Control Center
 :: Elevate with UAC administrator privileges if not already elevated
 net session >nul 2>&1
 if %errorlevel% neq 0 (
-    powershell.exe -NoProfile -Command "Start-Process cmd.exe -ArgumentList '/c `\"%~f0`\"' -Verb RunAs"
+    set "SELF_PATH=%~f0"
+    powershell.exe -NoProfile -Command "Start-Process cmd.exe -ArgumentList ('/c ' + [char]34 + $env:SELF_PATH + [char]34) -Verb RunAs"
     exit /b
 )
 
@@ -144,4 +145,4 @@ goto MENU
 
 :BROWSER
 start "" "%~dp0Install-Browser.cmd"
-goto MENU
+goto MENU
