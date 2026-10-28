@@ -141,18 +141,19 @@ foreach ($package in $packagesToRemove) {
     # offline hives. Without this the Security app stays installed (and points at a
     # Defender that no longer exists).
     if (-not $removed -and $removeDefender -and $package.PackageName -match 'SecHealthUI') {
-        $secHealthPaths = @(
-            (Join-Path -Path "$scratchDir\Program Files\WindowsApps" -ChildPath $package.PackageName)
-        )
+        $secHealthPaths = [System.Collections.Generic.List[string]]::new()
+        $secHealthPaths.Add((Join-Path -Path "$scratchDir\Program Files\WindowsApps" -ChildPath $package.PackageName))
         foreach ($globRoot in @(
             "$scratchDir\Program Files\WindowsApps",
             "$scratchDir\Windows\SystemApps",
             "$scratchDir\ProgramData\Microsoft\Windows\AppRepository\Packages"
         )) {
             if (Test-Path -LiteralPath $globRoot) {
-                $secHealthPaths += @(Get-ChildItem -LiteralPath $globRoot -Force -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Name -match 'SecHealthUI' } |
-                    ForEach-Object { $_.FullName })
+                $foundItems = Get-ChildItem -LiteralPath $globRoot -Force -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -match 'SecHealthUI' }
+                foreach ($item in $foundItems) {
+                    $secHealthPaths.Add($item.FullName)
+                }
             }
         }
         foreach ($secPath in @($secHealthPaths | Sort-Object -Unique)) {
@@ -246,9 +247,9 @@ $folderCleanupScript = {
 }
 
 $parallelism = [Math]::Max(1, [Math]::Min($AppxParallelism, 8))
-$folderPaths = @()
+$folderPaths = [System.Collections.Generic.List[string]]::new()
 foreach ($package in $successfullyRemovedPackages) {
-    $folderPaths += (Join-Path -Path "$scratchDir\Program Files\WindowsApps" -ChildPath $package.PackageName)
+    $folderPaths.Add((Join-Path -Path "$scratchDir\Program Files\WindowsApps" -ChildPath $package.PackageName))
 }
 
 if ($parallelism -le 1 -or $folderPaths.Count -le 1) {
