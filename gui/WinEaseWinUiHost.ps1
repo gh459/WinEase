@@ -391,7 +391,9 @@ function Invoke-WinEaseWinUiMigrationRequest {
             $migratorPath = Join-Path $repo 'tools\migrator\WinEase-Migrator.ps1'
             if (-not (Test-Path -LiteralPath $migratorPath)) { return @{ Kind = 'Warning'; Title = (Get-WinEaseUiString 'Mig.Wizard.Title'); Text = (Get-WinEaseUiString 'Mig.Wizard.NotFound') } }
             $migratorArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $migratorPath, '-GUI', '-BackupRoot', $root, '-UiLanguage', "$($script:WinEaseUiLanguage)")
-            Start-Process powershell.exe -ArgumentList $migratorArgs -WindowStyle Normal
+            # Start-Process joins an array with spaces and no quoting; quote each element so a path with a space stays one argument
+            $migratorArgLine = ($migratorArgs | ForEach-Object { '"' + (($_ -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"' }) -join ' '
+            Start-Process powershell.exe -ArgumentList $migratorArgLine -WindowStyle Normal
             return @{}
         }
         default { throw "Unknown request '$Op'" }

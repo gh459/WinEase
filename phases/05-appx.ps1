@@ -322,5 +322,5 @@ if (Get-Command -Name Invoke-WinEaseDebloatTargets -ErrorAction SilentlyContinue
 
 # M2: User extension actions (Appx)
 if (Get-Command -Name Invoke-WinEaseUserExtensionActions -ErrorAction SilentlyContinue) {
-    try { Invoke-WinEaseUserExtensionActions -PhaseType Appx -ScratchDir $scratchDir -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    try { Invoke-WinEaseUserExtensionActions -PhaseType Appx -ScratchDir $scratchDir -DryRun:$DryRun | Out-Null } catch { Write-Warning "User extension actions (Appx) failed: $($_.Exception.Message)" }
 }

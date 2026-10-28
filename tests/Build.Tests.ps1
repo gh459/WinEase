@@ -51,11 +51,11 @@ Describe "WinEase builder - AST syntax" {
         $content = [System.IO.File]::ReadAllText($regPath, [System.Text.Encoding]::UTF8)
         $content | Should Match 'pushd,\\"%V\\"'
     }
-    It "gui\WinEaseWinUiHost.ps1 and gui\WinEaseGui.ps1 Start-Process calls pass array arguments preventing command injection" {
+    It "gui\WinEaseWinUiHost.ps1 and gui\WinEaseGui.ps1 Start-Process calls pass a quoted argument line preventing command injection" {
         foreach ($file in @($script:GuiPath, (Join-Path $script:RepoRoot "gui\WinEaseWinUiHost.ps1"))) {
             $content = [System.IO.File]::ReadAllText($file, [System.Text.Encoding]::UTF8)
             $content | Should Not Match 'Start-Process\s+powershell\.exe\s+-ArgumentList\s+"[^"]*\$'
-            $content | Should Match 'Start-Process\s+powershell\.exe\s+-ArgumentList\s+\$migratorArgs'
+            $content | Should Match 'Start-Process\s+powershell\.exe\s+-ArgumentList\s+\$migratorArgLine'
         }
     }
 }

@@ -253,5 +253,5 @@ foreach ($pluginFod in @($pluginFodRemovals | Where-Object { $_.Kind -ne 'Packag
 
 # M2: User extension actions (FOD)
 if (Get-Command -Name Invoke-WinEaseUserExtensionActions -ErrorAction SilentlyContinue) {
-    try { Invoke-WinEaseUserExtensionActions -PhaseType FOD -ScratchDir $scratchDir -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    try { Invoke-WinEaseUserExtensionActions -PhaseType FOD -ScratchDir $scratchDir -DryRun:$DryRun | Out-Null } catch { Write-Warning "User extension actions (FOD) failed: $($_.Exception.Message)" }
 }

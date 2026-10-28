@@ -537,3 +537,17 @@ function Resolve-WinEaseExplicitSourceMedia {
     $result.DriveLetter = $cand
     return [PSCustomObject]$result
 }
+
+function ConvertTo-WinEaseProcessArgumentString {
+    # Start-Process joins an -ArgumentList array with spaces and no quoting, so a path with a space is split
+    # into several arguments. This quotes each element the way CommandLineToArgvW expects.
+    param([string[]]$Arguments)
+    $quoted = foreach ($a in @($Arguments)) {
+        if ($null -eq $a) { continue }
+        if ($a.Length -gt 0 -and $a -notmatch '[\s"]') { $a; continue }
+        $escaped = $a -replace '(\\*)"', '$1$1\"'
+        $escaped = $escaped -replace '(\\+)$', '$1$1'
+        '"' + $escaped + '"'
+    }
+    return ($quoted -join ' ')
+}

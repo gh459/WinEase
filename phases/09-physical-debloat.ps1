@@ -125,7 +125,7 @@ if ($rustTargetItems.Count -gt 0) {
         return
     }
 
-    Write-Host "  [Physical Debloat] Rust binary verified: $rustBinary" -ForegroundColor Green
+    Write-Host "  [Physical Debloat] Rust binary found: $rustBinary (its contents are not verified)" -ForegroundColor Green
 
     $experimentalMap = @{}
     foreach ($item in $rustTargetItems) {
@@ -175,7 +175,7 @@ if ($rustTargetItems.Count -gt 0) {
 
     # Execute Rust binary
     Write-Host "  [Physical Debloat] Executing: $rustBinary $($rustArgs -join ' ')" -ForegroundColor Cyan
-    $proc = Start-Process -FilePath $rustBinary -ArgumentList $rustArgs -PassThru -Wait -NoNewWindow
+    $proc = Start-Process -FilePath $rustBinary -ArgumentList (ConvertTo-WinEaseProcessArgumentString -Arguments $rustArgs) -PassThru -Wait -NoNewWindow
     $exitCode = $proc.ExitCode
 
     # The result file is read for every exit code. When the engine fails, the errors

@@ -960,7 +960,7 @@ if (Get-Command -Name Get-WinEasePluginContributions -ErrorAction SilentlyContin
 
 # M2: User extension actions (Registry)
 if (Get-Command -Name Invoke-WinEaseUserExtensionActions -ErrorAction SilentlyContinue) {
-    try { Invoke-WinEaseUserExtensionActions -PhaseType Registry -ScratchDir $scratchDir -DryRun:$DryRun | Out-Null } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    try { Invoke-WinEaseUserExtensionActions -PhaseType Registry -ScratchDir $scratchDir -DryRun:$DryRun | Out-Null } catch { Write-Warning "User extension actions (Registry) failed: $($_.Exception.Message)" }
 }
 
 # P1-01: a registry write that reg.exe refused no longer passes unnoticed.
