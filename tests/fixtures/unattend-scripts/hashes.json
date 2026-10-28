@@ -21,8 +21,8 @@
     },
     {
         "path":  "scripts/setup/WinEase-transition-watchdog.ps1",
-        "sha256":  "9c102366fd0c7d594d424f07b8ac9ad9828bd8c14703c3d1bf91a983a95f26fc",
-        "bytes":  3295
+        "sha256":  "999f5e7212b03f429ee889e114e29316a8c5f3170749fc9f019dbc7ae1602d0d",
+        "bytes":  3476
     },
     {
         "path":  "scripts/tools/Install-Browser.ps1",
