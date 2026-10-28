@@ -10,6 +10,19 @@ WinEase scheme; entries below are local-fork additions on top of upstream 2.1.
 - **The Pester job fails when more than 12 tests are skipped**, so a test group that silently stops running is noticed.
 - **The conflict auto-resolver no longer stages arbitrary changes.** Before `git add -A` it refuses files changed outside the conflicted list, new files, and conflicts under `.github/`.
 
+## Unreleased (local fork, 2026-10-28) - Rust engine safety (audit PR-D)
+
+### Fixed
+- **Hyper-V target no longer deletes kernel drivers.** `vhdmp.sys` (also used to mount the VHDX files of Windows itself) and `hvservice.sys` are off the removal list; only `vmms.exe`, `vmwp.exe` and `vmcompute.exe` remain.
+- **Spooler target no longer removes `Windows\System32\spool`.** It empties `spool\PRINTERS` and keeps the folder, so the color profiles in `spool\drivers\color` survive.
+- **`delete_directory_contents` reports a folder it cannot list** (after one forced-access retry, never in a dry run) instead of treating it as empty.
+- **`validate_target_path` rejects a target whose path passes through a junction or symlink** between the mount root and the target.
+- **A target that matched nothing is reported** in the new `warnings` array of the result JSON (it used to look like a success).
+- **The engine exits with code 5 when the result file cannot be written** (removal errors still exit 1).
+- Documented the System32 deletion policy and its servicing risk in `docs/KNOWN_ISSUES.md`.
+
+Not changed: file symlinks still go through `force_access` in `delete_file`, and the package-name patterns (`MicrosoftEdge*`, `Microsoft.Cortana*`) are not checked against a real image.
+
 ## Unreleased (local fork, 2026-10-28) - behaviour fixes (audit PR-C)
 
 ### Fixed
