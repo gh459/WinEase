@@ -1356,12 +1356,13 @@ function Start-WinEaseMigrationBackup {
     }
     # Manifest: Entries stay readable by Restore-WinEaseUserData / Restore-WinEaseCustomPaths;
     # Folders / Rules / CustomPaths tell Start-WinEaseMigrationRestore which tasks exist.
-    $entries = @($ud.ManifestEntries)
-    if ($cp) { $entries += @($cp.ManifestEntries) }
-    $folderList = @()
-    foreach ($k in $FolderMap.Keys) {
-        $folderList += [PSCustomObject]@{ Category = [string]$k; SourcePath = [string]$FolderMap[$k] }
-    }
+    $entries = @(
+        if ($ud.ManifestEntries) { $ud.ManifestEntries }
+        if ($cp -and $cp.ManifestEntries) { $cp.ManifestEntries }
+    )
+    $folderList = @(foreach ($k in $FolderMap.Keys) {
+        [PSCustomObject]@{ Category = [string]$k; SourcePath = [string]$FolderMap[$k] }
+    })
     $ruleList = @()
     if ($rb) { $ruleList = @($rb.BackedUpRules) }
     $customList = @($customExpanded)
