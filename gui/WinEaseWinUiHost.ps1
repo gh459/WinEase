@@ -159,8 +159,9 @@ function Get-WinEaseWinUiJobReply {
     if ($Outcome.Error) { return @{ Kind = 'Error'; Text = (Get-WinEaseUiString 'Msg.Error' -Format $Outcome.Error) } }
     $text = $SuccessMessage
     $kind = 'Info'
-    if (@($Outcome.Errors).Count -gt 0) {
-        $text += "`n`n" + (Get-WinEaseUiString 'Msg.ErrorsReported') + "`n" + (@($Outcome.Errors) -join "`n")
+    $errs = @($Outcome.Errors | Where-Object { $_ })
+    if ($errs.Count -gt 0) {
+        $text += "`n`n" + (Get-WinEaseUiString 'Msg.ErrorsReported') + "`n" + ($errs -join "`n")
         $kind = 'Warning'
     }
     return @{ Kind = $kind; Text = $text }
