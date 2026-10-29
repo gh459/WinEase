@@ -871,10 +871,14 @@ public sealed partial class MainWindow : Window
 
     private async Task<(string Name, string Description, bool Ok)> ShowSavePresetDialogAsync()
     {
-        var name = new TextBox { MaxLength = 40 };
-        AutomationProperties.SetName(name, _s.Get("Dlg.SavePreset.Name").Trim());
-        var description = new TextBox { MaxLength = 200 };
-        AutomationProperties.SetName(description, _s.Get("Dlg.SavePreset.Description").Trim());
+        string nameLabel = _s.Get("Dlg.SavePreset.Name").Trim();
+        string descLabel = _s.Get("Dlg.SavePreset.Description").Trim();
+        var name = new TextBox { MaxLength = 40, PlaceholderText = nameLabel };
+        AutomationProperties.SetName(name, nameLabel);
+        AutomationProperties.SetHelpText(name, nameLabel);
+        var description = new TextBox { MaxLength = 200, PlaceholderText = descLabel };
+        AutomationProperties.SetName(description, descLabel);
+        AutomationProperties.SetHelpText(description, descLabel);
         var panel = new StackPanel { Spacing = 8 };
         panel.Children.Add(new TextBlock { Text = _s.Get("Dlg.SavePreset.Name") });
         panel.Children.Add(name);
@@ -888,7 +892,9 @@ public sealed partial class MainWindow : Window
             PrimaryButtonText = _s.Get("Dlg.SavePreset.Save"),
             CloseButtonText = _s.Get("Button.Cancel"),
             DefaultButton = ContentDialogButton.Primary,
+            IsPrimaryButtonEnabled = false,
         };
+        name.TextChanged += (_, _) => dlg.IsPrimaryButtonEnabled = name.Text.Trim().Length > 0;
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return ("", "", false);
         return (name.Text.Trim(), description.Text.Trim(), name.Text.Trim().Length > 0);
     }
