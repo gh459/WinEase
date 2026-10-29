@@ -264,11 +264,11 @@ ADD	HKLM\zNTUSER\System\GameConfigStore	GameDVR_FSEBehaviorMode	REG_DWORD	2
 ADD	HKLM\zNTUSER\System\GameConfigStore	GameDVR_HonorUserFSEBehaviorMode	REG_DWORD	1
 ADD	HKLM\zDEFAULT\System\GameConfigStore	GameDVR_FSEBehaviorMode	REG_DWORD	2
 ADD	HKLM\zDEFAULT\System\GameConfigStore	GameDVR_HonorUserFSEBehaviorMode	REG_DWORD	1
-ADD	HKLM\zSYSTEM\CurrentControlSet\Control\Video\NVIDIA\PowerMizer	PowerMizerPerf	REG_DWORD	1
-ADD	HKLM\zSYSTEM\CurrentControlSet\Control\Video\NVIDIA\PowerMizer	PowerMizerAsync	REG_DWORD	0
-ADD	HKLM\zSYSTEM\CurrentControlSet\Control\Video\NVIDIA\PowerMizer	PowerMizerClock	REG_DWORD	0
-ADD	HKLM\zSYSTEM\CurrentControlSet\Control\Session Manager\kernel	DpcProfile	REG_DWORD	1
-ADD	HKLM\zSYSTEM\CurrentControlSet\Control\Session Manager\kernel\Processor	DpcProfile	REG_DWORD	1
+ADD	HKLM\zSYSTEM\ControlSet001\Control\Video\NVIDIA\PowerMizer	PowerMizerPerf	REG_DWORD	1
+ADD	HKLM\zSYSTEM\ControlSet001\Control\Video\NVIDIA\PowerMizer	PowerMizerAsync	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Control\Video\NVIDIA\PowerMizer	PowerMizerClock	REG_DWORD	0
+ADD	HKLM\zSYSTEM\ControlSet001\Control\Session Manager\kernel	DpcProfile	REG_DWORD	1
+ADD	HKLM\zSYSTEM\ControlSet001\Control\Session Manager\kernel\Processor	DpcProfile	REG_DWORD	1
 ADD	HKLM\zSYSTEM\ControlSet001\Control\GraphicsDrivers	HwSchMode	REG_DWORD	2
 ADD	HKLM\zDEFAULT\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32	(default)	REG_SZ	""
 ADD	HKLM\zNTUSER\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32	(default)	REG_SZ	""

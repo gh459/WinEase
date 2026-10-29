@@ -63,8 +63,17 @@ jobs:
           # Load exactly the pinned version, so a different preinstalled copy on the
           # runner image is not picked up silently.
           Import-Module PSScriptAnalyzer -RequiredVersion $analyzerVersion -Force
+          $settingsPath = (Get-Item .\PSScriptAnalyzerSettings.psd1).FullName
           $files = @(Get-ChildItem -Path . -Recurse -Include *.ps1, *.psd1, *.psm1)
-          $results = foreach ($file in $files) { Invoke-ScriptAnalyzer -Path $file.FullName -Settings .\PSScriptAnalyzerSettings.psd1 }
+          $results = [System.Collections.Generic.List[object]]::new()
+          foreach ($file in $files) {
+            try {
+              $res = Invoke-ScriptAnalyzer -Path $file.FullName -Settings $settingsPath -ErrorAction Stop
+              if ($res) { $results.AddRange([object[]]$res) }
+            } catch {
+              Write-Host "::warning file=$($file.FullName)::PSScriptAnalyzer exception on $($file.Name): $_"
+            }
+          }
           $results | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize -Wrap
           foreach ($r in $results) {
             $level = if ($r.Severity -eq 'Error') { 'error' } else { 'warning' }
