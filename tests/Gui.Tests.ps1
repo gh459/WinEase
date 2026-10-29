@@ -1996,6 +1996,89 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
         { Invoke-WinEaseWinUiGeneralRequest -Op 'guide' -Arguments $null -RepoRoot ([System.IO.Path]::GetTempPath()) } | Should Throw
     }
 
+    It "Invoke-WinEaseWinUiPresetRequest: presetState operation returns expected state hashtable" {
+        $config = @{ TweakSettings = @{} }
+        $res = Invoke-WinEaseWinUiPresetRequest -Op 'presetState' -Arguments @{ BasePresetKey = 'balanced'; Config = $config }
+        ($res -is [hashtable]) | Should Be $true
+        $res.ContainsKey('Data') | Should Be $true
+        $res.Data.ContainsKey('BasePresetKey') | Should Be $true
+        $res.Data.ContainsKey('IsModified') | Should Be $true
+        $res.Data.ContainsKey('State') | Should Be $true
+        $res.Data.ContainsKey('PresetKey') | Should Be $true
+        $res.Data.ContainsKey('DifferingKeys') | Should Be $true
+    }
+
+    It "Invoke-WinEaseWinUiPresetRequest: presets operation returns list of available presets" {
+        $res = Invoke-WinEaseWinUiPresetRequest -Op 'presets' -Arguments $null
+        ($res -is [hashtable]) | Should Be $true
+        $res.Data.ContainsKey('Presets') | Should Be $true
+        @($res.Data.Presets).Count | Should BeGreaterThan 0
+    }
+
+    It "Invoke-WinEaseWinUiPresetRequest: savePreset operation handles success, reason key, and general error branches" {
+        # 1. Success branch
+        Mock Save-WinEaseGuiUserPreset {
+            return @{ Saved = $true; Key = 'user_preset_1'; ReasonKey = $null }
+        }
+        $args = @{ Name = ' My Preset '; Description = 'My Desc'; Config = @{}; Overwrite = $false }
+        $res = Invoke-WinEaseWinUiPresetRequest -Op 'savePreset' -Arguments $args
+        $res.Data.Success | Should Be $true
+        $res.Data.Key | Should Be 'user_preset_1'
+        $res.Data.Presets | Should Not BeNullOrEmpty
+        $res.Data.Text | Should Match 'My Preset'
+
+        # 2. Failure with ReasonKey branch
+        Mock Save-WinEaseGuiUserPreset {
+            return @{ Saved = $false; Key = $null; ReasonKey = 'Msg.SavePreset.Exists' }
+        }
+        $resReason = Invoke-WinEaseWinUiPresetRequest -Op 'savePreset' -Arguments $args
+        $resReason.Data.Success | Should Be $false
+        $resReason.Data.ReasonKey | Should Be 'Msg.SavePreset.Exists'
+        $resReason.Data.Text | Should Not BeNullOrEmpty
+
+        # 3. General error branch
+        Mock Save-WinEaseGuiUserPreset {
+            return @{ Saved = $false; Key = $null; ReasonKey = $null; Error = 'Permission denied' }
+        }
+        $resErr = Invoke-WinEaseWinUiPresetRequest -Op 'savePreset' -Arguments $args
+        $resErr.Data.Success | Should Be $false
+        $resErr.Data.Text | Should Match 'Permission denied'
+    }
+
+    It "Invoke-WinEaseWinUiPresetRequest: presetDiff operation formats diff between presets and current config" {
+        $diffPreset = Invoke-WinEaseWinUiPresetRequest -Op 'presetDiff' -Arguments @{ From = 'extreme'; To = 'balanced' }
+        ($diffPreset -is [hashtable]) | Should Be $true
+        $diffPreset.ContainsKey('Text') | Should Be $true
+
+        $diffCurrent = Invoke-WinEaseWinUiPresetRequest -Op 'presetDiff' -Arguments @{ From = 'extreme'; To = '__current__'; Config = @{ TweakSettings = @{ DisableUAC = $true } } }
+        ($diffCurrent -is [hashtable]) | Should Be $true
+        $diffCurrent.ContainsKey('Text') | Should Be $true
+    }
+
+    It "Invoke-WinEaseWinUiPresetRequest: throws on unknown request" {
+        { Invoke-WinEaseWinUiPresetRequest -Op 'unknownPresetOp' -Arguments $null } | Should Throw "Unknown request 'unknownPresetOp'"
+    }
+
+    It "Invoke-WinEaseWinUiRequest: routes preset operations (presetState, presets, savePreset, presetDiff)" {
+        # presetState
+        $r1 = Invoke-WinEaseWinUiRequest -Op 'presetState' -Arguments @{ BasePresetKey = 'balanced'; Config = @{} }
+        $r1.ContainsKey('Data') | Should Be $true
+
+        # presets
+        $r2 = Invoke-WinEaseWinUiRequest -Op 'presets' -Arguments $null
+        $r2.ContainsKey('Data') | Should Be $true
+
+        # savePreset
+        Mock Save-WinEaseGuiUserPreset { return @{ Saved = $true; Key = 'k1' } }
+        $r3 = Invoke-WinEaseWinUiRequest -Op 'savePreset' -Arguments @{ Name = 'P1' }
+        $r3.ContainsKey('Data') | Should Be $true
+        $r3.Data.Success | Should Be $true
+
+        # presetDiff
+        $r4 = Invoke-WinEaseWinUiRequest -Op 'presetDiff' -Arguments @{ From = 'extreme'; To = 'balanced' }
+        $r4.ContainsKey('Text') | Should Be $true
+    }
+
     It "the builder prefers the WinUI 3 window, keeps -ClassicGui and falls back to WinForms" {
         $builder = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'WinEasebuilder.ps1'))
         $guiSession = [System.IO.File]::ReadAllText($script:GuiSessionPath)
