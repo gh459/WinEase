@@ -2026,6 +2026,27 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
             if (Test-Path -LiteralPath $dumpFolder) { Remove-Item -LiteralPath $dumpFolder -Recurse -Force -ErrorAction SilentlyContinue }
         }
     }
+
+    It "Get-WinEaseGuiOutputDir resolves scriptDir, WinEaseGuiRepoRoot, or current location in order" {
+        $savedScriptDir = $script:scriptDir
+        $savedRepoRoot = $script:WinEaseGuiRepoRoot
+        try {
+            $script:scriptDir = 'C:\TestScriptDir'
+            $script:WinEaseGuiRepoRoot = 'C:\TestRepoRoot'
+            Get-WinEaseGuiOutputDir | Should Be 'C:\TestScriptDir'
+
+            $script:scriptDir = $null
+            $script:WinEaseGuiRepoRoot = 'C:\TestRepoRoot'
+            Get-WinEaseGuiOutputDir | Should Be 'C:\TestRepoRoot'
+
+            $script:scriptDir = $null
+            $script:WinEaseGuiRepoRoot = $null
+            Get-WinEaseGuiOutputDir | Should Be (Get-Location).Path
+        } finally {
+            $script:scriptDir = $savedScriptDir
+            $script:WinEaseGuiRepoRoot = $savedRepoRoot
+        }
+    }
 }
 
 Describe "Show-WinEaseGuiSessionWindow session launcher and error handling" {
