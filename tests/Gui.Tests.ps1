@@ -2026,6 +2026,188 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
             if (Test-Path -LiteralPath $dumpFolder) { Remove-Item -LiteralPath $dumpFolder -Recurse -Force -ErrorAction SilentlyContinue }
         }
     }
+
+    Context "Invoke-WinEaseWinUiMigrationRequest operations" {
+        It "handles 'readiness' request returning readiness title and message" {
+            Mock Test-WinEaseRecoveryReadiness {
+                return [PSCustomObject]@{
+                    ReadinessScore       = 95
+                    SecondaryDrives      = @('D:', 'E:')
+                    SystemRestoreEnabled = $true
+                    WinReEnabledOnTarget = $true
+                    Recommendations      = @('Enable backup', 'Check space')
+                }
+            }
+            $reqArgs = @{ Config = @{ Option = $true } }
+            $res = Invoke-WinEaseWinUiMigrationRequest -Op 'readiness' -Arguments $reqArgs -RepoRoot $script:RepoRoot -BackupRoot $TestDrive
+            $res.Title | Should Not BeNullOrEmpty
+            $res.Text | Should Match '95'
+            $res.Text | Should Match 'D:, E:'
+            $res.Text | Should Match 'Enable backup'
+            Assert-MockCalled Test-WinEaseRecoveryReadiness -Exactly 1 -Scope It
+        }
+
+        It "handles 'migrationRules' request returning rules and rule errors" {
+            $res = Invoke-WinEaseWinUiMigrationRequest -Op 'migrationRules' -Arguments @{} -RepoRoot $script:RepoRoot -BackupRoot $TestDrive
+            @($res.Data).Count | Should BeGreaterThan 0
+            $res.Data[0].Id | Should Not BeNullOrEmpty
+            $res.Data[0].Name | Should Not BeNullOrEmpty
+        }
+
+        It "handles 'exportApps' request formatting job reply" {
+            Mock Invoke-WinEaseGuiMigrationJob {
+                return @{ Error = $null; Errors = @(); Result = 'Done' }
+            }
+            $outPath = Join-Path $TestDrive 'apps.json'
+            $res = Invoke-WinEaseWinUiMigrationRequest -Op 'exportApps' -Arguments @{ OutputPath = $outPath } -RepoRoot $script:RepoRoot -BackupRoot $TestDrive
+            $res.Kind | Should Be 'Info'
+            $res.Title | Should Not BeNullOrEmpty
+            $res.Text | Should Match ([regex]::Escape($outPath))
+            Assert-MockCalled Invoke-WinEaseGuiMigrationJob -Exactly 1 -Scope It
+        }
+
+        It "handles 'estimate' request returning estimate message or null estimate" {
+            Mock Get-WinEaseMigrationFolderMapFromNames { return @{ 'Documents' = 'C:\Users\Test\Documents' } }
+            Mock Invoke-WinEaseGuiMigrationJob {
+                return @{
+                    Error  = $null
+                    Errors = @()
+                    Result = [PSCustomObject]@{
+                        TotalFiles          = 42
+                        TotalMB             = 128
+                        DestinationDrive    = 'D:'
+                        DestinationFreeMB   = 10240
+                        HasEnoughSpace      = $true
+                    }
+                }
+            }
+            $res = Invoke-WinEaseWinUiMigrationRequest -Op 'estimate' -Arguments @{ Folders = @('Documents'); RuleIds = @('rule1') } -RepoRoot $script:RepoRoot -BackupRoot $TestDrive
+            $res.Kind | Should Be 'Info'
+            $res.Title | Should Not BeNullOrEmpty
+            $res.Text | Should Match '42'
+            $res.Text | Should Match '128'
+
+            # Null estimate result
+            Mock Invoke-WinEaseGuiMigrationJob { return @{ Error = $null; Errors = @(); Result = $null } }
+            $resNull = Invoke-WinEaseWinUiMigrationRequest -Op 'estimate' -Arguments @{ Folders = @() } -RepoRoot $script:RepoRoot -BackupRoot $TestDrive
+            $resNull.Kind | Should Be 'Info'
+        }
+
+        It "handles 'backup' request collecting rules results, skip reasons, failed files and outcome lines" {
+            Mock Get-WinEaseMigrationFolderMapFromNames { return @{ 'Desktop' = 'C:\Users\Test\Desktop' } }
+            Mock Get-WinEaseGuiBackupOutcomeLines { return @('Outcome line 1', 'Outcome line 2') }
+            Mock Invoke-WinEaseGuiMigrationJob {
+                return @{
+                    Error  = $null
+                    Errors = @()
+                    Result = [PSCustomObject]@{
+                        RulesResult = [PSCustomObject]@{
+                            BackedUpRules = @('r1')
+                            SkipReasons   = @([PSCustomObject]@{ Item = 'ItemA'; Reason = 'In use' })
+                            SkippedFiles  = 1
+                            FailedFiles   = @([PSCustomObject]@{ Rule = 'RuleB'; Error = 'Permission denied' })
+                        }
+                        UserData    = [PSCustomObject]@{ FailedFiles = @('f1') }
+                        RuleErrors  = @('Broken rule file')
+                    }
+                }
+            }
+            $reqArgs = @{ Folders = @('Desktop'); RuleIds = @('r1'); IncludeSecrets = $true }
+            $res = Invoke-WinEaseWinUiMigrationRequest -Op 'backup' -Arguments $reqArgs -RepoRoot $script:RepoRoot -BackupRoot $TestDrive
+            $res.Kind | Should Be 'Info'
+            $res.Title | Should Not BeNullOrEmpty
+            $res.Data.Status | Should Not BeNullOrEmpty
+            $res.Text | Should Match 'ItemA: In use'
+            $res.Text | Should Match 'RuleB: Permission denied'
+            $res.Text | Should Match 'Broken rule file'
+            $res.Text | Should Match 'Outcome line 1'
+        }
+
+        It "handles 'verify' request returning integrity check results" {
+            if (-not (Get-Command Test-WinEaseGuiBackupIntegrity -ErrorAction SilentlyContinue)) {
+                function Test-WinEaseGuiBackupIntegrity { }
+            }
+            Mock Invoke-WinEaseGuiMigrationJob {
+                return @{
+                    Error  = $null
+                    Errors = @()
+                    Result = [PSCustomObject]@{
+                        Checked  = 10
+                        Problems = @('File corrupt: a.txt')
+                    }
+                }
+            }
+            $resProb = Invoke-WinEaseWinUiMigrationRequest -Op 'verify' -Arguments @{} -RepoRoot $script:RepoRoot -BackupRoot $TestDrive
+            $resProb.Kind | Should Be 'Warning'
+            $resProb.Title | Should Not BeNullOrEmpty
+            $resProb.Text | Should Match '10'
+
+            # Clean verification
+            Mock Invoke-WinEaseGuiMigrationJob {
+                return @{
+                    Error  = $null
+                    Errors = @()
+                    Result = [PSCustomObject]@{ Checked = 10; Problems = @() }
+                }
+            }
+            $resOk = Invoke-WinEaseWinUiMigrationRequest -Op 'verify' -Arguments @{} -RepoRoot $script:RepoRoot -BackupRoot $TestDrive
+            $resOk.Kind | Should Be 'Info'
+            $resOk.Text | Should Match '10'
+        }
+
+        It "handles 'restore' request formatting restore results and status" {
+            Mock Invoke-WinEaseGuiMigrationJob {
+                return @{
+                    Error  = $null
+                    Errors = @()
+                    Result = [PSCustomObject]@{
+                        Results = @([PSCustomObject]@{ TaskId = 'Task1'; Status = 'Restored' })
+                    }
+                }
+            }
+            $reqArgs = @{ ConflictPolicy = 'Overwrite'; RetryFailedOnly = $true; IncludeSecrets = $true }
+            $res = Invoke-WinEaseWinUiMigrationRequest -Op 'restore' -Arguments $reqArgs -RepoRoot $script:RepoRoot -BackupRoot $TestDrive
+            $res.Kind | Should Be 'Info'
+            $res.Title | Should Not BeNullOrEmpty
+            $res.Text | Should Match 'Task1: Restored'
+            $res.Data.Status | Should Not BeNullOrEmpty
+        }
+
+        It "handles 'backupCustom' request returning error for empty paths or success for valid paths" {
+            $noPaths = Invoke-WinEaseWinUiMigrationRequest -Op 'backupCustom' -Arguments @{ Paths = @() } -RepoRoot $script:RepoRoot -BackupRoot $TestDrive
+            $noPaths.Kind | Should Be 'Error'
+
+            $testFile = Join-Path $TestDrive "custom_src.txt"
+            Set-Content -LiteralPath $testFile -Value "custom payload"
+            $backupFolder = Join-Path $TestDrive "custom_backup_dest"
+
+            $withPaths = Invoke-WinEaseWinUiMigrationRequest -Op 'backupCustom' -Arguments @{ Paths = @($testFile) } -RepoRoot $script:RepoRoot -BackupRoot $backupFolder
+            $withPaths.Title | Should Not BeNullOrEmpty
+            $withPaths.Text | Should Match '1'
+            $withPaths.Data.Status | Should Match '1'
+        }
+
+        It "handles 'restoreCustom' request restoring custom paths with conflict policy" {
+            $backupFolder = Join-Path $TestDrive "custom_backup_restore"
+            $res = Invoke-WinEaseWinUiMigrationRequest -Op 'restoreCustom' -Arguments @{ ConflictPolicy = 'Skip' } -RepoRoot $script:RepoRoot -BackupRoot $backupFolder
+            $res.Title | Should Not BeNullOrEmpty
+            $res.Text | Should Not BeNullOrEmpty
+            $res.Data.Status | Should Not BeNullOrEmpty
+        }
+
+        It "handles 'wizard' request returning warning when script is missing or launching process when present" {
+            $resMissing = Invoke-WinEaseWinUiMigrationRequest -Op 'wizard' -Arguments @{} -RepoRoot ([System.IO.Path]::GetTempPath()) -BackupRoot $TestDrive
+            $resMissing.Kind | Should Be 'Warning'
+
+            Mock Start-Process { }
+            $resOk = Invoke-WinEaseWinUiMigrationRequest -Op 'wizard' -Arguments @{} -RepoRoot $script:RepoRoot -BackupRoot $TestDrive
+            Assert-MockCalled Start-Process -Exactly 1 -Scope It
+        }
+
+        It "throws unknown request error when an invalid Op is supplied to Invoke-WinEaseWinUiMigrationRequest" {
+            { Invoke-WinEaseWinUiMigrationRequest -Op 'invalidOp' -Arguments @{} -RepoRoot $script:RepoRoot -BackupRoot $TestDrive } | Should Throw "Unknown request 'invalidOp'"
+        }
+    }
 }
 
 Describe "Show-WinEaseGuiSessionWindow session launcher and error handling" {
