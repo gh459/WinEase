@@ -1328,6 +1328,53 @@ Describe "S10 - GUI and migrator cleanup (shared parts)" -Tags 'slow' {
         $script:WinEaseGuiColors.Accent.ToArgb() | Should Be ([System.Drawing.Color]::FromArgb(0, 190, 255).ToArgb())
     }
 
+    It "New-WinEaseButton constructs a button with defaults, custom parameters, Tag, OnClick and Parent" {
+        . $script:S10Gui
+        # Default parameter construction
+        $btnDefault = New-WinEaseButton -Text "Test Button" -X 10 -Y 20 -Width 100 -Height 30
+        $btnDefault.Text | Should Be "Test Button"
+        $btnDefault.AccessibleName | Should Be "Test Button"
+        $btnDefault.Location.X | Should Be 10
+        $btnDefault.Location.Y | Should Be 20
+        $btnDefault.Size.Width | Should Be 100
+        $btnDefault.Size.Height | Should Be 30
+        $btnDefault.BackColor.ToArgb() | Should Be ($script:WinEaseGuiColors.Button.ToArgb())
+        $btnDefault.ForeColor.ToArgb() | Should Be ([System.Drawing.Color]::White.ToArgb())
+        $btnDefault.FlatStyle | Should Be 'Flat'
+        $btnDefault.Tag | Should BeNullOrEmpty
+
+        # Ampersand removal in AccessibleName
+        $btnAmp = New-WinEaseButton -Text "&Save && &Close" -X 0 -Y 0 -Width 50 -Height 20
+        $btnAmp.AccessibleName | Should Be "Save  Close"
+
+        # Custom options: Font, BackColor, ForeColor, Tag, OnClick handler and Parent controls binding
+        $parent = New-Object System.Windows.Forms.Panel
+        $customFont = New-Object System.Drawing.Font('Arial', 10)
+        $customBack = [System.Drawing.Color]::Red
+        $customFore = [System.Drawing.Color]::Yellow
+        $script:buttonTestClicked = $false
+        $onClick = { $script:buttonTestClicked = $true }
+
+        $btnCustom = New-WinEaseButton -Text "Custom" -X 5 -Y 15 -Width 80 -Height 25 `
+            -BackColor $customBack -ForeColor $customFore -Font $customFont `
+            -Tag "MyTagValue" -OnClick $onClick -Parent $parent
+
+        try {
+            $btnCustom.Font.Name | Should Be "Arial"
+            $btnCustom.BackColor.ToArgb() | Should Be ($customBack.ToArgb())
+            $btnCustom.ForeColor.ToArgb() | Should Be ($customFore.ToArgb())
+            $btnCustom.Tag | Should Be "MyTagValue"
+            $parent.Controls.Contains($btnCustom) | Should Be $true
+
+            $btnCustom.PerformClick()
+            $script:buttonTestClicked | Should Be $true
+        } finally {
+            $parent.Dispose()
+            $customFont.Dispose()
+            $script:buttonTestClicked = $null
+        }
+    }
+
     It "part factories keep their geometry and colours" {
         . $script:S10Gui
         $cmb = New-WinEaseComboBox -Items 'a', 'b' -SelectedIndex 1 -DropList -X 5 -Y 6 -Width 100
