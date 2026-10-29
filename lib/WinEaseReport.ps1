@@ -294,8 +294,11 @@ function Export-WinEaseHtmlReport {
         [void]$sb.AppendLine('    <h2>&#9881; Granular System &amp; Security Tweaks (All-Toggle Architecture)</h2>')
         $allTweakItems = [System.Collections.Generic.List[PSCustomObject]]::new()
         foreach ($entry in $script:AllTweakDefs.GetEnumerator()) {
-            $cat = if ($entry.Value -is [System.Collections.IDictionary]) { $entry.Value['Category'] } else { $entry.Value.Category }
-            $desc = if ($entry.Value -is [System.Collections.IDictionary]) { $entry.Value['Description'] } else { $entry.Value.Description }
+            $val = $entry.Value
+            $cat = $val.Category
+            $desc = $val.Description
+            if (-not $cat -and $val) { try { if ($val.ContainsKey('Category')) { $cat = $val['Category'] } } catch { Write-Verbose "Ignored: $($_.Exception.Message)" } }
+            if (-not $desc -and $val) { try { if ($val.ContainsKey('Description')) { $desc = $val['Description'] } } catch { Write-Verbose "Ignored: $($_.Exception.Message)" } }
             $allTweakItems.Add([PSCustomObject]@{
                 Key         = [string]$entry.Key
                 Category    = [string]$cat
