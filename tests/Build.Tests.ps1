@@ -1034,3 +1034,107 @@ Describe "WinEase builder - ConvertTo-WinEaseCliArgument" {
         ConvertTo-WinEaseCliArgument -Name "SourceDrive" -Value $null | Should Be "-SourceDrive ''"
     }
 }
+
+Describe "WinEase builder - Invoke-WinEaseHostHealthCheck" {
+    BeforeAll {
+        . (Join-Path -Path $script:RepoRoot -ChildPath "lib\WinEaseBuildPlan.ps1")
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcNode = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Invoke-WinEaseHostHealthCheck'
+        }, $true)
+        . ([scriptblock]::Create($funcNode.Extent.Text))
+    }
+
+    BeforeEach {
+        $script:Warnings = [System.Collections.Generic.List[string]]::new()
+        $script:HostOutputs = [System.Collections.Generic.List[string]]::new()
+        Mock Write-Warning -MockWith {
+            param($Message)
+            $script:Warnings.Add("$Message")
+        }
+        Mock Write-Host -MockWith {
+            param($Object, $ForegroundColor)
+            $script:HostOutputs.Add("$Object")
+        }
+        Mock Get-WinEaseRecommendedFreeGB { return 40 }
+    }
+
+    It "reports no risk factors for a healthy host environment" {
+        Mock Get-CimInstance { [PSCustomObject]@{ TotalPhysicalMemory = 16GB } }
+        Mock Get-PSDrive { [PSCustomObject]@{ Free = 100GB } }
+        Mock Get-PhysicalDisk { @([PSCustomObject]@{ FriendlyName = 'NVMe SSD'; MediaType = 'SSD'; HealthStatus = 'Healthy' }) }
+
+        Invoke-WinEaseHostHealthCheck -WorkspaceDir "C:\WinEase_workspace"
+
+        $script:Warnings.Count | Should Be 0
+        ($script:HostOutputs -join "`n") | Should Match 'Host health: no blocking risk factors detected'
+    }
+
+    It "flags risk warning when physical RAM is below 8 GB" {
+        Mock Get-CimInstance { [PSCustomObject]@{ TotalPhysicalMemory = 4GB } }
+        Mock Get-PSDrive { [PSCustomObject]@{ Free = 100GB } }
+        Mock Get-PhysicalDisk { @([PSCustomObject]@{ FriendlyName = 'NVMe SSD'; MediaType = 'SSD'; HealthStatus = 'Healthy' }) }
+
+        Invoke-WinEaseHostHealthCheck -WorkspaceDir "C:\WinEase_workspace"
+
+        $script:Warnings.Count | Should BeGreaterThan 0
+        ($script:Warnings -join "`n") | Should Match 'HOST ENVIRONMENT RISK DETECTED'
+        ($script:Warnings -join "`n") | Should Match 'Low physical RAM \(4 GB < 8 GB\)'
+    }
+
+    It "flags risk warning when workspace free space is below recommended threshold" {
+        Mock Get-CimInstance { [PSCustomObject]@{ TotalPhysicalMemory = 16GB } }
+        Mock Get-PSDrive { [PSCustomObject]@{ Free = 20GB } }
+        Mock Get-PhysicalDisk { @([PSCustomObject]@{ FriendlyName = 'NVMe SSD'; MediaType = 'SSD'; HealthStatus = 'Healthy' }) }
+
+        Invoke-WinEaseHostHealthCheck -WorkspaceDir "C:\WinEase_workspace"
+
+        $script:Warnings.Count | Should BeGreaterThan 0
+        ($script:Warnings -join "`n") | Should Match 'HOST ENVIRONMENT RISK DETECTED'
+        ($script:Warnings -join "`n") | Should Match 'Low free space on the C: drive \(20 GB free, 40\+ GB recommended\)'
+    }
+
+    It "checks free space across multiple distinct drives" {
+        Mock Get-CimInstance { [PSCustomObject]@{ TotalPhysicalMemory = 16GB } }
+        Mock Get-PSDrive -ParameterFilter { $Name -eq 'C' } { [PSCustomObject]@{ Free = 100GB } }
+        Mock Get-PSDrive -ParameterFilter { $Name -eq 'D' } { [PSCustomObject]@{ Free = 15GB } }
+        Mock Get-PhysicalDisk { @([PSCustomObject]@{ FriendlyName = 'NVMe SSD'; MediaType = 'SSD'; HealthStatus = 'Healthy' }) }
+
+        Invoke-WinEaseHostHealthCheck -WorkspaceDir "D:\BuildDir"
+
+        $script:Warnings.Count | Should BeGreaterThan 0
+        ($script:Warnings -join "`n") | Should Match 'Low free space on the D: drive \(15 GB free, 40\+ GB recommended\)'
+        ($script:Warnings -join "`n") | Should Not Match 'Low free space on the C: drive'
+    }
+
+    It "flags risk warning when physical disk health status is not Healthy" {
+        Mock Get-CimInstance { [PSCustomObject]@{ TotalPhysicalMemory = 16GB } }
+        Mock Get-PSDrive { [PSCustomObject]@{ Free = 100GB } }
+        Mock Get-PhysicalDisk { @(
+            [PSCustomObject]@{ FriendlyName = 'Disk0'; MediaType = 'SSD'; HealthStatus = 'Healthy' },
+            [PSCustomObject]@{ FriendlyName = 'Disk1'; MediaType = 'HDD'; HealthStatus = 'Warning' }
+        ) }
+
+        Invoke-WinEaseHostHealthCheck -WorkspaceDir "C:\WinEase_workspace"
+
+        $script:Warnings.Count | Should BeGreaterThan 0
+        ($script:Warnings -join "`n") | Should Match 'HOST ENVIRONMENT RISK DETECTED'
+        ($script:Warnings -join "`n") | Should Match 'Unhealthy physical disk\(s\): Disk1=Warning'
+    }
+
+    It "handles CIM, PSDrive, and Storage module exceptions gracefully without throwing" {
+        Mock Get-CimInstance { throw "WMI service unavailable" }
+        Mock Get-PSDrive { throw "PSDrive query error" }
+        Mock Get-PhysicalDisk { throw "Storage module missing" }
+
+        { Invoke-WinEaseHostHealthCheck -WorkspaceDir "C:\WinEase_workspace" } | Should Not Throw
+
+        ($script:HostOutputs -join "`n") | Should Match 'Physical RAM:\s+\(detection unavailable\)'
+        ($script:HostOutputs -join "`n") | Should Match 'Physical disks:\s+\(Storage module unavailable, skipped\)'
+        $script:Warnings.Count | Should Be 0
+    }
+}
