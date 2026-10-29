@@ -36,15 +36,25 @@ public class IssueFilteringTests
     private static int OptimizedShowIssues(List<InputIssue> issues, string[] fieldKeys)
     {
         int processedCount = 0;
-        var issuesByField = issues.ToLookup(i => i.Field == "OutputDir" ? "WorkDir" : i.Field, StringComparer.Ordinal);
+        var issuesByField = new Dictionary<string, List<InputIssue>>(StringComparer.Ordinal);
+        for (int i = 0; i < issues.Count; i++)
+        {
+            var issue = issues[i];
+            string key = issue.Field == "OutputDir" ? "WorkDir" : issue.Field;
+            if (!issuesByField.TryGetValue(key, out var list))
+            {
+                list = new List<InputIssue>();
+                issuesByField[key] = list;
+            }
+            list.Add(issue);
+        }
+
         foreach (var key in fieldKeys)
         {
-            var mine = issuesByField[key];
-            if (!mine.Any())
+            if (issuesByField.TryGetValue(key, out var mine) && mine.Count > 0)
             {
-                continue;
+                processedCount += mine.Count;
             }
-            processedCount += mine.Count();
         }
         return processedCount;
     }
@@ -64,12 +74,23 @@ public class IssueFilteringTests
         };
 
         var fields = new[] { "SourceDrive", "WorkDir", "Index", "InjectDrivers", "UserName", "ComputerName" };
-        var issuesByField = issues.ToLookup(i => i.Field == "OutputDir" ? "WorkDir" : i.Field, StringComparer.Ordinal);
+        var issuesByField = new Dictionary<string, List<InputIssue>>(StringComparer.Ordinal);
+        for (int i = 0; i < issues.Count; i++)
+        {
+            var issue = issues[i];
+            string key = issue.Field == "OutputDir" ? "WorkDir" : issue.Field;
+            if (!issuesByField.TryGetValue(key, out var list))
+            {
+                list = new List<InputIssue>();
+                issuesByField[key] = list;
+            }
+            list.Add(issue);
+        }
 
         foreach (var field in fields)
         {
             var baseline = issues.Where(i => i.Field == field || (field == "WorkDir" && i.Field == "OutputDir")).ToList();
-            var optimized = issuesByField[field].ToList();
+            var optimized = issuesByField.TryGetValue(field, out var list) ? list : new List<InputIssue>();
 
             Assert.Equal(baseline.Count, optimized.Count);
             for (int i = 0; i < baseline.Count; i++)
