@@ -1996,6 +1996,78 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
         { Invoke-WinEaseWinUiGeneralRequest -Op 'guide' -Arguments $null -RepoRoot ([System.IO.Path]::GetTempPath()) } | Should Throw
     }
 
+    It "requests: 'plugins.list' returns formatted plugin inventory rows" {
+        Mock Get-WinEasePluginInventory {
+            return @(
+                [PSCustomObject]@{
+                    Source = 'User'
+                    File = 'TestPlugin.dll'
+                    Sha256 = '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef'
+                    Status = 'Ok'
+                    OnError = 'Warn'
+                    Enabled = $true
+                    Description = 'A test plugin'
+                }
+            )
+        }
+
+        $res = Invoke-WinEaseWinUiRequest -Op 'plugins.list' -Arguments $null
+        $res | Should Not BeNullOrEmpty
+        $res.Data.Count | Should Be 1
+        $row = $res.Data[0]
+        $row.Source | Should Be 'User'
+        $row.File | Should Be 'TestPlugin.dll'
+        $row.Sha256 | Should Be '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef'
+        $row.Status | Should Be 'Ok'
+        $row.OnError | Should Be 'Warn'
+        $row.Enabled | Should Be $true
+        $row.Description | Should Be 'A test plugin'
+    }
+
+    It "requests: 'plugins.addUser' validates mandatory path parameter and handles confirm and add steps" {
+        # Path missing throws error
+        { Invoke-WinEaseWinUiPluginRequest -Op 'plugins.addUser' -Arguments @{} } | Should Throw 'No plugin file was given.'
+
+        # Step 1: Confirmation request without ConfirmSha256
+        Mock Get-WinEasePluginFileInfo {
+            return [PSCustomObject]@{
+                Name = 'SamplePlugin.dll'
+                Sha256 = 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890'
+                Size = '12 KB'
+            }
+        }
+        $confirmReply = Invoke-WinEaseWinUiRequest -Op 'plugins.addUser' -Arguments @{ Path = 'C:\Plugins\SamplePlugin.dll' }
+        $confirmReply.Kind | Should Be 'Info'
+        $confirmReply.Data.NeedsConfirm | Should Be $true
+        $confirmReply.Data.Name | Should Be 'SamplePlugin.dll'
+        $confirmReply.Data.Sha256 | Should Be 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890'
+        $confirmReply.Data.Size | Should Be '12 KB'
+
+        # Step 2: Addition request with ConfirmSha256
+        Mock Add-WinEaseUserPlugin {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
+            param($Path, $ExpectedSha256, $OnError, $Description, $RepoRoot)
+            return [PSCustomObject]@{
+                File = 'SamplePlugin.dll'
+                Sha256 = $ExpectedSha256
+            }
+        }
+        $addedReply = Invoke-WinEaseWinUiRequest -Op 'plugins.addUser' -Arguments @{
+            Path = 'C:\Plugins\SamplePlugin.dll'
+            ConfirmSha256 = 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890'
+            OnError = 'Stop'
+            Description = 'User description'
+        }
+        $addedReply.Kind | Should Be 'Info'
+        $addedReply.Data.NeedsConfirm | Should Be $false
+        $addedReply.Data.File | Should Be 'SamplePlugin.dll'
+        $addedReply.Data.Sha256 | Should Be 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890'
+        Assert-MockCalled Add-WinEaseUserPlugin -Times 1 -Scope It
+
+        # Unknown plugin request op throws exception
+        { Invoke-WinEaseWinUiPluginRequest -Op 'plugins.unknown' -Arguments @{} } | Should Throw "Unknown request 'plugins.unknown'"
+    }
+
     It "the builder prefers the WinUI 3 window, keeps -ClassicGui and falls back to WinForms" {
         $builder = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'WinEasebuilder.ps1'))
         $guiSession = [System.IO.File]::ReadAllText($script:GuiSessionPath)

@@ -497,10 +497,10 @@ function Invoke-WinEaseWinUiCustomScriptRequest {
 function Invoke-WinEaseWinUiPluginRequest {
     param([string]$Op, $Arguments, [string]$RepoRoot)
     $a = $Arguments
-    $repo = $RepoRoot
+    $repo = if ($RepoRoot) { $RepoRoot } else { $script:WinEaseGuiRepoRoot }
     switch ($Op) {
         'plugins.list' {
-            $pluginEngine = Join-Path $repo 'lib\WinEasePlugins.ps1'
+            $pluginEngine = if ($repo) { Join-Path $repo 'lib\WinEasePlugins.ps1' } else { 'lib\WinEasePlugins.ps1' }
             if (-not (Test-Path -LiteralPath 'Function:\Get-WinEasePluginInventory') -and (Test-Path -LiteralPath $pluginEngine)) { . $pluginEngine }
             $rows = [System.Collections.Generic.List[object]]::new()
             foreach ($p in @(Get-WinEasePluginInventory -RepoRoot $repo)) {
@@ -519,10 +519,10 @@ function Invoke-WinEaseWinUiPluginRequest {
         'plugins.addUser' {
             # Two steps: without ConfirmSha256 the reply shows the file and its hash (NeedsConfirm);
             # the window asks the user and sends the same request again with the hash that was shown.
-            $pluginEngine = Join-Path $repo 'lib\WinEasePlugins.ps1'
-            if (-not (Test-Path -LiteralPath 'Function:\Add-WinEaseUserPlugin') -and (Test-Path -LiteralPath $pluginEngine)) { . $pluginEngine }
             $pluginPath = "$($a.Path)".Trim()
             if (-not $pluginPath) { throw 'No plugin file was given.' }
+            $pluginEngine = if ($repo) { Join-Path $repo 'lib\WinEasePlugins.ps1' } else { 'lib\WinEasePlugins.ps1' }
+            if (-not (Test-Path -LiteralPath 'Function:\Add-WinEaseUserPlugin') -and (Test-Path -LiteralPath $pluginEngine)) { . $pluginEngine }
             $pluginTitle = Get-WinEaseUiString 'Plugins.Title'
             $confirm = "$($a.ConfirmSha256)".Trim().ToLowerInvariant()
             if (-not $confirm) {
