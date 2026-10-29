@@ -2026,6 +2026,40 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
             if (Test-Path -LiteralPath $dumpFolder) { Remove-Item -LiteralPath $dumpFolder -Recurse -Force -ErrorAction SilentlyContinue }
         }
     }
+
+    It "Get-WinEaseWinUiPresets aggregates built-in and user presets setting Key and Label properties" {
+        Mock Get-WinEaseGuiPresetValues {
+            param($Name)
+            if ($Name -eq 'extreme') {
+                return [ordered]@{ ProfileName = 'Extreme' }
+            } elseif ($Name -eq 'balanced') {
+                return [ordered]@{ ProfileName = 'Balanced' }
+            } elseif ($Name -eq 'user_custom1') {
+                return [ordered]@{ ProfileName = 'Custom 1' }
+            }
+            return $null
+        }
+        Mock Get-WinEaseGuiUserPresetChoices {
+            return @(
+                [PSCustomObject]@{ Key = 'user_custom1'; Label = 'My Custom Preset 1' },
+                [PSCustomObject]@{ Key = 'user_missing'; Label = 'Missing Preset' }
+            )
+        }
+
+        $presets = Get-WinEaseWinUiPresets
+
+        @($presets).Count | Should Be 3
+        $presets[0].Key | Should Be 'extreme'
+        $presets[0].ProfileName | Should Be 'Extreme'
+        $presets[1].Key | Should Be 'balanced'
+        $presets[1].ProfileName | Should Be 'Balanced'
+        $presets[2].Key | Should Be 'user_custom1'
+        $presets[2].Label | Should Be 'My Custom Preset 1'
+        $presets[2].ProfileName | Should Be 'Custom 1'
+
+        Assert-MockCalled Get-WinEaseGuiPresetValues -Scope It
+        Assert-MockCalled Get-WinEaseGuiUserPresetChoices -Exactly 1 -Scope It
+    }
 }
 
 Describe "Show-WinEaseGuiSessionWindow session launcher and error handling" {
