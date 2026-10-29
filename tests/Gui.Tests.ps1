@@ -1345,6 +1345,35 @@ Describe "S10 - GUI and migrator cleanup (shared parts)" -Tags 'slow' {
             $frm.FormBorderStyle | Should Be 'FixedDialog'
         } finally { $frm.Dispose() }
     }
+
+    It "New-WinEaseCheckBox factory initializes CheckBox and RadioButton correctly" {
+        . $script:S10Gui
+        $parent = New-Object System.Windows.Forms.Panel
+        try {
+            # Standard CheckBox with mnemonic &
+            $chk = New-WinEaseCheckBox -Text '&Option Text' -X 10 -Y 20 -Width 150 -Height 30 -Checked $true -Parent $parent
+            ($chk -is [System.Windows.Forms.CheckBox]) | Should Be $true
+            $chk.Text | Should Be '&Option Text'
+            $chk.AccessibleName | Should Be 'Option Text'
+            $chk.Location.X | Should Be 10
+            $chk.Location.Y | Should Be 20
+            $chk.Size.Width | Should Be 150
+            $chk.Size.Height | Should Be 30
+            $chk.Checked | Should Be $true
+            $chk.ForeColor.ToArgb() | Should Be ($script:WinEaseGuiColors.Text.ToArgb())
+            $parent.Controls.Contains($chk) | Should Be $true
+
+            # RadioButton with -Radio switch
+            $rad = New-WinEaseCheckBox -Radio -Text 'Radio Option' -X 5 -Y 5 -Width 100 -Height 20 -Checked $false
+            ($rad -is [System.Windows.Forms.RadioButton]) | Should Be $true
+            ($rad -isnot [System.Windows.Forms.CheckBox]) | Should Be $true
+            $rad.Text | Should Be 'Radio Option'
+            $rad.AccessibleName | Should Be 'Radio Option'
+            $rad.Checked | Should Be $false
+        } finally {
+            $parent.Dispose()
+        }
+    }
 }
 
 Describe "GUI display language (English / Japanese)" -Tags 'slow' {
