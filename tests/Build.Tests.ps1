@@ -953,7 +953,7 @@ Describe "WinEase builder - Enter-Phase progress tracking and checkpoints" {
 
             $script:CurrentPhase | Should Be 10
             $verboseMsgs.Count | Should BeGreaterThan 0
-            $verboseMsgs[0].Message | Should Match "Ignored:"
+            $verboseMsgs[0].Message | Should Match "Could not set window title:"
             $verboseMsgs[0].Message | Should Match "Host RawUI WindowTitle exception"
         }
     }
