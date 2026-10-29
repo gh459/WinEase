@@ -1996,6 +1996,87 @@ Describe "WinUI 3 window host (gui\WinEaseWinUiHost.ps1)" {
         { Invoke-WinEaseWinUiGeneralRequest -Op 'guide' -Arguments $null -RepoRoot ([System.IO.Path]::GetTempPath()) } | Should Throw
     }
 
+    It "Invoke-WinEaseWinUiCustomScriptRequest: handles customScripts request with stage defaulting and row mapping" {
+        Mock Get-WinEaseCustomScriptInventory {
+            return @(
+                [PSCustomObject]@{
+                    Name = '01-test.ps1'; FullPath = 'C:\repo\scripts\custom\FirstLogon\01-test.ps1'
+                    EffectiveOrder = '01'; Extension = '.ps1'; Size = '1 KB'; Condition = ''
+                    OnError = 'Stop'; Description = 'Test Script'; Location = 'FirstLogon'
+                }
+            )
+        }
+        $res = Invoke-WinEaseWinUiRequest -Op 'customScripts' -Arguments @{}
+        $res.Data.Count | Should Be 1
+        $res.Data[0].Name | Should Be '01-test.ps1'
+        $res.Data[0].Path | Should Be 'C:\repo\scripts\custom\FirstLogon\01-test.ps1'
+        $res.Data[0].OnError | Should Be 'Stop'
+        Assert-MockCalled Get-WinEaseCustomScriptInventory -Scope It
+    }
+
+    It "Invoke-WinEaseWinUiCustomScriptRequest: handles customScriptAdd request success and error warning modes" {
+        Mock Add-WinEaseCustomScript {
+            param($RepoRoot, $Stage, $Paths)
+            if ($Paths -contains 'bad.ps1') {
+                return @{ Added = @(); Errors = @('Failed to add bad.ps1') }
+            }
+            return @{ Added = @('01-good.ps1'); Errors = @() }
+        }
+
+        $res1 = Invoke-WinEaseWinUiRequest -Op 'customScriptAdd' -Arguments @{ Stage = 'FirstLogon'; Paths = @('01-good.ps1') }
+        $res1.Kind | Should Be 'Info'
+        $res1.Text | Should Match 'Added 1 script\(s\) to stage FirstLogon\.'
+
+        $res2 = Invoke-WinEaseWinUiRequest -Op 'customScriptAdd' -Arguments @{ Stage = 'FirstLogon'; Paths = @('bad.ps1') }
+        $res2.Kind | Should Be 'Warning'
+        $res2.Text | Should Match 'Failed to add bad\.ps1'
+    }
+
+    It "Invoke-WinEaseWinUiCustomScriptRequest: handles customScriptRemove, customScriptMeta, and customScriptReorder requests" {
+        Mock Remove-WinEaseCustomScript { return @{ Removed = '01-test.ps1' } }
+        Mock Set-WinEaseCustomScriptMetadata { param($Path, $Order, $Condition, $OnError, $Description) return @{ Id = '01-test.ps1' } }
+        Mock Move-WinEaseCustomScriptOrder { param($Path, $NewOrder) return @{ Name = '01-test.ps1' } }
+
+        $resRemove = Invoke-WinEaseWinUiRequest -Op 'customScriptRemove' -Arguments @{ Stage = 'FirstLogon'; Path = '01-test.ps1' }
+        $resRemove.Text | Should Match '01-test\.ps1'
+
+        $resMeta = Invoke-WinEaseWinUiRequest -Op 'customScriptMeta' -Arguments @{ Path = '01-test.ps1'; Order = ' 200 '; Condition = ''; OnError = 'Warn'; Description = 'Desc' }
+        $resMeta.Text | Should Match '01-test\.ps1'
+
+        $resReorder = Invoke-WinEaseWinUiRequest -Op 'customScriptReorder' -Arguments @{ Path = '01-test.ps1'; Order = '50' }
+        $resReorder.Text | Should Match '01-test\.ps1'
+    }
+
+    It "Invoke-WinEaseWinUiCustomScriptRequest: handles customScriptPreview request for empty and populated script lists" {
+        Mock Get-WinEaseCustomScriptPreview {
+            return @(
+                [PSCustomObject]@{ Stage = 'FirstLogon'; ImagePath = 'scripts\custom\FirstLogon\01-a.ps1'; RunsAs = 'SYSTEM' }
+            )
+        }
+        $resPopulated = Invoke-WinEaseWinUiRequest -Op 'customScriptPreview' -Arguments @{}
+        $resPopulated.Text | Should Match 'FirstLogon  scripts\\custom\\FirstLogon\\01-a\.ps1  \(SYSTEM\)'
+
+        Mock Get-WinEaseCustomScriptPreview { return @() }
+        $resEmpty = Invoke-WinEaseWinUiRequest -Op 'customScriptPreview' -Arguments @{}
+        $resEmpty.Text | Should Not BeNullOrEmpty
+    }
+
+    It "Invoke-WinEaseWinUiCustomScriptRequest: customScriptOpenFolder validates stage and executes Start-Process safely without spawning explorer" {
+        Mock Get-WinEaseCustomScriptStageMap {
+            return @(
+                [PSCustomObject]@{ Stage = 'FirstLogon'; RepoFolder = 'scripts\custom\FirstLogon' }
+            )
+        }
+        Mock Start-Process {}
+        Mock Test-Path { return $true }
+
+        $res = Invoke-WinEaseWinUiRequest -Op 'customScriptOpenFolder' -Arguments @{ Stage = 'FirstLogon' }
+        ($res -is [hashtable]) | Should Be $true
+        Assert-MockCalled Start-Process -Exactly 1 -Scope It
+
+        { Invoke-WinEaseWinUiRequest -Op 'customScriptOpenFolder' -Arguments @{ Stage = 'InvalidStage' } } | Should Throw "Unknown stage 'InvalidStage'."
+    }
+
     It "the builder prefers the WinUI 3 window, keeps -ClassicGui and falls back to WinForms" {
         $builder = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'WinEasebuilder.ps1'))
         $guiSession = [System.IO.File]::ReadAllText($script:GuiSessionPath)
