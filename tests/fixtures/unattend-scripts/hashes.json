@@ -11,8 +11,8 @@
     },
     {
         "path":  "scripts/setup/RunFirstLogon.ps1",
-        "sha256":  "46266052f28f6ea06b5658bf850447944de7580f5653afb9b6f7404f8c2c08f0",
-        "bytes":  10679
+        "sha256":  "b8763a23f2008daa7f60f831ca213dee2d2ee2f0da7021a2895b81235ce54a53",
+        "bytes":  10732
     },
     {
         "path":  "scripts/setup/WinEase-oobe-autologon-repair.ps1",
