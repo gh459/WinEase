@@ -43,6 +43,11 @@ function Find-WinEaseWinUiExe {
 function ConvertTo-WinEaseHashtable {
     param($InputObject)
     if ($null -eq $InputObject) { return $null }
+    if ($InputObject -is [System.Collections.IDictionary]) {
+        $h = @{}
+        foreach ($k in $InputObject.Keys) { $h[$k] = ConvertTo-WinEaseHashtable $InputObject[$k] }
+        return $h
+    }
     if ($InputObject -is [System.Management.Automation.PSCustomObject]) {
         $h = @{}
         foreach ($p in $InputObject.PSObject.Properties) { $h[$p.Name] = ConvertTo-WinEaseHashtable $p.Value }
