@@ -982,7 +982,8 @@ Describe "WinEase builder - Enter-Phase progress tracking and checkpoints" {
 
 Describe "WinEase builder - ConvertTo-WinEaseCliArgument" {
     BeforeAll {
-        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $bPath = if ($script:BuilderPath) { $script:BuilderPath } elseif ($global:BuilderPath) { $global:BuilderPath } else { Join-Path (Get-Location).Path "WinEasebuilder.ps1" }
+        $content = [System.IO.File]::ReadAllText($bPath, [System.Text.Encoding]::UTF8)
         $tokens = $null; $parseErrors = $null
         $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
         $funcNode = $ast.Find({
@@ -1032,5 +1033,70 @@ Describe "WinEase builder - ConvertTo-WinEaseCliArgument" {
 
     It "serializes `$null value as parameter with empty string" {
         ConvertTo-WinEaseCliArgument -Name "SourceDrive" -Value $null | Should Be "-SourceDrive ''"
+    }
+}
+
+Describe "WinEase builder - New-WinEaseChildArguments" {
+    BeforeAll {
+        $bPath = if ($script:BuilderPath) { $script:BuilderPath } elseif ($global:BuilderPath) { $global:BuilderPath } else { Join-Path (Get-Location).Path "WinEasebuilder.ps1" }
+        $content = [System.IO.File]::ReadAllText($bPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcNode = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'New-WinEaseChildArguments'
+        }, $true)
+        . ([scriptblock]::Create($funcNode.Extent.Text))
+
+        function Decode-WinEaseBase64Command {
+            param([string]$ArgumentString)
+            $encoded = $ArgumentString -replace '^.*-EncodedCommand\s+', ''
+            $bytes = [System.Convert]::FromBase64String($encoded)
+            return [System.Text.Encoding]::Unicode.GetString($bytes)
+        }
+    }
+
+    It "returns powershell CLI flags -NoProfile -ExecutionPolicy Bypass -InputFormat None -EncodedCommand" {
+        $res = New-WinEaseChildArguments -ScriptPath "C:\WinEase\WinEasebuilder.ps1" -ScriptArguments @("-NonInteractive")
+        $res | Should -Match '^-NoProfile -ExecutionPolicy Bypass -InputFormat None -EncodedCommand '
+    }
+
+    It "encodes command string containing script path, arguments, and exit code propagation" {
+        $res = New-WinEaseChildArguments -ScriptPath "C:\WinEase\WinEasebuilder.ps1" -ScriptArguments @("-NonInteractive", "-Profile 'extreme'")
+        $decoded = Decode-WinEaseBase64Command -ArgumentString $res
+        $decoded | Should -Be "& 'C:\WinEase\WinEasebuilder.ps1' -NonInteractive -Profile 'extreme'; exit `$LASTEXITCODE"
+    }
+
+    It "escapes single quotes in script path" {
+        $res = New-WinEaseChildArguments -ScriptPath "C:\User's Path\WinEasebuilder.ps1" -ScriptArguments @("-NonInteractive")
+        $decoded = Decode-WinEaseBase64Command -ArgumentString $res
+        $decoded | Should -Be "& 'C:\User''s Path\WinEasebuilder.ps1' -NonInteractive; exit `$LASTEXITCODE"
+    }
+
+    It "handles empty array for ScriptArguments" {
+        $res = New-WinEaseChildArguments -ScriptPath "C:\WinEase\WinEasebuilder.ps1" -ScriptArguments @()
+        $decoded = Decode-WinEaseBase64Command -ArgumentString $res
+        $decoded | Should -Be "& 'C:\WinEase\WinEasebuilder.ps1' ; exit `$LASTEXITCODE"
+    }
+
+    It "handles `$null for ScriptArguments" {
+        $res = New-WinEaseChildArguments -ScriptPath "C:\WinEase\WinEasebuilder.ps1" -ScriptArguments $null
+        $decoded = Decode-WinEaseBase64Command -ArgumentString $res
+        $decoded | Should -Be "& 'C:\WinEase\WinEasebuilder.ps1' ; exit `$LASTEXITCODE"
+    }
+
+    It "joins multiple serialized arguments with spaces" {
+        $argsList = @("-NonInteractive", "-WorkDir 'C:\Work Dir'", "-KeepDefender")
+        $res = New-WinEaseChildArguments -ScriptPath "C:\WinEase\WinEasebuilder.ps1" -ScriptArguments $argsList
+        $decoded = Decode-WinEaseBase64Command -ArgumentString $res
+        $decoded | Should -Be "& 'C:\WinEase\WinEasebuilder.ps1' -NonInteractive -WorkDir 'C:\Work Dir' -KeepDefender; exit `$LASTEXITCODE"
+    }
+
+    It "preserves arguments containing quotes and semi-colons" {
+        $argsList = @("-UserName 'User''s PC'", "-TweakGroupOverrides 'NetworkStack=1;TimerBCD=0'")
+        $res = New-WinEaseChildArguments -ScriptPath "C:\WinEase\WinEasebuilder.ps1" -ScriptArguments $argsList
+        $decoded = Decode-WinEaseBase64Command -ArgumentString $res
+        $decoded | Should -Be "& 'C:\WinEase\WinEasebuilder.ps1' -UserName 'User''s PC' -TweakGroupOverrides 'NetworkStack=1;TimerBCD=0'; exit `$LASTEXITCODE"
     }
 }
