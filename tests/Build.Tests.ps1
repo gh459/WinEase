@@ -1034,3 +1034,51 @@ Describe "WinEase builder - ConvertTo-WinEaseCliArgument" {
         ConvertTo-WinEaseCliArgument -Name "SourceDrive" -Value $null | Should Be "-SourceDrive ''"
     }
 }
+
+Describe "WinEase builder - New-WinEaseChildArguments" {
+    BeforeAll {
+        $content = [System.IO.File]::ReadAllText($script:BuilderPath, [System.Text.Encoding]::UTF8)
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$parseErrors)
+        $funcNode = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'New-WinEaseChildArguments'
+        }, $true)
+        . ([scriptblock]::Create($funcNode.Extent.Text))
+    }
+
+    It "formats flags and EncodedCommand string correctly" {
+        $res = New-WinEaseChildArguments -ScriptPath "C:\WinEase\WinEasebuilder.ps1" -ScriptArguments @("-NonInteractive", "-Profile 'extreme'")
+        $res | Should Match '^-NoProfile -ExecutionPolicy Bypass -InputFormat None -EncodedCommand [A-Za-z0-9+/=]+$'
+    }
+
+    It "decodes base64 payload matching command syntax with arguments and exit exitCode" {
+        $path = "C:\WinEase\WinEasebuilder.ps1"
+        $args = @("-NonInteractive", "-Profile 'extreme'")
+        $res = New-WinEaseChildArguments -ScriptPath $path -ScriptArguments $args
+        $encoded = ($res -split ' ')[-1]
+        $decodedBytes = [Convert]::FromBase64String($encoded)
+        $decodedCommand = [System.Text.Encoding]::Unicode.GetString($decodedBytes)
+        $decodedCommand | Should Be "& 'C:\WinEase\WinEasebuilder.ps1' -NonInteractive -Profile 'extreme'; exit `$LASTEXITCODE"
+    }
+
+    It "escapes single quotes in ScriptPath in decoded command payload" {
+        $path = "C:\WinEase's Builder\WinEasebuilder.ps1"
+        $args = @("-NonInteractive")
+        $res = New-WinEaseChildArguments -ScriptPath $path -ScriptArguments $args
+        $encoded = ($res -split ' ')[-1]
+        $decodedBytes = [Convert]::FromBase64String($encoded)
+        $decodedCommand = [System.Text.Encoding]::Unicode.GetString($decodedBytes)
+        $decodedCommand | Should Be "& 'C:\WinEase''s Builder\WinEasebuilder.ps1' -NonInteractive; exit `$LASTEXITCODE"
+    }
+
+    It "handles empty ScriptArguments correctly" {
+        $path = "C:\WinEase\WinEasebuilder.ps1"
+        $res = New-WinEaseChildArguments -ScriptPath $path -ScriptArguments @()
+        $encoded = ($res -split ' ')[-1]
+        $decodedBytes = [Convert]::FromBase64String($encoded)
+        $decodedCommand = [System.Text.Encoding]::Unicode.GetString($decodedBytes)
+        $decodedCommand | Should Be "& 'C:\WinEase\WinEasebuilder.ps1' ; exit `$LASTEXITCODE"
+    }
+}
