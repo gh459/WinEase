@@ -307,11 +307,14 @@ if ($removeDefender) {
     $secHealthDirs = [System.Collections.Generic.List[string]]::new()
     foreach ($secRoot in @("Program Files\WindowsApps", "Windows\SystemApps", "ProgramData\Microsoft\Windows\AppRepository\Packages")) {
         $fullRoot = Join-Path -Path $verifyApply -ChildPath $secRoot
-        if (Test-Path -LiteralPath $fullRoot) {
-            foreach ($item in (Get-ChildItem -LiteralPath $fullRoot -Force -ErrorAction SilentlyContinue)) {
-                if ($item.Name -match 'SecHealthUI') {
-                    $secHealthDirs.Add((Join-Path -Path $secRoot -ChildPath $item.Name))
+        if ([System.IO.Directory]::Exists($fullRoot)) {
+            try {
+                foreach ($dirPath in [System.IO.Directory]::EnumerateDirectories($fullRoot, '*SecHealthUI*')) {
+                    $dirName = [System.IO.Path]::GetFileName($dirPath)
+                    $secHealthDirs.Add((Join-Path -Path $secRoot -ChildPath $dirName))
                 }
+            } catch {
+                # Ignore directory enumeration errors to match SilentlyContinue behavior
             }
         }
     }
