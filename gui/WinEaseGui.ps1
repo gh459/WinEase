@@ -1601,7 +1601,7 @@ function New-WinEaseMigrationActionsGroup {
         $backupArgs = Get-WinEaseGuiBackupArgs -Gui $g
         $o = Invoke-WinEaseGuiMigrationJob -Button $btn -Form $f -RepoRoot $script:WinEaseGuiRepoRoot -Arguments $backupArgs -Script 'param($a) Start-WinEaseMigrationBackup @a'
         $doneMsg = Get-WinEaseUiString 'Mig.Backup.Done' -Format $backupArgs.BackupRoot
-        if (-not $o.Error) { $outcomeLines = @(Get-WinEaseGuiBackupOutcomeLines -Result $o.Result); if ($outcomeLines.Count -gt 0) { $doneMsg += "`n`n" + ($outcomeLines -join "`n") } }
+        if (-not $o.Error) { $outcomeLines = @(Get-WinEaseGuiBackupOutcomeLines -Result $o.Result); if ($outcomeLines.Count -gt 0) { $doneMsg = "$doneMsg`n`n$($outcomeLines -join "`n")" } }
         Show-WinEaseGuiJobOutcome -Outcome $o -Title (Get-WinEaseUiString 'Mig.Backup.Title') -SuccessMessage $doneMsg
         if ($g.MigStatus -and -not $o.Error) { $g.MigStatus.Text = Get-WinEaseUiString 'Mig.Backup.Status' }
     })
