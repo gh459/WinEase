@@ -716,6 +716,32 @@ Describe "WinEase browser installer signature (Test-WinEaseBrowserInstallerSigna
         }
     }
 
+    It "properly escapes HTML tags in tweak category names to prevent XSS" {
+        $outPath = Join-Path ([System.IO.Path]::GetTempPath()) ("report_tweak_xss_" + [guid]::NewGuid().ToString('N') + ".html")
+        $evilCat = '<script>alert("category_xss")</script>'
+        $oldTweakDefs = $script:AllTweakDefs
+        try {
+            $script:AllTweakDefs = [ordered]@{
+                "TestTweak" = @{
+                    Category    = $evilCat
+                    Description = "Test description"
+                }
+            }
+            Export-WinEaseHtmlReport -OutputPath $outPath -BuildInfo @{
+                Settings = @{ TweakSettings = @{ "TestTweak" = $true } }
+            }
+            Test-Path -LiteralPath $outPath | Should Be $true
+            $html = [System.IO.File]::ReadAllText($outPath)
+            $html | Should Not Match '<script>alert\("category_xss"\)</script>'
+            $html | Should Match '&lt;script&gt;alert\("category_xss"\)&lt;/script&gt;'
+        } finally {
+            $script:AllTweakDefs = $oldTweakDefs
+            if (Test-Path -LiteralPath $outPath) {
+                Remove-Item -LiteralPath $outPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "returns `$false and deletes file when Get-AuthenticodeSignature returns `$null" {
         $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("test_browser_nullsig_" + [guid]::NewGuid().ToString('N') + ".exe")
         [System.IO.File]::WriteAllText($tempFile, "dummy content")
