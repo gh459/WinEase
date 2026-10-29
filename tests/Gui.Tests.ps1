@@ -2362,6 +2362,42 @@ Describe "Send-WinEaseGuiProgress in gui\WinEaseWinUiHost.ps1" {
     }
 }
 
+Describe "Get-WinEaseWinUiJobReply in gui\WinEaseWinUiHost.ps1" {
+    BeforeAll {
+        . (Join-Path -Path $script:RepoRoot -ChildPath 'gui\WinEaseWinUiHost.ps1')
+        . (Join-Path -Path $script:RepoRoot -ChildPath 'lib\WinEaseGuiCore.ps1')
+    }
+
+    It "returns Error kind and formatted error text when Outcome.Error is set" {
+        $outcome = @{ Error = 'Backup drive is full' }
+        $reply = Get-WinEaseWinUiJobReply -Outcome $outcome -SuccessMessage 'Success'
+        $reply.Kind | Should Be 'Error'
+        $reply.Text | Should Be (Get-WinEaseUiString 'Msg.Error' -Format 'Backup drive is full')
+    }
+
+    It "returns Info kind and success message when Outcome has no errors" {
+        $outcome = @{ Errors = @() }
+        $reply = Get-WinEaseWinUiJobReply -Outcome $outcome -SuccessMessage 'Operation completed'
+        $reply.Kind | Should Be 'Info'
+        $reply.Text | Should Be 'Operation completed'
+    }
+
+    It "returns Warning kind with appended errors when Outcome.Errors contains items" {
+        $outcome = @{ Errors = @('File A locked', 'File B permission denied') }
+        $reply = Get-WinEaseWinUiJobReply -Outcome $outcome -SuccessMessage 'Backup partially done'
+        $reply.Kind | Should Be 'Warning'
+        $expectedText = "Backup partially done`n`n" + (Get-WinEaseUiString 'Msg.ErrorsReported') + "`nFile A locked`nFile B permission denied"
+        $reply.Text | Should Be $expectedText
+    }
+
+    It "handles PSCustomObject outcome and null/missing Errors safely" {
+        $outcomeObj = [PSCustomObject]@{ Error = $null; Errors = $null }
+        $reply = Get-WinEaseWinUiJobReply -Outcome $outcomeObj -SuccessMessage 'Done'
+        $reply.Kind | Should Be 'Info'
+        $reply.Text | Should Be 'Done'
+    }
+}
+
 Describe "B1 - preset vs custom state (Get-WinEaseGuiPresetState and the window result)" -Tags 'slow' {
     $settingsDef = Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot "config\schema.psd1")
     $script:AllTweakDefs = [ordered]@{}
