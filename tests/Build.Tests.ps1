@@ -198,6 +198,15 @@ Describe "WinEase setup scripts - Custom Scripts Logging" {
 
         . ([scriptblock]::Create($redactFn.Extent.Text))
         . ([scriptblock]::Create($logFn.Extent.Text))
+
+        $firstLogonPath = Join-Path $script:RepoRoot "scripts\FirstLogon.ps1"
+        $firstLogonAst = [System.Management.Automation.Language.Parser]::ParseFile($firstLogonPath, [ref]$tokens, [ref]$errors)
+
+        $flRedactFn = $firstLogonAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Redact-WinEaseSecret' }, $true)
+        $flLogFn = $firstLogonAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Write-CustomScriptLog' }, $true)
+
+        . ([scriptblock]::Create($flRedactFn.Extent.Text))
+        . ([scriptblock]::Create($flLogFn.Extent.Text))
     }
 
     It "scripts/FirstLogon.ps1 contains dual-log recording and stop preference wrapper" {
@@ -297,6 +306,60 @@ Describe "WinEase setup scripts - Custom Scripts Logging" {
 
         Assert-MockCalled Add-Content -Exactly 1 -Scope It
         Assert-MockCalled Write-Warning -Exactly 1 -Scope It -ParameterFilter { $Message -match '\[USER-SCRIPT-LOG-WARNING\] Failed to write log entry: Mocked Add-Content error' }
+    }
+
+    It "Write-CustomScriptLog appends log entry using System.IO.File::AppendAllText on happy path and redacts secrets" {
+        $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("fl_log_test_" + [Guid]::NewGuid().ToString("N"))
+        $logPath1 = Join-Path $tempDir "sub1\custom-scripts.log"
+        $logPath2 = Join-Path $tempDir "sub2\custom-scripts.log"
+        $customLogFiles = @($logPath1, $logPath2)
+
+        try {
+            Write-CustomScriptLog "Executing script with secret password = 'SuperSecretPassword123'"
+            (Test-Path -LiteralPath $logPath1) | Should Be $true
+            (Test-Path -LiteralPath $logPath2) | Should Be $true
+
+            $content1 = Get-Content -LiteralPath $logPath1 -Raw
+            $content1 | Should Match 'password = \[REDACTED\]'
+            $content1 | Should Not Match 'SuperSecretPassword123'
+
+            $content2 = Get-Content -LiteralPath $logPath2 -Raw
+            $content2 | Should Match 'password = \[REDACTED\]'
+        } finally {
+            if (Test-Path -LiteralPath $tempDir) { Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "Write-CustomScriptLog falls back to Add-Content when System.IO.File::AppendAllText throws" {
+        Mock Add-Content -MockWith { }
+        $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("fl_log_test_" + [Guid]::NewGuid().ToString("N"))
+        New-Item -ItemType File -Path $tempDir -Force | Out-Null
+        $logPath = Join-Path $tempDir "custom-scripts.log" # Parent is a file, AppendAllText throws
+        $customLogFiles = @($logPath)
+
+        try {
+            Write-CustomScriptLog "Fallback path test message"
+            Assert-MockCalled Add-Content -Exactly 1 -Scope It -ParameterFilter { $Value -match "Fallback path test message" }
+        } finally {
+            if (Test-Path -LiteralPath $tempDir) { Remove-Item -LiteralPath $tempDir -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "Write-CustomScriptLog writes warning when both AppendAllText and Add-Content throw" {
+        Mock Add-Content -MockWith { throw "Mocked Add-Content error" }
+        Mock Write-Warning -MockWith { }
+        $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("fl_log_test_" + [Guid]::NewGuid().ToString("N"))
+        New-Item -ItemType File -Path $tempDir -Force | Out-Null
+        $logPath = Join-Path $tempDir "custom-scripts.log" # Parent is a file
+        $customLogFiles = @($logPath)
+
+        try {
+            Write-CustomScriptLog "Double failure test message"
+            Assert-MockCalled Add-Content -Exactly 1 -Scope It
+            Assert-MockCalled Write-Warning -Exactly 1 -Scope It -ParameterFilter { $Message -match '\[CUSTOM-SCRIPT-LOG-WARNING\] Failed to append log entry' }
+        } finally {
+            if (Test-Path -LiteralPath $tempDir) { Remove-Item -LiteralPath $tempDir -Force -ErrorAction SilentlyContinue }
+        }
     }
 }
 
