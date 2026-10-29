@@ -14,6 +14,7 @@ namespace WinEase.Plugins
     {
         private static readonly object Gate = new object();
         private static Assembly contract;
+        private static int contractMajorVersion;
         private static bool installed;
 
         /// <summary>Remembers the contract assembly and installs the handler once per process.</summary>
@@ -23,6 +24,8 @@ namespace WinEase.Plugins
             lock (Gate)
             {
                 contract = contractAssembly;
+                // Cache the contract assembly's major version to avoid heap allocations from Assembly.GetName() during resolution.
+                contractMajorVersion = contractAssembly.GetName().Version != null ? contractAssembly.GetName().Version.Major : 0;
                 if (installed) return;
                 AppDomain.CurrentDomain.AssemblyResolve += OnResolve;
                 installed = true;
@@ -37,8 +40,8 @@ namespace WinEase.Plugins
             try { requested = new AssemblyName(args.Name); }
             catch (Exception) { return null; }
             if (!string.Equals(requested.Name, PluginApi.AssemblyName, StringComparison.OrdinalIgnoreCase)) return null;
-            // Plugins bind to the major version only.
-            if (requested.Version != null && requested.Version.Major != current.GetName().Version.Major) return null;
+            // Plugins bind to the major version only. Use cached major version to prevent repeated AssemblyName allocations.
+            if (requested.Version != null && requested.Version.Major != contractMajorVersion) return null;
             return current;
         }
     }
