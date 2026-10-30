@@ -1414,7 +1414,10 @@ public sealed partial class MainWindow : Window
         var actions = new StackPanel { Spacing = 6 };
         void Action(string key, Func<Task> run)
         {
-            var b = new Button { Content = _s.Get(key).Trim(), HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left };
+            string label = _s.Get(key).Trim();
+            var b = new Button { Content = label, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left };
+            AutomationProperties.SetName(b, label);
+            ToolTipService.SetToolTip(b, label);
             b.Click += async (_, _) => await run();
             actions.Children.Add(b);
         }
@@ -1528,7 +1531,9 @@ public sealed partial class MainWindow : Window
         List<string>? ruleErrors = null;
         if (_migRules == null)
         {
-            host.Children.Add(new ProgressRing { IsActive = true, Width = 20, Height = 20, HorizontalAlignment = HorizontalAlignment.Left });
+            var ring = new ProgressRing { IsActive = true, Width = 20, Height = 20, HorizontalAlignment = HorizontalAlignment.Left };
+            AutomationProperties.SetName(ring, _s.Get("Main.Busy"));
+            host.Children.Add(ring);
             JsonObject r;
             try
             {
