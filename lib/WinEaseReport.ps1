@@ -302,7 +302,7 @@ function Export-WinEaseHtmlReport {
         }
         $catGroups = $allTweakItems | Group-Object Category
         foreach ($cg in $catGroups) {
-            [void]$sb.AppendLine("    <h3 style=`"font-size: 15px; color: var(--accent); margin-top: 14px; margin-bottom: 6px;`">$($cg.Name) Tweaks</h3>")
+            [void]$sb.AppendLine("    <h3 style=`"font-size: 15px; color: var(--accent); margin-top: 14px; margin-bottom: 6px;`">$(& $enc $cg.Name) Tweaks</h3>")
             [void]$sb.AppendLine('    <div class="tweak-grid">')
             foreach ($item in $cg.Group) {
                 $tval = $false
