@@ -78,13 +78,22 @@ namespace WinEase.Plugins.Builtin.PostInstallTools
             Assembly assembly = typeof(PostInstallToolsPlugin).Assembly;
             foreach (string name in assembly.GetManifestResourceNames())
             {
-                if (string.Equals(name.Replace('\\', '/'), wanted, StringComparison.Ordinal))
+                // Avoid string.Replace allocations when resource name has no backslashes or matches directly.
+                if (string.Equals(name, wanted, StringComparison.Ordinal) ||
+                    (name.IndexOf('\\') >= 0 && string.Equals(name.Replace('\\', '/'), wanted, StringComparison.Ordinal)))
                 {
                     using (Stream stream = assembly.GetManifestResourceStream(name))
-                    using (MemoryStream copy = new MemoryStream())
                     {
-                        stream.CopyTo(copy);
-                        return copy.ToArray();
+                        // Read directly into pre-sized byte array using stream length to eliminate MemoryStream allocations.
+                        byte[] buffer = new byte[stream.Length];
+                        int offset = 0;
+                        while (offset < buffer.Length)
+                        {
+                            int read = stream.Read(buffer, offset, buffer.Length - offset);
+                            if (read == 0) break;
+                            offset += read;
+                        }
+                        return buffer;
                     }
                 }
             }
@@ -97,7 +106,8 @@ namespace WinEase.Plugins.Builtin.PostInstallTools
             List<string> names = new List<string>();
             foreach (string name in typeof(PostInstallToolsPlugin).Assembly.GetManifestResourceNames())
             {
-                string normalised = name.Replace('\\', '/');
+                // Avoid string.Replace allocation when name contains no backslashes.
+                string normalised = name.IndexOf('\\') >= 0 ? name.Replace('\\', '/') : name;
                 if (normalised.StartsWith("tools/", StringComparison.Ordinal)) names.Add(normalised.Substring("tools/".Length));
             }
             return names;
