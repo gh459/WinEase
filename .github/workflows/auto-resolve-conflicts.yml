@@ -137,7 +137,7 @@ jobs:
 
       - name: Resolve conflicts with Claude
         if: steps.merge.outputs.conflicts == 'true'
-        uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        uses: anthropics/claude-code-action@d70510b174a1244958df0b03166a54912811f3e6 # v1.0.264
         with:
           # Repository secret ANTHROPIC_API_KEY (docs/REPOSITORY_SETTINGS.md); the
           # CLAUDE_CODE_OAUTH_TOKEN variant is not configured in this repository.
