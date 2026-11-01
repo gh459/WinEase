@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -9,6 +10,7 @@ using WinEase.Plugins.Builtin.Latency;
 using WinEase.Plugins.Builtin.PostInstallTools;
 using WinEase.Plugins.Builtin.UpstreamSync;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace WinEase.Plugins.Tests
 {
@@ -249,6 +251,32 @@ namespace WinEase.Plugins.Tests
 
     public class PostInstallToolsTests
     {
+        private readonly ITestOutputHelper _output;
+
+        public PostInstallToolsTests(ITestOutputHelper output = null)
+        {
+            _output = output;
+        }
+
+        private static byte[] BaselineReadResource(string toolPath)
+        {
+            string wanted = "tools/" + toolPath;
+            var assembly = typeof(PostInstallToolsPlugin).Assembly;
+            foreach (string name in assembly.GetManifestResourceNames())
+            {
+                if (string.Equals(name.Replace('\\', '/'), wanted, StringComparison.Ordinal))
+                {
+                    using (Stream stream = assembly.GetManifestResourceStream(name))
+                    using (MemoryStream copy = new MemoryStream())
+                    {
+                        stream.CopyTo(copy);
+                        return copy.ToArray();
+                    }
+                }
+            }
+            throw new InvalidOperationException("The tool script is not embedded: " + toolPath);
+        }
+
         private static IDictionary<string, string> RecordedHashes()
         {
             // tests\fixtures\unattend-scripts\hashes.json: the SHA256 of every script, recorded before the scripts became resources
@@ -344,6 +372,68 @@ namespace WinEase.Plugins.Tests
             dry.WriteImageFile(ImageFileRoot.SetupTools, "x.bat", new byte[] { 1, 2 });
             Assert.Single(dry.Recorded);
             Assert.Throws<ArgumentException>(delegate { host.WriteImageFile(ImageFileRoot.SetupTools, "..\\x.bat", new byte[0]); });
+        }
+
+        [Fact]
+        public void ReadResourceMatchesBaselineByteForByte()
+        {
+            foreach (string path in PostInstallToolsPlugin.ToolPaths)
+            {
+                byte[] baseline = BaselineReadResource(path);
+                byte[] optimized = PostInstallToolsPlugin.ReadResource(path);
+                Assert.Equal(baseline, optimized);
+            }
+        }
+
+        [Fact]
+        public void BenchmarkResourceReadingPerformanceVsBaseline()
+        {
+            const int iterations = 1000;
+
+            // Warm up
+            foreach (string path in PostInstallToolsPlugin.ToolPaths)
+            {
+                _ = BaselineReadResource(path);
+                _ = PostInstallToolsPlugin.ReadResource(path);
+            }
+
+            // Measure Baseline
+            long baseMemBefore = GC.GetTotalAllocatedBytes(true);
+            var swBase = Stopwatch.StartNew();
+            for (int i = 0; i < iterations; i++)
+            {
+                foreach (string path in PostInstallToolsPlugin.ToolPaths)
+                {
+                    _ = BaselineReadResource(path);
+                }
+            }
+            swBase.Stop();
+            long baseMemAfter = GC.GetTotalAllocatedBytes(true);
+            long baseAllocated = baseMemAfter - baseMemBefore;
+
+            // Measure Optimized
+            long optMemBefore = GC.GetTotalAllocatedBytes(true);
+            var swOpt = Stopwatch.StartNew();
+            for (int i = 0; i < iterations; i++)
+            {
+                foreach (string path in PostInstallToolsPlugin.ToolPaths)
+                {
+                    _ = PostInstallToolsPlugin.ReadResource(path);
+                }
+            }
+            swOpt.Stop();
+            long optMemAfter = GC.GetTotalAllocatedBytes(true);
+            long optAllocated = optMemAfter - optMemBefore;
+
+            if (_output != null)
+            {
+                _output.WriteLine(string.Format("Baseline:  {0} ms, {1:F2} KB allocated", swBase.ElapsedMilliseconds, baseAllocated / 1024.0));
+                _output.WriteLine(string.Format("Optimized: {0} ms, {1:F2} KB allocated", swOpt.ElapsedMilliseconds, optAllocated / 1024.0));
+                double speedup = (double)swBase.ElapsedTicks / Math.Max(1, swOpt.ElapsedTicks);
+                _output.WriteLine(string.Format("Speedup: {0:F2}x", speedup));
+            }
+
+            Assert.True(optAllocated < baseAllocated, "Optimized resource reading should allocate less memory than baseline");
         }
     }
 
