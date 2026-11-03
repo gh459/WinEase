@@ -143,11 +143,23 @@ namespace WinEase.Plugins
         public static void CheckRelativePath(string relativePath)
         {
             if (string.IsNullOrWhiteSpace(relativePath)) throw new ArgumentException("A relative path is required.", "relativePath");
-            if (relativePath.IndexOf(':') >= 0 || relativePath.StartsWith("\\") || relativePath.StartsWith("/"))
+            // Disallow null bytes and control characters that can terminate or corrupt file path handling in OS APIs
+            if (relativePath.IndexOf('\0') >= 0) throw new ArgumentException("Null bytes are not allowed: " + relativePath, "relativePath");
+
+            // Normalize URL-encoded sequences (e.g. %2e%2e or %2f) to defend against traversal bypasses
+            string unescaped = relativePath;
+            try { unescaped = Uri.UnescapeDataString(relativePath); }
+            catch (UriFormatException) { }
+
+            if (unescaped.IndexOf(':') >= 0 || unescaped.StartsWith("\\") || unescaped.StartsWith("/"))
                 throw new ArgumentException("The path has to be relative: " + relativePath, "relativePath");
-            foreach (string part in relativePath.Split('\\', '/'))
+
+            foreach (string part in unescaped.Split('\\', '/'))
             {
-                if (part == "..") throw new ArgumentException("The path leaves its folder: " + relativePath, "relativePath");
+                // Windows drops trailing spaces and dots during path normalization; ".. ", "...", or parts composed only of dots and spaces resolve to traversal or invalid paths
+                string trimmed = part.TrimEnd(' ');
+                if (part == ".." || trimmed == ".." || trimmed == "." || (trimmed.Length > 0 && trimmed.Trim('.').Length == 0))
+                    throw new ArgumentException("The path leaves its folder: " + relativePath, "relativePath");
             }
         }
 
