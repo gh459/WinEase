@@ -78,13 +78,23 @@ namespace WinEase.Plugins.Builtin.PostInstallTools
             Assembly assembly = typeof(PostInstallToolsPlugin).Assembly;
             foreach (string name in assembly.GetManifestResourceNames())
             {
-                if (string.Equals(name.Replace('\\', '/'), wanted, StringComparison.Ordinal))
+                // Only replace backslashes if present to prevent redundant string allocations on forward-slash resource names.
+                string normalised = name.IndexOf('\\') >= 0 ? name.Replace('\\', '/') : name;
+                if (string.Equals(normalised, wanted, StringComparison.Ordinal))
                 {
                     using (Stream stream = assembly.GetManifestResourceStream(name))
-                    using (MemoryStream copy = new MemoryStream())
                     {
-                        stream.CopyTo(copy);
-                        return copy.ToArray();
+                        // Read directly into preallocated buffer to avoid intermediate MemoryStream allocations and buffer copies.
+                        int len = checked((int)stream.Length);
+                        byte[] buffer = new byte[len];
+                        int total = 0;
+                        while (total < len)
+                        {
+                            int read = stream.Read(buffer, total, len - total);
+                            if (read == 0) throw new EndOfStreamException("Premature end of stream while reading resource: " + toolPath);
+                            total += read;
+                        }
+                        return buffer;
                     }
                 }
             }
@@ -97,7 +107,8 @@ namespace WinEase.Plugins.Builtin.PostInstallTools
             List<string> names = new List<string>();
             foreach (string name in typeof(PostInstallToolsPlugin).Assembly.GetManifestResourceNames())
             {
-                string normalised = name.Replace('\\', '/');
+                // Only replace backslashes if present to prevent redundant string allocations.
+                string normalised = name.IndexOf('\\') >= 0 ? name.Replace('\\', '/') : name;
                 if (normalised.StartsWith("tools/", StringComparison.Ordinal)) names.Add(normalised.Substring("tools/".Length));
             }
             return names;
