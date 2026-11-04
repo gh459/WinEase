@@ -143,11 +143,26 @@ namespace WinEase.Plugins
         public static void CheckRelativePath(string relativePath)
         {
             if (string.IsNullOrWhiteSpace(relativePath)) throw new ArgumentException("A relative path is required.", "relativePath");
-            if (relativePath.IndexOf(':') >= 0 || relativePath.StartsWith("\\") || relativePath.StartsWith("/"))
+            if (relativePath.IndexOf(':') >= 0 || relativePath[0] == '\\' || relativePath[0] == '/')
                 throw new ArgumentException("The path has to be relative: " + relativePath, "relativePath");
-            foreach (string part in relativePath.Split('\\', '/'))
+
+            // Zero-allocation segment scanning: avoid allocating string arrays and substring strings from Split().
+            int len = relativePath.Length;
+            int start = 0;
+            while (start < len)
             {
-                if (part == "..") throw new ArgumentException("The path leaves its folder: " + relativePath, "relativePath");
+                int end = start;
+                while (end < len && relativePath[end] != '\\' && relativePath[end] != '/')
+                {
+                    end++;
+                }
+
+                if (end - start == 2 && relativePath[start] == '.' && relativePath[start + 1] == '.')
+                {
+                    throw new ArgumentException("The path leaves its folder: " + relativePath, "relativePath");
+                }
+
+                start = end + 1;
             }
         }
 

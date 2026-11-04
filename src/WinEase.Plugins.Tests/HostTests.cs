@@ -1,10 +1,19 @@
 using System;
+using System.Diagnostics;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace WinEase.Plugins.Tests
 {
     public class HostTests
     {
+        private readonly ITestOutputHelper _output;
+
+        public HostTests(ITestOutputHelper output = null)
+        {
+            _output = output;
+        }
+
         private static DelegateWinEaseHost NewHost(bool dryRun, out int[] calls)
         {
             // calls: 0 registry, 1 dism, 2 file
@@ -139,6 +148,137 @@ namespace WinEase.Plugins.Tests
         {
             ArgumentException ex = Assert.Throws<ArgumentException>(() => DelegateWinEaseHost.CheckRelativePath(path));
             Assert.Equal("relativePath", ex.ParamName);
+        }
+
+        // Baseline implementation using string.Split('\\', '/')
+        private static void BaselineCheckRelativePath(string relativePath)
+        {
+            if (string.IsNullOrWhiteSpace(relativePath)) throw new ArgumentException("A relative path is required.", "relativePath");
+            if (relativePath.IndexOf(':') >= 0 || relativePath.StartsWith("\\") || relativePath.StartsWith("/"))
+                throw new ArgumentException("The path has to be relative: " + relativePath, "relativePath");
+            foreach (string part in relativePath.Split('\\', '/'))
+            {
+                if (part == "..") throw new ArgumentException("The path leaves its folder: " + relativePath, "relativePath");
+            }
+        }
+
+        [Fact]
+        public void CheckRelativePath_MatchesBaselineBehaviorExactly()
+        {
+            string[] testPaths = new[]
+            {
+                "file.txt",
+                "folder/file.txt",
+                "folder\\file.txt",
+                "deep/nested/path/to/script.ps1",
+                "deep\\nested\\path\\to\\script.ps1",
+                ".hidden",
+                "folder..name/file.txt",
+                "double//slash\\path.txt",
+                "trailing/slash/",
+                null,
+                "",
+                "   ",
+                "\t",
+                "C:\\abs.txt",
+                "d:rel.txt",
+                "\\leading.txt",
+                "/leading.txt",
+                "..",
+                "..\\evil.txt",
+                "../evil.txt",
+                "a/b/../evil.txt",
+                "a\\b\\..\\evil.txt"
+            };
+
+            foreach (string path in testPaths)
+            {
+                Exception baseEx = null;
+                try { BaselineCheckRelativePath(path); }
+                catch (Exception ex) { baseEx = ex; }
+
+                Exception optEx = null;
+                try { DelegateWinEaseHost.CheckRelativePath(path); }
+                catch (Exception ex) { optEx = ex; }
+
+                if (baseEx == null)
+                {
+                    Assert.Null(optEx);
+                }
+                else
+                {
+                    Assert.NotNull(optEx);
+                    Assert.IsType(baseEx.GetType(), optEx);
+                    Assert.Equal(baseEx.Message, optEx.Message);
+                    if (baseEx is ArgumentException baseArgEx && optEx is ArgumentException optArgEx)
+                    {
+                        Assert.Equal(baseArgEx.ParamName, optArgEx.ParamName);
+                    }
+                }
+            }
+        }
+
+        [Fact]
+        public void Benchmark_CheckRelativePath_ZeroAllocationsAndPerformance()
+        {
+            string[] paths = new[]
+            {
+                "Install-Browser.ps1",
+                "scripts/tools/setup.cmd",
+                "Atlas-ReviOS Tools/1. Toggle Windows Defender.bat",
+                "nested\\subfolder\\deep\\component\\runner.ps1",
+                ".profile",
+                "tools/config/manifest.json"
+            };
+
+            const int iterations = 10000;
+
+            // Warm up
+            for (int i = 0; i < 100; i++)
+            {
+                for (int p = 0; p < paths.Length; p++)
+                {
+                    BaselineCheckRelativePath(paths[p]);
+                    DelegateWinEaseHost.CheckRelativePath(paths[p]);
+                }
+            }
+
+            // Measure Baseline
+            long baseMemBefore = GC.GetTotalAllocatedBytes(true);
+            var swBase = Stopwatch.StartNew();
+            for (int i = 0; i < iterations; i++)
+            {
+                for (int p = 0; p < paths.Length; p++)
+                {
+                    BaselineCheckRelativePath(paths[p]);
+                }
+            }
+            swBase.Stop();
+            long baseMemAfter = GC.GetTotalAllocatedBytes(true);
+            long baseAllocated = baseMemAfter - baseMemBefore;
+
+            // Measure Optimized
+            long optMemBefore = GC.GetTotalAllocatedBytes(true);
+            var swOpt = Stopwatch.StartNew();
+            for (int i = 0; i < iterations; i++)
+            {
+                for (int p = 0; p < paths.Length; p++)
+                {
+                    DelegateWinEaseHost.CheckRelativePath(paths[p]);
+                }
+            }
+            swOpt.Stop();
+            long optMemAfter = GC.GetTotalAllocatedBytes(true);
+            long optAllocated = optMemAfter - optMemBefore;
+
+            _output?.WriteLine($"CheckRelativePath Baseline:  {swBase.ElapsedMilliseconds} ms, {baseAllocated / 1024.0:F2} KB allocated");
+            _output?.WriteLine($"CheckRelativePath Optimized: {swOpt.ElapsedMilliseconds} ms, {optAllocated / 1024.0:F2} KB allocated");
+
+            double speedup = (double)swBase.ElapsedTicks / Math.Max(1, swOpt.ElapsedTicks);
+            _output?.WriteLine($"CheckRelativePath Speedup: {speedup:F2}x");
+
+            // Assert deterministic allocation reduction (zero-allocation vs string.Split array allocations)
+            Assert.True(optAllocated < baseAllocated, "Optimized CheckRelativePath should allocate significantly less memory than baseline");
         }
 
         [Fact]
