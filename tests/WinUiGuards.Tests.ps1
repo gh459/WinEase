@@ -40,4 +40,10 @@ Describe "WinUI main window guards" {
         $script:Cs | Should Match 'AutomationProperties\.SetLiveSetting\(info, Microsoft\.UI\.Xaml\.Automation\.Peers\.AutomationLiveSetting\.Polite\);'
         $script:Cs | Should Match 'AutomationProperties\.SetLiveSetting\(_csCount, Microsoft\.UI\.Xaml\.Automation\.Peers\.AutomationLiveSetting\.Polite\);'
     }
+    It "preset diff dialog configures accessibility and prevents re-entrant comparison" {
+        $script:Cs | Should Match 'AutomationProperties\.SetName\(output,\s*_s\.Get\("Dlg\.PresetDiff\.Title"\)\);'
+        $script:Cs | Should Match 'AutomationProperties\.SetLiveSetting\(output,\s*Microsoft\.UI\.Xaml\.Automation\.Peers\.AutomationLiveSetting\.Polite\);'
+        $script:Cs | Should Match 'ToolTipService\.SetToolTip\(c,\s*name\);'
+        $script:Cs | Should Match '(?s)d\.IsPrimaryButtonEnabled = false;.*?await _bridge\.RequestAsync\("presetDiff".*?finally\s*\{[^}]*d\.IsPrimaryButtonEnabled = true;'
+    }
 }
