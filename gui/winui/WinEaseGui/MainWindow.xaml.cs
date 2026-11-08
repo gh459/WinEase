@@ -2867,6 +2867,7 @@ public sealed partial class MainWindow : Window
             foreach (var n in names) c.Items.Add(n.Label);
             c.SelectedIndex = Math.Min(sel, names.Count - 1);
             AutomationProperties.SetName(c, name);
+            ToolTipService.SetToolTip(c, name);
             return c;
         }
         var from = Picker(0, _s.Get("Dlg.PresetDiff.From").Trim().TrimEnd(':', '：', ' '));
@@ -2878,16 +2879,20 @@ public sealed partial class MainWindow : Window
             IsTextSelectionEnabled = true,
             TextWrapping = TextWrapping.NoWrap,
         };
-        var content = new StackPanel { Spacing = 8, MinWidth = 560 };
-        content.Children.Add(FieldRow(_s.Get("Dlg.PresetDiff.From"), from));
-        content.Children.Add(FieldRow(_s.Get("Dlg.PresetDiff.To"), to));
-        content.Children.Add(new ScrollViewer
+        AutomationProperties.SetName(output, _s.Get("Dlg.PresetDiff.Title"));
+        AutomationProperties.SetLiveSetting(output, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+        var scroll = new ScrollViewer
         {
             Content = output,
             MaxHeight = 420,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollMode = ScrollMode.Auto,
-        });
+        };
+        AutomationProperties.SetName(scroll, _s.Get("Dlg.PresetDiff.Title"));
+        var content = new StackPanel { Spacing = 8, MinWidth = 560 };
+        content.Children.Add(FieldRow(_s.Get("Dlg.PresetDiff.From"), from));
+        content.Children.Add(FieldRow(_s.Get("Dlg.PresetDiff.To"), to));
+        content.Children.Add(scroll);
         var dlg = new ContentDialog
         {
             XamlRoot = Content.XamlRoot,
@@ -2902,6 +2907,7 @@ public sealed partial class MainWindow : Window
         {
             a.Cancel = true;
             var deferral = a.GetDeferral();
+            d.IsPrimaryButtonEnabled = false;
             try
             {
                 var args = new JsonObject
@@ -2921,6 +2927,7 @@ public sealed partial class MainWindow : Window
             }
             finally
             {
+                d.IsPrimaryButtonEnabled = true;
                 deferral.Complete();
             }
         };
