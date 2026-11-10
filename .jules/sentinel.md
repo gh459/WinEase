@@ -2,6 +2,12 @@
 
 Security notes from the Sentinel agent. Newest entry first; format in `README.md`.
 
+## 2026-10-30 - Path traversal via URL-encoding and Windows path normalization in plugin host
+
+**Vulnerability:** In `src/WinEase.Plugins.Abstractions/IWinEaseHost.cs`, `DelegateWinEaseHost.CheckRelativePath` validated relative paths against directory traversal by checking for `..` segments and leading slashes/colons. However, inputs using URL-encoded characters (such as `%2e%2e` or `%2f`), embedded null bytes (`\0`), or Windows dot/space normalization quirks (such as `.. ` or `...`) bypassed the simple string splitting and `..` equality check, potentially allowing write operations to escape their intended image folder.
+**Learning:** Checking for literal `".." != part` is insufficient when input paths can contain URL-encoded sequences, null bytes, or Windows path normalization quirks that collapse trailing dots/spaces in file system APIs.
+**Prevention:** Unescape percent-encoded characters using `Uri.UnescapeDataString`, validate for null bytes, and ensure path segments do not collapse into traversal patterns when trailing spaces and dots are evaluated.
+
 ## 2026-10-22 - PowerShell command injection in custom script execution
 
 **Vulnerability:** In `scripts/FirstLogon.ps1`, `scripts/UserOnce.ps1`, and embedded setup scripts in `autounattend.xml`, user custom script paths `$scriptPath` were interpolated directly into child `powershell.exe -Command "& { ... & '$scriptPath' ... }"` string invocations without escaping single quote characters. If a custom script path contained single quotes (e.g. `C:\Custom'Scripts\hook.ps1`), it could escape the single-quoted string literal and trigger arbitrary PowerShell code execution.
