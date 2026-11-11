@@ -1807,18 +1807,24 @@ public sealed partial class MainWindow : Window
             await MessageAsync(_s.Get("Msg.Title.Default"), _s.Get("CS.Msg.NoSelection"), "Warning");
             return;
         }
-        var order = new TextBox { Text = InitData.Str(sel["Order"]) };
-        var condition = new TextBox { Text = InitData.Str(sel["Condition"]) };
+        string orderLabel = _s.Get("CS.Dlg.Meta.Order").Trim();
+        string condLabel = _s.Get("CS.Dlg.Meta.Condition").Trim();
+        string errLabel = _s.Get("CS.Dlg.Meta.OnError").Trim();
+        string descLabel = _s.Get("CS.Dlg.Meta.Description").Trim();
+        var order = new TextBox { Text = InitData.Str(sel["Order"]), PlaceholderText = orderLabel };
+        var condition = new TextBox { Text = InitData.Str(sel["Condition"]), PlaceholderText = condLabel };
         var onError = new ComboBox { MinWidth = 140, HorizontalAlignment = HorizontalAlignment.Stretch };
+        AutomationProperties.SetName(onError, errLabel);
+        ToolTipService.SetToolTip(onError, errLabel);
         foreach (string v in OnErrorValues) onError.Items.Add(new ComboBoxItem { Content = _s.Get("CS.OnError." + v, v), Tag = v });
         string current = InitData.Str(sel["OnError"], "Warn");
         onError.SelectedIndex = Math.Max(0, Array.IndexOf(OnErrorValues, current));
-        var description = new TextBox { Text = InitData.Str(sel["Description"]) };
+        var description = new TextBox { Text = InitData.Str(sel["Description"]), PlaceholderText = descLabel };
         var panel = new StackPanel { Spacing = 8 };
-        panel.Children.Add(FieldRow(_s.Get("CS.Dlg.Meta.Order"), order));
-        panel.Children.Add(FieldRow(_s.Get("CS.Dlg.Meta.Condition"), condition));
-        panel.Children.Add(FieldRow(_s.Get("CS.Dlg.Meta.OnError"), onError));
-        panel.Children.Add(FieldRow(_s.Get("CS.Dlg.Meta.Description"), description));
+        panel.Children.Add(FieldRow(orderLabel, order));
+        panel.Children.Add(FieldRow(condLabel, condition));
+        panel.Children.Add(FieldRow(errLabel, onError));
+        panel.Children.Add(FieldRow(descLabel, description));
         panel.Children.Add(new TextBlock { Text = _s.Get("CS.Dlg.Meta.Hint"), TextWrapping = TextWrapping.Wrap, Foreground = Res("TextFillColorSecondaryBrush") });
         var dlg = new ContentDialog
         {
@@ -1827,6 +1833,7 @@ public sealed partial class MainWindow : Window
             Content = panel,
             PrimaryButtonText = _s.Get("Button.Save", "Save"),
             CloseButtonText = _s.Get("Button.Cancel", "Cancel"),
+            DefaultButton = ContentDialogButton.Primary,
         };
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
         await RunAndShowAsync("customScriptMeta", new JsonObject
@@ -1849,10 +1856,11 @@ public sealed partial class MainWindow : Window
             return;
         }
         string name = InitData.Str(sel["Name"]);
-        var order = new TextBox { Text = InitData.Str(sel["Order"]) };
+        string orderLabel = _s.Get("CS.Dlg.Meta.Order").Trim();
+        var order = new TextBox { Text = InitData.Str(sel["Order"]), PlaceholderText = orderLabel };
         var panel = new StackPanel { Spacing = 8 };
         panel.Children.Add(new TextBlock { Text = _s.Format("CS.Dlg.Reorder.Hint", name), TextWrapping = TextWrapping.Wrap });
-        panel.Children.Add(FieldRow(_s.Get("CS.Dlg.Meta.Order"), order));
+        panel.Children.Add(FieldRow(orderLabel, order));
         var dlg = new ContentDialog
         {
             XamlRoot = Content.XamlRoot,
@@ -1860,7 +1868,10 @@ public sealed partial class MainWindow : Window
             Content = panel,
             PrimaryButtonText = _s.Get("Button.Save", "Save"),
             CloseButtonText = _s.Get("Button.Cancel", "Cancel"),
+            DefaultButton = ContentDialogButton.Primary,
+            IsPrimaryButtonEnabled = order.Text.Trim().Length > 0,
         };
+        order.TextChanged += (_, _) => dlg.IsPrimaryButtonEnabled = order.Text.Trim().Length > 0;
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
         await RunAndShowAsync("customScriptReorder", new JsonObject { ["Path"] = InitData.Str(sel["Path"]), ["Order"] = order.Text.Trim() });
         await LoadCustomScriptsAsync(list);
