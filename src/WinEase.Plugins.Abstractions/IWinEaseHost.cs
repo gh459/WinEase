@@ -143,11 +143,22 @@ namespace WinEase.Plugins
         public static void CheckRelativePath(string relativePath)
         {
             if (string.IsNullOrWhiteSpace(relativePath)) throw new ArgumentException("A relative path is required.", "relativePath");
-            if (relativePath.IndexOf(':') >= 0 || relativePath.StartsWith("\\") || relativePath.StartsWith("/"))
-                throw new ArgumentException("The path has to be relative: " + relativePath, "relativePath");
-            foreach (string part in relativePath.Split('\\', '/'))
+            // Security: reject null bytes, decode URL-encoding, and guard against Windows path normalization quirks
+            if (relativePath.IndexOf('\0') >= 0) throw new ArgumentException("Null bytes are not allowed in path.", "relativePath");
+            string unescaped = relativePath;
+            if (relativePath.IndexOf('%') >= 0)
             {
-                if (part == "..") throw new ArgumentException("The path leaves its folder: " + relativePath, "relativePath");
+                try { unescaped = Uri.UnescapeDataString(relativePath); }
+                catch (UriFormatException) { }
+            }
+            if (unescaped.IndexOf('\0') >= 0) throw new ArgumentException("Null bytes are not allowed in path.", "relativePath");
+            if (unescaped.IndexOf(':') >= 0 || unescaped.StartsWith("\\") || unescaped.StartsWith("/"))
+                throw new ArgumentException("The path has to be relative: " + relativePath, "relativePath");
+            foreach (string part in unescaped.Split('\\', '/'))
+            {
+                string trimmed = part.TrimEnd(' ');
+                if (trimmed == ".." || part == ".." || (part.Length >= 2 && part.Trim(' ', '.') == ""))
+                    throw new ArgumentException("The path leaves its folder: " + relativePath, "relativePath");
             }
         }
 
