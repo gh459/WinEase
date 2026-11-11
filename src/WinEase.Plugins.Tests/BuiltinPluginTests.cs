@@ -363,4 +363,17 @@ namespace WinEase.Plugins.Tests
             PluginAssemblyResolver.Install(assembly);
         }
     }
+
+    public class CustomScriptDialogAccessibilityTests
+    {
+        [Fact]
+        public void CustomScriptDialogsConfigureAccessibilityAndDefaultButtons()
+        {
+            string cs = RepoFiles.Read(Path.Combine("gui", "winui", "WinEaseGui", "MainWindow.xaml.cs"));
+            Assert.Contains("AutomationProperties.SetName(onError, errLabel);", cs);
+            Assert.Contains("ToolTipService.SetToolTip(onError, errLabel);", cs);
+            Assert.Contains("DefaultButton = ContentDialogButton.Primary,", cs);
+            Assert.Contains("order.TextChanged += (_, _) => dlg.IsPrimaryButtonEnabled = order.Text.Trim().Length > 0;", cs);
+        }
+    }
 }
