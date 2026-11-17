@@ -13,6 +13,10 @@ namespace WinEase.Launcher
     {
         public const int UacCancelledErrorCode = 1223;
 
+        // Cache characters requiring quotes and empty string array to avoid heap allocations per invocation.
+        private static readonly char[] QuoteChars = { ' ', '\t', '\n', '\v', '"' };
+        private static readonly string[] EmptyStrings = new string[0];
+
         /// <summary>
         /// WinEasebuilder.ps1 first, else a WinEasebuilder-*.ps1. Like the batch "for" loop, the last match in
         /// name order wins when there are several. Returns null when nothing is found.
@@ -100,7 +104,7 @@ namespace WinEase.Launcher
         public static string QuoteArgument(string arg)
         {
             if (arg == null) arg = "";
-            if (arg.Length > 0 && arg.IndexOfAny(new[] { ' ', '\t', '\n', '\v', '"' }) < 0) return arg;
+            if (arg.Length > 0 && arg.IndexOfAny(QuoteChars) < 0) return arg;
             var sb = new StringBuilder("\"");
             int backslashes = 0;
             foreach (char c in arg)
@@ -126,7 +130,7 @@ namespace WinEase.Launcher
 
         public static string JoinArguments(IEnumerable<string> args)
         {
-            return string.Join(" ", (args ?? new string[0]).Select(QuoteArgument));
+            return string.Join(" ", (args ?? EmptyStrings).Select(QuoteArgument));
         }
 
         /// <summary>
