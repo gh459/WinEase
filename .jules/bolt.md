@@ -2,9 +2,9 @@
 
 Performance notes from the Bolt agent. Newest entry first; format in `README.md`.
 
-## 2026-10-31 - Direct fixed-length buffer reading of embedded manifest resources in C# plugins
+## 2026-11-01 - Direct fixed-length buffer reading of embedded manifest resources in C# plugins
 
-**Learning:** Reading embedded manifest resource streams using `MemoryStream`, `stream.CopyTo()`, and `copy.ToArray()` introduces an intermediate 80KB buffer, repeated internal resizing, and a redundant final array copy. In addition, calling `name.Replace('\\', '/')` on every manifest name creates unnecessary string allocations when names contain no backslashes. Allocating `new byte[stream.Length]` directly and reading in chunks eliminates intermediate buffer allocations (~32% reduction in allocated memory and ~1.76x speedup).
+**Learning:** Reading embedded manifest resource streams using `MemoryStream`, `stream.CopyTo()`, and `copy.ToArray()` introduces an intermediate 80KB buffer, repeated internal resizing, and a redundant final array copy. In addition, calling `name.Replace('\\', '/')` on every manifest name creates unnecessary string allocations when names contain no backslashes. Allocating `new byte[stream.Length]` directly and reading in chunks eliminates intermediate buffer allocations (~37% reduction in allocated memory and ~2.16x speedup).
 **Action:** When extracting embedded resources with known stream length in C# plugins, allocate `new byte[stream.Length]` directly and guard `string.Replace` calls with `IndexOf` checks.
 
 ## 2026-10-27 - Zero-allocation path segment scanning and HashSet deduplication in C# launcher/plugins
