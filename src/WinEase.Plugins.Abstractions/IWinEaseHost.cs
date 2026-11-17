@@ -143,23 +143,50 @@ namespace WinEase.Plugins
         public static void CheckRelativePath(string relativePath)
         {
             if (string.IsNullOrWhiteSpace(relativePath)) throw new ArgumentException("A relative path is required.", "relativePath");
-            // Disallow null bytes and control characters that can terminate or corrupt file path handling in OS APIs
-            if (relativePath.IndexOf('\0') >= 0) throw new ArgumentException("Null bytes are not allowed: " + relativePath, "relativePath");
+            if (relativePath.IndexOf('\0') >= 0) throw new ArgumentException("Null bytes are not allowed in path.", "relativePath");
 
-            // Normalize URL-encoded sequences (e.g. %2e%2e or %2f) to defend against traversal bypasses
             string unescaped = relativePath;
-            try { unescaped = Uri.UnescapeDataString(relativePath); }
-            catch (UriFormatException) { }
+            if (relativePath.IndexOf('%') >= 0)
+            {
+                try { unescaped = Uri.UnescapeDataString(relativePath); }
+                catch (UriFormatException) { }
+                if (unescaped.IndexOf('\0') >= 0) throw new ArgumentException("Null bytes are not allowed in path.", "relativePath");
+            }
 
-            if (unescaped.IndexOf(':') >= 0 || unescaped.StartsWith("\\") || unescaped.StartsWith("/"))
+            if (unescaped.IndexOf(':') >= 0 || (unescaped.Length > 0 && (unescaped[0] == '\\' || unescaped[0] == '/')))
                 throw new ArgumentException("The path has to be relative: " + relativePath, "relativePath");
 
-            foreach (string part in unescaped.Split('\\', '/'))
+            // Zero-allocation segment scanning with Windows trailing-space and dot traversal hardening.
+            int len = unescaped.Length;
+            int start = 0;
+            while (start < len)
             {
-                // Windows drops trailing spaces and dots during path normalization; ".. ", "...", or parts composed only of dots and spaces resolve to traversal or invalid paths
-                string trimmed = part.TrimEnd(' ');
-                if (part == ".." || trimmed == ".." || trimmed == "." || (trimmed.Length > 0 && trimmed.Trim('.').Length == 0))
-                    throw new ArgumentException("The path leaves its folder: " + relativePath, "relativePath");
+                int end = start;
+                while (end < len && unescaped[end] != '\\' && unescaped[end] != '/')
+                {
+                    end++;
+                }
+
+                int segLen = end - start;
+                if (segLen >= 2)
+                {
+                    bool allDotsOrSpaces = true;
+                    for (int i = start; i < end; i++)
+                    {
+                        char ch = unescaped[i];
+                        if (ch != '.' && ch != ' ')
+                        {
+                            allDotsOrSpaces = false;
+                            break;
+                        }
+                    }
+                    if (allDotsOrSpaces)
+                    {
+                        throw new ArgumentException("The path leaves its folder: " + relativePath, "relativePath");
+                    }
+                }
+
+                start = end + 1;
             }
         }
 
