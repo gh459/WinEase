@@ -40,17 +40,22 @@ try {
     }
     $sw1.Stop()
 
-    # 2. Optimized: Generic List with foreach
+    # 2. Optimized: Generic List with foreach and cached root paths
     $sw2 = [System.Diagnostics.Stopwatch]::StartNew()
+    $validRoots = [System.Collections.Generic.List[PSCustomObject]]::new()
+    foreach ($secRoot in $secRoots) {
+        $fullRoot = Join-Path -Path $mockApply -ChildPath $secRoot
+        if (Test-Path -LiteralPath $fullRoot) {
+            $validRoots.Add([PSCustomObject]@{ SecRoot = $secRoot; FullRoot = $fullRoot })
+        }
+    }
+
     for ($i = 0; $i -lt $Iterations; $i++) {
         $secHealthDirs2 = [System.Collections.Generic.List[string]]::new()
-        foreach ($secRoot in $secRoots) {
-            $fullRoot = Join-Path -Path $mockApply -ChildPath $secRoot
-            if (Test-Path -LiteralPath $fullRoot) {
-                foreach ($item in (Get-ChildItem -LiteralPath $fullRoot -Force -ErrorAction SilentlyContinue)) {
-                    if ($item.Name -match 'SecHealthUI') {
-                        $secHealthDirs2.Add((Join-Path -Path $secRoot -ChildPath $item.Name))
-                    }
+        foreach ($vr in $validRoots) {
+            foreach ($item in (Get-ChildItem -LiteralPath $vr.FullRoot -Force -ErrorAction SilentlyContinue)) {
+                if ($item.Name -match 'SecHealthUI') {
+                    $secHealthDirs2.Add((Join-Path -Path $vr.SecRoot -ChildPath $item.Name))
                 }
             }
         }

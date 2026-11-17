@@ -1931,17 +1931,36 @@ public sealed partial class MainWindow : Window
 
     private void ShowIssues()
     {
-        var issuesByField = _issues.ToLookup(i => i.Field == "OutputDir" ? "WorkDir" : i.Field, StringComparer.Ordinal);
+        var issuesByField = new Dictionary<string, List<InputIssue>>(StringComparer.Ordinal);
+        for (int i = 0; i < _issues.Count; i++)
+        {
+            var issue = _issues[i];
+            string key = issue.Field == "OutputDir" ? "WorkDir" : issue.Field;
+            if (!issuesByField.TryGetValue(key, out var list))
+            {
+                list = new List<InputIssue>();
+                issuesByField[key] = list;
+            }
+            list.Add(issue);
+        }
+
         foreach (var kv in _fieldMsgs)
         {
-            var mine = issuesByField[kv.Key];
-            if (!mine.Any())
+            if (!issuesByField.TryGetValue(kv.Key, out var mine) || mine.Count == 0)
             {
                 kv.Value.Text = "";
                 kv.Value.Visibility = Visibility.Collapsed;
                 continue;
             }
-            bool error = mine.Any(i => i.Severity == "Error");
+            bool error = false;
+            for (int i = 0; i < mine.Count; i++)
+            {
+                if (mine[i].Severity == "Error")
+                {
+                    error = true;
+                    break;
+                }
+            }
             // Icon and word before the text: the severity never depends on the colour
             kv.Value.Text = (error ? "\u26A0 " + _s.Get("Severity.Error") : "\u24D8 " + _s.Get("Severity.Warning")) + ": " + string.Join(" ", mine.Select(i => i.Text));
             kv.Value.Foreground = Res(error ? "SystemFillColorCriticalBrush" : "SystemFillColorCautionBrush");
