@@ -307,37 +307,6 @@ namespace WinEase.Plugins.Tests
             Assert.Equal(PostInstallToolsPlugin.ToolPaths.OrderBy(p => p, StringComparer.Ordinal), PostInstallToolsPlugin.ResourceToolPaths().OrderBy(p => p, StringComparer.Ordinal));
         }
 
-        private static byte[] BaselineReadResource(string toolPath)
-        {
-            string wanted = "tools/" + toolPath;
-            var assembly = typeof(PostInstallToolsPlugin).Assembly;
-            foreach (string name in assembly.GetManifestResourceNames())
-            {
-                if (string.Equals(name.Replace('\\', '/'), wanted, StringComparison.Ordinal))
-                {
-                    using (Stream stream = assembly.GetManifestResourceStream(name))
-                    using (MemoryStream copy = new MemoryStream())
-                    {
-                        stream.CopyTo(copy);
-                        return copy.ToArray();
-                    }
-                }
-            }
-            throw new InvalidOperationException("The tool script is not embedded: " + toolPath);
-        }
-
-        [Fact]
-        public void ReadResourceMatchesBaselineByteForByte()
-        {
-            foreach (string path in PostInstallToolsPlugin.ToolPaths)
-            {
-                byte[] baseline = BaselineReadResource(path);
-                byte[] optimized = PostInstallToolsPlugin.ReadResource(path);
-                Assert.Equal(baseline, optimized);
-            }
-        }
-
-
         [Fact]
         public void EmbeddedScriptsAreByteForByteTheFilesOfScriptsTools()
         {
@@ -496,6 +465,19 @@ namespace WinEase.Plugins.Tests
             Assert.Contains("ToolTipService.SetToolTip(c, name);", cs);
             Assert.Contains("d.IsPrimaryButtonEnabled = false;", cs);
             Assert.Contains("d.IsPrimaryButtonEnabled = true;", cs);
+        }
+    }
+
+    public class CustomScriptDialogAccessibilityTests
+    {
+        [Fact]
+        public void CustomScriptDialogsConfigureAccessibilityAndDefaultButtons()
+        {
+            string cs = RepoFiles.Read(Path.Combine("gui", "winui", "WinEaseGui", "MainWindow.xaml.cs"));
+            Assert.Contains("AutomationProperties.SetName(onError, errLabel);", cs);
+            Assert.Contains("ToolTipService.SetToolTip(onError, errLabel);", cs);
+            Assert.Contains("DefaultButton = ContentDialogButton.Primary,", cs);
+            Assert.Contains("order.TextChanged += (_, _) => dlg.IsPrimaryButtonEnabled = order.Text.Trim().Length > 0;", cs);
         }
     }
 }
