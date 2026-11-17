@@ -139,28 +139,28 @@ try {
 
     # Steps 2-4 always all run: FirstLogon.ps1 contains the AutoLogon teardown and WinRE cleanup,
     # so a Winhancements.ps1 failure must not skip it. Failures are collected and reported afterwards.
-    $stepErrors = @()
+    $stepErrors = [System.Collections.Generic.List[string]]::new()
 
     # 2. System optimizations: Winhancements.ps1 (System mode)
     $winExit = Invoke-ChildScriptWithLog -ScriptPath $winhanceScript -Arguments "" -LogPath $winhanceSysLog -Description "Winhancements.ps1 (System optimization mode)"
     if ($winExit -ne 0) {
-        $stepErrors += "Winhancements.ps1 failed with exit code $winExit"
+        $stepErrors.Add("Winhancements.ps1 failed with exit code $winExit")
         Write-FirstLogonLog "Winhancements.ps1 failed with exit code $winExit - continuing with FirstLogon.ps1" "ERROR"
     }
 
     # 3. Finalization: FirstLogon.ps1
     $flExit = Invoke-ChildScriptWithLog -ScriptPath $firstLogonScript -Arguments "" -LogPath $flChildLog -Description "FirstLogon.ps1 (Service shutdown, tasks, desktop tools)"
     if ($flExit -ne 0) {
-        $stepErrors += "FirstLogon.ps1 failed with exit code $flExit"
+        $stepErrors.Add("FirstLogon.ps1 failed with exit code $flExit")
     }
     if (Test-Path -LiteralPath "$markerDir\firstlogon_script.failed") {
-        $stepErrors += "FirstLogon.ps1 reported internal errors in $markerDir\firstlogon_script.failed"
+        $stepErrors.Add("FirstLogon.ps1 reported internal errors in $markerDir\firstlogon_script.failed")
     }
 
     # 4. User optimizations: Winhancements.ps1 -UserCustomizations
     $userExit = Invoke-ChildScriptWithLog -ScriptPath $winhanceScript -Arguments "-UserCustomizations" -LogPath $winhanceUserLog -Description "Winhancements.ps1 -UserCustomizations"
     if ($userExit -ne 0) {
-        $stepErrors += "Winhancements.ps1 -UserCustomizations failed with exit code $userExit"
+        $stepErrors.Add("Winhancements.ps1 -UserCustomizations failed with exit code $userExit")
     }
 
     if ($stepErrors.Count -gt 0) {
