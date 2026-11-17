@@ -465,7 +465,7 @@ $script:WinEaseVersion = "2.1"
 try {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
     $OutputEncoding = [System.Text.Encoding]::UTF8
-} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+} catch { Write-Verbose "Could not set console UTF-8 output encoding: $($_.Exception.Message)" }
 
 # Disable all interactive confirmation prompts to guarantee non-blocking unattended execution
 $ConfirmPreference = 'None'
@@ -579,7 +579,7 @@ if ((-not $TestSelf) -and ($env:WINEASE_TEST_MODE -ne "1") -and (-not $isDryRunM
         Write-Host "Error: Could not acquire the global build mutex (Global\WinEaseBuilder): $_" -ForegroundColor Red
         Write-Host "Refusing to build without the concurrency lock. Close any other WinEase builder process and retry." -ForegroundColor Red
         if ($script:BuildMutex) {
-            try { $script:BuildMutex.Dispose() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+            try { $script:BuildMutex.Dispose() } catch { Write-Warning "Failed to dispose build mutex: $($_.Exception.Message)" }
             $script:BuildMutex = $null
         }
         exit 1
@@ -866,7 +866,7 @@ function Enter-Phase {
     $script:PhaseStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $phaseTitle = "WinEase [$Step/$($script:TotalPhases)] $PhaseName"
     if ($null -ne $host.UI.RawUI) {
-        try { $host.UI.RawUI.WindowTitle = $phaseTitle } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        try { $host.UI.RawUI.WindowTitle = $phaseTitle } catch { Write-Verbose "Could not set window title: $($_.Exception.Message)" }
     }
     if (Get-Command -Name Send-WinEaseGuiProgress -ErrorAction SilentlyContinue) {
         $progress = @{ Phase = $Step; Total = $script:TotalPhases; Name = $PhaseName }
@@ -1021,7 +1021,7 @@ try {
         $null = Import-WinEaseUserExtensions -PresetsOnly
     }
 } catch {
-    Write-Verbose "Ignored: $($_.Exception.Message)"
+    Write-Warning "Failed to load user presets: $($_.Exception.Message)"
 }
 
 function Get-WinEasePreset {
@@ -1404,7 +1404,7 @@ if ($Profile -and $Profile.Contains(',')) {
             try {
                 if ($script:HasMutex) { $script:BuildMutex.ReleaseMutex() }
                 $script:BuildMutex.Dispose()
-            } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+            } catch { Write-Warning "Failed to release or dispose build mutex during batch queue transition: $($_.Exception.Message)" }
             $script:BuildMutex = $null
             $script:HasMutex = $false
         }
@@ -1977,7 +1977,7 @@ $resolvedConfig = [PSCustomObject]@{
 try {
     $configJson = $resolvedConfig | ConvertTo-Json -Depth 6
     [void](Write-WinEaseTextFileAtomic -Path $configSnapshotPath -Content $configJson -Encoding utf8)
-} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+} catch { Write-Warning "Could not save build configuration snapshot to '$configSnapshotPath': $($_.Exception.Message)" }
 
 Write-Host ""
 Write-Host "Active configuration:" -ForegroundColor Cyan
@@ -2034,7 +2034,7 @@ try {
             Write-Host "  - Estimated build time:    ~$([math]::Round($totalSec / 60, 1)) min (based on last run's phase timings)" -ForegroundColor DarkCyan
         }
     }
-} catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+} catch { Write-Verbose "Could not calculate estimated build time: $($_.Exception.Message)" }
 
 # Dependency & feature-impact pre-flight check
 try {
@@ -2288,7 +2288,7 @@ function Invoke-WinEaseHostHealthCheck {
                 if ($freeGB -lt (Get-WinEaseRecommendedFreeGB)) { $hostIssues.Add("Low free space on the $volLetter`: drive ($freeGB GB free, $(Get-WinEaseRecommendedFreeGB)+ GB recommended).") }
             }
         }
-    } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+    } catch { Write-Verbose "Free space check failed: $($_.Exception.Message)" }
 
     # 3. Physical disk SMART health (Storage module available on Win8+)
     $diskScanDone = $false
@@ -2350,7 +2350,7 @@ if ($ResumeFromPhase -gt 0) {
                 Write-WinEaseDiagnosticReport "Resume failed"
             }
             Write-Host "ResumeFromPhase failed: $_" -ForegroundColor Red
-            try { Stop-Transcript } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+            try { Stop-Transcript } catch { Write-Verbose "Could not stop transcript logging: $($_.Exception.Message)" }
             exit 1
         }
     } else {
@@ -2379,7 +2379,7 @@ if ($ResumeIsoOnly) {
         Write-Host "==============================================================================" -ForegroundColor Red
         Write-Host "Error: $_" -ForegroundColor Red
         Write-Host "Preserved workspace payload: $(if ($WorkDir) { $WorkDir } else { '<Documents>\WinEase_workspace\build' })" -ForegroundColor Gray
-        try { Stop-Transcript } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        try { Stop-Transcript } catch { Write-Verbose "Could not stop transcript logging: $($_.Exception.Message)" }
         exit 1
     }
 }
@@ -2577,7 +2577,7 @@ try {
     if ($script:HivesLoaded) {
         Write-Host "Cleaning up lingering registry hives..." -ForegroundColor Yellow
         @('zCOMPONENTS', 'zDEFAULT', 'zNTUSER', 'zSOFTWARE', 'zSYSTEM') | ForEach-Object {
-            try { [void](Unmount-RegistryHiveWithRetry -Name $_) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+            try { [void](Unmount-RegistryHiveWithRetry -Name $_) } catch { Write-Warning "Could not unmount registry hive '$_' during cleanup: $($_.Exception.Message)" }
         }
         $script:HivesLoaded = $false
     }
@@ -2588,10 +2588,10 @@ try {
         foreach ($d in $script:AllocatedMountDirs) { [void]$allTargetMounts.Add($d) }
     }
     if ($scratchDir) {
-        try { [void]$allTargetMounts.Add((ConvertTo-WinEaseNormalizedPath -Path $scratchDir)) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        try { [void]$allTargetMounts.Add((ConvertTo-WinEaseNormalizedPath -Path $scratchDir)) } catch { Write-Verbose "Could not normalize scratch directory path '$scratchDir': $($_.Exception.Message)" }
     }
     if ($vhdxMountDir -and (-not $script:IsVhdxMounted)) {
-        try { [void]$allTargetMounts.Add((ConvertTo-WinEaseNormalizedPath -Path $vhdxMountDir)) } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        try { [void]$allTargetMounts.Add((ConvertTo-WinEaseNormalizedPath -Path $vhdxMountDir)) } catch { Write-Verbose "Could not normalize VHDX mount directory path '$vhdxMountDir': $($_.Exception.Message)" }
     }
 
     foreach ($mPath in $allTargetMounts) {
@@ -2768,8 +2768,8 @@ try {
             if ($vhdxMountDir -and (Test-Path -LiteralPath $vhdxMountDir)) {
                 $rpCheck = Get-Item -LiteralPath $vhdxMountDir -Force -ErrorAction SilentlyContinue
                 if ($rpCheck -and ($rpCheck.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
-                    try { & mountvol.exe "$vhdxMountDir" /D > $null 2>&1 } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
-                    try { [System.IO.Directory]::Delete($vhdxMountDir, $false) } catch { try { $rpCheck.Delete() } catch { Write-Verbose "Ignored: $($_.Exception.Message)" } }
+                    try { & mountvol.exe "$vhdxMountDir" /D > $null 2>&1 } catch { Write-Verbose "Mountvol unmount failed for '$vhdxMountDir': $($_.Exception.Message)" }
+                    try { [System.IO.Directory]::Delete($vhdxMountDir, $false) } catch { try { $rpCheck.Delete() } catch { Write-Verbose "Reparse point directory deletion failed for '$vhdxMountDir': $($_.Exception.Message)" } }
                 } else {
                     if (Test-CanSafelyDeleteDirectory -Path $vhdxMountDir -ExpectedBaseDir $baseWorkDir -PreservedDirs $script:PreservedMountDirs) {
                         [void](Remove-WinEaseTreeRobust -Path $vhdxMountDir -SafetyRoot $baseWorkDir -AllowLockedFallback)
@@ -2834,7 +2834,7 @@ try {
             $script:BuildMutex.Dispose()
             $script:BuildMutex = $null
             $script:HasMutex = $false
-        } catch { Write-Verbose "Ignored: $($_.Exception.Message)" }
+        } catch { Write-Warning "Failed to release or dispose build mutex in final cleanup: $($_.Exception.Message)" }
     }
 
     if (Get-Command -Name Close-WinEaseGuiProgress -ErrorAction SilentlyContinue) {
