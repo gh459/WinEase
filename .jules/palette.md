@@ -2,6 +2,11 @@
 
 WinUI 3 accessibility and UI notes from the Palette agent. Newest entry first; format in `README.md`.
 
+## 2025-05-19 - Accessibility for dynamic action buttons and standalone ProgressRing controls in WinUI 3
+
+**Learning:** Dynamically generated `Button` lists and standalone `ProgressRing` loading indicators in WinUI 3 lack screen reader announcements if `AutomationProperties.SetName` is not explicitly set on instantiation.
+**Action:** Always set `AutomationProperties.SetName` (and `ToolTipService.SetToolTip`) when instantiating dynamic buttons and loading indicators, mapping them to localized string keys.
+
 ## 2025-05-18 - Keyboard focus for tooltips and help marks in WinUI 3
 
 **Learning:** Placing `ToolTipService.ToolTip` or `AutomationProperties.Name` on static `TextBlock` elements (such as "?" help indicators) renders them inaccessible to keyboard-only users because `TextBlock` controls do not receive Tab focus.
