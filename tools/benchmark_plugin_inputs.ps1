@@ -22,7 +22,10 @@ $sw1 = [System.Diagnostics.Stopwatch]::StartNew()
 $result1 = $null
 for ($iter = 0; $iter -lt $Iterations; $iter++) {
     $inputs = @(Get-ChildItem -LiteralPath $srcDir -Filter '*.cs' -File)
-    $inputs += @(Get-WinEaseBuiltinPluginResources -Name $name -RepoRoot $paths.RepoRoot | ForEach-Object { Get-Item -LiteralPath ($_ -split ',')[0] })
+    $resources = Get-WinEaseBuiltinPluginResources -Name $name -RepoRoot $paths.RepoRoot
+    foreach ($res in $resources) {
+        $inputs += Get-Item -LiteralPath ($res -split ',')[0]
+    }
     $result1 = ($inputs | Sort-Object -Property LastWriteTimeUtc -Descending | Select-Object -First 1).LastWriteTimeUtc
 }
 $sw1.Stop()
