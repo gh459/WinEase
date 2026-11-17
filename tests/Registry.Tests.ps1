@@ -42,6 +42,11 @@ Describe "Registry phase - snapshots per preset" {
         $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\10-registry.ps1'))
         [regex]::Matches($text, '(?m)^\s*(?:&\s*)?reg\.exe\s+(add|delete)\b').Count | Should Be 0
     }
+
+    It "does not write to zSYSTEM\CurrentControlSet in phases\10-registry.ps1 (Bug Check 0x67)" {
+        $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'phases\10-registry.ps1'))
+        $text.Contains('zSYSTEM\CurrentControlSet') | Should Be $false
+    }
 }
 
 Describe "Invoke-WinEaseReg" {

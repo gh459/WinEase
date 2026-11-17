@@ -37,6 +37,16 @@ function Test-WinEaseSelfCheck02RegistrySafety {
                 $illegal += "Line $($i+1): $line"
             }
         }
+        $phase10 = Join-Path (Split-Path -Parent $BuilderPath) "phases\10-registry.ps1"
+        if (Test-Path -LiteralPath $phase10) {
+            $p10Lines = Get-Content -LiteralPath $phase10
+            for ($i = 0; $i -lt $p10Lines.Count; $i++) {
+                $line = $p10Lines[$i]
+                if ($line -like "*zSYSTEM\CurrentControlSet*" -and $line -notlike "*reg.exe query*" -and $line -notlike "*reg.exe delete*" -and $line -notlike "*#*") {
+                    $illegal += "phases/10-registry.ps1 Line $($i+1): $line"
+                }
+            }
+        }
         if ($illegal.Count -gt 0) {
             $regSafePass = $false
             $regMsg = "FAILED: Found $($illegal.Count) illegal CurrentControlSet operations"

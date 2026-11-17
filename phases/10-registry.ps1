@@ -263,12 +263,12 @@ if ($disableFSE -or (Test-TweakEnabled 'DisableFSE' $false)) {
 if ($nvidiaLowLatency -or (Test-TweakEnabled 'NvidiaLowLatency' $false)) {
     Write-Host "  [NVIDIA] Applying PowerMizer performance mode and per-CPU core DPC policy..." -ForegroundColor Green
     # PowerMizer: 0 = max performance (newer drivers), 1 = adaptive
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\CurrentControlSet\Control\Video\NVIDIA\PowerMizer" -Name "PowerMizerPerf" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\CurrentControlSet\Control\Video\NVIDIA\PowerMizer" -Name "PowerMizerAsync" -Type REG_DWORD -Data '0'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\CurrentControlSet\Control\Video\NVIDIA\PowerMizer" -Name "PowerMizerClock" -Type REG_DWORD -Data '0'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Video\NVIDIA\PowerMizer" -Name "PowerMizerPerf" -Type REG_DWORD -Data '1'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Video\NVIDIA\PowerMizer" -Name "PowerMizerAsync" -Type REG_DWORD -Data '0'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Video\NVIDIA\PowerMizer" -Name "PowerMizerClock" -Type REG_DWORD -Data '0'
     # Per-processor DPC policy: 1 = the processor is a DPC processor (defers non-DPC work).
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "DpcProfile" -Type REG_DWORD -Data '1'
-    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\CurrentControlSet\Control\Session Manager\kernel\Processor" -Name "DpcProfile" -Type REG_DWORD -Data '1'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\kernel" -Name "DpcProfile" -Type REG_DWORD -Data '1'
+    Invoke-WinEaseReg -Action Add -Key "HKLM\zSYSTEM\ControlSet001\Control\Session Manager\kernel\Processor" -Name "DpcProfile" -Type REG_DWORD -Data '1'
 }
 
 # HAGS (EnableHAGS / the GPULatency group) is implemented by the built-in plugin WinEase.Plugins.Builtin.Latency.
