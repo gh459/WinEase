@@ -135,6 +135,14 @@ namespace WinEase.Plugins.Tests
         [InlineData("../evil.txt")]
         [InlineData("a/b/../evil.txt")]
         [InlineData("a\\b\\..\\evil.txt")]
+        [InlineData("a/\0/b.txt")]
+        [InlineData("evil.txt\0.safe")]
+        [InlineData("%2e%2e/evil.txt")]
+        [InlineData("..%2fevil.txt")]
+        [InlineData("a/%2e%2e/evil.txt")]
+        [InlineData(".. /evil.txt")]
+        [InlineData(".../evil.txt")]
+        [InlineData("a\\.. \\evil.txt")]
         public void CheckRelativePathRejectsInvalidRelativePaths(string path)
         {
             ArgumentException ex = Assert.Throws<ArgumentException>(() => DelegateWinEaseHost.CheckRelativePath(path));
