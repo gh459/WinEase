@@ -78,19 +78,19 @@ namespace WinEase.Plugins.Builtin.PostInstallTools
             Assembly assembly = typeof(PostInstallToolsPlugin).Assembly;
             foreach (string name in assembly.GetManifestResourceNames())
             {
-                // Avoid string.Replace allocations when resource name has no backslashes or matches directly.
-                if (string.Equals(name, wanted, StringComparison.Ordinal) ||
-                    (name.IndexOf('\\') >= 0 && string.Equals(name.Replace('\\', '/'), wanted, StringComparison.Ordinal)))
+                // Avoid string.Replace allocation when resource name contains no backslashes.
+                string normalised = name.IndexOf('\\') >= 0 ? name.Replace('\\', '/') : name;
+                if (string.Equals(normalised, wanted, StringComparison.Ordinal))
                 {
                     using (Stream stream = assembly.GetManifestResourceStream(name))
                     {
-                        // Read directly into pre-sized byte array using stream length to eliminate MemoryStream allocations.
-                        byte[] buffer = new byte[stream.Length];
+                        int len = checked((int)stream.Length);
+                        byte[] buffer = new byte[len];
                         int offset = 0;
-                        while (offset < buffer.Length)
+                        while (offset < len)
                         {
-                            int read = stream.Read(buffer, offset, buffer.Length - offset);
-                            if (read == 0) break;
+                            int read = stream.Read(buffer, offset, len - offset);
+                            if (read == 0) throw new EndOfStreamException("Premature end of stream while reading resource: " + toolPath);
                             offset += read;
                         }
                         return buffer;
