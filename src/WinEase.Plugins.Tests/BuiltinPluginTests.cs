@@ -363,4 +363,18 @@ namespace WinEase.Plugins.Tests
             PluginAssemblyResolver.Install(assembly);
         }
     }
+
+    public class MainWindowAccessibilityTests
+    {
+        [Fact]
+        public void PresetDiffDialogConfiguresAccessibilityAndGuardsReentrancy()
+        {
+            string cs = RepoFiles.Read(Path.Combine("gui", "winui", "WinEaseGui", "MainWindow.xaml.cs"));
+            Assert.Contains("AutomationProperties.SetName(output, _s.Get(\"Dlg.PresetDiff.Title\"));", cs);
+            Assert.Contains("AutomationProperties.SetLiveSetting(output, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);", cs);
+            Assert.Contains("ToolTipService.SetToolTip(c, name);", cs);
+            Assert.Contains("d.IsPrimaryButtonEnabled = false;", cs);
+            Assert.Contains("d.IsPrimaryButtonEnabled = true;", cs);
+        }
+    }
 }
